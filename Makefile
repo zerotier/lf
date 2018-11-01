@@ -8,8 +8,7 @@ all:	lf
 
 lf:	$(OBJS)
 
-clean:
+clean:	FORCE
 	rm -rf *.o lf *.dSYM
 
 FORCE:
-	;
