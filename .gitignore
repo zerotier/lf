@@ -1,0 +1,6 @@
+*.o
+*.a
+*.dylib
+*.so
+.DS_Store
+*.dSYM
