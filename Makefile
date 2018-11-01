@@ -1,8 +1,8 @@
 CC=cc
-CFLAGS=-O2
+CFLAGS=-O3 -fvectorize
 LIBS=-lsqlite3
 
-OBJS=common.o db.o ed25519.o wharrgarbl.o
+OBJS=common.o db.o ed25519.o toml.o wharrgarbl.o
 
 all:	lf
 
