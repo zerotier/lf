@@ -45,3 +45,51 @@ uint64_t ZTLF_prng()
 	state[1] = z;
 	return (z + y) + (uint64_t)rand();
 }
+
+#ifdef __WINDOWS__
+
+unsigned int ZTLF_ncpus()
+{
+	static volatile unsigned int nc = 0;
+	const unsigned int tmp = nc;
+	if (!tmp) {
+		SYSTEM_INFO info;
+		GetSystemInfo(&info);
+		return (nc = (info.dwNumberOfProcessors <= 0) ? (unsigned int)1 : (unsigned int)(info.dwNumberOfProcessors));
+	}
+	return tmp;
+}
+
+#else
+
+unsigned int ZTLF_ncpus()
+{
+	static volatile unsigned int nc = 0;
+	const unsigned int tmp = nc;
+	if (!tmp) {
+		long n = sysconf(_SC_NPROCESSORS_ONLN);
+		return (nc = (n <= 0) ? (unsigned int)1 : (unsigned int)n);
+	}
+	return tmp;
+}
+
+void ZTLF_secureRandom(void *b,const unsigned long n)
+{
+	static pthread_mutex_t l = PTHREAD_MUTEX_INITIALIZER;
+	static int fd = -1;
+	pthread_mutex_lock(&l);
+	if (fd < 0) {
+		fd = open("/dev/urandom",O_RDONLY);
+		if (fd < 0) {
+			fprintf(stderr,"FATAL: unable to open /dev/urandom\n");
+			abort();
+		}
+	}
+	if (read(fd,b,(size_t)n) != (ssize_t)n) {
+		fprintf(stderr,"FATAL: read error from /dev/urandom\n");
+		abort();
+	}
+	pthread_mutex_unlock(&l);
+}
+
+#endif

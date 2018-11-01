@@ -27,9 +27,9 @@
 #ifndef ZTLF_ED25519_H
 #define ZTLF_ED25519_H
 
-#define ZTLF_ED25519_PUBLIC_KEY_SIZE 32
+#define ZTLF_ED25519_PUBLIC_KEY_SIZE  32
 #define ZTLF_ED25519_PRIVATE_KEY_SIZE 64
-#define ZTLF_ED25519_SIGNATURE_SIZE 64
+#define ZTLF_ED25519_SIGNATURE_SIZE   64
 
 void ZTLF_ed25519CreateKeypair(unsigned char *public_key, unsigned char *private_key, const unsigned char *seed);
 void ZTLF_ed25519Sign(unsigned char *signature, const unsigned char *message, size_t message_len, const unsigned char *public_key, const unsigned char *private_key);

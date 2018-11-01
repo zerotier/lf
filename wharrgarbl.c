@@ -99,16 +99,10 @@ static void *_wharrgarbl(void *ptr)
 
 void ZTLF_wharrgarbl(uint64_t wresult[3],const void *in,const unsigned long inlen,const uint64_t difficulty,const unsigned long memory)
 {
-	static volatile unsigned int s_cpuCount = 0;
-
 	struct _wharrgarblState ws;
+	const unsigned int nt = ZTLF_ncpus();
 
-	unsigned int nt;
-	if (!(nt = s_cpuCount)) {
-		nt = s_cpuCount = ZTLF_ncpus();
-	}
-
-	ws.runNonce = ZTLF_prng; /* nonce to avoid time-wasting false positives and so memset(0) is not needed */
+	ws.runNonce = ZTLF_prng(); /* nonce to avoid time-wasting false positives and so memset(0) is not needed */
 	ws.difficulty = difficulty;
 	if (ws.difficulty == 0) {
 		++ws.difficulty;
@@ -120,7 +114,6 @@ void ZTLF_wharrgarbl(uint64_t wresult[3],const void *in,const unsigned long inle
 	ws.out = wresult;
 	ws.collisionTable = (uint64_t *)malloc(ws.memory * 16);
 	ZTLF_SHA384(ws.inHash,in,inlen);
-
 	pthread_mutex_init(&ws.doneLock,NULL);
 	pthread_cond_init(&ws.doneCond,NULL);
 	ws.done = 0;
@@ -153,7 +146,7 @@ uint64_t ZTLF_wharrgarblVerify2(const uint64_t wresult[2],const void *in,const u
 {
 	unsigned char inHash[48];
 	uint64_t hbuf[6];
-	uint64_t collision[2],difficulty;
+	uint64_t collision[2];
 	int i;
 	ZTLF_SHA384_CTX hash;
 

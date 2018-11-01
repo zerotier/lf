@@ -35,6 +35,8 @@
 #include <string.h>
 #include <memory.h>
 #include <time.h>
+#include <fcntl.h>
+#include <sys/ioctl.h>
 #include <sys/time.h>
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -50,31 +52,12 @@
 
 #define ZTLF_PACKED_STRUCT(D) __pragma(pack(push,1)) D __pragma(pack(pop))
 
-static inline unsigned int ZTLF_ncpus()
-{
-	SYSTEM_INFO info;
-	GetSystemInfo(&info);
-	if (info.dwNumberOfProcessors <= 0) {
-		return 1;
-	}
-	return (unsigned int)(info.dwNumberOfProcessors);
-}
-
 #else /* not Windows */
 
 #include <unistd.h>
 #include <pthread/pthread.h>
 
 #define ZTLF_PACKED_STRUCT(D) D __attribute__((packed))
-
-static inline unsigned int ZTLF_ncpus()
-{
-	long n = sysconf(_SC_NPROCESSORS_ONLN);
-	if (n <= 0) {
-		return 1;
-	}
-	return (unsigned int)n;
-}
 
 #endif /* Windows or non-Windows? */
 
@@ -137,5 +120,7 @@ static inline uint64_t ZTLF_timeMs()
 };
 
 uint64_t ZTLF_prng();
+unsigned int ZTLF_ncpus();
+void ZTLF_secureRandom(void *b,const unsigned long n);
 
 #endif
