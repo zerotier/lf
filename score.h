@@ -31,9 +31,9 @@
 
 static inline uint32_t score(const uint8_t h[32])
 {
-	unsigned int k,i = 0;
-	uint32_t zb = 0;
 	uint64_t rem = 0;
+	uint32_t zb = 0;
+	unsigned int k,i = 0;
 
 	while (i < 32) {
 		if (h[i++])
@@ -52,7 +52,7 @@ static inline uint32_t score(const uint8_t h[32])
 		++zb;
 	}
 
-	return ((zb << 24) | ((~((uint32_t)rem)) >> 8));
+	return ((zb >= 256) ? 0xffffffff : ((zb << 24) | ((~((uint32_t)rem)) >> 8)));
 }
 
 #endif

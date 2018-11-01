@@ -34,7 +34,7 @@ uint64_t ZTLF_prng()
 	uint64_t y = state[1];
 	if ((!x)&&(!y)) {
 		x = ZTLF_timeMs();
-		y = (uint64_t)rand();
+		y = (uint64_t)rand() + (uint64_t)(&state);
 #ifndef __WINDOWS__
 		y += (uint64_t)getpid();
 #endif

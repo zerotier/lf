@@ -30,8 +30,8 @@
 #include "common.h"
 #include "sha.h"
 
-#define ZTLF_RECORD_FLAG_AUTH_WHARRGARBL    0x04 /* wharrgarbl momentum-like PoW attached */
-#define ZTLF_RECORD_FLAG_AUTH_CA            0x08 /* owner ID is signed by a CA */
+#define ZTLF_RECORD_FLAG_AUTH_WHARRGARBL    0x08 /* wharrgarbl momentum-like PoW attached */
+#define ZTLF_RECORD_FLAG_AUTH_CA            0x10 /* owner ID is signed by a CA */
 
 #define ZTLF_RECORD_FLAGS_MASK_TYPE         0x07
 
@@ -41,20 +41,24 @@
 
 ZTLF_PACKED_STRUCT(struct ZTLF_Record
 {
-	uint64_t id[4];                    /* public key derived from record key (or hash thereof) */
-	uint64_t owner[4];                 /* public key (or hash thereof) of owner */
 	uint64_t timestamp;                /* timestamp in milliseconds since epoch */
+	uint64_t id[4];                    /* public key (or hash thereof) derived from record key */
+	uint64_t owner[4];                 /* public key (or hash thereof) of owner */
+
 	ZTLF_PACKED_STRUCT(struct {
 		uint64_t timestamp;              /* timestamp of referenced record or 0 if link is unused */
-		uint64_t hash[3];                /* first 192 bits (24 bytes) of sha384(sha384(id | owner) | owner) */
-	}) links[ZTLF_RECORD_LINK_COUNT];  /* links to other records by ID, owner, and timestamp */
-	uint8_t flags;                     /* FFFFFFTT: F=flags, T=record type (0-3) */
+		uint64_t hash[3];                /* 192-bit hash computed from sha384(sha384(id | owner) | owner) */
+	}) links[ZTLF_RECORD_LINK_COUNT];
+
+	uint16_t ttl;                      /* TTL in hours (actual TTL is this + 1, so 0 == 1 hour) */
+	uint8_t flags;                     /* FFFFFTTT: F=flags, T=record type (0-7) */
+
 	union {
 		ZTLF_PACKED_STRUCT(struct {      /* ZT_LF_RECORD_TYPE_ED25519_AES256CFB */
 			uint8_t keyClaimSignature[64]; /* ed25519 signature with secret computed from plaintext key */
 			uint8_t ownerSignature[64];    /* ed25519 signature with owner key */
 			uint8_t valueSize;             /* actual size is size + 1 */
-			uint8_t data[];                /* 1-256 byte value, auth data, other optional fields */
+			uint8_t data[];                /* 1-256 byte value data followed by any flag-indicated fields */
 		}) t0;
 	} p;
 });
@@ -64,6 +68,7 @@ static inline void ZTLF_Record_transportEncode(struct ZTLF_Record *r)
 	r->timestamp = ZTLF_htonll(r->timestamp);
 	for(int i=0;i<ZTLF_RECORD_LINK_COUNT;i++)
 		r->links[i].timestamp = ZTLF_htonll(r->links[i].timestamp);
+	r->ttl = htons(r->ttl);
 }
 
 static inline void ZTLF_Record_transportDecode(struct ZTLF_Record *r)
@@ -71,6 +76,7 @@ static inline void ZTLF_Record_transportDecode(struct ZTLF_Record *r)
 	r->timestamp = ZTLF_ntohll(r->timestamp);
 	for(int i=0;i<ZTLF_RECORD_LINK_COUNT;i++)
 		r->links[i].timestamp = ZTLF_ntohll(r->links[i].timestamp);
+	r->ttl = ntohs(r->ttl);
 }
 
 static inline void ZTLF_Record_idOwnerHash(const struct ZTLF_Record *r,uint64_t out[3])
@@ -88,9 +94,9 @@ static inline void ZTLF_Record_idOwnerHash(const struct ZTLF_Record *r,uint64_t 
 	ZTLF_SHA384_update(&h,r->owner,sizeof(r->owner));
 	ZTLF_SHA384_final(&h,tmp);
 
-	out[0] = tmp[0];
-	out[1] = tmp[1];
-	out[2] = tmp[2];
+	out[0] = tmp[0] ^ tmp[1];
+	out[1] = tmp[2] ^ tmp[3];
+	out[2] = tmp[4] ^ tmp[5];
 }
 
 #endif

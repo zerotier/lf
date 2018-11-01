@@ -120,14 +120,19 @@ void ZTLF_wharrgarbl(uint64_t wresult[3],const void *in,const unsigned long inle
 	ws.out = wresult;
 	ws.collisionTable = (uint64_t *)malloc(ws.memory * 16);
 	ZTLF_SHA384(ws.inHash,in,inlen);
+
 	pthread_mutex_init(&ws.doneLock,NULL);
 	pthread_cond_init(&ws.doneCond,NULL);
 	ws.done = 0;
 
-	for(unsigned int t=0;t<nt;++t) {
+	for(unsigned int t=1;t<nt;++t) {
 		pthread_t thr;
-		pthread_create(&thr,NULL,&_wharrgarbl,&ws);
+		if (pthread_create(&thr,NULL,&_wharrgarbl,&ws)) {
+			abort();
+		}
+		pthread_detach(thr);
 	}
+	_wharrgarbl(&ws);
 
 	pthread_mutex_lock(&ws.doneLock);
 	for(;;) {
@@ -140,6 +145,7 @@ void ZTLF_wharrgarbl(uint64_t wresult[3],const void *in,const unsigned long inle
 
 	pthread_cond_destroy(&ws.doneCond);
 	pthread_mutex_destroy(&ws.doneLock);
+
 	free(ws.collisionTable);
 }
 
