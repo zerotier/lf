@@ -28,6 +28,7 @@
 #define ZT_LF_DB_H
 
 #include "common.h"
+#include "record.h"
 
 #include <sqlite3.h>
 
@@ -36,6 +37,8 @@ struct ZTLF_db
 	sqlite3 *dbc;
 	sqlite3_stmt *sAddRecord;
 	sqlite3_stmt *sAddLink;
+
+	pthread_mutex_t lock;
 };
 
 

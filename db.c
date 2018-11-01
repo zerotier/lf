@@ -26,7 +26,13 @@
 
 #include "db.h"
 
-#define ZT_LF_DB_INIT_SQL (\
+#define ZT_LF_DB_INIT_SQL \
+"PRAGMA locking_mode = EXCLUSIVE;\n" \
+"PRAGMA journal_mode = MEMORY;\n" \
+"PRAGMA cache_size = -262144;\n" \
+"PRAGMA synchronous = 0;\n" \
+"PRAGMA auto_vacuum = 0;\n" \
+"PRAGMA foreign_keys = OFF;\n" \
 "CREATE TABLE IF NOT EXISTS config (k VARCHAR(256) PRIMARY KEY NOT NULL,v BLOB NOT NULL);\n" \
 "CREATE TABLE IF NOT EXISTS record (\n" \
 " rowid INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,\n" \
@@ -46,7 +52,9 @@
 " work INTEGER NOT NULL,\n" \
 " retries INTEGER NOT NULL DEFAULT(0),\n" \
 " PRIMARY KEY(idOwnerHash,recordRowid)\n" \
-") WITHOUT ROWID;\n")
+") WITHOUT ROWID;\n" \
+"CREATE INDEX IF NOT EXISTS link_recordRowid ON link(recordRowid);\n" \
+"CREATE INDEX IF NOT EXISTS link_retries ON link(retries);\n"
 
 int ZTLF_db_open(const char *path,struct ZTLF_db *db)
 {
@@ -57,10 +65,15 @@ int ZTLF_db_open(const char *path,struct ZTLF_db *db)
 	if ((e = sqlite3_open_v2(path,&db->dbc,SQLITE_OPEN_CREATE|SQLITE_OPEN_READWRITE|SQLITE_OPEN_NOMUTEX,NULL)) != SQLITE_OK)
 		goto exit_with_error;
 
+	if ((e = sqlite3_exec(db->dbc,(ZT_LF_DB_INIT_SQL),NULL,NULL,NULL)) != SQLITE_OK)
+		goto exit_with_error;
+
 	if ((e = sqlite3_prepare_v2(db->dbc,"INSERT INTO record (id,owner,idOwnerHash,timestamp,expiration,data) VALUES (?,?,?,?,?,?)",-1,&db->sAddRecord,NULL)) != SQLITE_OK)
 		goto exit_with_error;
 	if ((e = sqlite3_prepare_v2(db->dbc,"INSERT INTO link (idOwnerHash,recordRowid,work) VALUES (?,?,?)",-1,&db->sAddLink,NULL)) != SQLITE_OK)
 		goto exit_with_error;
+
+	pthread_mutex_init(&db->lock,NULL);
 
 	return 0;
 
@@ -73,7 +86,9 @@ void ZTLF_db_close(struct ZTLF_db *db)
 {
 	if (db->dbc) {
 		if (db->sAddRecord) sqlite3_finalize(db->sAddRecord);
+		if (db->sAddLink) sqlite3_finalize(db->sAddLink);
 		sqlite3_close_v2(db->dbc);
+		pthread_mutex_destroy(&db->lock);
 		memset(db,0,sizeof(struct ZTLF_db));
 	}
 }
