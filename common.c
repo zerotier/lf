@@ -43,7 +43,7 @@ uint64_t ZTLF_prng()
 	x ^= x << 23;
 	const uint64_t z = x ^ y ^ (x >> 17) ^ (y >> 26);
 	state[1] = z;
-	return (z + y) + (uint64_t)rand();
+	return z + y + (uint64_t)rand();
 }
 
 #ifdef __WINDOWS__

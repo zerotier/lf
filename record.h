@@ -41,13 +41,13 @@
 
 ZTLF_PACKED_STRUCT(struct ZTLF_Record
 {
-	uint64_t timestamp;                /* timestamp in milliseconds since epoch */
 	uint64_t id[4];                    /* public key (or hash thereof) derived from record key */
 	uint64_t owner[4];                 /* public key (or hash thereof) of owner */
+	uint64_t timestamp;                /* timestamp in milliseconds since epoch */
 
 	ZTLF_PACKED_STRUCT(struct {
-		uint64_t timestamp;              /* timestamp of referenced record or 0 if link is unused */
 		uint64_t hash[3];                /* 192-bit hash computed from sha384(sha384(id | owner) | owner) */
+		uint64_t timestamp;              /* timestamp of referenced record or 0 if link is unused */
 	}) links[ZTLF_RECORD_LINK_COUNT];
 
 	uint16_t ttl;                      /* TTL in hours (actual TTL is this + 1, so 0 == 1 hour) */
