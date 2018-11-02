@@ -25,6 +25,7 @@
  */
 
 #include "db.h"
+#include "map.h"
 
 #define ZT_LF_DB_INIT_SQL \
 "PRAGMA locking_mode = EXCLUSIVE;\n" \

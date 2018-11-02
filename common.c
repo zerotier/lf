@@ -32,18 +32,13 @@ uint64_t ZTLF_prng()
 	/* https://en.wikipedia.org/wiki/Xorshift#xorshift.2B */
 	uint64_t x = state[0];
 	uint64_t y = state[1];
-	if ((!x)&&(!y)) {
-		x = ZTLF_timeMs();
-		y = (uint64_t)rand() + (uint64_t)(&state);
-#ifndef __WINDOWS__
-		y += (uint64_t)getpid();
-#endif
-	}
+	if ((!x)&&(!y))
+		ZTLF_secureRandom(state,sizeof(state));
 	state[0] = y;
 	x ^= x << 23;
 	const uint64_t z = x ^ y ^ (x >> 17) ^ (y >> 26);
 	state[1] = z;
-	return z + y + (uint64_t)rand();
+	return z + y;
 }
 
 #ifdef __WINDOWS__
@@ -60,7 +55,7 @@ unsigned int ZTLF_ncpus()
 	return tmp;
 }
 
-#else
+#else /* non-Windows */
 
 unsigned int ZTLF_ncpus()
 {
@@ -92,4 +87,4 @@ void ZTLF_secureRandom(void *b,const unsigned long n)
 	pthread_mutex_unlock(&l);
 }
 
-#endif
+#endif /* Windows / non-Windows */

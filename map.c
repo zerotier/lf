@@ -29,8 +29,8 @@
 void ZTLF_Map_init(struct ZTLF_Map *m,unsigned long initialBucketCountHint,void (*valueDeleter)(void *))
 {
 	m->nonce = ZTLF_prng(); /* randomizes bucket allocation */
-	initialBucketCountHint /= 4096;
-	initialBucketCountHint *= 4096;
+	initialBucketCountHint >>= 12;
+	initialBucketCountHint <<= 12;
 	m->bucketCount = (initialBucketCountHint > 4096) ? initialBucketCountHint : 4096;
 	ZTLF_MALLOC_CHECK(m->buckets = (struct ZTLF_MapEntry *)malloc(sizeof(struct ZTLF_MapEntry) * m->bucketCount));
 	memset(m->buckets,0,sizeof(struct ZTLF_MapEntry) * m->bucketCount);
@@ -50,16 +50,11 @@ void ZTLF_Map_destroy(struct ZTLF_Map *m)
 
 int ZTLF_Map_set(struct ZTLF_Map *m,const void *k,const unsigned long klen,void *v)
 {
-	if (klen > ZTLF_MAP_MAX_KEY_SIZE) {
-		fprintf(stderr,"FATAL: ZTLF_Map supports key no longer than %d bytes!",ZTLF_MAP_MAX_KEY_SIZE);
-		abort();
-	}
-
 	uint64_t key[ZTLF_MAP_MAX_KEY_SIZE / 8];
 	for(unsigned long i=0;i<klen;i++)
 		((uint8_t *)key)[i] = ((const uint8_t *)k)[i];
 	for(unsigned long i=klen;i<ZTLF_MAP_MAX_KEY_SIZE;++i)
-		((uint8_t *)key)[i] = 0;
+		((uint8_t *)key)[i % ZTLF_MAP_MAX_KEY_SIZE] = 0;
 	uint64_t hash = m->nonce;
 	for(unsigned long i=0;i<(ZTLF_MAP_MAX_KEY_SIZE / 8);++i)
 		hash += ZTLF_xorshift64star(hash + key[i]);
@@ -81,7 +76,7 @@ int ZTLF_Map_set(struct ZTLF_Map *m,const void *k,const unsigned long klen,void 
 
 	struct ZTLF_Map nm;
 	nm.nonce = ZTLF_prng();
-	nm.bucketCount = m->bucketCount * 4;
+	nm.bucketCount = m->bucketCount << 1;
 	ZTLF_MALLOC_CHECK(nm.buckets = (struct ZTLF_MapEntry *)malloc(sizeof(struct ZTLF_MapEntry) * nm.bucketCount));
 	memset(nm.buckets,0,sizeof(struct ZTLF_MapEntry) * nm.bucketCount);
 	nm.valueDeleter = NULL;
@@ -100,12 +95,9 @@ int ZTLF_Map_set(struct ZTLF_Map *m,const void *k,const unsigned long klen,void 
 
 void *ZTLF_Map_get(struct ZTLF_Map *m,const void *k,const unsigned long klen)
 {
-	if (klen > ZTLF_MAP_MAX_KEY_SIZE)
-		return (void *)0;
-
 	uint64_t key[ZTLF_MAP_MAX_KEY_SIZE / 8];
 	for(unsigned long i=0;i<klen;i++)
-		((uint8_t *)key)[i] = ((const uint8_t *)k)[i];
+		((uint8_t *)key)[i % ZTLF_MAP_MAX_KEY_SIZE] = ((const uint8_t *)k)[i];
 	for(unsigned long i=klen;i<ZTLF_MAP_MAX_KEY_SIZE;++i)
 		((uint8_t *)key)[i] = 0;
 	uint64_t hash = m->nonce;

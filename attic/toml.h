@@ -25,10 +25,12 @@ SOFTWARE.
 #ifndef TOML_H
 #define TOML_H
 
+#ifndef TOML_EXTERN
 #ifdef __cplusplus
 #define TOML_EXTERN extern "C"
 #else
 #define TOML_EXTERN extern
+#endif
 #endif
 
 typedef struct toml_table_t toml_table_t;

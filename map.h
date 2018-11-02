@@ -29,7 +29,7 @@
 
 #include "common.h"
 
-/* Can be increased, but must be a multiple of 8 */
+/* Can be increased, but must be a multiple of 8. Keys larger than this may collide!. */
 #define ZTLF_MAP_MAX_KEY_SIZE 32
 
 /* Set a key to this (NULL) to delete */
@@ -52,6 +52,7 @@ struct ZTLF_Map
 	void (*valueDeleter)(void *);
 };
 
+/* If valueDeleter is non-NULL it will be used to free values when they're replaced and on map destroy */
 void ZTLF_Map_init(struct ZTLF_Map *m,unsigned long initialBucketCountHint,void (*valueDeleter)(void *));
 
 void ZTLF_Map_destroy(struct ZTLF_Map *m);
@@ -61,5 +62,24 @@ int ZTLF_Map_set(struct ZTLF_Map *m,const void *k,const unsigned long klen,void 
 
 /* Returns NULL if key is not found */
 void *ZTLF_Map_get(struct ZTLF_Map *m,const void *k,const unsigned long klen);
+
+/* Iterates by running a command or block of code against all keys. The variables ztlfMapKey and
+ * ztlfMapValue are set in the loop to keys and values. It's up to the code to know what the
+ * key length should be. It's unsafe to structurally change the map here, though the ztlfMapValue
+ * temporary variable can be changed or set to NULL to delete. Using "break" in the code (at its
+ * top level) will terminate iteration. Iteration cannot be nested. */
+#define ZTLF_Map_iterate(m,c) \
+	for(unsigned long _ztmi_i=0;_ztmi_i<(m)->bucketCount;++_ztmi_i) { \
+		if ((m)->buckets[_ztmi_i].value) { \
+			const void *const ztlfMapKey = (void *)(m)->buckets[_ztmi_i].key; \
+			void *ztlfMapValue = (void *)(m)->buckets[_ztmi_i].value; \
+			c \
+			if (ztlfMapValue != (void *)(m)->buckets[_ztmi_i].value) { \
+				if ((m)->valueDeleter) \
+					(m)->valueDeleter((m)->buckets[_ztmi_i].value); \
+				(m)->buckets[_ztmi_i].value = ztlfMapValue; \
+			} \
+		} \
+	}
 
 #endif
