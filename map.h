@@ -24,41 +24,42 @@
  * of your own application.
  */
 
-#ifndef ZT_LF_AES_H
-#define ZT_LF_AES_H
+#ifndef ZTLF_MAP_H
+#define ZTLF_MAP_H
 
 #include "common.h"
 
-#define ZTLF_AES256_KEY_SIZE   32
-#define ZTLF_AES256CFB_IV_SIZE 16
+/* Can be increased, but must be a multiple of 8 */
+#define ZTLF_MAP_MAX_KEY_SIZE 32
 
-#ifdef __APPLE__
+/* Set a key to this (NULL) to delete */
+#define ZTLF_MAP_VALUE_EMPTY ((void *)0)
 
-#include <CommonCrypto/CommonCrypto.h>
-#include <CommonCrypto/CommonCryptor.h>
+/* Use this value for set-like behavior */
+#define ZTLF_MAP_VALUE_SET   ((void *)1)
 
-typedef CCCryptorRef ZTLF_AES256CFB;
-
-static inline void ZTLF_AES256CFB_init(ZTLF_AES256CFB *c,const void *key,const void *iv,int encrypt)
+struct ZTLF_MapEntry
 {
-	if (CCCryptorCreateWithMode((encrypt) ? kCCEncrypt : kCCDecrypt,kCCModeCFB,kCCAlgorithmAES,ccNoPadding,iv,key,32,(const void *)0,0,0,0,c) != kCCSuccess) {
-		abort();
-	}
-}
+	uint64_t key[ZTLF_MAP_MAX_KEY_SIZE / 8];
+	void *value;
+};
 
-static inline void ZTLF_AES256CFB_crypt(ZTLF_AES256CFB *c,void *out,const void *in,const unsigned long len)
+struct ZTLF_Map
 {
-	if (len) {
-		size_t moved = 0;
-		CCCryptorUpdate(*c,in,(size_t)len,out,(size_t)len,&moved);
-		if (moved != (size_t)len) {
-			abort();
-		}
-	}
-}
+	uint64_t nonce;
+	unsigned long bucketCount;
+	struct ZTLF_MapEntry *buckets;
+	void (*valueDeleter)(void *);
+};
 
-static inline void ZTLF_AES256CFB_destroy(ZTLF_AES256CFB *c) { CCCryptorRelease(*c); }
+void ZTLF_Map_init(struct ZTLF_Map *m,unsigned long initialBucketCountHint,void (*valueDeleter)(void *));
 
-#endif /* __APPLE__ */
+void ZTLF_Map_destroy(struct ZTLF_Map *m);
+
+/* Set key to NULL to delete */
+int ZTLF_Map_set(struct ZTLF_Map *m,const void *k,const unsigned long klen,void *v);
+
+/* Returns NULL if key is not found */
+void *ZTLF_Map_get(struct ZTLF_Map *m,const void *k,const unsigned long klen);
 
 #endif

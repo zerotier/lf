@@ -2,7 +2,7 @@ CC=cc
 CFLAGS=-O3 -fvectorize -std=c99 -Wall
 LIBS=-lsqlite3
 
-OBJS=common.o db.o ed25519.o toml.o wharrgarbl.o
+OBJS=common.o db.o ed25519.o map.o toml.o wharrgarbl.o
 
 all:	lf
 

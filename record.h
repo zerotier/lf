@@ -30,9 +30,6 @@
 #include "common.h"
 #include "sha.h"
 
-#define ZTLF_RECORD_FLAG_AUTH_WHARRGARBL    0x08 /* wharrgarbl momentum-like PoW attached */
-#define ZTLF_RECORD_FLAG_AUTH_CA            0x10 /* owner ID is signed by a CA */
-
 #define ZTLF_RECORD_FLAGS_MASK_TYPE         0x07
 
 #define ZTLF_RECORD_TYPE_ED25519_AES256CFB  0x00 /* ed25519 signatures, AES-256-CFB value masking */
@@ -54,12 +51,15 @@ ZTLF_PACKED_STRUCT(struct ZTLF_Record
 	uint8_t flags;                     /* FFFFFTTT: F=flags, T=record type (0-7) */
 
 	union {
+		/* Type 0 personality (the only one right now) */
 		ZTLF_PACKED_STRUCT(struct {      /* ZT_LF_RECORD_TYPE_ED25519_AES256CFB */
 			uint8_t keyClaimSignature[64]; /* ed25519 signature with secret computed from plaintext key */
 			uint8_t ownerSignature[64];    /* ed25519 signature with owner key */
 			uint8_t valueSize;             /* actual size is size + 1 */
-			uint8_t data[];                /* 1-256 byte value data followed by any flag-indicated fields */
+			uint8_t data[];                /* 1-256 byte value data, endorsements, any other optional data... */
 		}) t0;
+
+		/* Future type-selected personalities could be added here... */
 	} p;
 });
 

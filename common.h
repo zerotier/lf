@@ -36,10 +36,14 @@
 #include <memory.h>
 #include <time.h>
 #include <fcntl.h>
+#include <errno.h>
 #include <sys/ioctl.h>
 #include <sys/time.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/select.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 
 #if defined(_WIN32) || defined(WIN32) || defined(_WIN64) || defined(WIN64)
 
@@ -55,6 +59,7 @@
 #else /* not Windows */
 
 #include <unistd.h>
+#include <signal.h>
 #include <pthread/pthread.h>
 
 #define ZTLF_PACKED_STRUCT(D) D __attribute__((packed))
@@ -101,6 +106,8 @@ static inline uint64_t ZTLF_htonll(uint64_t n)
 
 #define ZTLF_ntohll(n) ZTLF_htonll((n))
 
+#define ZTLF_MALLOC_CHECK(m) if (!((m))) { fprintf(stderr,"FATAL: malloc() failed!\n"); abort(); }
+
 static inline uint64_t ZTLF_timeMs()
 {
 #ifdef __WINDOWS__
@@ -118,6 +125,15 @@ static inline uint64_t ZTLF_timeMs()
 	return ( (1000ULL * (uint64_t)tv.tv_sec) + (uint64_t)(tv.tv_usec / 1000) );
 #endif
 };
+
+static inline uint64_t ZTLF_xorshift64star(uint64_t s)
+{
+	uint64_t x = s;
+	x ^= x << 13;
+	x ^= x >> 7;
+	x ^= x << 17;
+	return s * 0x2545F4914F6CDD1DULL;
+}
 
 uint64_t ZTLF_prng();
 unsigned int ZTLF_ncpus();

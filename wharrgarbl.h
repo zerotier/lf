@@ -34,5 +34,6 @@
 void ZTLF_wharrgarbl(uint64_t wresult[3],const void *in,const unsigned long inlen,const uint64_t difficulty,const unsigned long memory);
 uint64_t ZTLF_wharrgarblVerify2(const uint64_t wresult[2],const void *in,const unsigned long inlen,const uint64_t difficulty);
 static inline uint64_t ZTLF_wharrgarblVerify(const uint64_t wresult[3],const void *in,const unsigned long inlen) { return ZTLF_wharrgarblVerify2(wresult,in,inlen,ZTLF_ntohll(wresult[2])); }
+static inline uint64_t ZTLF_wharrgarblGetDifficulty(const uint64_t wresult[3]) { return wresult[2]; }
 
 #endif
