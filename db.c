@@ -28,8 +28,6 @@
 #include "map.h"
 #include "record.h"
 
-static const uint64_t nilIdOwnerHash[3] = { 0,0,0 };
-
 #define ZTLF_NEG(e) (((e) <= 0) ? (e) : -(e))
 
 #define ZTLF_DB_INIT_SQL \
