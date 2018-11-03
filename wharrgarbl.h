@@ -29,6 +29,7 @@
 
 #include "common.h"
 
+#define ZTLF_WHARRGARBL_SIZE_QW 3
 #define ZTLF_WHARRGARBL_SIZE_BYTES 24
 
 void ZTLF_wharrgarbl(uint64_t wresult[3],const void *in,const unsigned long inlen,const uint64_t difficulty,const unsigned long memory);

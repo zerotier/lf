@@ -31,11 +31,13 @@
 
 struct ZTLF_Config
 {
-	char networkPassphrase[128];
+	char networkPassphrase[64];
 
 	int p2pPort;
 
 	int httpPort;
+
+	bool addWorkWhileIdle;
 };
 
 #endif

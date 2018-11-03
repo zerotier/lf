@@ -39,13 +39,17 @@ void ZTLF_Map_init(struct ZTLF_Map *m,unsigned long initialBucketCountHint,void 
 
 void ZTLF_Map_destroy(struct ZTLF_Map *m)
 {
-	for(unsigned long b=0;b<m->bucketCount;++b) {
-		if (m->buckets[b].value) {
-			if (m->valueDeleter)
-				m->valueDeleter(m->buckets[b].value);
+	if (m->buckets) {
+		if (m->valueDeleter) {
+			for(unsigned long b=0;b<m->bucketCount;++b) {
+				if (m->buckets[b].value) {
+					m->valueDeleter(m->buckets[b].value);
+				}
+			}
 		}
+		free(m->buckets);
 	}
-	free(m->buckets);
+	m->buckets = NULL;
 }
 
 int ZTLF_Map_set(struct ZTLF_Map *m,const void *k,const unsigned long klen,void *v)

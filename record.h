@@ -28,13 +28,16 @@
 #define ZT_LF_RECORD_H
 
 #include "common.h"
-#include "sha.h"
 
 #define ZTLF_RECORD_FLAGS_MASK_TYPE         0x07
 
 #define ZTLF_RECORD_TYPE_ED25519_AES256CFB  0x00 /* ed25519 signatures, AES-256-CFB value masking */
 
 #define ZTLF_RECORD_LINK_COUNT              8
+
+#define ZTLF_RECORD_MIN_SIZE sizeof(struct ZTLF_Record)
+
+#define ZTLF_RECORD_ATTACHMENT_TYPE_WHARRGARBL_POW 0x00
 
 ZTLF_PACKED_STRUCT(struct ZTLF_Record
 {
@@ -43,7 +46,7 @@ ZTLF_PACKED_STRUCT(struct ZTLF_Record
 	uint64_t timestamp;                /* timestamp in milliseconds since epoch */
 
 	ZTLF_PACKED_STRUCT(struct {
-		uint64_t hash[3];                /* 192-bit hash computed from sha384(sha384(id | owner) | owner) */
+		uint64_t idOwnerHash[3];         /* 192-bit hash computed from sha384(sha384(id | owner) | owner) */
 		uint64_t timestamp;              /* timestamp of referenced record or 0 if link is unused */
 	}) links[ZTLF_RECORD_LINK_COUNT];
 
@@ -56,12 +59,17 @@ ZTLF_PACKED_STRUCT(struct ZTLF_Record
 			uint8_t keyClaimSignature[64]; /* ed25519 signature with secret computed from plaintext key */
 			uint8_t ownerSignature[64];    /* ed25519 signature with owner key */
 			uint8_t valueSize;             /* actual size is size + 1 */
-			uint8_t data[];                /* 1-256 byte value data, endorsements, any other optional data... */
+			uint8_t data[];                /* 1-256 byte value data, work, any other optional data... */
 		}) t0;
 
 		/* Future type-selected personalities could be added here... */
 	} p;
 });
+
+static inline uint64_t ZTLF_Record_expirationTime(const struct ZTLF_Record *r)
+{
+	return (r->timestamp + (60000ULL * (1ULL + (uint64_t)r->ttl)));
+}
 
 static inline void ZTLF_Record_transportEncode(struct ZTLF_Record *r)
 {
@@ -79,24 +87,8 @@ static inline void ZTLF_Record_transportDecode(struct ZTLF_Record *r)
 	r->ttl = ntohs(r->ttl);
 }
 
-static inline void ZTLF_Record_idOwnerHash(const struct ZTLF_Record *r,uint64_t out[3])
-{
-	uint64_t tmp[6];
-	ZTLF_SHA384_CTX h;
+void ZTLF_Record_idOwnerHash(const struct ZTLF_Record *r,uint64_t out[3]);
 
-	ZTLF_SHA384_init(&h);
-	ZTLF_SHA384_update(&h,r->id,sizeof(r->id));
-	ZTLF_SHA384_update(&h,r->owner,sizeof(r->owner));
-	ZTLF_SHA384_final(&h,tmp);
-
-	ZTLF_SHA384_init(&h);
-	ZTLF_SHA384_update(&h,tmp,sizeof(tmp));
-	ZTLF_SHA384_update(&h,r->owner,sizeof(r->owner));
-	ZTLF_SHA384_final(&h,tmp);
-
-	out[0] = tmp[0] ^ tmp[1];
-	out[1] = tmp[2] ^ tmp[3];
-	out[2] = tmp[4] ^ tmp[5];
-}
+double ZTLF_Record_getInternalWeight(const struct ZTLF_Record *r,const unsigned long rsize);
 
 #endif

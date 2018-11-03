@@ -31,6 +31,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <stddef.h>
+#include <stdbool.h>
 #include <limits.h>
 #include <string.h>
 #include <memory.h>
@@ -133,6 +134,30 @@ static inline uint64_t ZTLF_xorshift64star(uint64_t s)
 	x ^= x >> 7;
 	x ^= x << 17;
 	return s * 0x2545F4914F6CDD1DULL;
+}
+
+static inline int ZTLF_ui64contains(const uint64_t *a,const unsigned long l,const uint64_t i)
+{
+	const uint64_t *eof = a + l;
+	while (a != eof) {
+		if (*a == i) {
+			return 1;
+		}
+		++a;
+	}
+	return 0;
+}
+
+static inline int ZTLF_i64contains(const int64_t *a,const unsigned long l,const int64_t i)
+{
+	const int64_t *eof = a + l;
+	while (a != eof) {
+		if (*a == i) {
+			return 1;
+		}
+		++a;
+	}
+	return 0;
 }
 
 uint64_t ZTLF_prng();

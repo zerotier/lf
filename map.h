@@ -57,11 +57,22 @@ void ZTLF_Map_init(struct ZTLF_Map *m,unsigned long initialBucketCountHint,void 
 
 void ZTLF_Map_destroy(struct ZTLF_Map *m);
 
-/* Set key to NULL to delete */
+/* Set key to NULL to delete; returns >0 if new, 0 if existing */
 int ZTLF_Map_set(struct ZTLF_Map *m,const void *k,const unsigned long klen,void *v);
 
 /* Returns NULL if key is not found */
 void *ZTLF_Map_get(struct ZTLF_Map *m,const void *k,const unsigned long klen);
+
+static inline void ZTLF_Map_clear(struct ZTLF_Map *m)
+{
+	for(unsigned long b=0;b<m->bucketCount;++b) {
+		if (m->buckets[b].value) {
+			if (m->valueDeleter)
+				m->valueDeleter(m->buckets[b].value);
+			m->buckets[b].value = (void *)0;
+		}
+	}
+}
 
 /* Iterates by running a command or block of code against all keys. The variables ztlfMapKey and
  * ztlfMapValue are set in the loop to keys and values. It's up to the code to know what the
