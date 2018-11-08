@@ -43,6 +43,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/select.h>
+#include <sys/stat.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
@@ -56,6 +57,7 @@
 #endif
 
 #define ZTLF_PACKED_STRUCT(D) __pragma(pack(push,1)) D __pragma(pack(pop))
+#define ZTLF_PATH_SEPARATOR "\\"
 
 #else /* not Windows */
 
@@ -64,6 +66,7 @@
 #include <pthread/pthread.h>
 
 #define ZTLF_PACKED_STRUCT(D) D __attribute__((packed))
+#define ZTLF_PATH_SEPARATOR "/"
 
 #endif /* Windows or non-Windows? */
 
@@ -80,24 +83,20 @@
 #endif
 
 #if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
-#if defined(__GNUC__)
-#if defined(__FreeBSD__)
-#define ZTLF_htonll(n) (bswap64((uint64_t)(n)))
-#elif (!defined(__OpenBSD__))
-#define ZTLF_htonll(n) (__builtin_bswap64((uint64_t)(n)))
-#endif
+#ifdef __GNUC__
+#define ZTLF_htonll(n) ((uint64_t)(__builtin_bswap64((uint64_t)(n))))
 #else
 static inline uint64_t ZTLF_htonll(uint64_t n)
 {
 	return (
-		((n & 0x00000000000000FFULL) << 56) |
-		((n & 0x000000000000FF00ULL) << 40) |
-		((n & 0x0000000000FF0000ULL) << 24) |
-		((n & 0x00000000FF000000ULL) <<  8) |
-		((n & 0x000000FF00000000ULL) >>  8) |
-		((n & 0x0000FF0000000000ULL) >> 24) |
-		((n & 0x00FF000000000000ULL) >> 40) |
-		((n & 0xFF00000000000000ULL) >> 56)
+		((n & 0x00000000000000ffULL) << 56) |
+		((n & 0x000000000000ff00ULL) << 40) |
+		((n & 0x0000000000ff0000ULL) << 24) |
+		((n & 0x00000000ff000000ULL) <<  8) |
+		((n & 0x000000ff00000000ULL) >>  8) |
+		((n & 0x0000ff0000000000ULL) >> 24) |
+		((n & 0x00ff000000000000ULL) >> 40) |
+		((n & 0xff00000000000000ULL) >> 56)
 	);
 }
 #endif
@@ -127,13 +126,15 @@ static inline uint64_t ZTLF_timeMs()
 #endif
 };
 
+static inline uint64_t ZTLF_timeSec() { return (uint64_t)time(NULL); };
+
 static inline uint64_t ZTLF_xorshift64star(uint64_t s)
 {
 	uint64_t x = s;
 	x ^= x << 13;
 	x ^= x >> 7;
 	x ^= x << 17;
-	return s * 0x2545F4914F6CDD1DULL;
+	return s * 0x2545f4914f6cdd1dULL;
 }
 
 static inline int ZTLF_ui64contains(const uint64_t *a,const unsigned long l,const uint64_t i)

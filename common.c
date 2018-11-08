@@ -33,7 +33,7 @@ uint64_t ZTLF_prng()
 	uint64_t x = state[0];
 	uint64_t y = state[1];
 	if ((!x)&&(!y))
-		ZTLF_secureRandom(state,sizeof(state));
+		ZTLF_secureRandom((void *)state,sizeof(state));
 	state[0] = y;
 	x ^= x << 23;
 	const uint64_t z = x ^ y ^ (x >> 17) ^ (y >> 26);

@@ -3769,43 +3769,6 @@ static void sc_muladd(unsigned char *s, const unsigned char *a, const unsigned c
 	s[31] = (unsigned char) (s11 >> 17);
 }
 
-void ZTLF_ed25519CreateKeypair(unsigned char *public_key, unsigned char *private_key, const unsigned char *seed) {
-	ge_p3 A;
-
-	ZTLF_SHA512(private_key,seed,32);
-	private_key[0] &= 248;
-	private_key[31] &= 63;
-	private_key[31] |= 64;
-
-	ge_scalarmult_base(&A, private_key);
-	ge_p3_tobytes(public_key, &A);
-}
-
-void ZTLF_ed25519Sign(unsigned char *signature, const unsigned char *message, size_t message_len, const unsigned char *public_key, const unsigned char *private_key) {
-	ZTLF_SHA512_CTX hash;
-	unsigned char hram[64];
-	unsigned char r[64];
-	ge_p3 R;
-
-	ZTLF_SHA512_init(&hash);
-	ZTLF_SHA512_update(&hash, private_key + 32, 32);
-	ZTLF_SHA512_update(&hash, message, message_len);
-	ZTLF_SHA512_final(&hash, r);
-
-	sc_reduce(r);
-	ge_scalarmult_base(&R, r);
-	ge_p3_tobytes(signature, &R);
-
-	ZTLF_SHA512_init(&hash);
-	ZTLF_SHA512_update(&hash, signature, 32);
-	ZTLF_SHA512_update(&hash, public_key, 32);
-	ZTLF_SHA512_update(&hash, message, message_len);
-	ZTLF_SHA512_final(&hash, hram);
-
-	sc_reduce(hram);
-	sc_muladd(signature + 32, hram, private_key, r);
-}
-
 static int consttime_equal(const unsigned char *x, const unsigned char *y) {
 	unsigned char r = 0;
 
@@ -3847,7 +3810,44 @@ static int consttime_equal(const unsigned char *x, const unsigned char *y) {
 	return !r;
 }
 
-int ZTLF_ed25519Verify(const unsigned char *signature, const unsigned char *message, size_t message_len, const unsigned char *public_key) {
+void ZTLF_Ed25519CreateKeypair(unsigned char *public_key, unsigned char *private_key, const unsigned char *seed) {
+	ge_p3 A;
+
+	ZTLF_SHA512(private_key,seed,32);
+	private_key[0] &= 248;
+	private_key[31] &= 63;
+	private_key[31] |= 64;
+
+	ge_scalarmult_base(&A, private_key);
+	ge_p3_tobytes(public_key, &A);
+}
+
+void ZTLF_Ed25519Sign(unsigned char *signature, const unsigned char *message, size_t message_len, const unsigned char *public_key, const unsigned char *private_key) {
+	ZTLF_SHA512_CTX hash;
+	unsigned char hram[64];
+	unsigned char r[64];
+	ge_p3 R;
+
+	ZTLF_SHA512_init(&hash);
+	ZTLF_SHA512_update(&hash, private_key + 32, 32);
+	ZTLF_SHA512_update(&hash, message, message_len);
+	ZTLF_SHA512_final(&hash, r);
+
+	sc_reduce(r);
+	ge_scalarmult_base(&R, r);
+	ge_p3_tobytes(signature, &R);
+
+	ZTLF_SHA512_init(&hash);
+	ZTLF_SHA512_update(&hash, signature, 32);
+	ZTLF_SHA512_update(&hash, public_key, 32);
+	ZTLF_SHA512_update(&hash, message, message_len);
+	ZTLF_SHA512_final(&hash, hram);
+
+	sc_reduce(hram);
+	sc_muladd(signature + 32, hram, private_key, r);
+}
+
+int ZTLF_Ed25519Verify(const unsigned char *signature, const unsigned char *message, size_t message_len, const unsigned char *public_key) {
 	unsigned char h[64];
 	unsigned char checker[32];
 	ZTLF_SHA512_CTX hash;

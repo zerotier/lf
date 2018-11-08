@@ -39,6 +39,14 @@
 
 typedef CCCryptorRef ZTLF_AES256CFB;
 
+static inline void ZTLF_AES256ECB_encrypt(const void *key,void *out,const void *in)
+{
+	size_t moved = 0;
+	if (CCCrypt(kCCEncrypt,kCCAlgorithmAES,kCCOptionECBMode,key,32,NULL,in,16,out,16,&moved) != kCCSuccess) {
+		abort();
+	}
+}
+
 static inline void ZTLF_AES256CFB_init(ZTLF_AES256CFB *c,const void *key,const void *iv,bool encrypt)
 {
 	if (CCCryptorCreateWithMode((encrypt) ? kCCEncrypt : kCCDecrypt,kCCModeCFB,kCCAlgorithmAES,ccNoPadding,iv,key,32,(const void *)0,0,0,0,c) != kCCSuccess) {

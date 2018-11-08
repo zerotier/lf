@@ -25,63 +25,74 @@
  */
 
 #include "record.h"
-#include "sha.h"
-#include "wharrgarbl.h"
 
-void ZTLF_Record_idOwnerHash(const struct ZTLF_Record *r,uint64_t out[3])
+int ZTLF_Record_expand(struct ZTLF_RecordInfo *ri,const struct ZTLF_Record *r,const unsigned long rsize)
 {
-	uint64_t tmp[6];
-	ZTLF_SHA384_CTX h;
+	uint64_t wresult[3];
 
-	ZTLF_SHA384_init(&h);
-	ZTLF_SHA384_update(&h,r->id,sizeof(r->id));
-	ZTLF_SHA384_update(&h,r->owner,sizeof(r->owner));
-	ZTLF_SHA384_final(&h,tmp);
+	if (rsize < sizeof(struct ZTLF_Record))
+		return 1;
 
-	ZTLF_SHA384_init(&h);
-	ZTLF_SHA384_update(&h,tmp,sizeof(tmp));
-	ZTLF_SHA384_update(&h,r->owner,sizeof(r->owner));
-	ZTLF_SHA384_final(&h,tmp);
+	ri->r = r;
+	ri->timestamp = ZTLF_Record_timestamp(r);
+	ri->expiration = ri->timestamp + ri->r->ttl;
+	ri->value = NULL;
+	ri->idClaimSignatureEd25519 = NULL;
+	ri->ownerSignatureEd25519 = NULL;
+	ri->wharrgarblPow = NULL;
+	ri->weight = 0.0;
+	ri->caSignatureCount = 0;
+	ri->valueSize = 0;
 
-	out[0] = tmp[0] ^ tmp[1];
-	out[1] = tmp[2] ^ tmp[3];
-	out[2] = tmp[4] ^ tmp[5];
-}
-
-double ZTLF_Record_getInternalWeight(const struct ZTLF_Record *r,const unsigned long rsize)
-{
-	const uint8_t *const eof = ((uint8_t *)r) + rsize;
-	const uint8_t *p;
-	double w = 0.0;
-
-	switch(r->flags & ZTLF_RECORD_FLAGS_MASK_TYPE) {
-		case ZTLF_RECORD_TYPE_ED25519_AES256CFB:
-			p = ((uint8_t *)r) + sizeof(struct ZTLF_Record) + 1 + r->p.t0.valueSize;
-			break;
-		default:
-			return 0.0;
-	}
-
+	const uint8_t *p = r->data;
+	const uint8_t *eof = p + (rsize - sizeof(struct ZTLF_Record));
+	if (p > eof)
+		return 1;
 	while (p < eof) {
-		const uint8_t ft = *p;
-		if (++p >= eof) break;
-		unsigned long fs = ((unsigned long)*p) << 8;
-		if (++p >= eof) break;
-		fs |= (unsigned long)*p;
-		if (++p >= eof) break;
+		unsigned int fs = *(p++);
+		if (p >= eof) return 1;
+		fs <<= 8;
+		fs |= *(p++);
+		const unsigned int ft = (fs >> 12); /* most significant 4 bits are field type */
+		fs &= 0xfff; /* least significant 12 bits are size-1 */
+		++fs; /* actual size is from 1 to 4096, not 0 to 4095 */
+
+		const uint8_t *const nextp = p + fs;
+		if (nextp > eof)
+			return 1;
 
 		switch(ft) {
-			case ZTLF_RECORD_ATTACHMENT_TYPE_WHARRGARBL_POW:
-				if (fs == ZTLF_WHARRGARBL_SIZE_BYTES) {
-					uint64_t tmp[ZTLF_WHARRGARBL_SIZE_QW];
-					memcpy(tmp,p,ZTLF_WHARRGARBL_SIZE_BYTES);
-					w += ((double)ZTLF_wharrgarblGetDifficulty(tmp)) / (double)(0xffffffffffffffffULL);
-				}
+			case ZTLF_RECORD_FIELD_VALUE:
+				ri->value = p;
+				ri->valueSize = fs;
+				break;
+			case ZTLF_RECORD_FIELD_ID_CLAIM_SIGNATURE_ED25519:
+				if (fs != ZTLF_ED25519_SIGNATURE_SIZE)
+					return 1;
+				ri->idClaimSignatureEd25519 = p;
+				break;
+			case ZTLF_RECORD_FIELD_OWNER_SIGNATURE_ED25519:
+				if (fs != ZTLF_ED25519_SIGNATURE_SIZE)
+					return 1;
+				ri->ownerSignatureEd25519 = p;
+				break;
+			case ZTLF_RECORD_FIELD_CA_SIGNATURE_ED25519:
+				if (fs != ZTLF_ED25519_SIGNATURE_SIZE)
+					return 1;
+				if (ri->caSignatureCount >= ZTLF_RECORD_MAX_CA_SIGNATURES) return 1;
+				ri->caSignatureEd25519[ri->caSignatureCount++] = p;
+				break;
+			case ZTLF_RECORD_FIELD_WHARRGARBL_POW:
+				if (fs != ZTLF_WHARRGARBL_SIZE_BYTES)
+					return 1;
+				ri->wharrgarblPow = p;
+				memcpy(wresult,p,sizeof(wresult));
+				ri->weight += ((double)ZTLF_wharrgarblGetDifficulty(wresult)) / ((double)0xffffffffffffffffULL);
 				break;
 		}
 
-		p += fs;
+		p = nextp;
 	}
 
-	return w;
+	return 0;
 }

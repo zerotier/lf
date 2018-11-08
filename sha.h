@@ -28,6 +28,7 @@
 #define ZT_LF_SHA384_H
 
 #include "common.h"
+#include "aes.h"
 
 #ifdef __APPLE__
 
@@ -60,5 +61,14 @@ static inline void ZTLF_SHA512(void *d,const void *b,const unsigned long s)
 #define ZTLF_SHA512_final(ctx,d) CC_SHA512_Final((unsigned char *)(d),ctx)
 
 #endif /* __APPLE__ */
+
+static inline void ZTLF_Shandwich256(void *d,const void *b,const unsigned long s)
+{
+	uint64_t s512[8],s384[6];
+	ZTLF_SHA512(s512,b,s);
+	ZTLF_SHA384(s384,s512,64);
+	ZTLF_AES256ECB_encrypt(s512,d,s384);
+	ZTLF_AES256ECB_encrypt(s512 + 4,((uint8_t *)d) + 16,s384 + 2);
+}
 
 #endif

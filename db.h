@@ -34,27 +34,23 @@
 
 struct ZTLF_DB
 {
+	FILE *df;
 	sqlite3 *dbc;
 
 	sqlite3_stmt *sAddRecord;
-	sqlite3_stmt *sUpdateRecord;
-	sqlite3_stmt *sGetRecord;
-	sqlite3_stmt *sGetRecord2;
-	sqlite3_stmt *sGetRecordInfo;
-	sqlite3_stmt *sChangeRecordWeight1;
-	sqlite3_stmt *sChangeRecordWeight16;
+	sqlite3_stmt *sGetRecordCount;
+	sqlite3_stmt *sGetRecordInfoByHash;
 	sqlite3_stmt *sAddLink;
-	sqlite3_stmt *sDeleteLinkedFrom;
-	sqlite3_stmt *sGetLinksFrom;
-	sqlite3_stmt *sGetLinksTo;
-	sqlite3_stmt *sAddWanted;
-	sqlite3_stmt *sDeleteWanted;
-	sqlite3_stmt *sDeleteWantedFrom;
+	sqlite3_stmt *sGetDanglingLinks;
+	sqlite3_stmt *sDeleteDanglingLinks;
+	sqlite3_stmt *sAddDanglingLink;
+	sqlite3_stmt *sGetRecordsBelow;
+
+	uint64_t wfcap;
+	double *wfm;
+	int wfd;
 
 	pthread_mutex_t lock;
 };
-
-int ZTLF_DB_open(struct ZTLF_DB *db,const char *path);
-void ZTLF_DB_close(struct ZTLF_DB *db);
 
 #endif
