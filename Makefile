@@ -4,6 +4,7 @@ LIBS=-lsqlite3
 
 OBJS=\
 	common.o \
+	db.o \
 	ed25519.o \
 	record.o \
 	thirdparty/sandbird/sandbird.o \

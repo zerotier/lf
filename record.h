@@ -76,8 +76,9 @@ ZTLF_PACKED_STRUCT(struct ZTLF_Record
 	uint64_t id[4];                            /* public key (or hash thereof) derived from record key */
 	uint64_t owner[4];                         /* public key (or hash thereof) of owner */
 	uint64_t links[ZTLF_RECORD_LINK_COUNT][4]; /* links to other records by shandwich256(record) */
-	uint8_t reserved[2];                       /* currently must be 0 */
-	uint8_t ttl;                               /* TTL in 123671 second (~34 hour) increments */
+	uint8_t flags;                             /* currently must be 0 */
+	uint8_t reserved;                          /* currently must be 0 */
+	uint8_t ttl;                               /* TTL in 123671 second (~34 hour) increments or 0 to relinquish ID ownership now */
 	uint8_t timestamp[5];                      /* 40-bit (big-endian) timestamp in seconds since epoch */
 	uint8_t data[];                            /* value and fields */
 });

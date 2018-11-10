@@ -27,6 +27,15 @@
 #ifndef ZT_LF_COMMON_H
 #define ZT_LF_COMMON_H
 
+/* We really don't even support 32-bit systems for this, but go ahead and
+ * make it work. */
+#ifndef _FILE_OFFSET_BITS
+#define _FILE_OFFSET_BITS 64
+#endif
+#ifndef _LARGEFILE_SOURCE
+#define _LARGEFILE_SOURCE 1
+#endif
+
 #include <stdint.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -47,6 +56,10 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
+#ifndef PATH_MAX
+#define PATH_MAX 1024
+#endif
+
 #if defined(_WIN32) || defined(WIN32) || defined(_WIN64) || defined(WIN64)
 
 #include <WinSock2.h>
@@ -59,19 +72,38 @@
 #define ZTLF_PACKED_STRUCT(D) __pragma(pack(push,1)) D __pragma(pack(pop))
 #define ZTLF_PATH_SEPARATOR "\\"
 
-#else /* not Windows */
+#else /* not Windows -------------------------------------------------- */
 
+#include <sys/mman.h>
 #include <unistd.h>
 #include <signal.h>
 #include <pthread/pthread.h>
 
+#ifndef MAP_FILE /* legacy flag, not used on some platforms */
+#define MAP_FILE 0
+#endif
+
 #define ZTLF_PACKED_STRUCT(D) D __attribute__((packed))
 #define ZTLF_PATH_SEPARATOR "/"
 
-#endif /* Windows or non-Windows? */
+#endif /* Windows or non-Windows? ------------------------------------- */
 
-/* Assume little-endian byte order if not defined by compiler or system headers. */
-/* Are there even any big-endian systems still in production outside tiny embedded chips? */
+#if (defined(__GNUC__) && (__GNUC__ >= 3)) || (defined(__INTEL_COMPILER) && (__INTEL_COMPILER >= 800)) || defined(__clang__)
+#ifndef likely
+#define likely(x) __builtin_expect((x),1)
+#endif
+#ifndef unlikely
+#define unlikely(x) __builtin_expect((x),0)
+#endif
+#else
+#ifndef likely
+#define likely(x) (x)
+#endif
+#ifndef unlikely
+#define unlikely(x) (x)
+#endif
+#endif
+
 #ifndef __BYTE_ORDER__
 #ifndef __ORDER_LITTLE_ENDIAN__
 #define __ORDER_LITTLE_ENDIAN__ 4321
@@ -83,7 +115,7 @@
 #endif
 
 #if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
-#ifdef __GNUC__
+#if (defined(__GNUC__) && (__GNUC__ >= 3)) || (defined(__INTEL_COMPILER) && (__INTEL_COMPILER >= 800)) || defined(__clang__)
 #define ZTLF_htonll(n) ((uint64_t)(__builtin_bswap64((uint64_t)(n))))
 #else
 static inline uint64_t ZTLF_htonll(uint64_t n)
@@ -106,7 +138,10 @@ static inline uint64_t ZTLF_htonll(uint64_t n)
 
 #define ZTLF_ntohll(n) ZTLF_htonll((n))
 
-#define ZTLF_MALLOC_CHECK(m) if (!((m))) { fprintf(stderr,"FATAL: malloc() failed!\n"); abort(); }
+#define ZTLF_MALLOC_CHECK(m) if (unlikely(!((m)))) { fprintf(stderr,"FATAL: malloc() failed!\n"); abort(); }
+
+#define ZTLF_NEG(e) (((e) <= 0) ? (e) : -(e))
+#define ZTLF_POS(e) (((e) >= 0) ? (e) : -(e))
 
 static inline uint64_t ZTLF_timeMs()
 {
@@ -127,39 +162,6 @@ static inline uint64_t ZTLF_timeMs()
 };
 
 static inline uint64_t ZTLF_timeSec() { return (uint64_t)time(NULL); };
-
-static inline uint64_t ZTLF_xorshift64star(uint64_t s)
-{
-	uint64_t x = s;
-	x ^= x << 13;
-	x ^= x >> 7;
-	x ^= x << 17;
-	return s * 0x2545f4914f6cdd1dULL;
-}
-
-static inline int ZTLF_ui64contains(const uint64_t *a,const unsigned long l,const uint64_t i)
-{
-	const uint64_t *eof = a + l;
-	while (a != eof) {
-		if (*a == i) {
-			return 1;
-		}
-		++a;
-	}
-	return 0;
-}
-
-static inline int ZTLF_i64contains(const int64_t *a,const unsigned long l,const int64_t i)
-{
-	const int64_t *eof = a + l;
-	while (a != eof) {
-		if (*a == i) {
-			return 1;
-		}
-		++a;
-	}
-	return 0;
-}
 
 uint64_t ZTLF_prng();
 unsigned int ZTLF_ncpus();

@@ -24,35 +24,38 @@
  * of your own application.
  */
 
-#ifndef ZT_LF_SCORE_H
-#define ZT_LF_SCORE_H
+#ifndef ZTLF_VECTOR_H
+#define ZTLF_VECTOR_H
 
 #include "common.h"
 
-static inline uint32_t score(const uint8_t h[32])
+struct ZTLF_Vector_i64
 {
-	uint64_t rem = 0;
-	uint32_t zb = 0;
-	unsigned int k,i = 0;
+	int64_t *v;
+	unsigned long size;
+	unsigned long cap;
+};
 
-	while (i < 32) {
-		if (h[i++])
-			break;
-		zb += 8;
+static inline void ZTLF_Vector_i64_init(struct ZTLF_Vector_i64 *const vec,const unsigned long initialCapacity)
+{
+	if (initialCapacity > 0) {
+		ZTLF_MALLOC_CHECK(vec->v = (int64_t *)malloc(sizeof(int64_t) * initialCapacity));
+	} else {
+		vec->v = NULL;
 	}
-
-	for(k=0;k<8;++k) {
-		rem <<= 8;
-		if (i < 32)
-			rem |= (uint64_t)h[i++];
-	}
-
-	while ((rem >> 63) == 0) {
-		rem <<= 1;
-		++zb;
-	}
-
-	return ((zb >= 256) ? 0xffffffff : ((zb << 24) | ((~((uint32_t)rem)) >> 8)));
+	vec->size = 0;
+	vec->cap = initialCapacity;
 }
+
+#define ZTLF_Vector_i64_append(vec,i) { \
+	if (unlikely((vec)->size >= (vec)->cap)) { \
+		ZTLF_MALLOC_CHECK((vec)->v = (int64_t *)realloc((vec)->v,sizeof(int64_t) * ((vec)->cap *= 2))); \
+	} \
+	(vec)->v[(vec)->size++] = (i); \
+}
+
+#define ZTLF_Vector_i64_clear(vec) (vec)->size = 0
+
+#define ZTLF_Vector_i64_free(vec) if ((vec)->v) { free((vec)->v); }
 
 #endif

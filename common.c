@@ -25,14 +25,15 @@
  */
 
 #include "common.h"
+#include "aes.h"
 
+/* https://en.wikipedia.org/wiki/Xorshift#xorshift.2B */
 uint64_t ZTLF_prng()
 {
 	static volatile uint64_t state[2] = {0,0};
-	/* https://en.wikipedia.org/wiki/Xorshift#xorshift.2B */
 	uint64_t x = state[0];
 	uint64_t y = state[1];
-	if ((!x)&&(!y))
+	if (unlikely(!x)&&unlikely(!y))
 		ZTLF_secureRandom((void *)state,sizeof(state));
 	state[0] = y;
 	x ^= x << 23;
@@ -72,6 +73,7 @@ void ZTLF_secureRandom(void *b,const unsigned long n)
 {
 	static pthread_mutex_t l = PTHREAD_MUTEX_INITIALIZER;
 	static int fd = -1;
+	static ZTLF_AES256CFB aes;
 	pthread_mutex_lock(&l);
 	if (fd < 0) {
 		fd = open("/dev/urandom",O_RDONLY);
@@ -79,11 +81,22 @@ void ZTLF_secureRandom(void *b,const unsigned long n)
 			fprintf(stderr,"FATAL: unable to open /dev/urandom\n");
 			abort();
 		}
+		uint64_t aesk[4];
+		if (read(fd,aesk,sizeof(aesk)) != sizeof(aesk)) {
+			fprintf(stderr,"FATAL: read error from /dev/urandom\n");
+			abort();
+		}
+		aesk[0] += (uint64_t)ZTLF_timeMs();
+		aesk[1] += (uint64_t)getpid();
+		aesk[2] += (uint64_t)getppid();
+		aesk[3] += (uint64_t)b;
+		ZTLF_AES256CFB_init(&aes,aesk,aesk,true);
 	}
 	if (read(fd,b,(size_t)n) != (ssize_t)n) {
 		fprintf(stderr,"FATAL: read error from /dev/urandom\n");
 		abort();
 	}
+	ZTLF_AES256CFB_crypt(&aes,b,b,n); /* defense in depth against un-seeded or broken /dev/urandom */
 	pthread_mutex_unlock(&l);
 }
 

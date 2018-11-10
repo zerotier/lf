@@ -28,29 +28,63 @@
 #define ZT_LF_DB_H
 
 #include "common.h"
+#include "vector.h"
 #include "record.h"
 
+#ifdef ZTLF_SQLITE_INCLUDE
+#include ZTLF_SQLITE_INCLUDE
+#else
 #include <sqlite3.h>
+#endif
+
+ZTLF_PACKED_STRUCT(struct ZTLF_DB_GraphNode
+{
+	double totalWeight;
+	int64_t linkedRecordGoff[ZTLF_RECORD_LINK_COUNT];
+});
 
 struct ZTLF_DB
 {
-	FILE *df;
-	sqlite3 *dbc;
+	char path[PATH_MAX];
 
+	sqlite3 *dbc;
 	sqlite3_stmt *sAddRecord;
+	sqlite3_stmt *sGetLatestRecordTimestamp;
+	sqlite3_stmt *sGetRecordsById;
+	sqlite3_stmt *sGetAllLatestRecordsById;
 	sqlite3_stmt *sGetRecordCount;
 	sqlite3_stmt *sGetRecordInfoByHash;
-	sqlite3_stmt *sAddLink;
 	sqlite3_stmt *sGetDanglingLinks;
 	sqlite3_stmt *sDeleteDanglingLinks;
 	sqlite3_stmt *sAddDanglingLink;
-	sqlite3_stmt *sGetRecordsBelow;
+	sqlite3_stmt *sGetDanglingLinksForRetry;
+	sqlite3_stmt *sUpdateDanglingLinkRetryInfo;
 
-	uint64_t wfcap;
-	double *wfm;
-	int wfd;
+	uint64_t gfcap;
+	struct ZTLF_DB_GraphNode *gfm;
+	int gfd;
 
+	int df;
+
+	volatile int running;
 	pthread_mutex_t lock;
 };
+
+int ZTLF_DB_open(struct ZTLF_DB *db,const char *path);
+
+void ZTLF_DB_close(struct ZTLF_DB *db);
+
+/**
+ * Get the best record for a given ID
+ * 
+ * @param db Database instance
+ * @param r Record (must point to at least ZTLF_RECORD_MAX_SIZE bytes of memory!)
+ * @param totalWeight Pointer to double to receive total weight of this record in graph (if record is found)
+ * @param id 256-bit/32-byte record ID (not plain text key)
+ * @return Number of bytes in record, 0 if not found, or negative errno on error
+ */
+long ZTLF_getRecord(struct ZTLF_DB *const db,struct ZTLF_Record *r,double *totalWeight,const void *const id);
+
+int ZTLF_putRecord(struct ZTLF_DB *db,struct ZTLF_Record *const r,const unsigned long rsize);
 
 #endif
