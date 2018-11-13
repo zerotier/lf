@@ -51,7 +51,6 @@ struct ZTLF_DB
 	sqlite3_stmt *sAddRecord;
 	sqlite3_stmt *sGetLatestRecordTimestamp;
 	sqlite3_stmt *sGetRecordsById;
-	sqlite3_stmt *sGetAllLatestRecordsById;
 	sqlite3_stmt *sGetRecordCount;
 	sqlite3_stmt *sGetRecordInfoByHash;
 	sqlite3_stmt *sGetDanglingLinks;

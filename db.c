@@ -121,8 +121,6 @@ int ZTLF_DB_open(struct ZTLF_DB *db,const char *path)
 		goto exit_with_error;
 	if ((e = sqlite3_prepare_v2(db->dbc,"SELECT doff,dlen,goff,ts,exp,owner FROM record WHERE id = ? GROUP BY owner ORDER BY ts ASC",-1,&db->sGetRecordsById,NULL)) != SQLITE_OK)
 		goto exit_with_error;
-	if ((e = sqlite3_prepare_v2(db->dbc,"SELECT doff,dlen,MAX(ts),exp,owner FROM record WHERE id = ? GROUP BY owner",-1,&db->sGetAllLatestRecordsById,NULL)) != SQLITE_OK)
-		goto exit_with_error;
 	if ((e = sqlite3_prepare_v2(db->dbc,"SELECT COUNT(1) FROM record",-1,&db->sGetRecordCount,NULL)) != SQLITE_OK)
 		goto exit_with_error;
 	if ((e = sqlite3_prepare_v2(db->dbc,"SELECT doff,goff FROM record WHERE hash = ?",-1,&db->sGetRecordInfoByHash,NULL)) != SQLITE_OK)
@@ -183,7 +181,6 @@ void ZTLF_DB_close(struct ZTLF_DB *db)
 		if (db->sAddRecord) sqlite3_finalize(db->sAddRecord);
 		if (db->sGetLatestRecordTimestamp) sqlite3_finalize(db->sGetLatestRecordTimestamp);
 		if (db->sGetRecordsById) sqlite3_finalize(db->sGetRecordsById);
-		if (db->sGetAllLatestRecordsById) sqlite3_finalize(db->sGetAllLatestRecordsById);
 		if (db->sGetRecordCount) sqlite3_finalize(db->sGetRecordCount);
 		if (db->sGetRecordInfoByHash) sqlite3_finalize(db->sGetRecordInfoByHash);
 		if (db->sGetDanglingLinks) sqlite3_finalize(db->sGetDanglingLinks);
@@ -276,7 +273,7 @@ int ZTLF_putRecord(struct ZTLF_DB *db,struct ZTLF_Record *const r,const unsigned
 	int e = 0,result = 0;
 
 	struct ZTLF_Vector_i64 graphTraversalQueue;
-	ZTLF_Vector_i64_init(&graphTraversalQueue,8388608);
+	ZTLF_Vector_i64_init(&graphTraversalQueue,2097152);
 
 	uint64_t hash[4];
 	struct ZTLF_RecordInfo ri;
@@ -404,10 +401,10 @@ int ZTLF_putRecord(struct ZTLF_DB *db,struct ZTLF_Record *const r,const unsigned
 			}
 		}
 
-		/* Every 16m iterations compact the queue and yield the lock so any other
+		/* Every 1m iterations compact the queue and yield the lock so any other
 		 * threads can do things with the database. Addition is commutative so other
 		 * threads adding to total weights during this loop won't hurt anything. */
-		if (i >= 16777216) {
+		if (i >= 1048576) {
 			pthread_mutex_unlock(&db->lock);
 			memmove(graphTraversalQueue.v,graphTraversalQueue.v + i,sizeof(int64_t) * (graphTraversalQueue.size -= i));
 			i = 0;
