@@ -60,13 +60,15 @@ struct ZTLF_DB
 	sqlite3_stmt *sUpdateDanglingLinkRetryInfo;
 
 	uint64_t gfcap;
-	struct ZTLF_DB_GraphNode *gfm;
+	volatile struct ZTLF_DB_GraphNode *gfm;
 	int gfd;
 
 	int df;
 
 	volatile int running;
-	pthread_mutex_t lock;
+
+	pthread_mutex_t dbcLock;
+	pthread_mutex_t gfLock;
 };
 
 int ZTLF_DB_open(struct ZTLF_DB *db,const char *path);
@@ -84,6 +86,6 @@ void ZTLF_DB_close(struct ZTLF_DB *db);
  */
 long ZTLF_getRecord(struct ZTLF_DB *const db,struct ZTLF_Record *r,double *totalWeight,const void *const id);
 
-int ZTLF_putRecord(struct ZTLF_DB *db,struct ZTLF_Record *const r,const unsigned long rsize);
+int ZTLF_putRecord(struct ZTLF_DB *db,struct ZTLF_RecordInfo *const ri);
 
 #endif

@@ -31,8 +31,6 @@
 
 struct ZTLF_Config
 {
-	char networkPassphrase[128];
-
 	int p2pPort;
 
 	int httpPort;

@@ -26,6 +26,7 @@
 
 #include "common.h"
 #include "node.h"
+#include "selftest.h"
 
 static struct ZTLF_Node node;
 
@@ -39,6 +40,9 @@ static void exitSignal(int sig)
 
 int main(int argc,char **argv)
 {
+	ZTLF_selftest_core(stdout);
+	ZTLF_selftest_wharrgarbl(stdout);
+
 #ifndef __WINDOWS__
 	signal(SIGPIPE,SIG_IGN);
 	signal(SIGUSR1,SIG_IGN);

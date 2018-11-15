@@ -30,8 +30,9 @@
 struct _wharrgarblState
 {
 	uint64_t runNonce;
-	uint64_t difficulty;
+	uint64_t difficulty; /* 32-bit difficulty << 32 */
 	uint64_t memory;
+	volatile uint64_t iterations;
 	uint64_t *out;
 	uint64_t *collisionTable;
 	unsigned char inHash[48];
@@ -50,6 +51,7 @@ static void *_wharrgarbl(void *ptr)
 	uint64_t *ctabEntry;
 	ZTLF_SHA384_CTX hash;
 
+	uint64_t iter = 0;
 	while (ws->done == 0) {
 		++thisCollider;
 		ZTLF_SHA384_init(&hash);
@@ -72,10 +74,10 @@ static void *_wharrgarbl(void *ptr)
 
 				if (otherCollision == thisCollision) {
 					pthread_mutex_lock(&ws->doneLock);
+					ws->iterations += iter;
 					if (!ws->done) {
 						ws->out[0] = thisCollider;
 						ws->out[1] = otherCollider;
-						ws->out[2] = ZTLF_htonll(ws->difficulty);
 					}
 					++ws->done;
 					pthread_mutex_unlock(&ws->doneLock);
@@ -87,9 +89,12 @@ static void *_wharrgarbl(void *ptr)
 
 		*(ctabEntry++) = thisCollision;
 		*ctabEntry = thisCollider;
+
+		++iter;
 	}
 
 	pthread_mutex_lock(&ws->doneLock);
+	ws->iterations += iter;
 	++ws->done;
 	pthread_mutex_unlock(&ws->doneLock);
 	pthread_cond_broadcast(&ws->doneCond);
@@ -97,28 +102,29 @@ static void *_wharrgarbl(void *ptr)
 	return NULL;
 }
 
-void ZTLF_wharrgarbl(uint64_t wresult[3],const void *in,const unsigned long inlen,const uint64_t difficulty,const unsigned long memory)
+uint64_t ZTLF_wharrgarbl(void *pow,const void *in,const unsigned long inlen,const uint32_t difficulty,void *memory,const unsigned long memorySize,unsigned int threads)
 {
 	struct _wharrgarblState ws;
-	const unsigned int nt = ZTLF_ncpus();
 
+	uint64_t out[2];
 	ws.runNonce = ZTLF_prng(); /* nonce to avoid time-wasting false positives and so memset(0) is not needed */
-	ws.difficulty = difficulty;
+	ws.difficulty = ((uint64_t)difficulty) << 32;
 	if (ws.difficulty == 0) {
 		++ws.difficulty;
 	}
-	ws.memory = memory;
-	if (ws.memory < 1024) {
-		ws.memory = 1024;
-	}
-	ws.out = wresult;
-	ws.collisionTable = (uint64_t *)malloc(ws.memory * 16);
+	ws.memory = (memorySize / 16);
+	if (!ws.memory)
+		return 0;
+	ws.iterations = 0;
+	ws.out = out;
+	ws.collisionTable = (uint64_t *)memory;
 	ZTLF_SHA384(ws.inHash,in,inlen);
 	pthread_mutex_init(&ws.doneLock,NULL);
 	pthread_cond_init(&ws.doneCond,NULL);
 	ws.done = 0;
 
-	for(unsigned int t=1;t<nt;++t) {
+	if (threads < 1) threads = ZTLF_ncpus();
+	for(unsigned int t=1;t<threads;++t) {
 		pthread_t thr;
 		if (pthread_create(&thr,NULL,&_wharrgarbl,&ws)) {
 			abort();
@@ -129,7 +135,7 @@ void ZTLF_wharrgarbl(uint64_t wresult[3],const void *in,const unsigned long inle
 
 	pthread_mutex_lock(&ws.doneLock);
 	for(;;) {
-		if (ws.done >= nt) {
+		if (ws.done >= threads) {
 			pthread_mutex_unlock(&ws.doneLock);
 			break;
 		}
@@ -139,32 +145,45 @@ void ZTLF_wharrgarbl(uint64_t wresult[3],const void *in,const unsigned long inle
 	pthread_cond_destroy(&ws.doneCond);
 	pthread_mutex_destroy(&ws.doneLock);
 
-	free(ws.collisionTable);
+	for(unsigned int i=0;i<16;++i)
+		((uint8_t *)pow)[i] = ((uint8_t *)out)[i];
+	(((uint8_t *)pow)[16]) = (uint8_t)((difficulty >> 24) & 0xff);
+	(((uint8_t *)pow)[17]) = (uint8_t)((difficulty >> 16) & 0xff);
+	(((uint8_t *)pow)[18]) = (uint8_t)((difficulty >> 8) & 0xff);
+	(((uint8_t *)pow)[19]) = (uint8_t)(difficulty & 0xff);
+
+	return ws.iterations;
 }
 
-uint64_t ZTLF_wharrgarblVerify2(const uint64_t wresult[2],const void *in,const unsigned long inlen,const uint64_t difficulty)
+uint32_t ZTLF_wharrgarblVerify(const void *pow,const void *in,const unsigned long inlen)
 {
 	unsigned char inHash[48];
 	uint64_t hbuf[6];
 	uint64_t collision[2];
+	uint64_t powq[2];
 	int i;
 	ZTLF_SHA384_CTX hash;
+
+	for(unsigned int i=0;i<16;++i)
+		((uint8_t *)powq)[i] = ((const uint8_t *)pow)[i];
+	const uint32_t diff32 = ZTLF_wharrgarblGetDifficulty(pow);
+	const uint64_t difficulty = ((uint64_t)diff32) << 32;
 
 	ZTLF_SHA384_init(&hash);
 	ZTLF_SHA384_update(&hash,in,inlen);
 	ZTLF_SHA384_final(&hash,inHash);
 
-	if ((wresult[0] == wresult[1])||(!difficulty)) {
+	if ((powq[0] == powq[1])||(!difficulty)) {
 		return 0;
 	}
 
 	for(i=0;i<2;++i) {
 		ZTLF_SHA384_init(&hash);
 		ZTLF_SHA384_update(&hash,inHash,sizeof(inHash));
-		ZTLF_SHA384_update(&hash,&(wresult[i]),sizeof(uint64_t));
+		ZTLF_SHA384_update(&hash,&(powq[i]),sizeof(uint64_t));
 		ZTLF_SHA384_final(&hash,hbuf);
 		collision[i] = ZTLF_ntohll(hbuf[0]) % difficulty;
 	}
 
-	return ((collision[0] == collision[1]) ? difficulty : 0ULL);
+	return ((collision[0] == collision[1]) ? diff32 : 0ULL);
 }

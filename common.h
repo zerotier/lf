@@ -71,6 +71,7 @@
 
 #define ZTLF_PACKED_STRUCT(D) __pragma(pack(push,1)) D __pragma(pack(pop))
 #define ZTLF_PATH_SEPARATOR "\\"
+#define ZTLF_EOL "\r\n"
 
 #else /* not Windows -------------------------------------------------- */
 
@@ -85,6 +86,7 @@
 
 #define ZTLF_PACKED_STRUCT(D) D __attribute__((packed))
 #define ZTLF_PATH_SEPARATOR "/"
+#define ZTLF_EOL "\n"
 
 #endif /* Windows or non-Windows? ------------------------------------- */
 
@@ -143,6 +145,8 @@ static inline uint64_t ZTLF_htonll(uint64_t n)
 #define ZTLF_NEG(e) (((e) <= 0) ? (e) : -(e))
 #define ZTLF_POS(e) (((e) >= 0) ? (e) : -(e))
 
+#define ZTLF_timeSec() ((uint64_t)time(NULL))
+
 static inline uint64_t ZTLF_timeMs()
 {
 #ifdef __WINDOWS__
@@ -161,7 +165,29 @@ static inline uint64_t ZTLF_timeMs()
 #endif
 };
 
-static inline uint64_t ZTLF_timeSec() { return (uint64_t)time(NULL); };
+/* https://en.wikipedia.org/wiki/Xorshift#xorshift* */
+static inline uint64_t ZTLF_xorshift64star(uint64_t *const state)
+{
+	uint64_t x = *state;
+	if (unlikely(!x))
+		x = 1;
+	x ^= x >> 12;
+	x ^= x << 25;
+	x ^= x >> 27;
+	*state = x;
+	return x * 0x2545F4914F6CDD1DULL;
+}
+
+/* This is a version of xorshift64star that is designed to only be run once for e.g. hash mixing. */
+static inline uint64_t ZTLF_xorshift64starOnce(uint64_t x)
+{
+	if (unlikely(!x))
+		x = 1;
+	x ^= x >> 12;
+	x ^= x << 25;
+	x ^= x >> 27;
+	return x * 0x2545F4914F6CDD1D;
+}
 
 uint64_t ZTLF_prng();
 unsigned int ZTLF_ncpus();

@@ -33,11 +33,14 @@ uint64_t ZTLF_prng()
 	static volatile uint64_t state[2] = {0,0};
 	uint64_t x = state[0];
 	uint64_t y = state[1];
-	if (unlikely(!x)&&unlikely(!y))
+	if (unlikely(!(x|y))) {
 		ZTLF_secureRandom((void *)state,sizeof(state));
-	state[0] = y;
+		x = state[0];
+		y = state[1];
+	}
 	x ^= x << 23;
 	const uint64_t z = x ^ y ^ (x >> 17) ^ (y >> 26);
+	state[0] = y;
 	state[1] = z;
 	return z + y;
 }

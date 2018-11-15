@@ -25,29 +25,43 @@
  */
 
 #include "record.h"
+#include "score.h"
 
-int ZTLF_Record_expand(struct ZTLF_RecordInfo *ri,const struct ZTLF_Record *r,const unsigned long rsize)
+void ZTLF_Record_keyToId(uint64_t id[4],const void *k,const unsigned long klen)
 {
-	uint64_t wresult[3];
+	uint8_t seed[64],priv[64];
+	ZTLF_SHA512(seed,k,klen);
+	ZTLF_Ed25519CreateKeypair((unsigned char *)id,priv,seed); /* only the first 32 bytes of the hash are used here */
+}
 
+bool ZTLF_Record_expand(struct ZTLF_RecordInfo *ri,const struct ZTLF_Record *r,const unsigned long rsize)
+{
 	if (rsize < sizeof(struct ZTLF_Record))
-		return 1;
+		return false;
+	if ((r->flags & 0xf) != ZTLF_RECORD_TYPE_ED25519_ED25519_AES256CFB)
+		return false;
+	if ((r->flags & 0xf0) != 0) /* currently there are no flags */
+		return false;
+	if (r->reserved != 0)
+		return false;
 
+	ZTLF_Shandwich256(ri->hash,r,rsize);
 	ri->r = r;
+	ri->size = rsize;
 	ri->timestamp = ZTLF_Record_timestamp(r);
-	ri->expiration = ri->timestamp + ri->r->ttl;
+	ri->expiration = ri->timestamp + (uint64_t)ri->r->ttl;
 	ri->value = NULL;
 	ri->idClaimSignatureEd25519 = NULL;
 	ri->ownerSignatureEd25519 = NULL;
 	ri->wharrgarblPow = NULL;
-	ri->weight = 0.0;
+	ri->weight = ((double)ZTLF_score((const uint8_t *)(ri->hash))) / 4294967295.0;
 	ri->caSignatureCount = 0;
 	ri->valueSize = 0;
 
 	const uint8_t *p = r->data;
 	const uint8_t *eof = p + (rsize - sizeof(struct ZTLF_Record));
 	if (p > eof)
-		return 1;
+		return false;
 	while (p < eof) {
 		unsigned int fs = *(p++);
 		if (p >= eof) return 1;
@@ -68,31 +82,44 @@ int ZTLF_Record_expand(struct ZTLF_RecordInfo *ri,const struct ZTLF_Record *r,co
 				break;
 			case ZTLF_RECORD_FIELD_ID_CLAIM_SIGNATURE_ED25519:
 				if (fs != ZTLF_ED25519_SIGNATURE_SIZE)
-					return 1;
+					return false;
 				ri->idClaimSignatureEd25519 = p;
 				break;
 			case ZTLF_RECORD_FIELD_OWNER_SIGNATURE_ED25519:
 				if (fs != ZTLF_ED25519_SIGNATURE_SIZE)
-					return 1;
+					return false;
 				ri->ownerSignatureEd25519 = p;
 				break;
 			case ZTLF_RECORD_FIELD_CA_SIGNATURE_ED25519:
 				if (fs != ZTLF_ED25519_SIGNATURE_SIZE)
-					return 1;
+					return false;
 				if (ri->caSignatureCount >= ZTLF_RECORD_MAX_CA_SIGNATURES) return 1;
 				ri->caSignatureEd25519[ri->caSignatureCount++] = p;
 				break;
 			case ZTLF_RECORD_FIELD_WHARRGARBL_POW:
-				if (fs != ZTLF_WHARRGARBL_SIZE_BYTES)
-					return 1;
+				if (fs != ZTLF_WHARRGARBL_POW_BYTES)
+					return false;
 				ri->wharrgarblPow = p;
-				memcpy(wresult,p,sizeof(wresult));
-				ri->weight += ((double)ZTLF_wharrgarblGetDifficulty(wresult)) / ((double)0xffffffffffffffffULL);
 				break;
 		}
 
 		p = nextp;
 	}
 
-	return 0;
+	return true;
+}
+
+void ZTLF_Record_open(const struct ZTLF_RecordInfo *ri,void *out,const void *k,const unsigned long klen)
+{
+	uint8_t khash[64];
+	ZTLF_AES256CFB c;
+
+	ZTLF_SHA512(khash,k,klen);
+
+	/* For AES256-CFB we use the last 32 bytes of the hash as the AES256 key
+	 * and the last 16 bytes of the record header (which includes the last link
+	 * and the TTL and timestamp) as the IV. */
+	ZTLF_AES256CFB_init(&c,khash + 32,((const uint8_t *)ri->r) + (sizeof(struct ZTLF_Record) - 16),true);
+	ZTLF_AES256CFB_crypt(&c,out,ri->value,ri->valueSize);
+	ZTLF_AES256CFB_destroy(&c);
 }

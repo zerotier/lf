@@ -52,64 +52,52 @@ void ZTLF_Map_destroy(struct ZTLF_Map *m)
 	m->buckets = NULL;
 }
 
-int ZTLF_Map_set(struct ZTLF_Map *m,const void *k,const unsigned long klen,void *v)
+int ZTLF_Map_set(struct ZTLF_Map *m,const uint64_t k,void *v)
 {
-	uint64_t key[ZTLF_MAP_MAX_KEY_SIZE / 8];
-	for(unsigned long i=0;i<klen;i++)
-		((uint8_t *)key)[i] = ((const uint8_t *)k)[i];
-	for(unsigned long i=klen;i<ZTLF_MAP_MAX_KEY_SIZE;++i)
-		((uint8_t *)key)[i % ZTLF_MAP_MAX_KEY_SIZE] = 0;
-	uint64_t hash = m->nonce;
-	for(unsigned long i=0;i<(ZTLF_MAP_MAX_KEY_SIZE / 8);++i)
-		hash += ZTLF_xorshift64star(hash + key[i]);
-	const unsigned long bucket = ((unsigned long)hash) % m->bucketCount;
+	const unsigned long bucket = ((unsigned long)ZTLF_xorshift64starOnce(m->nonce ^ k)) % m->bucketCount;
 
 	if (!m->buckets[bucket].value) {
-		for(unsigned long i=0;i<(ZTLF_MAP_MAX_KEY_SIZE / 8);++i)
-			m->buckets[bucket].key[i] = key[i];
+		m->buckets[bucket].key = k;
 		m->buckets[bucket].value = v;
 		return 1;
-	} else if (!memcmp(m->buckets[bucket].key,key,ZTLF_MAP_MAX_KEY_SIZE)) {
-		if (m->buckets[bucket].value != v) {
-			if (m->valueDeleter)
-				m->valueDeleter(m->buckets[bucket].value);
-			m->buckets[bucket].value = v;
-		}
+	} else if (m->buckets[bucket].key == k) {
+		if (m->valueDeleter)
+			m->valueDeleter(m->buckets[bucket].value);
+		m->buckets[bucket].value = v;
 		return 0;
 	}
 
 	struct ZTLF_Map nm;
 	nm.nonce = ZTLF_prng();
+	nm.valueDeleter = NULL;
 	nm.bucketCount = m->bucketCount << 1;
 	ZTLF_MALLOC_CHECK(nm.buckets = (struct ZTLF_MapEntry *)malloc(sizeof(struct ZTLF_MapEntry) * nm.bucketCount));
 	memset(nm.buckets,0,sizeof(struct ZTLF_MapEntry) * nm.bucketCount);
-	nm.valueDeleter = NULL;
 	for(unsigned long b=0;b<m->bucketCount;++b) {
 		if (m->buckets[b].value)
-			ZTLF_Map_set(&nm,m->buckets[b].key,ZTLF_MAP_MAX_KEY_SIZE,m->buckets[b].value);
+			ZTLF_Map_set(&nm,m->buckets[b].key,m->buckets[b].value);
 	}
 
+	ZTLF_Map_set(&nm,k,v);
+
 	m->nonce = nm.nonce;
-	m->bucketCount = nm.bucketCount;
 	free(m->buckets);
 	m->buckets = nm.buckets;
+	m->bucketCount = nm.bucketCount;
 
 	return 1;
 }
 
-void *ZTLF_Map_get(struct ZTLF_Map *m,const void *k,const unsigned long klen)
+void ZTLF_Map_clear(struct ZTLF_Map *m)
 {
-	uint64_t key[ZTLF_MAP_MAX_KEY_SIZE / 8];
-	for(unsigned long i=0;i<klen;i++)
-		((uint8_t *)key)[i % ZTLF_MAP_MAX_KEY_SIZE] = ((const uint8_t *)k)[i];
-	for(unsigned long i=klen;i<ZTLF_MAP_MAX_KEY_SIZE;++i)
-		((uint8_t *)key)[i] = 0;
-	uint64_t hash = m->nonce;
-	for(unsigned long i=0;i<(ZTLF_MAP_MAX_KEY_SIZE / 8);++i)
-		hash += ZTLF_xorshift64star(hash + key[i]);
-	const unsigned long bucket = ((unsigned long)hash) % m->bucketCount;
-
-	if (!memcmp(m->buckets[bucket].key,key,ZTLF_MAP_MAX_KEY_SIZE))
-		return m->buckets[bucket].value;
-	return (void *)0;
+	if (m->valueDeleter) {
+		for(unsigned long b=0;b<m->bucketCount;++b) {
+			if (m->buckets[b].value) {
+				m->valueDeleter(m->buckets[b].value);
+				m->buckets[b].value = (void *)0;
+			}
+		}
+	} else {
+		memset(m->buckets,0,sizeof(struct ZTLF_MapEntry) * m->bucketCount);
+	}
 }

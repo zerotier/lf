@@ -29,60 +29,48 @@
 
 #include "common.h"
 
-/* Can be increased, but must be a multiple of 8. Keys larger than this may collide!. */
-#define ZTLF_MAP_MAX_KEY_SIZE 32
-
 /* Set a key to this (NULL) to delete */
 #define ZTLF_MAP_VALUE_EMPTY ((void *)0)
 
-/* Use this value for set-like behavior */
-#define ZTLF_MAP_VALUE_SET   ((void *)1)
-
 struct ZTLF_MapEntry
 {
-	uint64_t key[ZTLF_MAP_MAX_KEY_SIZE / 8];
+	uint64_t key;
 	void *value;
 };
 
 struct ZTLF_Map
 {
 	uint64_t nonce;
-	unsigned long bucketCount;
-	struct ZTLF_MapEntry *buckets;
 	void (*valueDeleter)(void *);
+	struct ZTLF_MapEntry *buckets;
+	unsigned long bucketCount;
 };
 
-/* If valueDeleter is non-NULL it will be used to free values when they're replaced and on map destroy */
+/* If valueDeleter is non-NULL it will be used to free values when they're replaced and on map destroy. */
 void ZTLF_Map_init(struct ZTLF_Map *m,unsigned long initialBucketCountHint,void (*valueDeleter)(void *));
 
 void ZTLF_Map_destroy(struct ZTLF_Map *m);
 
 /* Set key to NULL to delete; returns >0 if new, 0 if existing */
-int ZTLF_Map_set(struct ZTLF_Map *m,const void *k,const unsigned long klen,void *v);
+int ZTLF_Map_set(struct ZTLF_Map *m,const uint64_t k,void *v);
 
 /* Returns NULL if key is not found */
-void *ZTLF_Map_get(struct ZTLF_Map *m,const void *k,const unsigned long klen);
-
-static inline void ZTLF_Map_clear(struct ZTLF_Map *m)
+static inline void *ZTLF_Map_get(struct ZTLF_Map *m,const uint64_t k)
 {
-	for(unsigned long b=0;b<m->bucketCount;++b) {
-		if (m->buckets[b].value) {
-			if (m->valueDeleter)
-				m->valueDeleter(m->buckets[b].value);
-			m->buckets[b].value = (void *)0;
-		}
-	}
+	const unsigned long bucket = ((unsigned long)ZTLF_xorshift64starOnce(m->nonce ^ k)) % m->bucketCount;
+	return ((m->buckets[bucket].key == k) ? m->buckets[bucket].value : (void *)0);
 }
 
+void ZTLF_Map_clear(struct ZTLF_Map *m);
+
 /* Iterates by running a command or block of code against all keys. The variables ztlfMapKey and
- * ztlfMapValue are set in the loop to keys and values. It's up to the code to know what the
- * key length should be. It's unsafe to structurally change the map here, though the ztlfMapValue
- * temporary variable can be changed or set to NULL to delete. Using "break" in the code (at its
- * top level) will terminate iteration. Iteration cannot be nested. */
-#define ZTLF_Map_iterate(m,c) \
+ * ztlfMapValue are set in the loop to keys and values. ZTLF_Map_set is not safe here, but ztlfMapValue
+ * is safe to change in place to change or delete existing keys. A root level "break" in the supplied
+ * code fragment will terminate iteration. */
+#define ZTLF_Map_each(m,c) \
 	for(unsigned long _ztmi_i=0;_ztmi_i<(m)->bucketCount;++_ztmi_i) { \
 		if ((m)->buckets[_ztmi_i].value) { \
-			const void *const ztlfMapKey = (void *)(m)->buckets[_ztmi_i].key; \
+			const uint64_t ztlfMapKey = (m)->buckets[_ztmi_i].key; \
 			void *ztlfMapValue = (void *)(m)->buckets[_ztmi_i].value; \
 			c \
 			if (ztlfMapValue != (void *)(m)->buckets[_ztmi_i].value) { \

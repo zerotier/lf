@@ -26,6 +26,7 @@
 
 #include "db.h"
 #include "vector.h"
+#include "iset.h"
 
 #define ZTLF_GRAPH_FILE_CAPACITY_INCREMENT 1048576
 
@@ -96,7 +97,8 @@ int ZTLF_DB_open(struct ZTLF_DB *db,const char *path)
 	strncpy(db->path,path,PATH_MAX);
 	db->gfd = -1;
 	db->df = -1;
-	pthread_mutex_init(&db->lock,NULL);
+	pthread_mutex_init(&db->dbcLock,NULL);
+	pthread_mutex_init(&db->gfLock,NULL);
 
 	mkdir(path,0755);
 
@@ -172,7 +174,8 @@ void ZTLF_DB_close(struct ZTLF_DB *db)
 {
 	char tmp[PATH_MAX];
 
-	pthread_mutex_lock(&db->lock);
+	pthread_mutex_lock(&db->dbcLock);
+	pthread_mutex_lock(&db->gfLock);
 
 	if (db->df >= 0)
 		close(db->df);
@@ -191,7 +194,7 @@ void ZTLF_DB_close(struct ZTLF_DB *db)
 	}
 
 	if (db->gfm)
-		munmap(db->gfm,(size_t)(db->gfcap * sizeof(struct ZTLF_DB_GraphNode)));
+		munmap((void *)db->gfm,(size_t)(db->gfcap * sizeof(struct ZTLF_DB_GraphNode)));
 	if (db->gfd >= 0)
 		close(db->gfd);
 
@@ -200,8 +203,10 @@ void ZTLF_DB_close(struct ZTLF_DB *db)
 	snprintf(tmp,sizeof(tmp),"%s" ZTLF_PATH_SEPARATOR "lf.pid",db->path);
 	unlink(tmp);
 
-	pthread_mutex_unlock(&db->lock);
-	pthread_mutex_destroy(&db->lock);
+	pthread_mutex_unlock(&db->dbcLock);
+	pthread_mutex_unlock(&db->gfLock);
+	pthread_mutex_destroy(&db->dbcLock);
+	pthread_mutex_destroy(&db->gfLock);
 }
 
 long ZTLF_getRecord(struct ZTLF_DB *const db,struct ZTLF_Record *r,double *totalWeight,const void *const id)
@@ -209,14 +214,13 @@ long ZTLF_getRecord(struct ZTLF_DB *const db,struct ZTLF_Record *r,double *total
 	int64_t bestOwnerDoff = 0;
 	int64_t bestOwnerDlen = 0;
 	double bestOwnerTotalWeight = 0.0;
-
 	uint64_t lastRecordOwner[4];
 	int64_t lastRecordDoff = 0;
 	int64_t lastRecordDlen = 0;
 	double currTotalWeight = 0.0;
 	int64_t lastRecordExpTime = 0;
 
-	pthread_mutex_lock(&db->lock);
+	pthread_mutex_lock(&db->dbcLock);
 
 	/* Iterate through records grouped by owner and sorted in ascending
 	 * timestamp order. When we hit a change in owner or an expired record,
@@ -239,6 +243,10 @@ long ZTLF_getRecord(struct ZTLF_DB *const db,struct ZTLF_Record *r,double *total
 		memcpy(lastRecordOwner,owner,32);
 		lastRecordDoff = sqlite3_column_int64(db->sGetRecordsById,0);
 		lastRecordDlen = sqlite3_column_int64(db->sGetRecordsById,1);
+
+		/* This is read only and the memory is volatile, so this should be fine. There is a
+		 * small chance of slight inaccuracies if updates are in progress but overall it
+		 * should not be a significant issue. */
 		const uintptr_t goff = (uintptr_t)sqlite3_column_int64(db->sGetRecordsById,2);
 		if (likely(goff < db->gfcap))
 			currTotalWeight += db->gfm[goff].totalWeight;
@@ -252,35 +260,37 @@ long ZTLF_getRecord(struct ZTLF_DB *const db,struct ZTLF_Record *r,double *total
 
 	if (bestOwnerDlen > 0) {
 		if (lseek(db->df,(off_t)bestOwnerDoff,SEEK_SET) != (off_t)bestOwnerDoff) {
-			pthread_mutex_unlock(&db->lock);
+			pthread_mutex_unlock(&db->dbcLock);
 			return ZTLF_NEG(errno);
 		}
 		if (read(db->df,r,(size_t)bestOwnerDlen) != (ssize_t)bestOwnerDlen) {
-			pthread_mutex_unlock(&db->lock);
+			pthread_mutex_unlock(&db->dbcLock);
 			return ZTLF_NEG(errno);
 		}
-		pthread_mutex_unlock(&db->lock);
+		pthread_mutex_unlock(&db->dbcLock);
 		*totalWeight = bestOwnerTotalWeight;
 		return (long)bestOwnerDlen;
 	}
 
-	pthread_mutex_unlock(&db->lock);
+	pthread_mutex_unlock(&db->dbcLock);
 	return 0;
 }
 
-int ZTLF_putRecord(struct ZTLF_DB *db,struct ZTLF_Record *const r,const unsigned long rsize)
+int ZTLF_putRecord(struct ZTLF_DB *db,struct ZTLF_RecordInfo *const ri)
 {
+	uint8_t rwtmp[ZTLF_RECORD_MAX_SIZE + 8];
 	int e = 0,result = 0;
 
+	if ((!ri)||(ri->size < ZTLF_RECORD_MIN_SIZE)||(ri->size > ZTLF_RECORD_MAX_SIZE)) { /* sanity checks */
+		return ZTLF_NEG(EINVAL);
+	}
+
 	struct ZTLF_Vector_i64 graphTraversalQueue;
-	ZTLF_Vector_i64_init(&graphTraversalQueue,2097152);
+	ZTLF_Vector_i64_init(&graphTraversalQueue,1048576);
 
-	uint64_t hash[4];
-	struct ZTLF_RecordInfo ri;
-	ZTLF_Shandwich256(hash,r,rsize);
-	ZTLF_Record_expand(&ri,r,rsize);
-
-	pthread_mutex_lock(&db->lock);
+	bool dbLocked = true;
+	pthread_mutex_lock(&db->dbcLock);
+	pthread_mutex_lock(&db->gfLock);
 
 	/* Figure out where the next offset in the graph file is, which is always
 	 * equal to the current size of the record table as each record gets one entry.
@@ -290,7 +300,7 @@ int ZTLF_putRecord(struct ZTLF_DB *db,struct ZTLF_Record *const r,const unsigned
 	if (sqlite3_step(db->sGetRecordCount) == SQLITE_ROW)
 		goff = sqlite3_column_int64(db->sGetRecordCount,0);
 	if ((uint64_t)goff >= db->gfcap) {
-		munmap(db->gfm,(size_t)(db->gfcap * sizeof(struct ZTLF_DB_GraphNode)));
+		munmap((void *)db->gfm,(size_t)(db->gfcap * sizeof(struct ZTLF_DB_GraphNode)));
 		if (ftruncate(db->gfd,(off_t)((db->gfcap + ZTLF_GRAPH_FILE_CAPACITY_INCREMENT) * sizeof(struct ZTLF_DB_GraphNode)))) {
 			db->gfm = mmap(NULL,(size_t)(db->gfcap * sizeof(struct ZTLF_DB_GraphNode)),PROT_READ|PROT_WRITE,MAP_FILE|MAP_SHARED,db->gfd,0);
 			if (!db->gfm) {
@@ -307,7 +317,7 @@ int ZTLF_putRecord(struct ZTLF_DB *db,struct ZTLF_Record *const r,const unsigned
 			goto exit_putRecord;
 		}
 	}
-	struct ZTLF_DB_GraphNode *const graphNode = db->gfm + (uintptr_t)goff;
+	volatile struct ZTLF_DB_GraphNode *const graphNode = db->gfm + (uintptr_t)goff;
 
 	/* Figure out where record will be appended to record data file. */
 	int64_t doff = lseek(db->df,0,SEEK_END);
@@ -317,28 +327,28 @@ int ZTLF_putRecord(struct ZTLF_DB *db,struct ZTLF_Record *const r,const unsigned
 	}
 	doff += 2; /* actual offset is +2 to account for size prefix before record */
 
-	/* Write record size and record to data file. */
-	uint16_t sizePrefix = htons((uint16_t)rsize);
-	if (write(db->df,&sizePrefix,2) != 2) {
-		pthread_mutex_unlock(&db->lock);
-		return ZTLF_NEG(errno);
-	}
-	if (write(db->df,r,(size_t)rsize) != (ssize_t)rsize) {
-		pthread_mutex_unlock(&db->lock);
-		return ZTLF_NEG(errno);
+	/* Write record size and record to data file. Size prefix is not used by this
+	 * code but allows the record data file to be parsed and used as input for e.g.
+	 * bulk loading of records. */
+	rwtmp[0] = (uint8_t)((ri->size >> 8) & 0xff);
+	rwtmp[1] = (uint8_t)(ri->size & 0xff);
+	memcpy(rwtmp + 2,ri->r,ri->size); 
+	if (write(db->df,rwtmp,(size_t)(ri->size + 2)) != (ssize_t)(ri->size + 2)) {
+		result = ZTLF_NEG(errno);
+		goto exit_putRecord;
 	}
 	fsync(db->df);
 
 	/* Add entry to main record table. */
 	sqlite3_reset(db->sAddRecord);
 	sqlite3_bind_int64(db->sAddRecord,1,doff);
-	sqlite3_bind_int64(db->sAddRecord,2,(sqlite3_int64)rsize);
+	sqlite3_bind_int64(db->sAddRecord,2,(sqlite3_int64)ri->size);
 	sqlite3_bind_int64(db->sAddRecord,3,goff);
-	sqlite3_bind_int64(db->sAddRecord,4,(sqlite3_int64)ri.timestamp);
-	sqlite3_bind_int64(db->sAddRecord,5,(sqlite3_int64)ri.expiration);
-	sqlite3_bind_blob(db->sAddRecord,6,r->id,sizeof(r->id),SQLITE_STATIC);
-	sqlite3_bind_blob(db->sAddRecord,7,r->owner,sizeof(r->owner),SQLITE_STATIC);
-	sqlite3_bind_blob(db->sAddRecord,8,hash,sizeof(hash),SQLITE_STATIC);
+	sqlite3_bind_int64(db->sAddRecord,4,(sqlite3_int64)ri->timestamp);
+	sqlite3_bind_int64(db->sAddRecord,5,(sqlite3_int64)ri->expiration);
+	sqlite3_bind_blob(db->sAddRecord,6,ri->r->id,sizeof(ri->r->id),SQLITE_STATIC);
+	sqlite3_bind_blob(db->sAddRecord,7,ri->r->owner,sizeof(ri->r->owner),SQLITE_STATIC);
+	sqlite3_bind_blob(db->sAddRecord,8,ri->hash,32,SQLITE_STATIC);
 	if ((e = sqlite3_step(db->sAddRecord)) != SQLITE_DONE) {
 		result = ZTLF_POS(e);
 		goto exit_putRecord;
@@ -346,16 +356,16 @@ int ZTLF_putRecord(struct ZTLF_DB *db,struct ZTLF_Record *const r,const unsigned
 
 	/* Set links from this record in graph node or create dangling link entries. */
 	for(unsigned long i=0;i<ZTLF_RECORD_LINK_COUNT;++i) {
-		if ((r->links[i][0])||(r->links[i][1])||(r->links[i][2])||(r->links[i][3])) {
+		if ((ri->r->links[i][0])||(ri->r->links[i][1])||(ri->r->links[i][2])||(ri->r->links[i][3])) {
 			sqlite3_reset(db->sGetRecordInfoByHash);
-			sqlite3_bind_blob(db->sGetRecordInfoByHash,1,r->links[i],sizeof(hash),SQLITE_STATIC);
+			sqlite3_bind_blob(db->sGetRecordInfoByHash,1,ri->r->links[i],32,SQLITE_STATIC);
 			if (sqlite3_step(db->sGetRecordInfoByHash) == SQLITE_ROW) {
 				const int64_t linkedGoff = sqlite3_column_int64(db->sGetRecordInfoByHash,1);
 				graphNode->linkedRecordGoff[i] = linkedGoff;
 				ZTLF_Vector_i64_append(&graphTraversalQueue,linkedGoff);
 			} else {
 				sqlite3_reset(db->sAddDanglingLink);
-				sqlite3_bind_blob(db->sAddDanglingLink,1,r->links[i],sizeof(hash),SQLITE_STATIC);
+				sqlite3_bind_blob(db->sAddDanglingLink,1,ri->r->links[i],32,SQLITE_STATIC);
 				sqlite3_bind_int64(db->sAddDanglingLink,2,doff);
 				if ((e = sqlite3_step(db->sAddDanglingLink)) != SQLITE_DONE)
 					fprintf(stderr,"WARNING: database error adding dangling link: %d\n",e);
@@ -367,11 +377,11 @@ int ZTLF_putRecord(struct ZTLF_DB *db,struct ZTLF_Record *const r,const unsigned
 	/* Compute this record's total weight from its internal weight plus the total weights of
 	 * records linking to it. Also set this record's graph node offset in linking records'
 	 * graph nodes. */
-	double totalWeight = ri.weight;
+	double totalWeight = ri->weight;
 	sqlite3_reset(db->sGetDanglingLinks);
-	sqlite3_bind_blob(db->sGetDanglingLinks,1,hash,sizeof(hash),SQLITE_STATIC);
+	sqlite3_bind_blob(db->sGetDanglingLinks,1,ri->hash,32,SQLITE_STATIC);
 	while (sqlite3_step(db->sGetDanglingLinks) == SQLITE_ROW) {
-		struct ZTLF_DB_GraphNode *const gn = db->gfm + (uintptr_t)sqlite3_column_int64(db->sGetDanglingLinks,0);
+		volatile struct ZTLF_DB_GraphNode *const gn = db->gfm + (uintptr_t)sqlite3_column_int64(db->sGetDanglingLinks,0);
 		totalWeight += gn->totalWeight;
 		for(unsigned long j=0;j<ZTLF_RECORD_LINK_COUNT;++j) {
 			if (gn->linkedRecordGoff[j] < 0) {
@@ -383,42 +393,42 @@ int ZTLF_putRecord(struct ZTLF_DB *db,struct ZTLF_Record *const r,const unsigned
 
 	/* Delete dangling links to this record. */
 	sqlite3_reset(db->sDeleteDanglingLinks);
-	sqlite3_bind_blob(db->sDeleteDanglingLinks,1,hash,sizeof(hash),SQLITE_STATIC);
+	sqlite3_bind_blob(db->sDeleteDanglingLinks,1,ri->hash,32,SQLITE_STATIC);
 	if ((e = sqlite3_step(db->sDeleteDanglingLinks)) != SQLITE_DONE)
 		fprintf(stderr,"WARNING: database error deleting dangling links for received record: %d\n",e);
 	graphNode->totalWeight = totalWeight;
 
+	/* SQLite database work is now done. */
+	pthread_mutex_unlock(&db->dbcLock);
+	dbLocked = false;
+
 	/* Traverse graph of all records below this one and add this record's weight
 	 * to their total weights. */
-	const double wtmp = ri.weight;
+	struct ZTLF_ISet *const visited = ZTLF_ISet_new();
+	const double wtmp = ri->weight;
 	for(unsigned long i=0;i<graphTraversalQueue.size;) {
-		struct ZTLF_DB_GraphNode *const gn = db->gfm + (uintptr_t)graphTraversalQueue.v[i++];
-		gn->totalWeight += wtmp;
-		for(unsigned long j=0;j<ZTLF_RECORD_LINK_COUNT;++j) {
-			const int64_t tmp = gn->linkedRecordGoff[j];
-			if (tmp >= 0) {
-				ZTLF_Vector_i64_append(&graphTraversalQueue,tmp);
+		const int64_t goff = graphTraversalQueue.v[i++];
+		if (ZTLF_ISet_put(visited,goff)) {
+			volatile struct ZTLF_DB_GraphNode *const gn = db->gfm + (uintptr_t)goff;
+			gn->totalWeight += wtmp;
+			for(unsigned long j=0;j<ZTLF_RECORD_LINK_COUNT;++j) {
+				const int64_t tmp = gn->linkedRecordGoff[j];
+				if (tmp >= 0) {
+					ZTLF_Vector_i64_append(&graphTraversalQueue,tmp);
+				}
 			}
-		}
-
-		/* Every 1m iterations compact the queue and yield the lock so any other
-		 * threads can do things with the database. Addition is commutative so other
-		 * threads adding to total weights during this loop won't hurt anything. */
-		if (i >= 1048576) {
-			pthread_mutex_unlock(&db->lock);
-			memmove(graphTraversalQueue.v,graphTraversalQueue.v + i,sizeof(int64_t) * (graphTraversalQueue.size -= i));
-			i = 0;
-			pthread_yield_np();
-			if (!db->running) { /* sanity check */
-				fprintf(stderr,"BUG: database closed during in-progress putRecord()! database likely corrupt!\n");
-				abort();
+			if (i >= 1048576) { /* compact periodically to save memory */
+				memmove(graphTraversalQueue.v,graphTraversalQueue.v + i,sizeof(int64_t) * (graphTraversalQueue.size -= i));
+				i = 0;
 			}
-			pthread_mutex_lock(&db->lock);
 		}
 	}
+	ZTLF_ISet_free(visited);
 
 exit_putRecord:
-	pthread_mutex_unlock(&db->lock);
+	pthread_mutex_unlock(&db->gfLock);
+	if (dbLocked)
+		pthread_mutex_unlock(&db->dbcLock);
 
 	ZTLF_Vector_i64_free(&graphTraversalQueue);
 

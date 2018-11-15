@@ -49,7 +49,8 @@ static inline void ZTLF_Vector_i64_init(struct ZTLF_Vector_i64 *const vec,const 
 
 #define ZTLF_Vector_i64_append(vec,i) { \
 	if (unlikely((vec)->size >= (vec)->cap)) { \
-		ZTLF_MALLOC_CHECK((vec)->v = (int64_t *)realloc((vec)->v,sizeof(int64_t) * ((vec)->cap *= 2))); \
+		(vec)->cap = ((vec)->cap) ? ((vec)->cap << 1) : 1024; \
+		ZTLF_MALLOC_CHECK((vec)->v = (int64_t *)realloc((vec)->v,sizeof(int64_t) * (vec)->cap)); \
 	} \
 	(vec)->v[(vec)->size++] = (i); \
 }
