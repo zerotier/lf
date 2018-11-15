@@ -4,3 +4,5 @@
 *.so
 .DS_Store
 *.dSYM
+/lf
+*~
