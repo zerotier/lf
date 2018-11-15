@@ -46,6 +46,12 @@
  *   linking_record_doff: primary key of record that 'wants' this record
  *   last_retry_time:     time of last retry in seconds since epoch
  *   retry_count:         number of attempst that have been made to get this record
+ * 
+ * bias
+ *   id:                  record ID
+ *   owner:               record owner
+ *   adj:                 local weight adjustment
+ *   rank:                local hard ranking
  */
 
 #define ZTLF_DB_INIT_SQL \

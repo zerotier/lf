@@ -35,7 +35,7 @@
 /**
  * Record type 0: identified by ed25519 public keys, AES256-CFB encrypted value.
  */
-#define ZTLF_RECORD_TYPE_ED25519_ED25519_AES256CFB   0
+#define ZTLF_RECORD_TYPE_ED25519_ED25519_AES256CFB   0x0
 
 /**
  * Minimum size of a record (simply size of header)
@@ -68,10 +68,10 @@
 #define ZTLF_RECORD_TTL_INCREMENT_SEC                123671
 
 #define ZTLF_RECORD_FIELD_VALUE                      0x0
-#define ZTLF_RECORD_FIELD_ID_CLAIM_SIGNATURE_ED25519 0x1
-#define ZTLF_RECORD_FIELD_OWNER_SIGNATURE_ED25519    0x2
-#define ZTLF_RECORD_FIELD_CA_SIGNATURE_ED25519       0x3
-#define ZTLF_RECORD_FIELD_WHARRGARBL_POW             0x4
+#define ZTLF_RECORD_FIELD_ID_CLAIM_SIGNATURE_ED25519 0xc
+#define ZTLF_RECORD_FIELD_OWNER_SIGNATURE_ED25519    0xd
+#define ZTLF_RECORD_FIELD_CA_SIGNATURE_ED25519       0xe
+#define ZTLF_RECORD_FIELD_WHARRGARBL_POW             0xf
 
 /**
  * Packed record as it appears on the wire and in the database
@@ -137,7 +137,13 @@ bool ZTLF_Record_expand(struct ZTLF_RecordInfo *ri,const struct ZTLF_Record *r,c
 
 /**
  * Decrypt record value using its plaintext key
+ * 
+ * @param ri Expanded record
+ * @param out Output buffer (must be at least ri->valueSize bytes in size)
+ * @param k Plain text record key (not ID)
+ * @param klen Length of plain text key
+ * @return Number of bytes written to 'out'
  */
-void ZTLF_Record_open(const struct ZTLF_RecordInfo *ri,void *out,const void *k,const unsigned long klen);
+unsigned int ZTLF_Record_open(const struct ZTLF_RecordInfo *ri,void *out,const void *k,const unsigned long klen);
 
 #endif

@@ -109,7 +109,7 @@ bool ZTLF_Record_expand(struct ZTLF_RecordInfo *ri,const struct ZTLF_Record *r,c
 	return true;
 }
 
-void ZTLF_Record_open(const struct ZTLF_RecordInfo *ri,void *out,const void *k,const unsigned long klen)
+unsigned int ZTLF_Record_open(const struct ZTLF_RecordInfo *ri,void *out,const void *k,const unsigned long klen)
 {
 	uint8_t khash[64];
 	ZTLF_AES256CFB c;
@@ -122,4 +122,6 @@ void ZTLF_Record_open(const struct ZTLF_RecordInfo *ri,void *out,const void *k,c
 	ZTLF_AES256CFB_init(&c,khash + 32,((const uint8_t *)ri->r) + (sizeof(struct ZTLF_Record) - 16),true);
 	ZTLF_AES256CFB_crypt(&c,out,ri->value,ri->valueSize);
 	ZTLF_AES256CFB_destroy(&c);
+
+	return ri->valueSize;
 }
