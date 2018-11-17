@@ -30,26 +30,21 @@
 #include "common.h"
 #include "db.h"
 #include "record.h"
-#include "config.h"
 #include "aes.h"
-#include "thirdparty/sandbird/sandbird.h"
+#include "map.h"
 
 struct ZTLF_Node_PeerConnection
 {
-	uint8_t remotePublicKey[32];
-	ZTLF_AES256CFB encryptor;
-	ZTLF_AES256CFB decryptor;
-
+	struct ZTLF_Node *parent;
 	struct sockaddr_storage remoteAddress;
 
-	uint64_t connectTime;
-	uint64_t lastReceiveTime;
-	uint64_t lastSendTime;
-
-	pthread_t receiveThread;
-
-	pthread_mutex_t sendLock;
 	int sock;
+	pthread_mutex_t sendLock;
+
+	pthread_mutex_t subscribedLock;
+	struct ZTLF_Map256 subscribedToIds;
+	struct ZTLF_Map256 subscribedToOwners;
+	bool subscribedToAll;
 
 	bool incoming;
 };
@@ -57,10 +52,9 @@ struct ZTLF_Node_PeerConnection
 struct ZTLF_Node
 {
 	struct ZTLF_DB db;
-	struct ZTLF_Config config;
 
-	int p2pListenSocket;
-	sb_Server *httpServer;
+	unsigned int listenPort;
+	int listenSocket;
 
 	struct ZTLF_Node_PeerConnection *conn;
 	unsigned long connCount;

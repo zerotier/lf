@@ -64,11 +64,32 @@ static inline void ZTLF_SHA512(void *d,const void *b,const unsigned long s)
 
 static inline void ZTLF_Shandwich256(void *d,const void *b,const unsigned long s)
 {
-	uint64_t s512[8],s384[6];
-	ZTLF_SHA512(s512,b,s);
-	ZTLF_SHA384(s384,s512,64);
-	ZTLF_AES256ECB_encrypt(s512,d,s384);
-	ZTLF_AES256ECB_encrypt(s512 + 4,((uint8_t *)d) + 16,s384 + 2);
+	uint64_t s512a[8],s512b[8];
+	ZTLF_SHA512(s512a,b,s);
+	ZTLF_SHA512(s512b,s512a,64);
+	ZTLF_AES256ECB_encrypt(s512a,d,s512b);
+	ZTLF_AES256ECB_encrypt(s512a + 2,((uint8_t *)d) + 16,s512b + 2);
+}
+
+static inline void ZTLF_Shandwich384(void *d,const void *b,const unsigned long s)
+{
+	uint64_t s512a[8],s512b[8];
+	ZTLF_SHA512(s512a,b,s);
+	ZTLF_SHA512(s512b,s512a,64);
+	ZTLF_AES256ECB_encrypt(s512a,d,s512b);
+	ZTLF_AES256ECB_encrypt(s512a + 2,((uint8_t *)d) + 16,s512b + 2);
+	ZTLF_AES256ECB_encrypt(s512a + 4,((uint8_t *)d) + 32,s512b + 4);
+}
+
+static inline void ZTLF_Shandwich512(void *d,const void *b,const unsigned long s)
+{
+	uint64_t s512a[8],s512b[8];
+	ZTLF_SHA512(s512a,b,s);
+	ZTLF_SHA512(s512b,s512a,64);
+	ZTLF_AES256ECB_encrypt(s512a,d,s512b);
+	ZTLF_AES256ECB_encrypt(s512a + 2,((uint8_t *)d) + 16,s512b + 2);
+	ZTLF_AES256ECB_encrypt(s512a + 4,((uint8_t *)d) + 32,s512b + 4);
+	ZTLF_AES256ECB_encrypt(s512a + 6,((uint8_t *)d) + 48,s512b + 6);
 }
 
 #endif

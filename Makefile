@@ -3,15 +3,15 @@ CFLAGS=-O3 -fvectorize -std=c99 -Wall
 LIBS=-lsqlite3
 
 OBJS=\
+	base58.o \
 	common.o \
 	db.o \
 	ed25519.o \
 	lf.o \
 	map.o \
+	node.o \
 	record.o \
 	selftest.o \
-	thirdparty/sandbird/sandbird.o \
-	thirdparty/tiny-json/tiny-json.o \
 	wharrgarbl.o
 
 all:	lf

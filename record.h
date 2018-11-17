@@ -38,6 +38,11 @@
 #define ZTLF_RECORD_TYPE_ED25519_ED25519_AES256CFB   0x0
 
 /**
+ * Flag 0x10: this record's value is not encrypted (visible even without key)
+ */
+#define ZTLF_RECORD_FLAG_UNMASKED                    0x10
+
+/**
  * Minimum size of a record (simply size of header)
  */
 #define ZTLF_RECORD_MIN_SIZE                         sizeof(struct ZTLF_Record)
@@ -45,7 +50,7 @@
 /**
  * Overall maximum record size (cannot be changed)
  */
-#define ZTLF_RECORD_MAX_SIZE                         4096
+#define ZTLF_RECORD_MAX_SIZE                         4095
 
 /**
  * Maximum record value size (theoretical max: 4096 - overhead)
@@ -60,7 +65,7 @@
 /**
  * Number of links from one record to others (cannot be changed)
  */
-#define ZTLF_RECORD_LINK_COUNT                       3
+#define ZTLF_RECORD_LINK_COUNT                       8
 
 /**
  * Unit for TTL in seconds (cannot be changed)

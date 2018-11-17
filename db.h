@@ -50,7 +50,7 @@ struct ZTLF_DB
 	sqlite3 *dbc;
 	sqlite3_stmt *sAddRecord;
 	sqlite3_stmt *sGetLatestRecordTimestamp;
-	sqlite3_stmt *sGetRecordsById;
+	sqlite3_stmt *sGetRecordHistoryById;
 	sqlite3_stmt *sGetRecordCount;
 	sqlite3_stmt *sGetRecordInfoByHash;
 	sqlite3_stmt *sGetDanglingLinks;
@@ -75,16 +75,7 @@ int ZTLF_DB_open(struct ZTLF_DB *db,const char *path);
 
 void ZTLF_DB_close(struct ZTLF_DB *db);
 
-/**
- * Get the best record for a given ID
- * 
- * @param db Database instance
- * @param r Record (must point to at least ZTLF_RECORD_MAX_SIZE bytes of memory!)
- * @param totalWeight Pointer to double to receive total weight of this record in graph (if record is found)
- * @param id 256-bit/32-byte record ID (not plain text key)
- * @return Number of bytes in record, 0 if not found, or negative errno on error
- */
-long ZTLF_getRecord(struct ZTLF_DB *const db,struct ZTLF_Record *r,double *totalWeight,const void *const id);
+long ZTLF_getRecord(struct ZTLF_DB *const db,struct ZTLF_Record *r,double *aggregatedTotalWeight,const void *const id);
 
 int ZTLF_putRecord(struct ZTLF_DB *db,struct ZTLF_RecordInfo *const ri);
 

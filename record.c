@@ -36,11 +36,11 @@ void ZTLF_Record_keyToId(uint64_t id[4],const void *k,const unsigned long klen)
 
 bool ZTLF_Record_expand(struct ZTLF_RecordInfo *ri,const struct ZTLF_Record *r,const unsigned long rsize)
 {
-	if (rsize < sizeof(struct ZTLF_Record))
+	if (rsize < ZTLF_RECORD_MIN_SIZE)
+		return false;
+	if (rsize > ZTLF_RECORD_MAX_SIZE)
 		return false;
 	if ((r->flags & 0xf) != ZTLF_RECORD_TYPE_ED25519_ED25519_AES256CFB)
-		return false;
-	if ((r->flags & 0xf0) != 0) /* currently there are no flags */
 		return false;
 	if (r->reserved != 0)
 		return false;
@@ -111,17 +111,21 @@ bool ZTLF_Record_expand(struct ZTLF_RecordInfo *ri,const struct ZTLF_Record *r,c
 
 unsigned int ZTLF_Record_open(const struct ZTLF_RecordInfo *ri,void *out,const void *k,const unsigned long klen)
 {
-	uint8_t khash[64];
-	ZTLF_AES256CFB c;
+	if ((ri->r->flags & ZTLF_RECORD_FLAG_UNMASKED) == 0) {
+		uint8_t khash[64];
+		ZTLF_AES256CFB c;
+		ZTLF_SHA512(khash,k,klen);
 
-	ZTLF_SHA512(khash,k,klen);
+		/* For AES256-CFB we use the last 32 bytes of the hash as the AES256 key
+		 * and the last 16 bytes of the record header (which includes the last link
+		 * and the TTL and timestamp) as the IV. */
+		ZTLF_AES256CFB_init(&c,khash + 32,((const uint8_t *)ri->r) + (sizeof(struct ZTLF_Record) - 16),true);
+		ZTLF_AES256CFB_crypt(&c,out,ri->value,ri->valueSize);
+		ZTLF_AES256CFB_destroy(&c);
 
-	/* For AES256-CFB we use the last 32 bytes of the hash as the AES256 key
-	 * and the last 16 bytes of the record header (which includes the last link
-	 * and the TTL and timestamp) as the IV. */
-	ZTLF_AES256CFB_init(&c,khash + 32,((const uint8_t *)ri->r) + (sizeof(struct ZTLF_Record) - 16),true);
-	ZTLF_AES256CFB_crypt(&c,out,ri->value,ri->valueSize);
-	ZTLF_AES256CFB_destroy(&c);
-
-	return ri->valueSize;
+		return ri->valueSize;
+	} else {
+		memcpy(out,ri->value,ri->valueSize);
+		return ri->valueSize;
+	}
 }

@@ -145,6 +145,8 @@ static inline uint64_t ZTLF_htonll(uint64_t n)
 #define ZTLF_NEG(e) (((e) <= 0) ? (e) : -(e))
 #define ZTLF_POS(e) (((e) >= 0) ? (e) : -(e))
 
+#define ZTLF_eq256qw(a,b) (((a)[0] == (b)[0])&&((a)[1] == (b)[1])&&((a)[2] == (b)[2])&&((a)[3] == (b)[3]))
+
 #define ZTLF_timeSec() ((uint64_t)time(NULL))
 
 static inline uint64_t ZTLF_timeMs()

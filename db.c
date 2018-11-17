@@ -27,6 +27,7 @@
 #include "db.h"
 #include "vector.h"
 #include "iset.h"
+#include "map.h"
 
 #define ZTLF_GRAPH_FILE_CAPACITY_INCREMENT 1048576
 
@@ -46,12 +47,6 @@
  *   linking_record_doff: primary key of record that 'wants' this record
  *   last_retry_time:     time of last retry in seconds since epoch
  *   retry_count:         number of attempst that have been made to get this record
- * 
- * bias
- *   id:                  record ID
- *   owner:               record owner
- *   adj:                 local weight adjustment
- *   rank:                local hard ranking
  */
 
 #define ZTLF_DB_INIT_SQL \
@@ -78,8 +73,7 @@
 \
 "CREATE UNIQUE INDEX IF NOT EXISTS record_goff ON record(goff);\n" \
 "CREATE INDEX IF NOT EXISTS record_ts ON record(ts);\n" \
-"CREATE INDEX IF NOT EXISTS record_id ON record(id);\n" \
-"CREATE INDEX IF NOT EXISTS record_owner ON record(owner);\n" \
+"CREATE INDEX IF NOT EXISTS record_id_ts ON record(id,ts);\n" \
 "CREATE UNIQUE INDEX IF NOT EXISTS record_hash ON record(hash);\n" \
 \
 "CREATE TABLE IF NOT EXISTS dangling_link (" \
@@ -90,6 +84,7 @@
 "PRIMARY KEY(hash,linking_record_doff)" \
 ") WITHOUT ROWID;\n" \
 \
+"CREATE INDEX IF NOT EXISTS dangling_link_linking_record_doff ON dangling_link(linking_record_doff);\n" \
 "CREATE INDEX IF NOT EXISTS dangling_link_retry_count_last_retry_time ON dangling_link(retry_count,last_retry_time);\n"
 
 int ZTLF_DB_open(struct ZTLF_DB *db,const char *path)
@@ -127,7 +122,7 @@ int ZTLF_DB_open(struct ZTLF_DB *db,const char *path)
 		goto exit_with_error;
 	if ((e = sqlite3_prepare_v2(db->dbc,"SELECT MAX(ts) FROM record",-1,&db->sGetLatestRecordTimestamp,NULL)) != SQLITE_OK)
 		goto exit_with_error;
-	if ((e = sqlite3_prepare_v2(db->dbc,"SELECT doff,dlen,goff,ts,exp,owner FROM record WHERE id = ? GROUP BY owner ORDER BY ts ASC",-1,&db->sGetRecordsById,NULL)) != SQLITE_OK)
+	if ((e = sqlite3_prepare_v2(db->dbc,"SELECT doff,dlen,goff,ts,exp,owner FROM record WHERE id = ? AND doff NOT IN (SELECT dangling_link.linking_record_doff FROM dangling_link WHERE dangling_link.linking_record_doff = record.doff) ORDER BY ts DESC",-1,&db->sGetRecordHistoryById,NULL)) != SQLITE_OK)
 		goto exit_with_error;
 	if ((e = sqlite3_prepare_v2(db->dbc,"SELECT COUNT(1) FROM record",-1,&db->sGetRecordCount,NULL)) != SQLITE_OK)
 		goto exit_with_error;
@@ -189,7 +184,7 @@ void ZTLF_DB_close(struct ZTLF_DB *db)
 	if (db->dbc) {
 		if (db->sAddRecord) sqlite3_finalize(db->sAddRecord);
 		if (db->sGetLatestRecordTimestamp) sqlite3_finalize(db->sGetLatestRecordTimestamp);
-		if (db->sGetRecordsById) sqlite3_finalize(db->sGetRecordsById);
+		if (db->sGetRecordHistoryById) sqlite3_finalize(db->sGetRecordHistoryById);
 		if (db->sGetRecordCount) sqlite3_finalize(db->sGetRecordCount);
 		if (db->sGetRecordInfoByHash) sqlite3_finalize(db->sGetRecordInfoByHash);
 		if (db->sGetDanglingLinks) sqlite3_finalize(db->sGetDanglingLinks);
@@ -215,70 +210,81 @@ void ZTLF_DB_close(struct ZTLF_DB *db)
 	pthread_mutex_destroy(&db->gfLock);
 }
 
-long ZTLF_getRecord(struct ZTLF_DB *const db,struct ZTLF_Record *r,double *totalWeight,const void *const id)
+struct _ZTLF_getRecord_owner
 {
-	int64_t bestOwnerDoff = 0;
-	int64_t bestOwnerDlen = 0;
-	double bestOwnerTotalWeight = 0.0;
-	uint64_t lastRecordOwner[4];
-	int64_t lastRecordDoff = 0;
-	int64_t lastRecordDlen = 0;
-	double currTotalWeight = 0.0;
-	int64_t lastRecordExpTime = 0;
+	int64_t latestDoff;
+	int64_t latestDlen;
+	uint64_t nextTs;
+	double aggregatedTotalWeight;
+	bool eof;
+};
+
+long ZTLF_getRecord(struct ZTLF_DB *const db,struct ZTLF_Record *r,double *aggregatedTotalWeight,const void *const id)
+{
+	uint64_t owner[4];
+	struct ZTLF_Map256 m;
+
+	ZTLF_Map256_init(&m,4,free);
 
 	pthread_mutex_lock(&db->dbcLock);
 
-	/* Iterate through records grouped by owner and sorted in ascending
-	 * timestamp order. When we hit a change in owner or an expired record,
-	 * this is considered the end of a set of records with a common
-	 * owner and lineage. The 'right' record is the most recent record
-	 * in the set with the highest sum of total weights for a given owner. */
-	sqlite3_reset(db->sGetRecordsById);
-	sqlite3_bind_blob(db->sGetRecordsById,1,id,32,SQLITE_STATIC);
-	while (sqlite3_step(db->sGetRecordsById) == SQLITE_ROW) {
-		const int64_t ts = sqlite3_column_int64(db->sGetRecordsById,3);
-		const void *owner = sqlite3_column_blob(db->sGetRecordsById,5);
-		if ((ts >= lastRecordExpTime)||(memcmp(lastRecordOwner,owner,32))) {
-			if ((lastRecordDlen > ZTLF_RECORD_MIN_SIZE)&&(currTotalWeight > bestOwnerTotalWeight)) {
-				bestOwnerDoff = lastRecordDoff;
-				bestOwnerDlen = lastRecordDlen;
-				bestOwnerTotalWeight = currTotalWeight;
+	sqlite3_reset(db->sGetRecordHistoryById);
+	sqlite3_bind_blob(db->sGetRecordHistoryById,1,id,32,SQLITE_STATIC);
+	while (sqlite3_step(db->sGetRecordHistoryById) == SQLITE_ROW) {
+		memcpy(owner,sqlite3_column_blob(db->sGetRecordHistoryById,5),sizeof(owner));
+		struct _ZTLF_getRecord_owner *o = (struct _ZTLF_getRecord_owner *)ZTLF_Map256_get(&m,owner);
+
+		if (!o) {
+			ZTLF_MALLOC_CHECK(o = (struct _ZTLF_getRecord_owner *)malloc(sizeof(struct _ZTLF_getRecord_owner)));
+			o->latestDoff = sqlite3_column_int64(db->sGetRecordHistoryById,0);
+			o->latestDlen = sqlite3_column_int64(db->sGetRecordHistoryById,1);
+			o->nextTs = 0;
+			o->aggregatedTotalWeight = 0.0;
+			o->eof = false;
+			ZTLF_Map256_set(&m,owner,o);
+		}
+
+		if (!o->eof) {
+			if ((uint64_t)sqlite3_column_int64(db->sGetRecordHistoryById,4) < o->nextTs) {
+				/* We encountered an expired record, so this ends this owner's most recent set of records for this ID. */
+				o->eof = true;
+			} else {
+				/* Total weight of this owner's set of IDs is the sum of the total weights of each update in the set. */
+				o->aggregatedTotalWeight += db->gfm[(uintptr_t)sqlite3_column_int64(db->sGetRecordHistoryById,2)].totalWeight;
 			}
-			currTotalWeight = 0.0;
-		}
-		memcpy(lastRecordOwner,owner,32);
-		lastRecordDoff = sqlite3_column_int64(db->sGetRecordsById,0);
-		lastRecordDlen = sqlite3_column_int64(db->sGetRecordsById,1);
 
-		/* This is read only and the memory is volatile, so this should be fine. There is a
-		 * small chance of slight inaccuracies if updates are in progress but overall it
-		 * should not be a significant issue. */
-		const uintptr_t goff = (uintptr_t)sqlite3_column_int64(db->sGetRecordsById,2);
-		if (likely(goff < db->gfcap))
-			currTotalWeight += db->gfm[goff].totalWeight;
-		lastRecordExpTime = sqlite3_column_int64(db->sGetRecordsById,4);
-	}
-	if ((lastRecordDlen > ZTLF_RECORD_MIN_SIZE)&&(currTotalWeight > bestOwnerTotalWeight)) {
-		bestOwnerDoff = lastRecordDoff;
-		bestOwnerDlen = lastRecordDlen;
-		bestOwnerTotalWeight = currTotalWeight;
-	}
-
-	if (bestOwnerDlen > 0) {
-		if (lseek(db->df,(off_t)bestOwnerDoff,SEEK_SET) != (off_t)bestOwnerDoff) {
-			pthread_mutex_unlock(&db->dbcLock);
-			return ZTLF_NEG(errno);
+			/* "Next" timestamp is previous row since we iterate backwards through timestamp history. */
+			o->nextTs = (uint64_t)sqlite3_column_int64(db->sGetRecordHistoryById,3);
 		}
-		if (read(db->df,r,(size_t)bestOwnerDlen) != (ssize_t)bestOwnerDlen) {
-			pthread_mutex_unlock(&db->dbcLock);
-			return ZTLF_NEG(errno);
-		}
-		pthread_mutex_unlock(&db->dbcLock);
-		*totalWeight = bestOwnerTotalWeight;
-		return (long)bestOwnerDlen;
 	}
 
 	pthread_mutex_unlock(&db->dbcLock);
+
+	int64_t bestDoff = -1;
+	int64_t bestDlen = -1;
+	double bestTw = -1.0;
+
+	ZTLF_Map256_each(&m,{
+		struct _ZTLF_getRecord_owner *const o = (struct _ZTLF_getRecord_owner *)ztlfMapValue;
+		if (o->aggregatedTotalWeight > bestTw) {
+			bestDoff = o->latestDoff;
+			bestDlen = o->latestDlen;
+		}
+	});
+
+	ZTLF_Map256_destroy(&m);
+
+	if ((bestDoff >= 0)&&(bestDlen > ZTLF_RECORD_MIN_SIZE)) {
+		if (lseek(db->df,(off_t)bestDoff,SEEK_SET) == (off_t)bestDoff) {
+			long rsize = (long)read(db->df,r,(size_t)bestDlen);
+			if (rsize == (long)bestDlen) {
+				if (aggregatedTotalWeight)
+					*aggregatedTotalWeight = bestTw;
+				return rsize;
+			}
+		}
+	}
+
 	return 0;
 }
 
