@@ -122,33 +122,81 @@ unsigned int ZTLF_ncpus()
 
 void ZTLF_secureRandom(void *b,const unsigned long n)
 {
-	static pthread_mutex_t l = PTHREAD_MUTEX_INITIALIZER;
-	static int fd = -1;
-	static ZTLF_AES256CFB aes;
-	pthread_mutex_lock(&l);
-	if (fd < 0) {
-		fd = open("/dev/urandom",O_RDONLY);
-		if (fd < 0) {
-			fprintf(stderr,"FATAL: unable to open /dev/urandom\n");
-			abort();
+	static uint64_t state[1024];
+	static unsigned long ptr = 0;
+	static bool initialized = false;
+	static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+	pthread_mutex_lock(&lock);
+	for(unsigned long k=0;k<n;++k) {
+		unsigned long p = ptr++ % sizeof(state);
+		if (p == 0) {
+			if (unlikely(!initialized)) {
+				const int fd = open("/dev/urandom",O_RDONLY);
+				if (fd < 0) {
+					ZTLF_L_fatal("unable to open/read /dev/urandom");
+					abort();
+				}
+				if (read(fd,(void *)state,sizeof(state)) != sizeof(state)) {
+					close(fd);
+					ZTLF_L_fatal("unable to open/read /dev/urandom");
+					abort();
+				}
+				close(fd);
+				initialized = true;
+			}
+
+			uint64_t aesiv[2];
+			aesiv[0] = ZTLF_timeMs();
+			aesiv[1] = (uint64_t)b + (uint64_t)n;
+			ZTLF_AES256CFB aes;
+			ZTLF_AES256CFB_init(&aes,state,aesiv,true);
+			ZTLF_AES256CFB_crypt(&aes,state,state,sizeof(state));
+			ZTLF_AES256CFB_destroy(&aes);
 		}
-		uint64_t aesk[4];
-		if (read(fd,aesk,sizeof(aesk)) != sizeof(aesk)) {
-			fprintf(stderr,"FATAL: read error from /dev/urandom\n");
-			abort();
-		}
-		aesk[0] += (uint64_t)ZTLF_timeMs();
-		aesk[1] += (uint64_t)getpid();
-		aesk[2] += (uint64_t)getppid();
-		aesk[3] += (uint64_t)b;
-		ZTLF_AES256CFB_init(&aes,aesk,aesk,true);
+		((uint8_t *)b)[k] = ((uint8_t *)state)[p];
 	}
-	if (read(fd,b,(size_t)n) != (ssize_t)n) {
-		fprintf(stderr,"FATAL: read error from /dev/urandom\n");
-		abort();
-	}
-	ZTLF_AES256CFB_crypt(&aes,b,b,n); /* defense in depth against un-seeded or broken /dev/urandom */
-	pthread_mutex_unlock(&l);
+	pthread_mutex_unlock(&lock);
 }
 
 #endif /* Windows / non-Windows */
+
+void ZTLF_L_func(int level,const char *srcf,int line,const char *fmt,...)
+{
+	static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+
+	va_list ap;
+	char msg[1024];
+	va_start(ap, fmt);
+	(void)vsnprintf(msg,sizeof(msg),fmt,ap);
+	va_end(ap);
+	msg[sizeof(msg)-1] = (char)0;
+
+	char ts[128];
+	time_t t = time(0);
+	ctime_r(&t,ts);
+	ts[sizeof(ts)-1] = (char)0;
+
+	char *tsp = ts;
+	while (*tsp) {
+		if ((*tsp == '\r')||(*tsp == '\n')) {
+			*tsp = (char)0;
+			break;
+		}
+		++tsp;
+	}
+
+	if (!srcf)
+		srcf = "<unknown>";
+
+	pthread_mutex_lock(&lock);
+	if (level < 0) {
+		fprintf(stderr,"%s (%s:%d) %s: %s" ZTLF_EOL,ts,(strrchr(srcf,ZTLF_PATH_SEPARATOR_C) != NULL) ? (strrchr(srcf,ZTLF_PATH_SEPARATOR_C) + 1) : srcf,line,((level == -1) ? "WARNING" : "FATAL"),msg);
+	} else {
+		if (level > 1) {
+			fprintf(stdout,"%s (%s:%d) TRACE %s" ZTLF_EOL,ts,(strrchr(srcf,ZTLF_PATH_SEPARATOR_C) != NULL) ? (strrchr(srcf,ZTLF_PATH_SEPARATOR_C) + 1) : srcf,line,msg);
+		} else {
+			fprintf(stdout,"%s %s" ZTLF_EOL,ts,msg);
+		}
+	}
+	pthread_mutex_unlock(&lock);
+}

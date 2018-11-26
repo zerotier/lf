@@ -27,8 +27,6 @@
 #ifndef ZT_LF_COMMON_H
 #define ZT_LF_COMMON_H
 
-/* We really don't even support 32-bit systems for this, but go ahead and
- * make it work. */
 #ifndef _FILE_OFFSET_BITS
 #define _FILE_OFFSET_BITS 64
 #endif
@@ -80,6 +78,7 @@
 
 #define ZTLF_PACKED_STRUCT(D) __pragma(pack(push,1)) D __pragma(pack(pop))
 #define ZTLF_PATH_SEPARATOR "\\"
+#define ZTLF_PATH_SEPARATOR_C '\\'
 #define ZTLF_EOL "\r\n"
 
 #else /* not Windows -------------------------------------------------- */
@@ -95,6 +94,7 @@
 
 #define ZTLF_PACKED_STRUCT(D) D __attribute__((packed))
 #define ZTLF_PATH_SEPARATOR "/"
+#define ZTLF_PATH_SEPARATOR_C '/'
 #define ZTLF_EOL "\n"
 
 #endif /* Windows or non-Windows? ------------------------------------- */
@@ -158,11 +158,16 @@ static inline uint64_t ZTLF_htonll(uint64_t n)
 
 #define ZTLF_timeSec() ((uint64_t)time(NULL))
 
-const uint32_t ZTLF_CRC32_TABLE[256];
-
 uint64_t ZTLF_prng();
 unsigned int ZTLF_ncpus();
 void ZTLF_secureRandom(void *b,const unsigned long n);
+
+void ZTLF_L_func(int level,const char *srcf,int line,const char *fmt,...);
+#define ZTLF_L(...) ZTLF_L_func(0,__FILE__,__LINE__,__VA_ARGS__)
+#define ZTLF_L_warning(...) ZTLF_L_func(-1,__FILE__,__LINE__,__VA_ARGS__)
+#define ZTLF_L_fatal(...) ZTLF_L_func(-2,__FILE__,__LINE__,__VA_ARGS__)
+#define ZTLF_L_verbose(...) ZTLF_L_func(1,__FILE__,__LINE__,__VA_ARGS__)
+#define ZTLF_L_trace(...) ZTLF_L_func(2,__FILE__,__LINE__,__VA_ARGS__)
 
 static inline uint64_t ZTLF_timeMs()
 {
@@ -206,22 +211,26 @@ static inline uint64_t ZTLF_xorshift64starOnce(uint64_t x)
 	return x * 0x2545F4914F6CDD1D;
 }
 
-static inline uint32_t ZTLF_crc32(const void *const buf,const unsigned int len)
+/* https://en.wikipedia.org/wiki/Fletcher%27s_checksum */
+static inline uint16_t ZTLF_fletcher16(const uint8_t *data,unsigned int len)
 {
-	uint32_t crc = 0xffffffff;
-	for(unsigned int i=0;i<len;++i) {
-		crc = ZTLF_CRC32_TABLE[(crc ^ ((const uint8_t *)buf)[i]) & 0xff] ^ (crc >> 8);
+	uint32_t c0, c1;
+	unsigned int i;
+	for (c0=c1=0;len>=5802;len-=5802) {
+		for (i=0;i<5802;++i) {
+			c0 = c0 + *data++;
+			c1 = c1 + c0;
+		}
+		c0 = c0 % 255;
+		c1 = c1 % 255;
 	}
-	return ~crc;
-}
-
-static inline bool ZTLF_allZero(const void *const d,const unsigned int len)
-{
-	for(int i=0;i<len;++i) {
-		if (((const uint8_t *)d)[i])
-			return false;
+	for (i=0;i<len;++i) {
+		c0 = c0 + *data++;
+		c1 = c1 + c0;
 	}
-	return true;
+	c0 = c0 % 255;
+	c1 = c1 % 255;
+	return (uint16_t)((c1 << 8) | c0);
 }
 
 #endif

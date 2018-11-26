@@ -1,3 +1,5 @@
+/* https://github.com/luke-jr/libbase58 */
+
 /*
  * Copyright 2012-2014 Luke Dashjr
  *

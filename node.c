@@ -30,19 +30,38 @@
 #include "version.h"
 
 #define ZTLF_RECV_BUF_SIZE 131072
-#define ZTLF_SEND_BUF_SIZE 1048576
+#define ZTLF_SEND_BUF_SIZE 524288
 
-static bool _ZTLF_Node_sendTo(struct ZTLF_Node_PeerConnection *const c,void *const msgp,const unsigned int len,bool blocking)
+/* Compute fletcher16, encrypt, and send to destination peer if possible. */
+static bool _ZTLF_Node_sendTo(struct ZTLF_Node_PeerConnection *const c,void *const msgp,const unsigned int len)
 {
 	struct ZTLF_Message *const msg = (struct ZTLF_Message *)msgp;
-	msg->crc = htonl(ZTLF_crc32(((const uint8_t *)msg) + sizeof(struct ZTLF_Message),len - sizeof(struct ZTLF_Message)));
+	msg->fletcher16 = htons(ZTLF_fletcher16(((const uint8_t *)msg) + sizeof(struct ZTLF_Message),len - sizeof(struct ZTLF_Message)));
 	bool result = false;
 	pthread_mutex_lock(&(c->sendLock));
 	if (likely(c->sock >= 0)) {
+		if (likely(c->sockSendBufSize > 0)) {
+			if (unlikely(len > (unsigned int)c->sockSendBufSize))
+				return false;
+#ifdef SO_NWRITE
+			int bufsize = 0;
+			socklen_t bufsizesize = sizeof(bufsize);
+			if (unlikely(getsockopt(c->sock,SOL_SOCKET,SO_NWRITE,&bufsize,&bufsizesize) != 0)) {
+				ZTLF_L_warning("getsockopt(SO_NWRITE) failed: %s",strerror(errno));
+				return false;
+			}
+			if (bufsize >= (c->sockSendBufSize - (int)len)) {
+				ZTLF_L_trace("send failed: buffer contains %d bytes, message is %u bytes",bufsize,len);
+				return false;
+			}
+#else
+			TODO;
+#endif
+		}
 		if (c->encryptor != NULL) {
 			ZTLF_AES256CFB_crypt(c->encryptor,msg,msg,len);
 		}
-		result = (send(c->sock,msg,len,(blocking) ? 0 : MSG_DONTWAIT) == (ssize_t)len);
+		result = (send(c->sock,msg,len,MSG_DONTWAIT) == (ssize_t)len);
 		if (!result) {
 			close(c->sock);
 			c->sock = -1;
@@ -52,6 +71,7 @@ static bool _ZTLF_Node_sendTo(struct ZTLF_Node_PeerConnection *const c,void *con
 	return result;
 }
 
+/* Send goodbye if provided and close. */
 static void _ZTLF_Node_closeConnection(struct ZTLF_Node_PeerConnection *const c,unsigned int reason)
 {
 	pthread_mutex_lock(&(c->sendLock));
@@ -70,6 +90,7 @@ static void _ZTLF_Node_closeConnection(struct ZTLF_Node_PeerConnection *const c,
 	pthread_mutex_unlock(&(c->sendLock));
 }
 
+/* Create a HELLO message to send to a peer. */
 static void _ZTLF_Node_mkHello(struct ZTLF_Node_PeerConnection *const c,struct ZTLF_Message_Hello *const h,const uint8_t *const publicKey,const uint64_t flags)
 {
 	h->hdr = ZTLF_MESSAGE_HDR(ZTLF_PROTO_MESSAGE_TYPE_HELLO,sizeof(struct ZTLF_Message_Hello));
@@ -82,12 +103,14 @@ static void _ZTLF_Node_mkHello(struct ZTLF_Node_PeerConnection *const c,struct Z
 	h->cipher = ZTLF_PROTO_CIPHER_C25519_AES256_CFB;
 	memcpy(h->publicKey,publicKey,sizeof(h->publicKey));
 
+	/* Hello is initially sent in the clear, so everything after the IV is encrypted with
+	 * the network key. */
 	uint8_t encIv[48];
 	ZTLF_SHA384(encIv,h->iv,sizeof(h->iv));
 	ZTLF_AES256CFB enc;
 	ZTLF_AES256CFB_init(&enc,c->parent->networkKey,encIv,true);
-	uint8_t *const encStart = ((uint8_t *)h) + sizeof(h->hdr) + sizeof(h->crc) + sizeof(h->iv);
-	ZTLF_AES256CFB_crypt(&enc,encStart,encStart,sizeof(struct ZTLF_Message_Hello) - (sizeof(h->hdr) + sizeof(h->crc) + sizeof(h->iv)));
+	uint8_t *const encStart = ((uint8_t *)h) + sizeof(h->hdr) + sizeof(h->fletcher16) + sizeof(h->iv);
+	ZTLF_AES256CFB_crypt(&enc,encStart,encStart,sizeof(struct ZTLF_Message_Hello) - (sizeof(h->hdr) + sizeof(h->fletcher16) + sizeof(h->iv)));
 	ZTLF_AES256CFB_destroy(&enc);
 }
 
@@ -117,13 +140,14 @@ static void _ZTLF_Node_announcePeersTo(struct ZTLF_Node_PeerConnection *const c)
 			}
 			if (pilen > 0) {
 				pi->hdr = ZTLF_MESSAGE_HDR(ZTLF_PROTO_MESSAGE_TYPE_PEER_INFO,pilen);
-				_ZTLF_Node_sendTo(c,pi,pilen,false);
+				_ZTLF_Node_sendTo(c,pi,pilen);
 			}
 		}
 	}
 	pthread_mutex_unlock(&(c->parent->connLock));
 }
 
+/* Per-connection thread main */
 static void *_ZTLF_Node_connectionHandler(void *tptr)
 {
 	struct ZTLF_Node_PeerConnection *const c = (struct ZTLF_Node_PeerConnection *)tptr;
@@ -155,8 +179,13 @@ static void *_ZTLF_Node_connectionHandler(void *tptr)
 #endif
 
 		for(fl=ZTLF_SEND_BUF_SIZE;fl>=(ZTLF_SEND_BUF_SIZE / 8);fl-=(ZTLF_SEND_BUF_SIZE / 8)) {
-			if (setsockopt(c->sock,SOL_SOCKET,SO_SNDBUF,&fl,sizeof(fl)) == 0)
+			if (setsockopt(c->sock,SOL_SOCKET,SO_SNDBUF,&fl,sizeof(fl)) == 0) {
+				c->sockSendBufSize = (int)fl;
 				break;
+			}
+		}
+		if (!c->sockSendBufSize) {
+			ZTLF_L_warning("unable to set any send buffer size on TCP connection!");
 		}
 
 		fcntl(c->sock,F_SETFL,fcntl(c->sock,F_GETFL)&(~O_NONBLOCK));
@@ -171,12 +200,12 @@ static void *_ZTLF_Node_connectionHandler(void *tptr)
 
 	struct ZTLF_Message_Hello lastHelloSent;
 	_ZTLF_Node_mkHello(c,&lastHelloSent,c->parent->publicKey,0ULL);
-	_ZTLF_Node_sendTo(c,&lastHelloSent,sizeof(lastHelloSent),false);
+	_ZTLF_Node_sendTo(c,&lastHelloSent,sizeof(lastHelloSent));
 
 	unsigned int rptr = 0;
 	for(;;) {
 		const int nr = (int)recv(c->sock,mbuf + rptr,ZTLF_RECV_BUF_SIZE - rptr,0);
-		if (unlikely(nr < 0)) {
+		if (nr < 0) {
 			if ((errno == EINTR)||(errno == EAGAIN))
 				continue;
 			goto terminate_connection;
@@ -194,7 +223,7 @@ static void *_ZTLF_Node_connectionHandler(void *tptr)
 			msize += sizeof(struct ZTLF_Message) + 1; /* message size doesn't include header size, and range is 1-4096 not 0-4095 */
 
 			if (rptr >= msize) { /* a complete message was received */
-				if (ntohl(((struct ZTLF_Message *)mbuf)->crc) != ZTLF_crc32(mbuf + sizeof(struct ZTLF_Message),msize - sizeof(struct ZTLF_Message))) {
+				if (ntohs(((struct ZTLF_Message *)mbuf)->fletcher16) != ZTLF_fletcher16(mbuf + sizeof(struct ZTLF_Message),msize - sizeof(struct ZTLF_Message))) {
 					termReason = ZTLF_PROTO_GOODBYE_REASON_NONE;
 					goto terminate_connection;
 				}
@@ -227,8 +256,8 @@ static void *_ZTLF_Node_connectionHandler(void *tptr)
 							ZTLF_SHA384(decIv,h->iv,sizeof(h->iv));
 							ZTLF_AES256CFB dec;
 							ZTLF_AES256CFB_init(&dec,c->parent->networkKey,decIv,false);
-							uint8_t *const decStart = ((uint8_t *)h) + sizeof(h->hdr) + sizeof(h->crc) + sizeof(h->iv);
-							ZTLF_AES256CFB_crypt(&dec,decStart,decStart,sizeof(struct ZTLF_Message_Hello) - (sizeof(h->hdr) + sizeof(h->crc) + sizeof(h->iv)));
+							uint8_t *const decStart = ((uint8_t *)h) + sizeof(h->hdr) + sizeof(h->fletcher16) + sizeof(h->iv);
+							ZTLF_AES256CFB_crypt(&dec,decStart,decStart,sizeof(struct ZTLF_Message_Hello) - (sizeof(h->hdr) + sizeof(h->fletcher16) + sizeof(h->iv)));
 							ZTLF_AES256CFB_destroy(&dec);
 
 							if ((h->protoVersion != ZTLF_PROTO_VERSION)||(h->cipher != ZTLF_PROTO_CIPHER_C25519_AES256_CFB)) {
@@ -286,7 +315,7 @@ static void *_ZTLF_Node_connectionHandler(void *tptr)
 							ok.version[1] = ZTLF_VERSION_MINOR;
 							ok.version[2] = ZTLF_VERSION_REVISION;
 							ok.version[3] = ZTLF_VERSION_REVISION;
-							_ZTLF_Node_sendTo(c,&ok,sizeof(ok),false);
+							_ZTLF_Node_sendTo(c,&ok,sizeof(ok));
 						}
 						break;
 
@@ -334,7 +363,7 @@ static void *_ZTLF_Node_connectionHandler(void *tptr)
 									pthread_mutex_lock(&(c->parent->connLock));
 									for(unsigned long i=0;i<c->parent->connCount;++i) {
 										if ((&(c->parent->conn[i]) != c)&&(c->parent->conn[i].connectionEstablished))
-											_ZTLF_Node_sendTo(&(c->parent->conn[i]),pi,pilen,false);
+											_ZTLF_Node_sendTo(&(c->parent->conn[i]),pi,pilen);
 									}
 									pthread_mutex_unlock(&(c->parent->connLock));
 								}
@@ -401,6 +430,8 @@ static void *_ZTLF_Node_connectionHandler(void *tptr)
 				if (rptr > msize)
 					memmove(mbuf,mbuf + msize,rptr - msize);
 				rptr -= msize;
+			} else {
+				break;
 			}
 		}
 	}
@@ -446,6 +477,7 @@ static void _ZTLF_Node_newConnection(struct ZTLF_Node *const n,const struct sock
 	c->parent = n;
 	memcpy(&(c->remoteAddress),addr,sizeof(struct sockaddr_storage));
 	c->sock = sock;
+	c->sockSendBufSize = 0;
 	c->encryptor = NULL;
 	pthread_mutex_init(&(c->sendLock),NULL);
 	if (expectedRemoteKeyHash)

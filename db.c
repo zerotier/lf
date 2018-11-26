@@ -368,12 +368,12 @@ long ZTLF_DB_getRecord(struct ZTLF_DB *const db,struct ZTLF_Record *r,double *ag
 	return 0;
 }
 
-int ZTLF_DB_putRecord(struct ZTLF_DB *db,struct ZTLF_RecordInfo *const ri)
+int ZTLF_DB_putRecord(struct ZTLF_DB *db,struct ZTLF_ExpandedRecord *const er)
 {
 	uint8_t rwtmp[ZTLF_RECORD_MAX_SIZE + 8];
 	int e = 0,result = 0;
 
-	if ((!ri)||(ri->size < ZTLF_RECORD_MIN_SIZE)||(ri->size > ZTLF_RECORD_MAX_SIZE)) { /* sanity checks */
+	if ((!er)||(er->size < ZTLF_RECORD_MIN_SIZE)||(er->size > ZTLF_RECORD_MAX_SIZE)) { /* sanity checks */
 		return ZTLF_NEG(EINVAL);
 	}
 
@@ -430,10 +430,10 @@ int ZTLF_DB_putRecord(struct ZTLF_DB *db,struct ZTLF_RecordInfo *const ri)
 	/* Write record size and record to data file. Size prefix is not used by this
 	 * code but allows the record data file to be parsed and used as input for e.g.
 	 * bulk loading of records. */
-	rwtmp[0] = (uint8_t)((ri->size >> 8) & 0xff);
-	rwtmp[1] = (uint8_t)(ri->size & 0xff);
-	memcpy(rwtmp + 2,ri->r,ri->size); 
-	if (write(db->df,rwtmp,(size_t)(ri->size + 2)) != (ssize_t)(ri->size + 2)) {
+	rwtmp[0] = (uint8_t)((er->size >> 8) & 0xff);
+	rwtmp[1] = (uint8_t)(er->size & 0xff);
+	memcpy(rwtmp + 2,er->r,er->size); 
+	if (write(db->df,rwtmp,(size_t)(er->size + 2)) != (ssize_t)(er->size + 2)) {
 		result = ZTLF_NEG(errno);
 		goto exit_putRecord;
 	}
@@ -442,22 +442,22 @@ int ZTLF_DB_putRecord(struct ZTLF_DB *db,struct ZTLF_RecordInfo *const ri)
 	/* Add entry to main record table. */
 	sqlite3_reset(db->sAddRecord);
 	sqlite3_bind_int64(db->sAddRecord,1,doff);
-	sqlite3_bind_int64(db->sAddRecord,2,(sqlite3_int64)ri->size);
+	sqlite3_bind_int64(db->sAddRecord,2,(sqlite3_int64)er->size);
 	sqlite3_bind_int64(db->sAddRecord,3,goff);
-	sqlite3_bind_int64(db->sAddRecord,4,(sqlite3_int64)ri->timestamp);
-	sqlite3_bind_int64(db->sAddRecord,5,(sqlite3_int64)ri->expiration);
-	sqlite3_bind_blob(db->sAddRecord,6,ri->r->id,sizeof(ri->r->id),SQLITE_STATIC);
-	sqlite3_bind_blob(db->sAddRecord,7,ri->r->owner,sizeof(ri->r->owner),SQLITE_STATIC);
-	sqlite3_bind_blob(db->sAddRecord,8,ri->hash,32,SQLITE_STATIC);
+	sqlite3_bind_int64(db->sAddRecord,4,(sqlite3_int64)er->timestamp);
+	sqlite3_bind_int64(db->sAddRecord,5,(sqlite3_int64)(er->timestamp + er->ttl));
+	sqlite3_bind_blob(db->sAddRecord,6,er->r->id,sizeof(er->r->id),SQLITE_STATIC);
+	sqlite3_bind_blob(db->sAddRecord,7,er->r->owner,sizeof(er->r->owner),SQLITE_STATIC);
+	sqlite3_bind_blob(db->sAddRecord,8,er->hash,32,SQLITE_STATIC);
 	if ((e = sqlite3_step(db->sAddRecord)) != SQLITE_DONE) {
 		result = ZTLF_POS(e);
 		goto exit_putRecord;
 	}
 
 	/* Set links from this record in graph node or create dangling link entries. */
-	graphNode->linkCount = ri->linkCount;
-	for(unsigned int i=0;i<ri->linkCount;++i) {
-		const uint8_t *l = ri->links + (i * 32);
+	graphNode->linkCount = er->r->linkCount;
+	for(unsigned int i=0,j=er->r->linkCount;i<j;++i) {
+		const uint8_t *l = er->links + (i * 32);
 		sqlite3_reset(db->sGetRecordInfoByHash);
 		sqlite3_bind_blob(db->sGetRecordInfoByHash,1,l,32,SQLITE_STATIC);
 		if (sqlite3_step(db->sGetRecordInfoByHash) == SQLITE_ROW) {
@@ -477,9 +477,9 @@ int ZTLF_DB_putRecord(struct ZTLF_DB *db,struct ZTLF_RecordInfo *const ri)
 	/* Compute this record's total weight from its internal weight plus the total weights of
 	 * records linking to it. Also set this record's graph node offset in linking records'
 	 * graph nodes. */
-	double totalWeight = ri->weight;
+	double totalWeight = er->weight;
 	sqlite3_reset(db->sGetDanglingLinks);
-	sqlite3_bind_blob(db->sGetDanglingLinks,1,ri->hash,32,SQLITE_STATIC);
+	sqlite3_bind_blob(db->sGetDanglingLinks,1,er->hash,32,SQLITE_STATIC);
 	while (sqlite3_step(db->sGetDanglingLinks) == SQLITE_ROW) {
 		volatile struct ZTLF_DB_GraphNode *const linkingRecordGraphNode = (volatile struct ZTLF_DB_GraphNode *)(db->gfm + (uintptr_t)sqlite3_column_int64(db->sGetDanglingLinks,0));
 		totalWeight += linkingRecordGraphNode->totalWeight;
@@ -493,7 +493,7 @@ int ZTLF_DB_putRecord(struct ZTLF_DB *db,struct ZTLF_RecordInfo *const ri)
 
 	/* Delete dangling links to this record. */
 	sqlite3_reset(db->sDeleteDanglingLinks);
-	sqlite3_bind_blob(db->sDeleteDanglingLinks,1,ri->hash,32,SQLITE_STATIC);
+	sqlite3_bind_blob(db->sDeleteDanglingLinks,1,er->hash,32,SQLITE_STATIC);
 	if ((e = sqlite3_step(db->sDeleteDanglingLinks)) != SQLITE_DONE)
 		fprintf(stderr,"WARNING: database error deleting dangling links for received record: %d\n",e);
 
@@ -507,7 +507,7 @@ int ZTLF_DB_putRecord(struct ZTLF_DB *db,struct ZTLF_RecordInfo *const ri)
 	/* Traverse graph of all records below this one and add this record's weight
 	 * to their total weights. */
 	struct ZTLF_ISet *const visited = ZTLF_ISet_new();
-	const double wtmp = ri->weight;
+	const double wtmp = er->weight;
 	for(unsigned long i=0;i<graphTraversalQueue.size;) {
 		const int64_t goff = graphTraversalQueue.v[i++];
 		if (ZTLF_ISet_put(visited,goff)) {

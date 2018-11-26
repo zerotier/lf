@@ -39,6 +39,7 @@ struct ZTLF_Node_PeerConnection
 	struct sockaddr_storage remoteAddress;
 
 	int sock;
+	int sockSendBufSize;
 	ZTLF_AES256CFB *encryptor;
 	uint8_t sharedSecret[32];
 	pthread_mutex_t sendLock;

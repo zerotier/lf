@@ -52,8 +52,8 @@
 
 /* Message header prefixing every message: type, size, CRC32 */
 ZTLF_PACKED_STRUCT(struct ZTLF_Message {
-	uint16_t hdr; /* TTTTSSSSSSSSSSSS: T == type, S == inclusive message size - 1 (1-4096) */
-	uint32_t crc; /* CRC32 of data after this header */
+	uint16_t hdr;        /* TTTTSSSSSSSSSSSS: T == type, S == inclusive message size - 1 (1-4096) */
+	uint16_t fletcher16; /* fletcher16 checksum of data after header */
 });
 
 /* This computes the hdr field that starts each message. */
@@ -61,7 +61,7 @@ ZTLF_PACKED_STRUCT(struct ZTLF_Message {
 
 ZTLF_PACKED_STRUCT(struct ZTLF_Message_Hello {
 	uint16_t hdr;
-	uint32_t crc;
+	uint16_t fletcher16;
 
 	uint8_t iv[16];
 
@@ -76,7 +76,7 @@ ZTLF_PACKED_STRUCT(struct ZTLF_Message_Hello {
 
 ZTLF_PACKED_STRUCT(struct ZTLF_Message_OK {
 	uint16_t hdr;
-	uint32_t crc;
+	uint16_t fletcher16;
 
 	uint8_t ack[48];            /* SHA384(original hello packet | shared secret) */
 	uint64_t helloTime;         /* time echoed from original hello */
@@ -86,14 +86,14 @@ ZTLF_PACKED_STRUCT(struct ZTLF_Message_OK {
 
 ZTLF_PACKED_STRUCT(struct ZTLF_Message_Goodbye {
 	uint16_t hdr;
-	uint32_t crc;
+	uint16_t fletcher16;
 
 	uint8_t reason;
 });
 
 ZTLF_PACKED_STRUCT(struct ZTLF_Message_PeerInfo {
 	uint16_t hdr;
-	uint32_t crc;
+	uint16_t fletcher16;
 
 	uint64_t keyHash[6];        /* SHA384(publicKey) */
 	uint8_t addressType;        /* 6 or 4 */
@@ -102,7 +102,7 @@ ZTLF_PACKED_STRUCT(struct ZTLF_Message_PeerInfo {
 
 ZTLF_PACKED_STRUCT(struct ZTLF_Message_Record {
 	uint16_t hdr;
-	uint32_t crc;
+	uint16_t fletcher16;
 
 	struct ZTLF_Record record;
 });
@@ -116,7 +116,7 @@ ZTLF_PACKED_STRUCT(struct ZTLF_Message_RecordRequestByID {
 
 ZTLF_PACKED_STRUCT(struct ZTLF_Message_RecordRequestByHash {
 	uint16_t hdr;
-	uint32_t crc;
+	uint16_t fletcher16;
 
 	uint8_t count;  /* maximum number of records to return */
 	uint8_t hash[]; /* hash prefix of arbitrary length, up to 32 bytes */

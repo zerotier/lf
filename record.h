@@ -31,16 +31,13 @@
 #include "sha.h"
 #include "wharrgarbl.h"
 #include "ed25519.h"
+#include "score.h"
 
-/**
- * Record type 0: identified by ed25519 public keys, AES256-CFB encrypted value.
- */
-#define ZTLF_RECORD_TYPE_ED25519_ED25519_AES256CFB   0x0
-
-/**
- * Flag 0x10: this record's value is not encrypted (visible even without key)
- */
-#define ZTLF_RECORD_FLAG_UNMASKED                    0x10
+#define ZTLF_RECORD_ALG_CIPHER_NONE       0x0
+#define ZTLF_RECORD_ALG_CIPHER_AES256CFB  0x1
+#define ZTLF_RECORD_ALG_SIG_ED25519       0x0
+#define ZTLF_RECORD_ALG_WORK_NONE         0x0
+#define ZTLF_RECORD_ALG_WORK_WHARRGARBL   0x1
 
 /**
  * Minimum size of a record (simply size of header)
@@ -48,25 +45,19 @@
 #define ZTLF_RECORD_MIN_SIZE                         sizeof(struct ZTLF_Record)
 
 /**
- * Overall maximum record size (cannot be changed)
+ * Overall maximum allowed record size (sanity limit, cannot be changed)
  */
 #define ZTLF_RECORD_MAX_SIZE                         4096
 
 /**
- * Maximum record value size (theoretical max: 4096 - overhead)
+ * Maximum record value size (cannot be changed without network-wide upgrade)
  */
-#define ZTLF_RECORD_MAX_VALUE_SIZE                   256
+#define ZTLF_RECORD_MAX_VALUE_SIZE                   512
 
 /**
  * Unit for TTL in seconds (cannot be changed)
  */
 #define ZTLF_RECORD_TTL_INCREMENT_SEC                123671
-
-#define ZTLF_RECORD_FIELD_VALUE                      0x0
-#define ZTLF_RECORD_FIELD_LINKS                      0xc
-#define ZTLF_RECORD_FIELD_ID_CLAIM_SIGNATURE         0xd
-#define ZTLF_RECORD_FIELD_WHARRGARBL_POW             0xe
-#define ZTLF_RECORD_FIELD_OWNER_SIGNATURE            0xf
 
 /**
  * Packed record as it appears on the wire and in the database
@@ -75,68 +66,132 @@ ZTLF_PACKED_STRUCT(struct ZTLF_Record
 {
 	uint64_t id[4];                            /* public key (or hash thereof) derived from record key */
 	uint64_t owner[4];                         /* public key (or hash thereof) of owner */
-	uint8_t flags;                             /* least significant 4 bits: type, most significant 4 bits: flags */
-	uint8_t ttl;                               /* TTL in 123671 second (~34 hour) increments or 0 to relinquish ID ownership now */
 	uint8_t timestamp[5];                      /* 40-bit (big-endian) timestamp in seconds since epoch */
-	uint8_t data[];                            /* value and fields */
+	uint8_t ttl;                               /* TTL in 123671 second (~34 hour) increments or 0 to relinquish ID ownership now */
+	uint8_t linkCount;                         /* number of 32-byte links to hashes of other records */
+	uint8_t algorithms;                        /* VVWWIIOO: VV=value cipher,WW=work,II=id claim signature,OO=owner signature */
+	uint8_t data[];                            /* value, work, links, id claim signature, owner signature */
 });
 
 /**
- * Record information as expanded (parsed) from a record
+ * Expanded record with convenient pointers to record fields and sizes
  */
-struct ZTLF_RecordInfo
+struct ZTLF_ExpandedRecord
 {
-	uint64_t hash[4];
 	const struct ZTLF_Record *r;
-	unsigned long size;
+
+	const void *value;
+	const void *work;
+	const void *links; /* size in bytes is 32*r->linkCount */
+	const void *idClaimSignature;
+	const void *ownerSignature;
+
+	uint64_t hash[4];
 
 	uint64_t timestamp;
-	uint64_t expiration;
-
-	const uint8_t *value;
-	const uint8_t *links; /* size is always a multiple of 32 bytes */
-	const uint8_t *idClaimSignatureEd25519;
-	const uint8_t *ownerSignatureEd25519;
-	const uint8_t *wharrgarblPow;
-
+	uint64_t ttl;
 	double weight;
-	unsigned int linkCount; /* in 32-byte links, not bytes */
+	unsigned int size;
+
+	unsigned int workSize;
+	unsigned int idClaimSignatureSize;
+	unsigned int ownerSignatureSize;
 	unsigned int valueSize;
+
+	uint8_t valueCipher;
+	uint8_t workAlgorithm;
+	uint8_t idClaimSignatureAlgorithm;
+	uint8_t ownerSignatureAlgorithm;
 };
 
 /**
+ * Compute a record ID from a plain-text key
+ * 
+ * @param id Record ID buffer to fill
+ * @param k Plain text key
+ * @param klen Length of plain text key
+ */
+static inline void ZTLF_Record_keyToId(uint64_t id[4],const void *k,const unsigned long klen)
+{
+	uint8_t seed[64],priv[64];
+	ZTLF_SHA512(seed,k,klen);
+	ZTLF_Ed25519CreateKeypair((unsigned char *)id,priv,seed); /* only the first 32 bytes of the hash are used here */
+}
+
+/**
+ * Extract record timestamp from record
+ * 
  * @param r Record
- * @return Timestamp in milliseconds since epoch
+ * @return Timestamp in seconds since Unix epoch
  */
 static inline uint64_t ZTLF_Record_timestamp(const struct ZTLF_Record *r) { return ((((uint64_t)r->timestamp[0]) << 32) | (((uint64_t)r->timestamp[1]) << 24) | (((uint64_t)r->timestamp[2]) << 16) | (((uint64_t)r->timestamp[3]) << 8) | (uint64_t)r->timestamp[4]); }
 
 /**
- * Convert a plaintext key into a record ID
+ * Extract record TTL from record
+ * 
+ * @param r Record
+ * @return Time to live in seconds since Unix epoch
  */
-void ZTLF_Record_keyToId(uint64_t id[4],const void *k,const unsigned long klen);
+static inline uint64_t ZTLF_Record_ttl(const struct ZTLF_Record *r) { return (((uint64_t)r->ttl) * (uint64_t)ZTLF_RECORD_TTL_INCREMENT_SEC); }
 
 /**
- * Parse and expand a record into a structure containing field information
+ * Expand record into its constituent fields and perform basic validation
  * 
- * Note that ri references r but doesn't copy it, so r must continue to exist as long
- * as ri needs to be used.
- * 
- * @param ri Structure to fill with expanded record info
- * @param r Packed record
- * @param rsize Total size of record
- * @return True on success
+ * @param er Expanded record structure to fill
+ * @param r Packed record to expand (er contains pointers into this, so it must be held while er is used)
+ * @param rsize Total size of record in bytes
+ * @return True if packed record appears valid
  */
-bool ZTLF_Record_expand(struct ZTLF_RecordInfo *ri,const struct ZTLF_Record *r,const unsigned long rsize);
+static inline bool ZTLF_Record_expand(struct ZTLF_ExpandedRecord *const er,const struct ZTLF_Record *const r,const unsigned int rsize)
+{
+	er->valueCipher = (r->algorithms >> 6) & 3;
+	er->workAlgorithm = (r->algorithms >> 4) & 3;
+	er->idClaimSignatureAlgorithm = (r->algorithms >> 2) & 3;
+	er->ownerSignatureAlgorithm = r->algorithms & 3;
 
-/**
- * Decrypt record value using its plaintext key
- * 
- * @param ri Expanded record
- * @param out Output buffer (must be at least ri->valueSize bytes in size)
- * @param k Plain text record key (not ID)
- * @param klen Length of plain text key
- * @return Number of bytes written to 'out'
- */
-unsigned int ZTLF_Record_open(const struct ZTLF_RecordInfo *ri,void *out,const void *k,const unsigned long klen);
+	ZTLF_Shandwich256(er->hash,r,rsize);
+	er->timestamp = ZTLF_Record_timestamp(r);
+	er->ttl = ZTLF_Record_ttl(r);
+	er->weight = ZTLF_score((const uint8_t *)er->hash);
+	er->size = rsize;
+
+	switch (er->workAlgorithm) {
+		case ZTLF_RECORD_ALG_WORK_NONE:
+			er->workSize = 0;
+			break;
+		case ZTLF_RECORD_ALG_WORK_WHARRGARBL:
+			er->workSize = ZTLF_WHARRGARBL_POW_BYTES;
+			break;
+		default:
+			return false;
+	}
+	switch (er->idClaimSignatureAlgorithm) {
+		case ZTLF_RECORD_ALG_SIG_ED25519:
+			er->idClaimSignatureSize = ZTLF_ED25519_SIGNATURE_SIZE;
+			break;
+		default:
+			return false;
+	}
+	switch (er->ownerSignatureAlgorithm) {
+		case ZTLF_RECORD_ALG_SIG_ED25519:
+			er->ownerSignatureSize = ZTLF_ED25519_SIGNATURE_SIZE;
+			break;
+		default:
+			return false;
+	}
+	er->valueSize = rsize - (er->workSize + er->idClaimSignatureSize + er->ownerSignatureSize + (32 * (unsigned int)r->linkCount));
+	if (er->valueSize > rsize)
+		return false;
+
+	er->r = r;
+
+	er->value = r->data;
+	er->work = ((const uint8_t *)er->value) + er->valueSize;
+	er->links = ((const uint8_t *)er->work) + er->workSize;
+	er->idClaimSignature = ((const uint8_t *)er->links) + (32 * (unsigned int)r->linkCount);
+	er->ownerSignature = ((const uint8_t *)er->idClaimSignature) + er->idClaimSignatureSize;
+
+	return true;
+}
 
 #endif
