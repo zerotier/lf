@@ -50,7 +50,7 @@
 /**
  * Overall maximum record size (cannot be changed)
  */
-#define ZTLF_RECORD_MAX_SIZE                         4095
+#define ZTLF_RECORD_MAX_SIZE                         4096
 
 /**
  * Maximum record value size (theoretical max: 4096 - overhead)
@@ -58,25 +58,15 @@
 #define ZTLF_RECORD_MAX_VALUE_SIZE                   256
 
 /**
- * Maximum number of CA signature fields (sanity limit)
- */
-#define ZTLF_RECORD_MAX_CA_SIGNATURES                16
-
-/**
- * Number of links from one record to others (cannot be changed)
- */
-#define ZTLF_RECORD_LINK_COUNT                       8
-
-/**
  * Unit for TTL in seconds (cannot be changed)
  */
 #define ZTLF_RECORD_TTL_INCREMENT_SEC                123671
 
 #define ZTLF_RECORD_FIELD_VALUE                      0x0
-#define ZTLF_RECORD_FIELD_ID_CLAIM_SIGNATURE_ED25519 0xc
-#define ZTLF_RECORD_FIELD_OWNER_SIGNATURE_ED25519    0xd
-#define ZTLF_RECORD_FIELD_CA_SIGNATURE_ED25519       0xe
-#define ZTLF_RECORD_FIELD_WHARRGARBL_POW             0xf
+#define ZTLF_RECORD_FIELD_LINKS                      0xc
+#define ZTLF_RECORD_FIELD_ID_CLAIM_SIGNATURE         0xd
+#define ZTLF_RECORD_FIELD_WHARRGARBL_POW             0xe
+#define ZTLF_RECORD_FIELD_OWNER_SIGNATURE            0xf
 
 /**
  * Packed record as it appears on the wire and in the database
@@ -85,9 +75,7 @@ ZTLF_PACKED_STRUCT(struct ZTLF_Record
 {
 	uint64_t id[4];                            /* public key (or hash thereof) derived from record key */
 	uint64_t owner[4];                         /* public key (or hash thereof) of owner */
-	uint64_t links[ZTLF_RECORD_LINK_COUNT][4]; /* links to other records by shandwich256(record) */
 	uint8_t flags;                             /* least significant 4 bits: type, most significant 4 bits: flags */
-	uint8_t reserved;                          /* currently must be 0 */
 	uint8_t ttl;                               /* TTL in 123671 second (~34 hour) increments or 0 to relinquish ID ownership now */
 	uint8_t timestamp[5];                      /* 40-bit (big-endian) timestamp in seconds since epoch */
 	uint8_t data[];                            /* value and fields */
@@ -106,13 +94,13 @@ struct ZTLF_RecordInfo
 	uint64_t expiration;
 
 	const uint8_t *value;
+	const uint8_t *links; /* size is always a multiple of 32 bytes */
 	const uint8_t *idClaimSignatureEd25519;
 	const uint8_t *ownerSignatureEd25519;
-	const uint8_t *caSignatureEd25519[ZTLF_RECORD_MAX_CA_SIGNATURES];
 	const uint8_t *wharrgarblPow;
 
 	double weight;
-	unsigned int caSignatureCount;
+	unsigned int linkCount; /* in 32-byte links, not bytes */
 	unsigned int valueSize;
 };
 

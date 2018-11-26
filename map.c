@@ -102,6 +102,7 @@ void ZTLF_Map_clear(struct ZTLF_Map *m)
 		memset(m->buckets,0,sizeof(struct ZTLF_MapEntry) * m->bucketCount);
 	}
 }
+#endif
 
 void ZTLF_Map256_init(struct ZTLF_Map256 *m,unsigned long initialBucketCountHint,void (*valueDeleter)(void *))
 {
@@ -109,8 +110,8 @@ void ZTLF_Map256_init(struct ZTLF_Map256 *m,unsigned long initialBucketCountHint
 	initialBucketCountHint >>= 12;
 	initialBucketCountHint <<= 12;
 	m->bucketCount = (initialBucketCountHint > 4096) ? initialBucketCountHint : 4096;
-	ZTLF_MALLOC_CHECK(m->buckets = (struct ZTLF_MapEntry *)malloc(sizeof(struct ZTLF_MapEntry) * m->bucketCount));
-	memset(m->buckets,0,sizeof(struct ZTLF_MapEntry) * m->bucketCount);
+	ZTLF_MALLOC_CHECK(m->buckets = (struct ZTLF_Map256Entry *)malloc(sizeof(struct ZTLF_Map256Entry) * m->bucketCount));
+	memset(m->buckets,0,sizeof(struct ZTLF_Map256Entry) * m->bucketCount);
 	m->valueDeleter = valueDeleter;
 }
 
@@ -128,7 +129,6 @@ void ZTLF_Map256_destroy(struct ZTLF_Map256 *m)
 	}
 	m->buckets = NULL;
 }
-#endif
 
 int ZTLF_Map256_set(struct ZTLF_Map256 *m,const uint64_t k[4],void *v)
 {
@@ -152,14 +152,14 @@ int ZTLF_Map256_set(struct ZTLF_Map256 *m,const uint64_t k[4],void *v)
 	nm.nonce = ZTLF_prng();
 	nm.valueDeleter = NULL;
 	nm.bucketCount = m->bucketCount << 1;
-	ZTLF_MALLOC_CHECK(nm.buckets = (struct ZTLF_MapEntry *)malloc(sizeof(struct ZTLF_Map256Entry) * nm.bucketCount));
+	ZTLF_MALLOC_CHECK(nm.buckets = (struct ZTLF_Map256Entry *)malloc(sizeof(struct ZTLF_Map256Entry) * nm.bucketCount));
 	memset(nm.buckets,0,sizeof(struct ZTLF_Map256Entry) * nm.bucketCount);
 	for(unsigned long b=0;b<m->bucketCount;++b) {
 		if (m->buckets[b].value)
-			ZTLF_Map_set(&nm,m->buckets[b].key,m->buckets[b].value);
+			ZTLF_Map256_set(&nm,m->buckets[b].key,m->buckets[b].value);
 	}
 
-	ZTLF_Map_set(&nm,k,v);
+	ZTLF_Map256_set(&nm,k,v);
 
 	m->nonce = nm.nonce;
 	free(m->buckets);

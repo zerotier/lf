@@ -31,6 +31,13 @@
 
 #define ZTLF_GRAPH_FILE_CAPACITY_INCREMENT 1048576
 
+ZTLF_PACKED_STRUCT(struct ZTLF_DB_GraphNode
+{
+	double totalWeight;
+	uint16_t linkCount;
+	int64_t linkedRecordGoff[];
+});
+
 /*
  * record
  *   doff:                offset of record data in 'records' flat file (primary key)
@@ -47,6 +54,13 @@
  *   linking_record_doff: primary key of record that 'wants' this record
  *   last_retry_time:     time of last retry in seconds since epoch
  *   retry_count:         number of attempst that have been made to get this record
+ * 
+ * peer
+ *   keyHash:             SHA384(public key)
+ *   addressType:         currently either 4 or 6
+ *   address:             IPv4 or IPv6 IP
+ *   lastConnectTime:     timestamp of most recent outgoing connect to this peer key at this IP/port (ms)
+ *   firstConnectTime:    timestamp of first outgoing connect to this peer key at this IP/port (ms)
  */
 
 #define ZTLF_DB_INIT_SQL \
@@ -85,7 +99,18 @@
 ") WITHOUT ROWID;\n" \
 \
 "CREATE INDEX IF NOT EXISTS dangling_link_linking_record_doff ON dangling_link(linking_record_doff);\n" \
-"CREATE INDEX IF NOT EXISTS dangling_link_retry_count_last_retry_time ON dangling_link(retry_count,last_retry_time);\n"
+"CREATE INDEX IF NOT EXISTS dangling_link_retry_count_last_retry_time ON dangling_link(retry_count,last_retry_time);\n" \
+\
+"CREATE TABLE IF NOT EXISTS peer (" \
+"keyHash BLOB(48) PRIMARY KEY NOT NULL," \
+"address BLOB NOT NULL," \
+"addressType INTEGER NOT NULL," \
+"port INTEGER NOT NULL," \
+"lastConnectTime INTEGER NOT NULL," \
+"firstConnectTime INTEGER NOT NULL" \
+") WITHOUT ROWID;\n" \
+\
+"CREATE INDEX IF NOT EXISTS peer_lastConnectTime_firstConnectTime ON peer(lastConnectTime,firstConnectTime);\n"
 
 int ZTLF_DB_open(struct ZTLF_DB *db,const char *path)
 {
@@ -120,6 +145,8 @@ int ZTLF_DB_open(struct ZTLF_DB *db,const char *path)
 
 	if ((e = sqlite3_prepare_v2(db->dbc,"INSERT INTO record (doff,dlen,goff,ts,exp,id,owner,hash) VALUES (?,?,?,?,?,?,?,?)",-1,&db->sAddRecord,NULL)) != SQLITE_OK)
 		goto exit_with_error;
+	if ((e = sqlite3_prepare_v2(db->dbc,"SELECT MAX(goff) FROM record",-1,&db->sGetMaxRecordGoff,NULL)) != SQLITE_OK)
+		goto exit_with_error;
 	if ((e = sqlite3_prepare_v2(db->dbc,"SELECT MAX(ts) FROM record",-1,&db->sGetLatestRecordTimestamp,NULL)) != SQLITE_OK)
 		goto exit_with_error;
 	if ((e = sqlite3_prepare_v2(db->dbc,"SELECT doff,dlen,goff,ts,exp,owner FROM record WHERE id = ? AND doff NOT IN (SELECT dangling_link.linking_record_doff FROM dangling_link WHERE dangling_link.linking_record_doff = record.doff) ORDER BY ts DESC",-1,&db->sGetRecordHistoryById,NULL)) != SQLITE_OK)
@@ -138,6 +165,12 @@ int ZTLF_DB_open(struct ZTLF_DB *db,const char *path)
 		goto exit_with_error;
 	if ((e = sqlite3_prepare_v2(db->dbc,"UPDATE dangling_link SET last_retry_time = ?,retry_count = (retry_count + 1) WHERE hash = ?",-1,&db->sUpdateDanglingLinkRetryInfo,NULL)) != SQLITE_OK)
 		goto exit_with_error;
+	if ((e = sqlite3_prepare_v2(db->dbc,"SELECT firstConnectTime FROM peer WHERE keyHash = ?",-1,&db->sGetPeerFirstConnectTime,NULL)) != SQLITE_OK)
+		goto exit_with_error;
+	if ((e = sqlite3_prepare_v2(db->dbc,"INSERT OR REPLACE INTO peer (keyHash,address,addressType,port,lastConnectTime,firstConnectTime) VALUES (?,?,?,?,?,?)",-1,&db->sAddUpdatePeer,NULL)) != SQLITE_OK)
+		goto exit_with_error;
+	if ((e = sqlite3_prepare_v2(db->dbc,"INSERT OR IGNORE INTO peer (keyHash,address,addressType,port,lastConnectTime,firstConnectTime) VALUES (?,?,?,?,0,0)",-1,&db->sAddPotentialPeer,NULL)) != SQLITE_OK)
+		goto exit_with_error;
 
 	snprintf(tmp,sizeof(tmp),"%s" ZTLF_PATH_SEPARATOR "graph.bin",path);
 	db->gfd = open(tmp,O_RDWR|O_CREAT,0644);
@@ -146,14 +179,14 @@ int ZTLF_DB_open(struct ZTLF_DB *db,const char *path)
 	const long siz = lseek(db->gfd,0,SEEK_END);
 	if (siz < 0)
 		goto exit_with_error;
-	if (siz < (ZTLF_GRAPH_FILE_CAPACITY_INCREMENT * sizeof(struct ZTLF_DB_GraphNode))) {
-		if (ftruncate(db->gfd,ZTLF_GRAPH_FILE_CAPACITY_INCREMENT * sizeof(struct ZTLF_DB_GraphNode)))
+	if (siz < ZTLF_GRAPH_FILE_CAPACITY_INCREMENT) {
+		if (ftruncate(db->gfd,ZTLF_GRAPH_FILE_CAPACITY_INCREMENT))
 			goto exit_with_error;
 		db->gfcap = ZTLF_GRAPH_FILE_CAPACITY_INCREMENT;
 	} else {
-		db->gfcap = (uint64_t)(siz / sizeof(struct ZTLF_DB_GraphNode));
+		db->gfcap = (uint64_t)siz;
 	}
-	db->gfm = mmap(NULL,(size_t)(db->gfcap * sizeof(struct ZTLF_DB_GraphNode)),PROT_READ|PROT_WRITE,MAP_FILE|MAP_SHARED,db->gfd,0);
+	db->gfm = mmap(NULL,(size_t)db->gfcap,PROT_READ|PROT_WRITE,MAP_FILE|MAP_SHARED,db->gfd,0);
 	if (!db->gfm)
 		goto exit_with_error;
 
@@ -182,20 +215,24 @@ void ZTLF_DB_close(struct ZTLF_DB *db)
 		close(db->df);
 
 	if (db->dbc) {
-		if (db->sAddRecord) sqlite3_finalize(db->sAddRecord);
-		if (db->sGetLatestRecordTimestamp) sqlite3_finalize(db->sGetLatestRecordTimestamp);
-		if (db->sGetRecordHistoryById) sqlite3_finalize(db->sGetRecordHistoryById);
-		if (db->sGetRecordCount) sqlite3_finalize(db->sGetRecordCount);
-		if (db->sGetRecordInfoByHash) sqlite3_finalize(db->sGetRecordInfoByHash);
-		if (db->sGetDanglingLinks) sqlite3_finalize(db->sGetDanglingLinks);
-		if (db->sDeleteDanglingLinks) sqlite3_finalize(db->sDeleteDanglingLinks);
-		if (db->sAddDanglingLink) sqlite3_finalize(db->sAddDanglingLink);
-		if (db->sGetDanglingLinksForRetry) sqlite3_finalize(db->sGetDanglingLinksForRetry);
+		if (db->sAddRecord)                 sqlite3_finalize(db->sAddRecord);
+		if (db->sGetMaxRecordGoff)          sqlite3_finalize(db->sGetMaxRecordGoff);
+		if (db->sGetLatestRecordTimestamp)  sqlite3_finalize(db->sGetLatestRecordTimestamp);
+		if (db->sGetRecordHistoryById)      sqlite3_finalize(db->sGetRecordHistoryById);
+		if (db->sGetRecordCount)            sqlite3_finalize(db->sGetRecordCount);
+		if (db->sGetRecordInfoByHash)       sqlite3_finalize(db->sGetRecordInfoByHash);
+		if (db->sGetDanglingLinks)          sqlite3_finalize(db->sGetDanglingLinks);
+		if (db->sDeleteDanglingLinks)       sqlite3_finalize(db->sDeleteDanglingLinks);
+		if (db->sAddDanglingLink)           sqlite3_finalize(db->sAddDanglingLink);
+		if (db->sGetDanglingLinksForRetry)  sqlite3_finalize(db->sGetDanglingLinksForRetry);
+		if (db->sGetPeerFirstConnectTime)   sqlite3_finalize(db->sGetPeerFirstConnectTime);
+		if (db->sAddUpdatePeer)             sqlite3_finalize(db->sAddUpdatePeer);
+		if (db->sAddPotentialPeer)          sqlite3_finalize(db->sAddPotentialPeer);
 		sqlite3_close_v2(db->dbc);
 	}
 
 	if (db->gfm)
-		munmap((void *)db->gfm,(size_t)(db->gfcap * sizeof(struct ZTLF_DB_GraphNode)));
+		munmap((void *)db->gfm,(size_t)db->gfcap);
 	if (db->gfd >= 0)
 		close(db->gfd);
 
@@ -219,7 +256,50 @@ struct _ZTLF_getRecord_owner
 	bool eof;
 };
 
-long ZTLF_getRecord(struct ZTLF_DB *const db,struct ZTLF_Record *r,double *aggregatedTotalWeight,const void *const id)
+bool ZTLF_DB_logOutgoingPeerConnectSuccess(struct ZTLF_DB *const db,const void *keyHash,const unsigned int addressType,const void *address,const unsigned int addressLength,const unsigned int port)
+{
+	bool r = true;
+	pthread_mutex_lock(&db->dbcLock);
+
+	int64_t now = (int64_t)ZTLF_timeMs();
+	int64_t firstConnectTime = now;
+
+	sqlite3_reset(db->sGetPeerFirstConnectTime);
+	sqlite3_bind_blob(db->sGetPeerFirstConnectTime,1,keyHash,48,SQLITE_STATIC);
+	if (sqlite3_step(db->sGetPeerFirstConnectTime) == SQLITE_ROW) {
+		const int64_t fct = sqlite3_column_int64(db->sGetPeerFirstConnectTime,0);
+		if (fct > 0) {
+			firstConnectTime = fct;
+			r = false;
+		}
+	}
+
+	sqlite3_reset(db->sAddUpdatePeer);
+	sqlite3_bind_blob(db->sAddUpdatePeer,1,keyHash,48,SQLITE_STATIC);
+	sqlite3_bind_blob(db->sAddUpdatePeer,2,address,addressLength,SQLITE_STATIC);
+	sqlite3_bind_int(db->sAddUpdatePeer,3,(int)addressType);
+	sqlite3_bind_int(db->sAddUpdatePeer,4,(int)port);
+	sqlite3_bind_int64(db->sAddUpdatePeer,5,now);
+	sqlite3_bind_int64(db->sAddUpdatePeer,6,firstConnectTime);
+	sqlite3_step(db->sAddUpdatePeer);
+
+	pthread_mutex_unlock(&db->dbcLock);
+	return r;
+}
+
+void ZTLF_DB_logPotentialPeer(struct ZTLF_DB *const db,const void *keyHash,const unsigned int addressType,const void *address,const unsigned int addressLength,const unsigned int port)
+{
+	pthread_mutex_lock(&db->dbcLock);
+	sqlite3_reset(db->sAddPotentialPeer);
+	sqlite3_bind_blob(db->sAddPotentialPeer,1,keyHash,48,SQLITE_STATIC);
+	sqlite3_bind_blob(db->sAddPotentialPeer,2,address,addressLength,SQLITE_STATIC);
+	sqlite3_bind_int(db->sAddPotentialPeer,3,(int)addressType);
+	sqlite3_bind_int(db->sAddPotentialPeer,4,(int)port);
+	sqlite3_step(db->sAddPotentialPeer);
+	pthread_mutex_unlock(&db->dbcLock);
+}
+
+long ZTLF_DB_getRecord(struct ZTLF_DB *const db,struct ZTLF_Record *r,double *aggregatedTotalWeight,const void *const id)
 {
 	uint64_t owner[4];
 	struct ZTLF_Map256 m;
@@ -250,7 +330,7 @@ long ZTLF_getRecord(struct ZTLF_DB *const db,struct ZTLF_Record *r,double *aggre
 				o->eof = true;
 			} else {
 				/* Total weight of this owner's set of IDs is the sum of the total weights of each update in the set. */
-				o->aggregatedTotalWeight += db->gfm[(uintptr_t)sqlite3_column_int64(db->sGetRecordHistoryById,2)].totalWeight;
+				o->aggregatedTotalWeight += ((struct ZTLF_DB_GraphNode *)(db->gfm + (uintptr_t)sqlite3_column_int64(db->sGetRecordHistoryById,2)))->totalWeight;
 			}
 
 			/* "Next" timestamp is previous row since we iterate backwards through timestamp history. */
@@ -288,7 +368,7 @@ long ZTLF_getRecord(struct ZTLF_DB *const db,struct ZTLF_Record *r,double *aggre
 	return 0;
 }
 
-int ZTLF_putRecord(struct ZTLF_DB *db,struct ZTLF_RecordInfo *const ri)
+int ZTLF_DB_putRecord(struct ZTLF_DB *db,struct ZTLF_RecordInfo *const ri)
 {
 	uint8_t rwtmp[ZTLF_RECORD_MAX_SIZE + 8];
 	int e = 0,result = 0;
@@ -304,17 +384,23 @@ int ZTLF_putRecord(struct ZTLF_DB *db,struct ZTLF_RecordInfo *const ri)
 	pthread_mutex_lock(&db->dbcLock);
 	pthread_mutex_lock(&db->gfLock);
 
-	/* Figure out where the next offset in the graph file is, which is always
-	 * equal to the current size of the record table as each record gets one entry.
-	 * Grow graph file if necessary. */
+	/* Figure out where the next record's graph node offset should be: right after previous highest. */
 	int64_t goff = 0;
-	sqlite3_reset(db->sGetRecordCount);
-	if (sqlite3_step(db->sGetRecordCount) == SQLITE_ROW)
-		goff = sqlite3_column_int64(db->sGetRecordCount,0);
-	if ((uint64_t)goff >= db->gfcap) {
-		munmap((void *)db->gfm,(size_t)(db->gfcap * sizeof(struct ZTLF_DB_GraphNode)));
-		if (ftruncate(db->gfd,(off_t)((db->gfcap + ZTLF_GRAPH_FILE_CAPACITY_INCREMENT) * sizeof(struct ZTLF_DB_GraphNode)))) {
-			db->gfm = mmap(NULL,(size_t)(db->gfcap * sizeof(struct ZTLF_DB_GraphNode)),PROT_READ|PROT_WRITE,MAP_FILE|MAP_SHARED,db->gfd,0);
+	sqlite3_reset(db->sGetMaxRecordGoff);
+	if (sqlite3_step(db->sGetMaxRecordGoff) == SQLITE_ROW) {
+		const int64_t highestExistingGoff = sqlite3_column_int64(db->sGetMaxRecordGoff,0);
+		goff = highestExistingGoff +
+		       sizeof(struct ZTLF_DB_GraphNode) +
+					 (((unsigned long)((struct ZTLF_DB_GraphNode *)(db->gfm + (uintptr_t)highestExistingGoff))->linkCount) * sizeof(int64_t));
+		if ((goff % sizeof(double)) != 0) /* align graph nodes to multiples of sizeof(double) */
+			goff += sizeof(double) - (uintptr_t)(goff % sizeof(double));
+	}
+
+	/* Grow graph file if needed. */
+	if ((uint64_t)(goff + ZTLF_RECORD_MAX_SIZE) >= db->gfcap) {
+		munmap((void *)db->gfm,(size_t)db->gfcap);
+		if (ftruncate(db->gfd,(off_t)(db->gfcap + ZTLF_GRAPH_FILE_CAPACITY_INCREMENT))) {
+			db->gfm = mmap(NULL,(size_t)db->gfcap,PROT_READ|PROT_WRITE,MAP_FILE|MAP_SHARED,db->gfd,0);
 			if (!db->gfm) {
 				fprintf(stderr,"FATAL: unable to remap weights file after failed extend (likely disk problem or out of memory): %d\n",errno);
 				abort();
@@ -323,13 +409,15 @@ int ZTLF_putRecord(struct ZTLF_DB *db,struct ZTLF_RecordInfo *const ri)
 			goto exit_putRecord;
 		}
 		db->gfcap += ZTLF_GRAPH_FILE_CAPACITY_INCREMENT;
-		db->gfm = mmap(NULL,(size_t)(db->gfcap * sizeof(struct ZTLF_DB_GraphNode)),PROT_READ|PROT_WRITE,MAP_FILE|MAP_SHARED,db->gfd,0);
+		db->gfm = mmap(NULL,(size_t)db->gfcap,PROT_READ|PROT_WRITE,MAP_FILE|MAP_SHARED,db->gfd,0);
 		if (!db->gfm) {
 			result = ZTLF_NEG(errno);
 			goto exit_putRecord;
 		}
 	}
-	volatile struct ZTLF_DB_GraphNode *const graphNode = db->gfm + (uintptr_t)goff;
+
+	/* Get pointer to current record's graph node. */
+	volatile struct ZTLF_DB_GraphNode *const graphNode = (volatile struct ZTLF_DB_GraphNode *)(db->gfm + (uintptr_t)goff);
 
 	/* Figure out where record will be appended to record data file. */
 	int64_t doff = lseek(db->df,0,SEEK_END);
@@ -367,22 +455,22 @@ int ZTLF_putRecord(struct ZTLF_DB *db,struct ZTLF_RecordInfo *const ri)
 	}
 
 	/* Set links from this record in graph node or create dangling link entries. */
-	for(unsigned long i=0;i<ZTLF_RECORD_LINK_COUNT;++i) {
-		if ((ri->r->links[i][0])||(ri->r->links[i][1])||(ri->r->links[i][2])||(ri->r->links[i][3])) {
-			sqlite3_reset(db->sGetRecordInfoByHash);
-			sqlite3_bind_blob(db->sGetRecordInfoByHash,1,ri->r->links[i],32,SQLITE_STATIC);
-			if (sqlite3_step(db->sGetRecordInfoByHash) == SQLITE_ROW) {
-				const int64_t linkedGoff = sqlite3_column_int64(db->sGetRecordInfoByHash,1);
-				graphNode->linkedRecordGoff[i] = linkedGoff;
-				ZTLF_Vector_i64_append(&graphTraversalQueue,linkedGoff);
-			} else {
-				sqlite3_reset(db->sAddDanglingLink);
-				sqlite3_bind_blob(db->sAddDanglingLink,1,ri->r->links[i],32,SQLITE_STATIC);
-				sqlite3_bind_int64(db->sAddDanglingLink,2,doff);
-				if ((e = sqlite3_step(db->sAddDanglingLink)) != SQLITE_DONE)
-					fprintf(stderr,"WARNING: database error adding dangling link: %d\n",e);
-				graphNode->linkedRecordGoff[i] = -1;
-			}
+	graphNode->linkCount = ri->linkCount;
+	for(unsigned int i=0;i<ri->linkCount;++i) {
+		const uint8_t *l = ri->links + (i * 32);
+		sqlite3_reset(db->sGetRecordInfoByHash);
+		sqlite3_bind_blob(db->sGetRecordInfoByHash,1,l,32,SQLITE_STATIC);
+		if (sqlite3_step(db->sGetRecordInfoByHash) == SQLITE_ROW) {
+			const int64_t linkedGoff = sqlite3_column_int64(db->sGetRecordInfoByHash,1);
+			graphNode->linkedRecordGoff[i] = linkedGoff;
+			ZTLF_Vector_i64_append(&graphTraversalQueue,linkedGoff);
+		} else {
+			sqlite3_reset(db->sAddDanglingLink);
+			sqlite3_bind_blob(db->sAddDanglingLink,1,l,32,SQLITE_STATIC);
+			sqlite3_bind_int64(db->sAddDanglingLink,2,doff);
+			if ((e = sqlite3_step(db->sAddDanglingLink)) != SQLITE_DONE)
+				fprintf(stderr,"WARNING: database error adding dangling link: %d\n",e);
+			graphNode->linkedRecordGoff[i] = -1;
 		}
 	}
 
@@ -393,11 +481,11 @@ int ZTLF_putRecord(struct ZTLF_DB *db,struct ZTLF_RecordInfo *const ri)
 	sqlite3_reset(db->sGetDanglingLinks);
 	sqlite3_bind_blob(db->sGetDanglingLinks,1,ri->hash,32,SQLITE_STATIC);
 	while (sqlite3_step(db->sGetDanglingLinks) == SQLITE_ROW) {
-		volatile struct ZTLF_DB_GraphNode *const gn = db->gfm + (uintptr_t)sqlite3_column_int64(db->sGetDanglingLinks,0);
-		totalWeight += gn->totalWeight;
-		for(unsigned long j=0;j<ZTLF_RECORD_LINK_COUNT;++j) {
-			if (gn->linkedRecordGoff[j] < 0) {
-				gn->linkedRecordGoff[j] = goff;
+		volatile struct ZTLF_DB_GraphNode *const linkingRecordGraphNode = (volatile struct ZTLF_DB_GraphNode *)(db->gfm + (uintptr_t)sqlite3_column_int64(db->sGetDanglingLinks,0));
+		totalWeight += linkingRecordGraphNode->totalWeight;
+		for(unsigned int j=0,k=linkingRecordGraphNode->linkCount;j<k;++j) {
+			if (linkingRecordGraphNode->linkedRecordGoff[j] < 0) {
+				linkingRecordGraphNode->linkedRecordGoff[j] = goff;
 				break;
 			}
 		}
@@ -408,6 +496,8 @@ int ZTLF_putRecord(struct ZTLF_DB *db,struct ZTLF_RecordInfo *const ri)
 	sqlite3_bind_blob(db->sDeleteDanglingLinks,1,ri->hash,32,SQLITE_STATIC);
 	if ((e = sqlite3_step(db->sDeleteDanglingLinks)) != SQLITE_DONE)
 		fprintf(stderr,"WARNING: database error deleting dangling links for received record: %d\n",e);
+
+	/* Set this record's initial total weight in its graph node. */
 	graphNode->totalWeight = totalWeight;
 
 	/* SQLite database work is now done. */
@@ -423,7 +513,7 @@ int ZTLF_putRecord(struct ZTLF_DB *db,struct ZTLF_RecordInfo *const ri)
 		if (ZTLF_ISet_put(visited,goff)) {
 			volatile struct ZTLF_DB_GraphNode *const gn = db->gfm + (uintptr_t)goff;
 			gn->totalWeight += wtmp;
-			for(unsigned long j=0;j<ZTLF_RECORD_LINK_COUNT;++j) {
+			for(unsigned int j=0,k=gn->linkCount;j<k;++j) {
 				const int64_t tmp = gn->linkedRecordGoff[j];
 				if (tmp >= 0) {
 					ZTLF_Vector_i64_append(&graphTraversalQueue,tmp);

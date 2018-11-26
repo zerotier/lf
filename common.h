@@ -54,7 +54,16 @@
 #include <sys/select.h>
 #include <sys/stat.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <arpa/inet.h>
+
+#ifndef MSG_DONTWAIT
+#ifdef MSG_NONBLOCK
+#define MSG_DONTWAIT MSG_NONBLOCK
+#else
+#error Neither MSG_DONTWAIT nor MSG_NONBLOCK exist
+#endif
+#endif
 
 #ifndef PATH_MAX
 #define PATH_MAX 1024
@@ -106,6 +115,8 @@
 #endif
 #endif
 
+/* Assume little-endian byte order if not defined. Are there even any BE
+ * systems large enough to run this still in production in 2018? */
 #ifndef __BYTE_ORDER__
 #ifndef __ORDER_LITTLE_ENDIAN__
 #define __ORDER_LITTLE_ENDIAN__ 4321
@@ -145,9 +156,13 @@ static inline uint64_t ZTLF_htonll(uint64_t n)
 #define ZTLF_NEG(e) (((e) <= 0) ? (e) : -(e))
 #define ZTLF_POS(e) (((e) >= 0) ? (e) : -(e))
 
-#define ZTLF_eq256qw(a,b) (((a)[0] == (b)[0])&&((a)[1] == (b)[1])&&((a)[2] == (b)[2])&&((a)[3] == (b)[3]))
-
 #define ZTLF_timeSec() ((uint64_t)time(NULL))
+
+const uint32_t ZTLF_CRC32_TABLE[256];
+
+uint64_t ZTLF_prng();
+unsigned int ZTLF_ncpus();
+void ZTLF_secureRandom(void *b,const unsigned long n);
 
 static inline uint64_t ZTLF_timeMs()
 {
@@ -191,8 +206,22 @@ static inline uint64_t ZTLF_xorshift64starOnce(uint64_t x)
 	return x * 0x2545F4914F6CDD1D;
 }
 
-uint64_t ZTLF_prng();
-unsigned int ZTLF_ncpus();
-void ZTLF_secureRandom(void *b,const unsigned long n);
+static inline uint32_t ZTLF_crc32(const void *const buf,const unsigned int len)
+{
+	uint32_t crc = 0xffffffff;
+	for(unsigned int i=0;i<len;++i) {
+		crc = ZTLF_CRC32_TABLE[(crc ^ ((const uint8_t *)buf)[i]) & 0xff] ^ (crc >> 8);
+	}
+	return ~crc;
+}
+
+static inline bool ZTLF_allZero(const void *const d,const unsigned int len)
+{
+	for(int i=0;i<len;++i) {
+		if (((const uint8_t *)d)[i])
+			return false;
+	}
+	return true;
+}
 
 #endif

@@ -5,6 +5,7 @@ LIBS=-lsqlite3
 OBJS=\
 	base58.o \
 	common.o \
+	curve25519.o \
 	db.o \
 	ed25519.o \
 	lf.o \

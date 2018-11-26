@@ -37,18 +37,13 @@
 #include <sqlite3.h>
 #endif
 
-ZTLF_PACKED_STRUCT(struct ZTLF_DB_GraphNode
-{
-	double totalWeight;
-	int64_t linkedRecordGoff[ZTLF_RECORD_LINK_COUNT];
-});
-
 struct ZTLF_DB
 {
 	char path[PATH_MAX];
 
 	sqlite3 *dbc;
 	sqlite3_stmt *sAddRecord;
+	sqlite3_stmt *sGetMaxRecordGoff;
 	sqlite3_stmt *sGetLatestRecordTimestamp;
 	sqlite3_stmt *sGetRecordHistoryById;
 	sqlite3_stmt *sGetRecordCount;
@@ -58,9 +53,12 @@ struct ZTLF_DB
 	sqlite3_stmt *sAddDanglingLink;
 	sqlite3_stmt *sGetDanglingLinksForRetry;
 	sqlite3_stmt *sUpdateDanglingLinkRetryInfo;
+	sqlite3_stmt *sGetPeerFirstConnectTime;
+	sqlite3_stmt *sAddUpdatePeer;
+	sqlite3_stmt *sAddPotentialPeer;
 
 	uint64_t gfcap;
-	volatile struct ZTLF_DB_GraphNode *gfm;
+	volatile uint8_t *gfm;
 	int gfd;
 
 	int df;
@@ -72,11 +70,10 @@ struct ZTLF_DB
 };
 
 int ZTLF_DB_open(struct ZTLF_DB *db,const char *path);
-
 void ZTLF_DB_close(struct ZTLF_DB *db);
-
-long ZTLF_getRecord(struct ZTLF_DB *const db,struct ZTLF_Record *r,double *aggregatedTotalWeight,const void *const id);
-
-int ZTLF_putRecord(struct ZTLF_DB *db,struct ZTLF_RecordInfo *const ri);
+bool ZTLF_DB_logOutgoingPeerConnectSuccess(struct ZTLF_DB *const db,const void *keyHash,const unsigned int addressType,const void *address,const unsigned int addressLength,const unsigned int port);
+void ZTLF_DB_logPotentialPeer(struct ZTLF_DB *const db,const void *keyHash,const unsigned int addressType,const void *address,const unsigned int addressLength,const unsigned int port);
+long ZTLF_DB_getRecord(struct ZTLF_DB *const db,struct ZTLF_Record *r,double *aggregatedTotalWeight,const void *const id);
+int ZTLF_DB_putRecord(struct ZTLF_DB *db,struct ZTLF_RecordInfo *const ri);
 
 #endif

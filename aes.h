@@ -32,7 +32,10 @@
 #define ZTLF_AES256_KEY_SIZE   32
 #define ZTLF_AES256CFB_IV_SIZE 16
 
+/* Use CommonCrypto on Mac -- an older API but still available up to Mojave. */
 #ifdef __APPLE__
+
+#define ZTLF_HAVE_AES_IMPL 1
 
 #include <CommonCrypto/CommonCrypto.h>
 #include <CommonCrypto/CommonCryptor.h>
@@ -68,5 +71,14 @@ static inline void ZTLF_AES256CFB_crypt(ZTLF_AES256CFB *c,void *out,const void *
 static inline void ZTLF_AES256CFB_destroy(ZTLF_AES256CFB *c) { CCCryptorRelease(*c); }
 
 #endif /* __APPLE__ */
+
+/* TODO: Windows */
+#ifdef __WINDOWS__
+#endif
+
+/* If we don't have Apple or Windows, use OpenSSL/LibreSSL libcrypto */
+#ifndef ZTLF_HAVE_AES_IMPL
+
+#endif
 
 #endif

@@ -24,51 +24,13 @@
  * of your own application.
  */
 
-#ifndef ZTLF_NODE_H
-#define ZTLF_NODE_H
+#ifndef ZTLF_CURVE25519_H
+#define ZTLF_CURVE25519_H
 
 #include "common.h"
-#include "db.h"
-#include "record.h"
-#include "aes.h"
-#include "map.h"
 
-struct ZTLF_Node_PeerConnection
-{
-	struct ZTLF_Node *parent;
-	struct sockaddr_storage remoteAddress;
+void ZTLF_Curve25519_generate(uint8_t pub[32],uint8_t priv[32]);
 
-	int sock;
-	ZTLF_AES256CFB *encryptor;
-	uint8_t sharedSecret[32];
-	pthread_mutex_t sendLock;
-
-	uint8_t remoteKeyHash[48];
-	bool incoming;
-
-	volatile uint64_t lastReceiveTime;
-	volatile long latency;
-	volatile bool connectionEstablished;
-};
-
-struct ZTLF_Node
-{
-	struct ZTLF_DB db;
-
-	uint8_t networkKey[32];
-	uint8_t publicKey[32];
-	uint8_t privateKey[32];
-
-	unsigned int listenPort;
-	int listenSocket;
-
-	struct ZTLF_Node_PeerConnection *conn;
-	unsigned long connCount;
-	unsigned long connCapacity;
-	unsigned long connDesiredCount;
-	pthread_mutex_t connLock;
-
-	volatile bool run;
-};
+void ZTLF_Curve25519_agree(uint8_t secret[32],const uint8_t theirPublic[32],const uint8_t myPrivate[32]);
 
 #endif
