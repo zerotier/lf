@@ -117,10 +117,10 @@ void ZTLF_Map256_clear(struct ZTLF_Map256 *m);
  * ztlfMapValue are set in the loop to keys and values. ZTLF_Map_set is not safe here, but ztlfMapValue
  * is safe to change in place to change or delete existing keys. A root level "break" in the supplied
  * code fragment will terminate iteration. */
-#define ZTLF_Map256_each(m,c) \
+#define ZTLF_Map256_eachValue(m,c) \
 	for(unsigned long _ztmi_i=0;_ztmi_i<(m)->bucketCount;++_ztmi_i) { \
 		if ((m)->buckets[_ztmi_i].value) { \
-			const uint64_t *const ztlfMapKey = (m)->buckets[_ztmi_i].key; \
+			/* const uint64_t *const ztlfMapKey = (m)->buckets[_ztmi_i].key; */ \
 			void *ztlfMapValue = (void *)(m)->buckets[_ztmi_i].value; \
 			c \
 			if (ztlfMapValue != (void *)(m)->buckets[_ztmi_i].value) { \

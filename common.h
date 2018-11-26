@@ -39,6 +39,7 @@
 #include <stdio.h>
 #include <stddef.h>
 #include <stdbool.h>
+#include <stdarg.h>
 #include <limits.h>
 #include <string.h>
 #include <memory.h>

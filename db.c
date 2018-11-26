@@ -344,7 +344,7 @@ long ZTLF_DB_getRecord(struct ZTLF_DB *const db,struct ZTLF_Record *r,double *ag
 	int64_t bestDlen = -1;
 	double bestTw = -1.0;
 
-	ZTLF_Map256_each(&m,{
+	ZTLF_Map256_eachValue(&m,{
 		struct _ZTLF_getRecord_owner *const o = (struct _ZTLF_getRecord_owner *)ztlfMapValue;
 		if (o->aggregatedTotalWeight > bestTw) {
 			bestDoff = o->latestDoff;
@@ -511,7 +511,7 @@ int ZTLF_DB_putRecord(struct ZTLF_DB *db,struct ZTLF_ExpandedRecord *const er)
 	for(unsigned long i=0;i<graphTraversalQueue.size;) {
 		const int64_t goff = graphTraversalQueue.v[i++];
 		if (ZTLF_ISet_put(visited,goff)) {
-			volatile struct ZTLF_DB_GraphNode *const gn = db->gfm + (uintptr_t)goff;
+			volatile struct ZTLF_DB_GraphNode *const gn = (volatile struct ZTLF_DB_GraphNode *)(db->gfm + (uintptr_t)goff);
 			gn->totalWeight += wtmp;
 			for(unsigned int j=0,k=gn->linkCount;j<k;++j) {
 				const int64_t tmp = gn->linkedRecordGoff[j];

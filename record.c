@@ -26,3 +26,55 @@
 
 #include "record.h"
 #include "score.h"
+
+bool ZTLF_Record_expand(struct ZTLF_ExpandedRecord *const er,const struct ZTLF_Record *const r,const unsigned int rsize)
+{
+	er->valueCipher = (r->algorithms >> 6) & 3;
+	er->workAlgorithm = (r->algorithms >> 4) & 3;
+	er->idClaimSignatureAlgorithm = (r->algorithms >> 2) & 3;
+	er->ownerSignatureAlgorithm = r->algorithms & 3;
+
+	ZTLF_Shandwich256(er->hash,r,rsize);
+	er->timestamp = ZTLF_Record_timestamp(r);
+	er->ttl = ZTLF_Record_ttl(r);
+	er->weight = ZTLF_score((const uint8_t *)er->hash);
+	er->size = rsize;
+
+	switch (er->workAlgorithm) {
+		case ZTLF_RECORD_ALG_WORK_NONE:
+			er->workSize = 0;
+			break;
+		case ZTLF_RECORD_ALG_WORK_WHARRGARBL:
+			er->workSize = ZTLF_WHARRGARBL_POW_BYTES;
+			break;
+		default:
+			return false;
+	}
+	switch (er->idClaimSignatureAlgorithm) {
+		case ZTLF_RECORD_ALG_SIG_ED25519:
+			er->idClaimSignatureSize = ZTLF_ED25519_SIGNATURE_SIZE;
+			break;
+		default:
+			return false;
+	}
+	switch (er->ownerSignatureAlgorithm) {
+		case ZTLF_RECORD_ALG_SIG_ED25519:
+			er->ownerSignatureSize = ZTLF_ED25519_SIGNATURE_SIZE;
+			break;
+		default:
+			return false;
+	}
+	er->valueSize = rsize - (er->workSize + er->idClaimSignatureSize + er->ownerSignatureSize + (32 * (unsigned int)r->linkCount));
+	if (er->valueSize > rsize)
+		return false;
+
+	er->r = r;
+
+	er->value = r->data;
+	er->work = ((const uint8_t *)er->value) + er->valueSize;
+	er->links = ((const uint8_t *)er->work) + er->workSize;
+	er->idClaimSignature = ((const uint8_t *)er->links) + (32 * (unsigned int)r->linkCount);
+	er->ownerSignature = ((const uint8_t *)er->idClaimSignature) + er->idClaimSignatureSize;
+
+	return true;
+}

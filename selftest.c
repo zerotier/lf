@@ -33,6 +33,8 @@ bool ZTLF_selftest_core(FILE *o)
 	ZTLF_secureRandom(tmp,sizeof(tmp));
 	fprintf(o,"Testing cryptographic PRNG: %.16llx%.16llx%.16llx%.16llx" ZTLF_EOL,tmp[0],tmp[1],tmp[2],tmp[3]);
 	fprintf(o,"Testing non-cryptographic PRNG: %.16llx%.16llx%.16llx%.16llx" ZTLF_EOL,ZTLF_prng(),ZTLF_prng(),ZTLF_prng(),ZTLF_prng());
+
+	return true;
 }
 
 bool ZTLF_selftest_wharrgarbl(FILE *o)
@@ -63,5 +65,6 @@ bool ZTLF_selftest_wharrgarbl(FILE *o)
 		fprintf(o,"   %12x  %8u  %12llu   %.8f" ZTLF_EOL,diff32,thr,iter / 10,((double)(end - start)) / 10.0 / 1000.0);
 	}
 	free(foo);
+
 	return true;
 }
