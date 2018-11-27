@@ -152,10 +152,21 @@ static inline uint64_t ZTLF_htonll(uint64_t n)
 #else
 #define ZTLF_htonll(n) ((uint64_t)(n))
 #endif
-
 #define ZTLF_ntohll(n) ZTLF_htonll((n))
 
-#define ZTLF_MALLOC_CHECK(m) if (unlikely(!((m)))) { fprintf(stderr,"FATAL: malloc() failed!\n"); abort(); }
+#define ZTLF_ERR_NONE                         0
+#define ZTLF_ERR_OUT_OF_MEMORY                1
+#define ZTLF_ERR_ABORTED                      2
+#define ZTLF_ERR_OBJECT_TOO_LARGE             3
+
+#define ZTLF_MALLOC_CHECK(m) if (unlikely(!((m)))) { ZTLF_L_fatal("malloc() failed!"); abort(); }
+
+/* Macro to safely assign identical primitive types to unaligned variables */
+#if defined(_M_AMD64) || defined(__amd64__) || defined(__x86_64__) || defined(__amd64) || defined(__x86_64)
+#define ZTLF_UNALIGNED_ASSIGN(d,s) (d) = (s)
+#else
+#define ZTLF_UNALIGNED_ASSIGN(d,s) for(int _X=0;_X<sizeof(s);++_X) ((uint8_t *)&(d))[_X] = ((const uint8_t *)&(s))[_X]
+#endif
 
 #define ZTLF_NEG(e) (((e) <= 0) ? (e) : -(e))
 #define ZTLF_POS(e) (((e) >= 0) ? (e) : -(e))

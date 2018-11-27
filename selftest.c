@@ -54,27 +54,24 @@ bool ZTLF_selftest_wharrgarbl(FILE *o)
 		tmp[i] = (uint8_t)i;
 	uint8_t pow[ZTLF_WHARRGARBL_POW_BYTES];
 
-	/*
 	fprintf(o,"Testing and benchmarking wharrgarbl proof of work..." ZTLF_EOL);
 	fprintf(o,"-----------------------------------------------------" ZTLF_EOL);
 	fprintf(o,"Difficulty (hex)  Threads    Iterations  Avg Time (s)" ZTLF_EOL);
 	fprintf(o,"-----------------------------------------------------" ZTLF_EOL);
 	const unsigned int thr = ZTLF_ncpus();
-	for(int i=10;i<14;++i) {
-		uint32_t diff32 = 1 << i;
+	for(int i=0;i<4;++i) {
 		uint64_t iter = 0;
 		uint64_t start = ZTLF_timeMs();
-		for(int k=0;k<10;++k)
-			iter += ZTLF_wharrgarbl(pow,tmp,sizeof(tmp),diff32,foo,mem,0);
+		for(int k=0;k<5;++k)
+			iter += ZTLF_wharrgarbl(pow,tmp,sizeof(tmp),ZTLF_RECORD_WHARRGARBL_POW_ITERATION_DIFFICULTY,foo,mem,0);
 		uint64_t end = ZTLF_timeMs();
 		if (!ZTLF_wharrgarblVerify(pow,tmp,sizeof(tmp))) {
 			fprintf(o,"FAILED! (verify)" ZTLF_EOL);
 			free(foo);
 			return false;
 		}
-		fprintf(o,"   %12x  %8u  %12llu   %.8f" ZTLF_EOL,diff32,thr,iter / 10,((double)(end - start)) / 10.0 / 1000.0);
+		fprintf(o,"   %12x  %8u  %12llu   %.8f" ZTLF_EOL,ZTLF_RECORD_WHARRGARBL_POW_ITERATION_DIFFICULTY,thr,iter / 5,((double)(end - start)) / 5.0 / 1000.0);
 	}
-	*/
 
 	int icols = -1;
 	char *cols = getenv("COLUMNS");
@@ -83,7 +80,7 @@ bool ZTLF_selftest_wharrgarbl(FILE *o)
 		if (icols <= 0)
 			icols = -1;
 	}
-	icols /= 14;
+	icols /= 15;
 	fprintf(o,ZTLF_EOL "Determining time for record work by record length..." ZTLF_EOL);
 	uint8_t scoringHash[48];
 	double avgTime[ZTLF_RECORD_MAX_SIZE][2];
@@ -97,7 +94,7 @@ bool ZTLF_selftest_wharrgarbl(FILE *o)
 		ZTLF_SHA384(scoringHash,pow,sizeof(pow));
 		const uint32_t score = ZTLF_score(scoringHash);
 
-		uint32_t recordLengthAchieved = score / 61440;
+		uint32_t recordLengthAchieved = score / ZTLF_RECORD_WORK_COST_DIVISOR;
 		if (recordLengthAchieved > ZTLF_RECORD_MAX_SIZE)
 			recordLengthAchieved = ZTLF_RECORD_MAX_SIZE;
 		if (recordLengthAchieved == 0)
@@ -111,14 +108,16 @@ bool ZTLF_selftest_wharrgarbl(FILE *o)
 			avgTime[i][0] += ((double)elapsed) / 1000.0;
 			avgTime[i][1] += 1.0;
 		}
+		for(int i=0;i<16;++i)
+			fprintf(o,ZTLF_EOL);
 		for(unsigned int i=0;i<ZTLF_RECORD_MAX_SIZE;++i) {
-			fprintf(o,"%5u %8.3f",i,(avgTime[i][1] > 0.0) ? (avgTime[i][0] / avgTime[i][1]) : 0.0);
+			fprintf(o,"|%5u %7.2f ",i+1,(avgTime[i][1] > 0.0) ? (avgTime[i][0] / avgTime[i][1]) : 0.0);
 			if (icols > 0) {
 				if ((i % icols) == (icols-1))
 					fprintf(o,ZTLF_EOL);
 			}
 		}
-		fprintf(o,ZTLF_EOL ZTLF_EOL);
+		fprintf(o,ZTLF_EOL);
 	}
 
 	free(foo);

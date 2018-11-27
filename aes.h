@@ -68,7 +68,10 @@ static inline void ZTLF_AES256CFB_crypt(ZTLF_AES256CFB *c,void *out,const void *
 	}
 }
 
-static inline void ZTLF_AES256CFB_destroy(ZTLF_AES256CFB *c) { CCCryptorRelease(*c); }
+static inline void ZTLF_AES256CFB_destroy(ZTLF_AES256CFB *c)
+{
+	CCCryptorRelease(*c);
+}
 
 #endif /* __APPLE__ */
 
@@ -78,6 +81,47 @@ static inline void ZTLF_AES256CFB_destroy(ZTLF_AES256CFB *c) { CCCryptorRelease(
 
 /* If we don't have Apple or Windows, use OpenSSL/LibreSSL libcrypto */
 #ifndef ZTLF_HAVE_AES_IMPL
+
+#include <openssl/aes.h>
+#include <openssl/evp.h>
+
+typedef EVP_CIPHER_CTX ZTLF_AES256CFB;
+
+static inline void ZTLF_AES256ECB_encrypt(const void *key,void *out,const void *in)
+{
+	AES_KEY c;
+	AES_set_encrypt_key((const unsigned char *)key,256,&c);
+	AES_encrypt((const unsigned char *)in,(unsigned char *)out,&c);
+}
+
+static inline void ZTLF_AES256CFB_init(ZTLF_AES256CFB *c,const void *key,const void *iv,bool encrypt)
+{
+	EVP_CIPHER_CTX_init(c);
+	if (encrypt) {
+		EVP_EncryptInit_ex(c,EVP_aes_256_cfb128(),NULL,key,iv);
+	} else {
+		EVP_DecryptInit_ex(c,EVP_aes_256_cfb128(),NULL,key,iv);
+	}
+}
+
+static inline void ZTLF_AES256CFB_crypt(ZTLF_AES256CFB *c,void *out,const void *in,const unsigned long len)
+{
+	if (len) {
+		int outl = (int)len;
+		if (c->encrypt) {
+			EVP_EncryptUpdate(c,out,&outl,in,(int)len);
+		} else {
+			EVP_DecryptUpdate(c,out,&outl,in,(int)len);
+		}
+		if (outl != (int)len)
+			abort();
+	}
+}
+
+static inline void ZTLF_AES256CFB_destroy(ZTLF_AES256CFB *c)
+{
+	EVP_CIPHER_CTX_cleanup(c);
+}
 
 #endif
 

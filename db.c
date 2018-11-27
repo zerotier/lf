@@ -34,7 +34,7 @@
 ZTLF_PACKED_STRUCT(struct ZTLF_DB_GraphNode
 {
 	double totalWeight;
-	uint16_t linkCount;
+	uint8_t linkCount;
 	int64_t linkedRecordGoff[];
 });
 
@@ -330,7 +330,9 @@ long ZTLF_DB_getRecord(struct ZTLF_DB *const db,struct ZTLF_Record *r,double *ag
 				o->eof = true;
 			} else {
 				/* Total weight of this owner's set of IDs is the sum of the total weights of each update in the set. */
-				o->aggregatedTotalWeight += ((struct ZTLF_DB_GraphNode *)(db->gfm + (uintptr_t)sqlite3_column_int64(db->sGetRecordHistoryById,2)))->totalWeight;
+				double tw;
+				ZTLF_UNALIGNED_ASSIGN(tw,((struct ZTLF_DB_GraphNode *)(db->gfm + (uintptr_t)sqlite3_column_int64(db->sGetRecordHistoryById,2)))->totalWeight);
+				o->aggregatedTotalWeight += tw;
 			}
 
 			/* "Next" timestamp is previous row since we iterate backwards through timestamp history. */
@@ -455,14 +457,15 @@ int ZTLF_DB_putRecord(struct ZTLF_DB *db,struct ZTLF_ExpandedRecord *const er)
 	}
 
 	/* Set links from this record in graph node or create dangling link entries. */
-	graphNode->linkCount = er->linkCount;
+	graphNode->linkCount = (uint8_t)er->linkCount;
+	const int64_t neg1 = -1;
 	for(unsigned int i=0,j=er->linkCount;i<j;++i) {
 		const uint8_t *l = er->links + (i * 32);
 		sqlite3_reset(db->sGetRecordInfoByHash);
 		sqlite3_bind_blob(db->sGetRecordInfoByHash,1,l,32,SQLITE_STATIC);
 		if (sqlite3_step(db->sGetRecordInfoByHash) == SQLITE_ROW) {
 			const int64_t linkedGoff = sqlite3_column_int64(db->sGetRecordInfoByHash,1);
-			graphNode->linkedRecordGoff[i] = linkedGoff;
+			ZTLF_UNALIGNED_ASSIGN(graphNode->linkedRecordGoff[i],linkedGoff);
 			ZTLF_Vector_i64_append(&graphTraversalQueue,linkedGoff);
 		} else {
 			sqlite3_reset(db->sAddDanglingLink);
@@ -470,7 +473,7 @@ int ZTLF_DB_putRecord(struct ZTLF_DB *db,struct ZTLF_ExpandedRecord *const er)
 			sqlite3_bind_int64(db->sAddDanglingLink,2,doff);
 			if ((e = sqlite3_step(db->sAddDanglingLink)) != SQLITE_DONE)
 				fprintf(stderr,"WARNING: database error adding dangling link: %d\n",e);
-			graphNode->linkedRecordGoff[i] = -1;
+			ZTLF_UNALIGNED_ASSIGN(graphNode->linkedRecordGoff[i],neg1);
 		}
 	}
 
@@ -482,10 +485,14 @@ int ZTLF_DB_putRecord(struct ZTLF_DB *db,struct ZTLF_ExpandedRecord *const er)
 	sqlite3_bind_blob(db->sGetDanglingLinks,1,er->hash,32,SQLITE_STATIC);
 	while (sqlite3_step(db->sGetDanglingLinks) == SQLITE_ROW) {
 		volatile struct ZTLF_DB_GraphNode *const linkingRecordGraphNode = (volatile struct ZTLF_DB_GraphNode *)(db->gfm + (uintptr_t)sqlite3_column_int64(db->sGetDanglingLinks,0));
-		totalWeight += linkingRecordGraphNode->totalWeight;
+		double tw;
+		ZTLF_UNALIGNED_ASSIGN(tw,linkingRecordGraphNode->totalWeight);
+		totalWeight += tw;
 		for(unsigned int j=0,k=linkingRecordGraphNode->linkCount;j<k;++j) {
-			if (linkingRecordGraphNode->linkedRecordGoff[j] < 0) {
-				linkingRecordGraphNode->linkedRecordGoff[j] = goff;
+			int64_t lrgoff;
+			ZTLF_UNALIGNED_ASSIGN(lrgoff,linkingRecordGraphNode->linkedRecordGoff[j]);
+			if (lrgoff < 0) {
+				ZTLF_UNALIGNED_ASSIGN(linkingRecordGraphNode->linkedRecordGoff[j],goff);
 				break;
 			}
 		}
@@ -498,7 +505,7 @@ int ZTLF_DB_putRecord(struct ZTLF_DB *db,struct ZTLF_ExpandedRecord *const er)
 		fprintf(stderr,"WARNING: database error deleting dangling links for received record: %d\n",e);
 
 	/* Set this record's initial total weight in its graph node. */
-	graphNode->totalWeight = totalWeight;
+	ZTLF_UNALIGNED_ASSIGN(graphNode->totalWeight,totalWeight);
 
 	/* SQLite database work is now done. */
 	pthread_mutex_unlock(&db->dbcLock);
@@ -512,9 +519,13 @@ int ZTLF_DB_putRecord(struct ZTLF_DB *db,struct ZTLF_ExpandedRecord *const er)
 		const int64_t goff = graphTraversalQueue.v[i++];
 		if (ZTLF_ISet_put(visited,goff)) {
 			volatile struct ZTLF_DB_GraphNode *const gn = (volatile struct ZTLF_DB_GraphNode *)(db->gfm + (uintptr_t)goff);
-			gn->totalWeight += wtmp;
+			double tw;
+			ZTLF_UNALIGNED_ASSIGN(tw,gn->totalWeight);
+			tw += wtmp;
+			ZTLF_UNALIGNED_ASSIGN(gn->totalWeight,tw);
 			for(unsigned int j=0,k=gn->linkCount;j<k;++j) {
-				const int64_t tmp = gn->linkedRecordGoff[j];
+				int64_t tmp;
+				ZTLF_UNALIGNED_ASSIGN(tmp,gn->linkedRecordGoff[j]);
 				if (tmp >= 0) {
 					ZTLF_Vector_i64_append(&graphTraversalQueue,tmp);
 				}
