@@ -1,37 +1,32 @@
 /*
  * LF: Global Fully Replicated Key/Value Store
  * Copyright (C) 2018  ZeroTier, Inc.  https://www.zerotier.com/
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- *
- * --
- *
- * You can be released from the requirements of the license by purchasing
- * a commercial license. Buying such a license is mandatory as soon as you
- * develop commercial closed-source software that incorporates or links
- * directly against ZeroTier software without disclosing the source code
- * of your own application.
+ * 
+ * Licensed under the terms of the MIT license (see LICENSE.txt).
  */
 
 #include "common.h"
 #include "node.h"
 #include "selftest.h"
+#include "version.h"
+
+#define ZTLF_DEFAULT_TCP_PORT 19379
+#define ZTLF_DEFAULT_HTTP_PORT 19380
 
 static struct ZTLF_Node node;
 
 static void printHelp()
 {
+	printf(
+"LF (pronounced \"aleph\") version %d.%d.%d.%d" ZTLF_EOL
+"(c)2018 ZeroTier, Inc. (MIT license)" ZTLF_EOL ZTLF_EOL
+"Usage: lf [-options] <data directory>" ZTLF_EOL ZTLF_EOL
+"Options:" ZTLF_EOL
+"  -h                         - Display this help" ZTLF_EOL
+"  -v                         - Display version" ZTLF_EOL
+"  -t                         - Run internal self-test and exit" ZTLF_EOL
+"  -W                         - Benchmark record PoW (CTRL+C to stop)" ZTLF_EOL
+"",ZTLF_VERSION_MAJOR,ZTLF_VERSION_MINOR,ZTLF_VERSION_REVISION,ZTLF_VERSION_BUILD,ZTLF_DEFAULT_TCP_PORT,ZTLF_DEFAULT_HTTP_PORT);
 }
 
 static void exitSignal(int sig)
@@ -40,7 +35,28 @@ static void exitSignal(int sig)
 
 int main(int argc,char **argv)
 {
-	ZTLF_selftest(stdout);
+	for (int ch;(ch=getopt(argc,argv,"hvtW"))!=-1;) {
+		switch(ch) {
+			case 'v':
+				printf("%d.%d.%d.%d" ZTLF_EOL,ZTLF_VERSION_MAJOR,ZTLF_VERSION_MINOR,ZTLF_VERSION_REVISION,ZTLF_VERSION_BUILD);
+				return 0;
+			case 't':
+				return (ZTLF_selftest(stdout) ? 0 : 1);
+			case 'W':
+				ZTLF_selftest_modelProofOfWork(stdout);
+				return 0;
+			case 'h':
+			case '?':
+				printHelp();
+				return 0;
+		}
+		argc -= optind;
+		argv += optind;
+	}
+	if (argc != 2) {
+		printHelp();
+		return 1;
+	}
 
 #ifndef __WINDOWS__
 	signal(SIGPIPE,SIG_IGN);
