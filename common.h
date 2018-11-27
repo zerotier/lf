@@ -88,6 +88,7 @@
 #include <unistd.h>
 #include <signal.h>
 #include <pthread/pthread.h>
+#include <sched.h>
 
 #ifndef MAP_FILE /* legacy flag, not used on some platforms */
 #define MAP_FILE 0
@@ -97,6 +98,8 @@
 #define ZTLF_PATH_SEPARATOR "/"
 #define ZTLF_PATH_SEPARATOR_C '/'
 #define ZTLF_EOL "\n"
+
+pthread_t ZTLF_threadCreate(void *(*threadMain)(void *),void *arg,bool lowPriority);
 
 #endif /* Windows or non-Windows? ------------------------------------- */
 

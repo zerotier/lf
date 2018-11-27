@@ -31,57 +31,6 @@
 
 #define ZTLF_eq256qw(a,b) (((a)[0] == (b)[0])&&((a)[1] == (b)[1])&&((a)[2] == (b)[2])&&((a)[3] == (b)[3]))
 
-#if 0
-struct ZTLF_MapEntry
-{
-	uint64_t key;
-	void *value;
-};
-
-struct ZTLF_Map
-{
-	uint64_t nonce;
-	void (*valueDeleter)(void *);
-	struct ZTLF_MapEntry *buckets;
-	unsigned long bucketCount;
-};
-
-/* If valueDeleter is non-NULL it will be used to free values when they're replaced and on map destroy. */
-void ZTLF_Map_init(struct ZTLF_Map *m,unsigned long initialBucketCountHint,void (*valueDeleter)(void *));
-
-void ZTLF_Map_destroy(struct ZTLF_Map *m);
-
-/* Set key to NULL to delete; returns >0 if new, 0 if existing */
-int ZTLF_Map_set(struct ZTLF_Map *m,const uint64_t k,void *v);
-
-/* Returns NULL if key is not found */
-static inline void *ZTLF_Map_get(struct ZTLF_Map *m,const uint64_t k)
-{
-	const unsigned long bucket = ((unsigned long)ZTLF_xorshift64starOnce(m->nonce ^ k)) % m->bucketCount;
-	return ((m->buckets[bucket].key == k) ? m->buckets[bucket].value : (void *)0);
-}
-
-void ZTLF_Map_clear(struct ZTLF_Map *m);
-
-/* Iterates by running a command or block of code against all keys. The variables ztlfMapKey and
- * ztlfMapValue are set in the loop to keys and values. ZTLF_Map_set is not safe here, but ztlfMapValue
- * is safe to change in place to change or delete existing keys. A root level "break" in the supplied
- * code fragment will terminate iteration. */
-#define ZTLF_Map_each(m,c) \
-	for(unsigned long _ztmi_i=0;_ztmi_i<(m)->bucketCount;++_ztmi_i) { \
-		if ((m)->buckets[_ztmi_i].value) { \
-			const uint64_t ztlfMapKey = (m)->buckets[_ztmi_i].key; \
-			void *ztlfMapValue = (void *)(m)->buckets[_ztmi_i].value; \
-			c \
-			if (ztlfMapValue != (void *)(m)->buckets[_ztmi_i].value) { \
-				if ((m)->valueDeleter) \
-					(m)->valueDeleter((m)->buckets[_ztmi_i].value); \
-				(m)->buckets[_ztmi_i].value = ztlfMapValue; \
-			} \
-		} \
-	}
-#endif
-
 struct ZTLF_Map256Entry
 {
 	uint64_t key[4];

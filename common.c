@@ -109,6 +109,37 @@ unsigned int ZTLF_ncpus()
 
 #else /* non-Windows */
 
+pthread_t ZTLF_threadCreate(void *(*threadMain)(void *),void *arg,bool lowPriority)
+{
+	static pthread_attr_t lpAttr;
+	static volatile bool lpAttrInitialized = false;
+
+	if (!lpAttrInitialized) {
+		struct sched_param param;
+		if (unlikely(pthread_attr_init(&lpAttr) != 0)) {
+			ZTLF_L_fatal("pthread_attr_init() failed");
+			abort();
+		}
+		if (unlikely(pthread_attr_getschedparam(&lpAttr,&param) != 0)) {
+			ZTLF_L_fatal("pthread_attr_getschedparam() failed");
+			abort();
+		}
+		param.sched_priority = sched_get_priority_min(SCHED_OTHER);
+		if (unlikely(pthread_attr_setschedparam(&lpAttr,&param) != 0)) {
+			ZTLF_L_fatal("pthread_attr_setschedparam() failed");
+			abort();
+		}
+		lpAttrInitialized = true;
+	}
+
+	pthread_t t;
+	if (pthread_create(&t,(lowPriority) ? &lpAttr : (pthread_attr_t *)0,threadMain,arg)) {
+		ZTLF_L_fatal("pthread_create() failed");
+		abort();
+	}
+	return t;
+}
+
 unsigned int ZTLF_ncpus()
 {
 	static volatile unsigned int nc = 0;

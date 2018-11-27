@@ -42,7 +42,7 @@
 /**
  * Minimum size of a record (simply size of header)
  */
-#define ZTLF_RECORD_MIN_SIZE                         sizeof(struct ZTLF_Record)
+#define ZTLF_RECORD_MIN_SIZE                         (sizeof(struct ZTLF_Record))
 
 /**
  * Overall maximum allowed record size (sanity limit, cannot be changed)
@@ -52,12 +52,22 @@
 /**
  * Maximum record value size (cannot be changed without network-wide upgrade)
  */
-#define ZTLF_RECORD_MAX_VALUE_SIZE                   512
+#define ZTLF_RECORD_MAX_VALUE_SIZE                   1024
 
 /**
  * Unit for TTL in seconds (cannot be changed)
  */
 #define ZTLF_RECORD_TTL_INCREMENT_SEC                123671
+
+/**
+ * Wharrgarbl difficulty per iteration for record PoW
+ */
+#define ZTLF_RECORD_WHARRGARBL_POW_ITERATION_DIFFICULTY 0x1000
+
+/**
+ * Wharrgarbl memory per iteration for record PoW
+ */
+#define ZTLF_RECORD_WHARRGARBL_POW_ITERATION_MEMORY 67108864
 
 /**
  * Packed record as it appears on the wire and in the database
@@ -68,10 +78,23 @@ ZTLF_PACKED_STRUCT(struct ZTLF_Record
 	uint64_t owner[4];                         /* public key (or hash thereof) of owner */
 	uint8_t timestamp[5];                      /* 40-bit (big-endian) timestamp in seconds since epoch */
 	uint8_t ttl;                               /* TTL in 123671 second (~34 hour) increments or 0 to relinquish ID ownership now */
-	uint8_t linkCount;                         /* number of 32-byte links to hashes of other records */
 	uint8_t algorithms;                        /* VVWWIIOO: VV=value cipher,WW=work,II=id claim signature,OO=owner signature */
+	uint8_t valueSize[2];                      /* size of value in bytes (16-bit) */
 	uint8_t data[];                            /* value, work, links, id claim signature, owner signature */
 });
+
+/**
+ * Union buffer for creating records
+ */
+struct ZTLF_RecordBuffer
+{
+	unsigned int size;
+	uint8_t idClaimPrivateKey[ZTLF_ED25519_PRIVATE_KEY_SIZE];
+	union {
+		struct ZTLF_Record r;
+		uint8_t b[ZTLF_RECORD_MAX_SIZE];
+	} data;
+};
 
 /**
  * Expanded record with convenient pointers to record fields and sizes
@@ -93,10 +116,11 @@ struct ZTLF_ExpandedRecord
 	double weight;
 	unsigned int size;
 
+	unsigned int valueSize;
 	unsigned int workSize;
 	unsigned int idClaimSignatureSize;
 	unsigned int ownerSignatureSize;
-	unsigned int valueSize;
+	unsigned int linkCount;
 
 	uint8_t valueCipher;
 	uint8_t workAlgorithm;
@@ -111,12 +135,51 @@ struct ZTLF_ExpandedRecord
  * @param k Plain text key
  * @param klen Length of plain text key
  */
-static inline void ZTLF_Record_keyToId(uint64_t id[4],const void *k,const unsigned long klen)
-{
-	uint8_t seed[64],priv[64];
-	ZTLF_SHA512(seed,k,klen);
-	ZTLF_Ed25519CreateKeypair((unsigned char *)id,priv,seed); /* only the first 32 bytes of the hash are used here */
-}
+void ZTLF_Record_keyToId(uint64_t id[4],const void *k,const unsigned long klen);
+
+/**
+ * Create record, phase one -- set value, compute work
+ * 
+ * This can be a very time consuming operation due to work.
+ * 
+ * @param rb Record buffer (existing contents will be lost)
+ * @param plainTextKey Plain text key
+ * @param plainTextKeyLength Plain text key length
+ * @param value Plain text value
+ * @param valueLength Length of value in bytes
+ * @param timestamp Timestamp in seconds since epoch
+ * @param ttl TTL in seconds (will be quantized to ZTLF_RECORD_TTL_INCREMENT_SEC)
+ * @param encryptValue If true, value will be hidden from anyone who doesn't know the plain text key (default behavior)
+ * @param linkHashPrefix Buffer to fill with bytes to select prefixed for link hashes
+ * @param linkHashPrefixLength Length of linkHashPrefix in bytes (up to 32)
+ * @return True if parameters were valid
+ */
+bool ZTLF_Record_createInit(
+	struct ZTLF_RecordBuffer *rb,
+	const void *plainTextKey,
+	const unsigned long plainTextKeyLength,
+	const void *value,
+	const unsigned long valueLength,
+	const void *ownerPublicKey,
+	const uint64_t timestamp,
+	const uint64_t ttl,
+	const bool encryptValue,
+	uint8_t *linkHashPrefix,
+	unsigned int linkHashPrefixLength);
+
+/**
+ * Create record, phase two -- add links, sign with ID claim key and owner key
+ * 
+ * @param rb Record buffer containing the results of createInit()
+ * @param links Links (size must be 32*linkCount)
+ * @param linkCount Number of links
+ * @param ownerPrivateKey Private key to sign this record
+ */
+bool ZTLF_Record_createFinal(
+	struct ZTLF_RecordBuffer *rb,
+	const void *links,
+	const unsigned int linkCount,
+	const void *ownerPrivateKey);
 
 /**
  * Extract record timestamp from record

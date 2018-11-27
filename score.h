@@ -42,9 +42,10 @@ static inline uint32_t ZTLF_score(const uint8_t h[32])
 	unsigned int k,i = 0;
 
 	while (i < 32) {
-		if (h[i++])
+		if (h[i])
 			break;
 		zb += 8;
+		++i;
 	}
 
 	for(k=0;k<8;++k) {
@@ -58,7 +59,7 @@ static inline uint32_t ZTLF_score(const uint8_t h[32])
 		++zb;
 	}
 
-	return ((zb >= 256) ? 0xffffffff : ((zb << 24) | ((~((uint32_t)rem)) >> 8)));
+	return ( (zb >= 256) ? 0xffffffff : ((zb << 24) | (((uint32_t)(rem >> 40)) ^ 0x00ffffff)) );
 }
 
 #endif

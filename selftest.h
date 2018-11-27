@@ -32,4 +32,6 @@
 bool ZTLF_selftest_core(FILE *o);
 bool ZTLF_selftest_wharrgarbl(FILE *o);
 
+bool ZTLF_selftest(FILE *o);
+
 #endif

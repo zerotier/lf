@@ -455,8 +455,8 @@ int ZTLF_DB_putRecord(struct ZTLF_DB *db,struct ZTLF_ExpandedRecord *const er)
 	}
 
 	/* Set links from this record in graph node or create dangling link entries. */
-	graphNode->linkCount = er->r->linkCount;
-	for(unsigned int i=0,j=er->r->linkCount;i<j;++i) {
+	graphNode->linkCount = er->linkCount;
+	for(unsigned int i=0,j=er->linkCount;i<j;++i) {
 		const uint8_t *l = er->links + (i * 32);
 		sqlite3_reset(db->sGetRecordInfoByHash);
 		sqlite3_bind_blob(db->sGetRecordInfoByHash,1,l,32,SQLITE_STATIC);

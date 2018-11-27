@@ -40,8 +40,7 @@ static void exitSignal(int sig)
 
 int main(int argc,char **argv)
 {
-	ZTLF_selftest_core(stdout);
-	ZTLF_selftest_wharrgarbl(stdout);
+	ZTLF_selftest(stdout);
 
 #ifndef __WINDOWS__
 	signal(SIGPIPE,SIG_IGN);

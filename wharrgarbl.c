@@ -62,7 +62,7 @@ static void *_wharrgarbl(void *ptr)
 
 		ctabEntry = ws->collisionTable + (((thisCollision ^ ws->runNonce) % ws->memory) << 1);
 
-		if (*ctabEntry == thisCollision) {
+		if (unlikely(*ctabEntry == thisCollision)) {
 			otherCollider = *(ctabEntry + 1);
 
 			if (otherCollider != thisCollider) {
@@ -80,8 +80,8 @@ static void *_wharrgarbl(void *ptr)
 						ws->out[1] = otherCollider;
 					}
 					++ws->done;
-					pthread_mutex_unlock(&ws->doneLock);
 					pthread_cond_broadcast(&ws->doneCond);
+					pthread_mutex_unlock(&ws->doneLock);
 					return NULL;
 				}
 			}
@@ -96,8 +96,8 @@ static void *_wharrgarbl(void *ptr)
 	pthread_mutex_lock(&ws->doneLock);
 	ws->iterations += iter;
 	++ws->done;
-	pthread_mutex_unlock(&ws->doneLock);
 	pthread_cond_broadcast(&ws->doneCond);
+	pthread_mutex_unlock(&ws->doneLock);
 
 	return NULL;
 }
@@ -124,13 +124,8 @@ uint64_t ZTLF_wharrgarbl(void *pow,const void *in,const unsigned long inlen,cons
 	ws.done = 0;
 
 	if (threads < 1) threads = ZTLF_ncpus();
-	for(unsigned int t=1;t<threads;++t) {
-		pthread_t thr;
-		if (pthread_create(&thr,NULL,&_wharrgarbl,&ws)) {
-			abort();
-		}
-		pthread_detach(thr);
-	}
+	for(unsigned int t=1;t<threads;++t)
+		pthread_detach(ZTLF_threadCreate(&_wharrgarbl,&ws,true));
 	_wharrgarbl(&ws);
 
 	pthread_mutex_lock(&ws.doneLock);
