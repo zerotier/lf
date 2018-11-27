@@ -331,7 +331,7 @@ long ZTLF_DB_getRecord(struct ZTLF_DB *const db,struct ZTLF_Record *r,double *ag
 			} else {
 				/* Total weight of this owner's set of IDs is the sum of the total weights of each update in the set. */
 				double tw;
-				ZTLF_UNALIGNED_ASSIGN(tw,((struct ZTLF_DB_GraphNode *)(db->gfm + (uintptr_t)sqlite3_column_int64(db->sGetRecordHistoryById,2)))->totalWeight);
+				ZTLF_UNALIGNED_ASSIGN_8(tw,((struct ZTLF_DB_GraphNode *)(db->gfm + (uintptr_t)sqlite3_column_int64(db->sGetRecordHistoryById,2)))->totalWeight);
 				o->aggregatedTotalWeight += tw;
 			}
 
@@ -465,7 +465,7 @@ int ZTLF_DB_putRecord(struct ZTLF_DB *db,struct ZTLF_ExpandedRecord *const er)
 		sqlite3_bind_blob(db->sGetRecordInfoByHash,1,l,32,SQLITE_STATIC);
 		if (sqlite3_step(db->sGetRecordInfoByHash) == SQLITE_ROW) {
 			const int64_t linkedGoff = sqlite3_column_int64(db->sGetRecordInfoByHash,1);
-			ZTLF_UNALIGNED_ASSIGN(graphNode->linkedRecordGoff[i],linkedGoff);
+			ZTLF_UNALIGNED_ASSIGN_8(graphNode->linkedRecordGoff[i],linkedGoff);
 			ZTLF_Vector_i64_append(&graphTraversalQueue,linkedGoff);
 		} else {
 			sqlite3_reset(db->sAddDanglingLink);
@@ -473,7 +473,7 @@ int ZTLF_DB_putRecord(struct ZTLF_DB *db,struct ZTLF_ExpandedRecord *const er)
 			sqlite3_bind_int64(db->sAddDanglingLink,2,doff);
 			if ((e = sqlite3_step(db->sAddDanglingLink)) != SQLITE_DONE)
 				fprintf(stderr,"WARNING: database error adding dangling link: %d\n",e);
-			ZTLF_UNALIGNED_ASSIGN(graphNode->linkedRecordGoff[i],neg1);
+			ZTLF_UNALIGNED_ASSIGN_8(graphNode->linkedRecordGoff[i],neg1);
 		}
 	}
 
@@ -486,13 +486,13 @@ int ZTLF_DB_putRecord(struct ZTLF_DB *db,struct ZTLF_ExpandedRecord *const er)
 	while (sqlite3_step(db->sGetDanglingLinks) == SQLITE_ROW) {
 		volatile struct ZTLF_DB_GraphNode *const linkingRecordGraphNode = (volatile struct ZTLF_DB_GraphNode *)(db->gfm + (uintptr_t)sqlite3_column_int64(db->sGetDanglingLinks,0));
 		double tw;
-		ZTLF_UNALIGNED_ASSIGN(tw,linkingRecordGraphNode->totalWeight);
+		ZTLF_UNALIGNED_ASSIGN_8(tw,linkingRecordGraphNode->totalWeight);
 		totalWeight += tw;
 		for(unsigned int j=0,k=linkingRecordGraphNode->linkCount;j<k;++j) {
 			int64_t lrgoff;
-			ZTLF_UNALIGNED_ASSIGN(lrgoff,linkingRecordGraphNode->linkedRecordGoff[j]);
+			ZTLF_UNALIGNED_ASSIGN_8(lrgoff,linkingRecordGraphNode->linkedRecordGoff[j]);
 			if (lrgoff < 0) {
-				ZTLF_UNALIGNED_ASSIGN(linkingRecordGraphNode->linkedRecordGoff[j],goff);
+				ZTLF_UNALIGNED_ASSIGN_8(linkingRecordGraphNode->linkedRecordGoff[j],goff);
 				break;
 			}
 		}
@@ -505,7 +505,7 @@ int ZTLF_DB_putRecord(struct ZTLF_DB *db,struct ZTLF_ExpandedRecord *const er)
 		fprintf(stderr,"WARNING: database error deleting dangling links for received record: %d\n",e);
 
 	/* Set this record's initial total weight in its graph node. */
-	ZTLF_UNALIGNED_ASSIGN(graphNode->totalWeight,totalWeight);
+	ZTLF_UNALIGNED_ASSIGN_8(graphNode->totalWeight,totalWeight);
 
 	/* SQLite database work is now done. */
 	pthread_mutex_unlock(&db->dbcLock);
@@ -520,12 +520,12 @@ int ZTLF_DB_putRecord(struct ZTLF_DB *db,struct ZTLF_ExpandedRecord *const er)
 		if (ZTLF_ISet_put(visited,goff)) {
 			volatile struct ZTLF_DB_GraphNode *const gn = (volatile struct ZTLF_DB_GraphNode *)(db->gfm + (uintptr_t)goff);
 			double tw;
-			ZTLF_UNALIGNED_ASSIGN(tw,gn->totalWeight);
+			ZTLF_UNALIGNED_ASSIGN_8(tw,gn->totalWeight);
 			tw += wtmp;
-			ZTLF_UNALIGNED_ASSIGN(gn->totalWeight,tw);
+			ZTLF_UNALIGNED_ASSIGN_8(gn->totalWeight,tw);
 			for(unsigned int j=0,k=gn->linkCount;j<k;++j) {
 				int64_t tmp;
-				ZTLF_UNALIGNED_ASSIGN(tmp,gn->linkedRecordGoff[j]);
+				ZTLF_UNALIGNED_ASSIGN_8(tmp,gn->linkedRecordGoff[j]);
 				if (tmp >= 0) {
 					ZTLF_Vector_i64_append(&graphTraversalQueue,tmp);
 				}

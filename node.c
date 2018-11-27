@@ -36,8 +36,11 @@
 static bool _ZTLF_Node_sendTo(struct ZTLF_Node_PeerConnection *const c,void *const msgp,const unsigned int len)
 {
 	struct ZTLF_Message *const msg = (struct ZTLF_Message *)msgp;
-	msg->fletcher16 = htons(ZTLF_fletcher16(((const uint8_t *)msg) + sizeof(struct ZTLF_Message),len - sizeof(struct ZTLF_Message)));
 	bool result = false;
+
+	const uint16_t f16 = ZTLF_fletcher16(((const uint8_t *)msg) + sizeof(struct ZTLF_Message),len - sizeof(struct ZTLF_Message));
+	ZTLF_setu16(msg->fletcher16,f16);
+
 	pthread_mutex_lock(&(c->sendLock));
 	if (likely(c->sock >= 0)) {
 		if (likely(c->sockSendBufSize > 0)) {
@@ -68,6 +71,7 @@ static bool _ZTLF_Node_sendTo(struct ZTLF_Node_PeerConnection *const c,void *con
 		}
 	}
 	pthread_mutex_unlock(&(c->sendLock));
+
 	return result;
 }
 
@@ -78,7 +82,7 @@ static void _ZTLF_Node_closeConnection(struct ZTLF_Node_PeerConnection *const c,
 	if (c->sock >= 0) {
 		if (reason != ZTLF_PROTO_GOODBYE_REASON_NONE) {
 			struct ZTLF_Message_Goodbye bye;
-			bye.hdr = ZTLF_MESSAGE_HDR(ZTLF_PROTO_MESSAGE_TYPE_GOODBYE,sizeof(struct ZTLF_Message_Goodbye));
+			ZTLF_Message_setHdr(&bye,ZTLF_PROTO_MESSAGE_TYPE_GOODBYE,sizeof(struct ZTLF_Message_Goodbye));
 			bye.reason = (uint8_t)reason;
 			if (c->encryptor != NULL)
 				ZTLF_AES256CFB_crypt(c->encryptor,&bye,&bye,sizeof(bye));
@@ -93,13 +97,13 @@ static void _ZTLF_Node_closeConnection(struct ZTLF_Node_PeerConnection *const c,
 /* Create a HELLO message to send to a peer. */
 static void _ZTLF_Node_mkHello(struct ZTLF_Node_PeerConnection *const c,struct ZTLF_Message_Hello *const h,const uint8_t *const publicKey,const uint64_t flags)
 {
-	h->hdr = ZTLF_MESSAGE_HDR(ZTLF_PROTO_MESSAGE_TYPE_HELLO,sizeof(struct ZTLF_Message_Hello));
+	ZTLF_Message_setHdr(h,ZTLF_PROTO_MESSAGE_TYPE_HELLO,sizeof(struct ZTLF_Message_Hello));
 
 	ZTLF_secureRandom(h->iv,sizeof(h->iv));
 	h->protoVersion = 0;
 	h->protoFlags = 0;
-	h->currentTime = ZTLF_htonll(ZTLF_timeMs());
-	h->flags = ZTLF_htonll(flags);
+	ZTLF_setu64(h->currentTime,ZTLF_timeMs());
+	ZTLF_setu64(h->flags,flags);
 	h->cipher = ZTLF_PROTO_CIPHER_C25519_AES256_CFB;
 	memcpy(h->publicKey,publicKey,sizeof(h->publicKey));
 
@@ -114,13 +118,14 @@ static void _ZTLF_Node_mkHello(struct ZTLF_Node_PeerConnection *const c,struct Z
 	ZTLF_AES256CFB_destroy(&enc);
 }
 
+/* Announce all currently successfully connected outbound (and thus verified) peers to a given peer. */
 static void _ZTLF_Node_announcePeersTo(struct ZTLF_Node_PeerConnection *const c)
 {
 	uint64_t tmp[32];
 	struct ZTLF_Message_PeerInfo *pi = (struct ZTLF_Message_PeerInfo *)tmp;
 	pthread_mutex_lock(&(c->parent->connLock));
 	for(unsigned long i=0;i<c->parent->connCount;++i) {
-		if ((&(c->parent->conn[i]) != c)&&(c->parent->conn[i].connectionEstablished)) {
+		if ((&(c->parent->conn[i]) != c)&&(c->parent->conn[i].connectionEstablished)&&(!c->parent->conn[i].incoming)) {
 			struct ZTLF_Node_PeerConnection *c2 = (struct ZTLF_Node_PeerConnection *)&(c->parent->conn[i]);
 			memcpy(pi->keyHash,c2->remoteKeyHash,48);
 			unsigned int pilen = 0;
@@ -139,7 +144,7 @@ static void _ZTLF_Node_announcePeersTo(struct ZTLF_Node_PeerConnection *const c)
 					break;
 			}
 			if (pilen > 0) {
-				pi->hdr = ZTLF_MESSAGE_HDR(ZTLF_PROTO_MESSAGE_TYPE_PEER_INFO,pilen);
+				ZTLF_Message_setHdr(pi,ZTLF_PROTO_MESSAGE_TYPE_PEER_INFO,pilen);
 				_ZTLF_Node_sendTo(c,pi,pilen);
 			}
 		}
@@ -223,7 +228,8 @@ static void *_ZTLF_Node_connectionHandler(void *tptr)
 			msize += sizeof(struct ZTLF_Message) + 1; /* message size doesn't include header size, and range is 1-4096 not 0-4095 */
 
 			if (rptr >= msize) { /* a complete message was received */
-				if (ntohs(((struct ZTLF_Message *)mbuf)->fletcher16) != ZTLF_fletcher16(mbuf + sizeof(struct ZTLF_Message),msize - sizeof(struct ZTLF_Message))) {
+				const uint16_t f16 = ZTLF_getu16(((struct ZTLF_Message *)mbuf)->fletcher16);
+				if (f16 != ZTLF_fletcher16(mbuf + sizeof(struct ZTLF_Message),msize - sizeof(struct ZTLF_Message))) {
 					termReason = ZTLF_PROTO_GOODBYE_REASON_NONE;
 					goto terminate_connection;
 				}
@@ -307,10 +313,10 @@ static void *_ZTLF_Node_connectionHandler(void *tptr)
 							/* Send encrypted OK to peer with acknowledgement of HELLO. */
 							struct ZTLF_Message_OK ok;
 							memset(&ok,0,sizeof(ok));
-							ok.hdr = ZTLF_MESSAGE_HDR(ZTLF_PROTO_MESSAGE_TYPE_OK,sizeof(struct ZTLF_Message_OK));
+							ZTLF_Message_setHdr(&ok,ZTLF_PROTO_MESSAGE_TYPE_OK,sizeof(struct ZTLF_Message_OK));
 							ZTLF_SHA384_final(&ackHash,ok.ack);
-							ok.helloTime = h->currentTime;
-							ok.currentTime = ZTLF_htonll(now);
+							ZTLF_UNALIGNED_ASSIGN_8(ok.helloTime,h->currentTime);
+							ZTLF_setu64(ok.currentTime,now);
 							ok.version[0] = ZTLF_VERSION_MAJOR;
 							ok.version[1] = ZTLF_VERSION_MINOR;
 							ok.version[2] = ZTLF_VERSION_REVISION;
@@ -358,7 +364,7 @@ static void *_ZTLF_Node_connectionHandler(void *tptr)
 										break;
 								}
 								if (pilen > 0) {
-									pi->hdr = ZTLF_MESSAGE_HDR(ZTLF_PROTO_MESSAGE_TYPE_PEER_INFO,pilen);
+									ZTLF_Message_setHdr(pi,ZTLF_PROTO_MESSAGE_TYPE_PEER_INFO,pilen);
 									memcpy(pi->keyHash,c->remoteKeyHash,48);
 									pthread_mutex_lock(&(c->parent->connLock));
 									for(unsigned long i=0;i<c->parent->connCount;++i) {
@@ -371,7 +377,7 @@ static void *_ZTLF_Node_connectionHandler(void *tptr)
 
 							_ZTLF_Node_announcePeersTo(c);
 
-							const uint64_t ht = ZTLF_ntohll(ok->helloTime);
+							const uint64_t ht = ZTLF_getu64(ok->helloTime);
 							c->latency = (now > ht) ? (long)(now - ht) : (long)0;
 							c->connectionEstablished = true;
 							connectionEstablished = true;

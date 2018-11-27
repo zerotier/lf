@@ -46,8 +46,7 @@ bool ZTLF_selftest_core(FILE *o)
 
 bool ZTLF_selftest_wharrgarbl(FILE *o)
 {
-	const unsigned long mem = 1024 * 1024 * 512;
-	void *foo = malloc(mem);
+	void *const foo = malloc(ZTLF_RECORD_WHARRGARBL_POW_ITERATION_MEMORY);
 
 	uint8_t tmp[32];
 	for(int i=0;i<32;++i)
@@ -63,7 +62,7 @@ bool ZTLF_selftest_wharrgarbl(FILE *o)
 		uint64_t iter = 0;
 		uint64_t start = ZTLF_timeMs();
 		for(int k=0;k<5;++k)
-			iter += ZTLF_wharrgarbl(pow,tmp,sizeof(tmp),ZTLF_RECORD_WHARRGARBL_POW_ITERATION_DIFFICULTY,foo,mem,0);
+			iter += ZTLF_wharrgarbl(pow,tmp,sizeof(tmp),ZTLF_RECORD_WHARRGARBL_POW_ITERATION_DIFFICULTY,foo,ZTLF_RECORD_WHARRGARBL_POW_ITERATION_MEMORY,0);
 		uint64_t end = ZTLF_timeMs();
 		if (!ZTLF_wharrgarblVerify(pow,tmp,sizeof(tmp))) {
 			fprintf(o,"FAILED! (verify)" ZTLF_EOL);
@@ -73,6 +72,19 @@ bool ZTLF_selftest_wharrgarbl(FILE *o)
 		fprintf(o,"   %12x  %8u  %12llu   %.8f" ZTLF_EOL,ZTLF_RECORD_WHARRGARBL_POW_ITERATION_DIFFICULTY,thr,iter / 5,((double)(end - start)) / 5.0 / 1000.0);
 	}
 
+	free(foo);
+	return true;
+}
+
+bool ZTLF_selftest_modelProofOfWork(FILE *o)
+{
+	void *const foo = malloc(ZTLF_RECORD_WHARRGARBL_POW_ITERATION_MEMORY);
+
+	uint8_t tmp[32];
+	for(int i=0;i<32;++i)
+		tmp[i] = (uint8_t)i;
+	uint8_t pow[ZTLF_WHARRGARBL_POW_BYTES];
+
 	int icols = -1;
 	char *cols = getenv("COLUMNS");
 	if (cols) {
@@ -81,7 +93,6 @@ bool ZTLF_selftest_wharrgarbl(FILE *o)
 			icols = -1;
 	}
 	icols /= 15;
-	fprintf(o,ZTLF_EOL "Determining time for record work by record length..." ZTLF_EOL);
 	uint8_t scoringHash[48];
 	double avgTime[ZTLF_RECORD_MAX_SIZE][2];
 	uint64_t startTimes[ZTLF_RECORD_MAX_SIZE];

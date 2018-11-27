@@ -56,8 +56,12 @@ ZTLF_PACKED_STRUCT(struct ZTLF_Message {
 	uint16_t fletcher16; /* fletcher16 checksum of data after header */
 });
 
-/* This computes the hdr field that starts each message. */
-#define ZTLF_MESSAGE_HDR(t,l) htons((uint16_t)((((uint16_t)(t)) << 12) | ((uint16_t)(((l) - (sizeof(struct ZTLF_Message) + 1)) & 0xfff))))
+#define ZTLF_Message_setHdr(m,t,s) { \
+	((uint8_t *)(m))[0] = (uint8_t)((t) << 4) | (uint8_t)(((s) >> 8) & 0xf); \
+	((uint8_t *)(m))[1] = (uint8_t)(s); \
+}
+#define ZTLF_Message_type(m) (((const uint8_t *)(m))[0] >> 4)
+#define ZTLF_Message_size(m) ((((unsigned int)(((const uint8_t *)(m))[0] & 0xf)) << 8) | ((unsigned int)(((const uint8_t *)(m))[1])))
 
 ZTLF_PACKED_STRUCT(struct ZTLF_Message_Hello {
 	uint16_t hdr;
@@ -95,7 +99,7 @@ ZTLF_PACKED_STRUCT(struct ZTLF_Message_PeerInfo {
 	uint16_t hdr;
 	uint16_t fletcher16;
 
-	uint64_t keyHash[6];        /* SHA384(publicKey) */
+	uint8_t keyHash[48];        /* SHA384(publicKey) */
 	uint8_t addressType;        /* 6 or 4 */
 	uint8_t address[];          /* length depends on type: 6 (ip4, port) or 18 (ip6, port) */
 });
@@ -111,7 +115,7 @@ ZTLF_PACKED_STRUCT(struct ZTLF_Message_RecordRequestByID {
 	uint16_t hdr;
 	uint32_t crc;
 
-	uint64_t id[4];
+	uint8_t id[32];
 });
 
 ZTLF_PACKED_STRUCT(struct ZTLF_Message_RecordRequestByHash {

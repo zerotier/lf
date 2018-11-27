@@ -32,6 +32,7 @@
 #include "record.h"
 #include "aes.h"
 #include "map.h"
+#include "ed25519.h"
 
 struct ZTLF_Node_PeerConnection
 {
@@ -56,9 +57,9 @@ struct ZTLF_Node
 {
 	struct ZTLF_DB db;
 
-	uint8_t networkKey[32];
-	uint8_t publicKey[32];
-	uint8_t privateKey[32];
+	uint8_t networkKey[48]; /* SHA384(plain text network key), only first 32 bytes are actually used as AES key */
+	uint8_t publicKey[ZTLF_ED25519_PUBLIC_KEY_SIZE];
+	uint8_t privateKey[ZTLF_ED25519_PRIVATE_KEY_SIZE];
 
 	unsigned int listenPort;
 	int listenSocket;
