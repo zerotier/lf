@@ -21,6 +21,11 @@
 #define ZTLF_RECORD_ALG_WORK_WHARRGARBL   0x1
 
 /**
+ * Value to supply to create for ttl to indicate 'forever'
+ */
+#define ZTLF_TTL_FOREVER 0x7fffffffffffffffULL
+
+/**
  * Minimum size of a record (simply size of header)
  */
 #define ZTLF_RECORD_MIN_SIZE sizeof(struct ZTLF_Record)
@@ -41,9 +46,9 @@
 #define ZTLF_RECORD_MIN_LINKS 3
 
 /**
- * Unit for TTL in seconds (cannot be changed)
+ * Unit for TTL in seconds (about 34 hours and set so that max TTL is about one year, cannot be changed)
  */
-#define ZTLF_RECORD_TTL_INCREMENT_SEC 123671
+#define ZTLF_RECORD_TTL_INCREMENT_SEC 124158
 
 /**
  * Wharrgarbl difficulty per iteration for record PoW (takes ~1-3 sec on a quad-core Core i7 in 2018)
@@ -61,17 +66,38 @@
 #define ZTLF_RECORD_WORK_COST_DIVISOR 32768
 
 /**
- * Packed record as it appears on the wire and in the database
+ * Meta-data: [0] empty
+ */
+#define ZTLF_RECORD_METADATA_NIL 0x0
+
+/**
+ * Meta-data: [32] arbitrary 32-byte public selector that can be used to find records by some key
+ */
+#define ZTLF_RECORD_METADATA_SELECTOR 0x1
+
+/**
+ * Meta-data: [32] owner ID of new owner that should inherit prveious owners' record weights
+ * 
+ * Only one owner change can be made in a single revision. If there are two change owner meta-data
+ * fields the second is ignored.
+ */
+#define ZTLF_RECORD_METADATA_CHANGE_OWNER 0x2
+
+/**
+ * Packed record as it appears on the wire
+ * 
+ * Use ZTLF_Record_expand to create ZTLF_ExpandedRecord with fields expanded for more convenient access.
  */
 ZTLF_PACKED_STRUCT(struct ZTLF_Record
 {
-	uint8_t id[32];                            /* public key (or hash thereof) derived from record key */
-	uint8_t owner[32];                         /* public key (or hash thereof) of owner */
-	uint8_t timestamp[5];                      /* 40-bit (big-endian) timestamp in seconds since epoch */
-	uint8_t ttl;                               /* TTL in 123671 second (~34 hour) increments or 0 to relinquish ID ownership now */
-	uint8_t algorithms;                        /* VVWWIIOO: VV=value cipher,WW=work,II=id claim signature,OO=owner signature */
-	uint8_t vlSize[2];                         /* number of links (most significant 5 bits) and size of value (least significant 11 bits) */
-	uint8_t data[];                            /* value, links, work, id claim signature, owner signature */
+	uint8_t id[32];        /* public key (or hash thereof) derived from record key */
+	uint8_t owner[32];     /* public key (or hash thereof) of owner */
+	uint8_t timestamp[5];  /* 40-bit (big-endian) timestamp in seconds since epoch */
+	uint8_t ttl;           /* TTL in 124158 second (~34 hour) increments, 0 to expire now, or 255 to "never" expire */
+	uint8_t algorithms;    /* VVWWIIOO: VV=value cipher,WW=work,II=id claim signature,OO=owner signature */
+	uint8_t metadata;      /* two four-bit meta-data type IDs indicating which meta-data fields are present */
+	uint8_t vlSize[2];     /* number of links (most significant 5 bits) and size of value (least significant 11 bits) */
+	uint8_t data[];        /* value, links, meta-data (x2), work, id claim signature, owner signature */
 });
 
 /**
@@ -96,6 +122,7 @@ struct ZTLF_ExpandedRecord
 
 	const void *value;
 	const void *links; /* size in bytes is 32*r->linkCount */
+	const void *metaData[2];
 	const void *work;
 	const void *idClaimSignature;
 	const void *ownerSignature;
@@ -104,12 +131,15 @@ struct ZTLF_ExpandedRecord
 
 	uint64_t timestamp;
 	uint64_t ttl;
+	uint64_t expiration;
 	double weight;
 
 	unsigned int size;
 
 	unsigned int valueSize;
 	unsigned int linkCount;
+	unsigned int metaDataType[2];
+	unsigned int metaDataSize[2];
 	unsigned int workSize;
 	unsigned int idClaimSignatureSize;
 	unsigned int ownerSignatureSize;
@@ -170,22 +200,6 @@ int ZTLF_Record_create(
 	uint64_t ttl,
 	bool encryptValue,
 	bool (*statusCallback)(uint32_t,uint32_t));
-
-/**
- * Extract record timestamp from record
- * 
- * @param r Record
- * @return Timestamp in seconds since Unix epoch
- */
-static inline uint64_t ZTLF_Record_timestamp(const struct ZTLF_Record *r) { return ((((uint64_t)r->timestamp[0]) << 32) | (((uint64_t)r->timestamp[1]) << 24) | (((uint64_t)r->timestamp[2]) << 16) | (((uint64_t)r->timestamp[3]) << 8) | (uint64_t)r->timestamp[4]); }
-
-/**
- * Extract record TTL from record
- * 
- * @param r Record
- * @return Time to live in seconds since Unix epoch
- */
-static inline uint64_t ZTLF_Record_ttl(const struct ZTLF_Record *r) { return (((uint64_t)r->ttl) * (uint64_t)ZTLF_RECORD_TTL_INCREMENT_SEC); }
 
 /**
  * Expand record into its constituent fields and perform basic validation

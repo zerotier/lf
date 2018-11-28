@@ -63,13 +63,18 @@ ZTLF_PACKED_STRUCT(struct ZTLF_DB_GraphNode
 "exp INTEGER NOT NULL," \
 "id BLOB(32) NOT NULL," \
 "owner BLOB(32) NOT NULL," \
-"hash BLOB(32) NOT NULL" \
+"hash BLOB(32) NOT NULL," \
+"new_owner BLOB(32)," \
+"sel0 BLOB," \
+"sel1 BLOB" \
 ") WITHOUT ROWID;\n" \
 \
 "CREATE UNIQUE INDEX IF NOT EXISTS record_goff ON record(goff);\n" \
 "CREATE INDEX IF NOT EXISTS record_ts ON record(ts);\n" \
 "CREATE INDEX IF NOT EXISTS record_id_ts ON record(id,ts);\n" \
 "CREATE UNIQUE INDEX IF NOT EXISTS record_hash ON record(hash);\n" \
+"CREATE INDEX IF NOT EXISTS record_sel0 ON record(sel0);\n" \
+"CREATE INDEX IF NOT EXISTS record_sel1 ON record(sel1);\n" \
 \
 "CREATE TABLE IF NOT EXISTS dangling_link (" \
 "hash BLOB(32) NOT NULL," \
@@ -124,7 +129,7 @@ int ZTLF_DB_open(struct ZTLF_DB *db,const char *path)
 	if ((e = sqlite3_exec(db->dbc,(ZTLF_DB_INIT_SQL),NULL,NULL,NULL)) != SQLITE_OK)
 		goto exit_with_error;
 
-	if ((e = sqlite3_prepare_v2(db->dbc,"INSERT INTO record (doff,dlen,goff,ts,exp,id,owner,hash) VALUES (?,?,?,?,?,?,?,?)",-1,&db->sAddRecord,NULL)) != SQLITE_OK)
+	if ((e = sqlite3_prepare_v2(db->dbc,"INSERT INTO record (doff,dlen,goff,ts,exp,id,owner,hash,new_owner,sel0,sel1) VALUES (?,?,?,?,?,?,?,?,?,?,?)",-1,&db->sAddRecord,NULL)) != SQLITE_OK)
 		goto exit_with_error;
 	if ((e = sqlite3_prepare_v2(db->dbc,"SELECT MAX(goff) FROM record",-1,&db->sGetMaxRecordGoff,NULL)) != SQLITE_OK)
 		goto exit_with_error;
@@ -428,10 +433,27 @@ int ZTLF_DB_putRecord(struct ZTLF_DB *db,struct ZTLF_ExpandedRecord *const er)
 	sqlite3_bind_int64(db->sAddRecord,2,(sqlite3_int64)er->size);
 	sqlite3_bind_int64(db->sAddRecord,3,goff);
 	sqlite3_bind_int64(db->sAddRecord,4,(sqlite3_int64)er->timestamp);
-	sqlite3_bind_int64(db->sAddRecord,5,(sqlite3_int64)(er->timestamp + er->ttl));
+	sqlite3_bind_int64(db->sAddRecord,5,(sqlite3_int64)er->expiration);
 	sqlite3_bind_blob(db->sAddRecord,6,er->r->id,sizeof(er->r->id),SQLITE_STATIC);
 	sqlite3_bind_blob(db->sAddRecord,7,er->r->owner,sizeof(er->r->owner),SQLITE_STATIC);
 	sqlite3_bind_blob(db->sAddRecord,8,er->hash,32,SQLITE_STATIC);
+	bool haveNewOwner = false;
+	for(int i=0;i<2;++i) {
+		if (er->metaDataType[i] == ZTLF_RECORD_METADATA_CHANGE_OWNER) {
+			sqlite3_bind_blob(db->sAddRecord,9,er->metaData[i],er->metaDataSize[i],SQLITE_STATIC);
+			haveNewOwner = true;
+			break;
+		}
+	}
+	if (!haveNewOwner)
+		sqlite3_bind_null(db->sAddRecord,9);
+	int selectorColIdx = 10;
+	for(int i=0;i<2;++i) {
+		if (er->metaDataType[i] == ZTLF_RECORD_METADATA_SELECTOR)
+			sqlite3_bind_blob(db->sAddRecord,selectorColIdx++,er->metaData[i],er->metaDataSize[i],SQLITE_STATIC);
+	}
+	while (selectorColIdx < 12)
+		sqlite3_bind_null(db->sAddRecord,selectorColIdx++);
 	if ((e = sqlite3_step(db->sAddRecord)) != SQLITE_DONE) {
 		result = ZTLF_POS(e);
 		goto exit_putRecord;

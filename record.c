@@ -48,13 +48,20 @@ int ZTLF_Record_create(
 	rb->data.r.timestamp[2] = (uint8_t)((timestamp >> 16) & 0xff);
 	rb->data.r.timestamp[3] = (uint8_t)((timestamp >> 8) & 0xff);
 	rb->data.r.timestamp[4] = (uint8_t)(timestamp & 0xff);
-	unsigned int ttlb = (unsigned int)(ttl / ZTLF_RECORD_TTL_INCREMENT_SEC);
-	if (ttlb > 255) {
+	uint8_t ttlb;
+	if (ttl == ZTLF_TTL_FOREVER) {
 		ttlb = 255;
-	} else if (ttlb == 0) {
-		ttlb = (ttl > 0) ? 1 : 0;
+	} else if (ttl == 0) {
+		ttlb = 0;
+	} else {
+		ttl /= ZTLF_RECORD_TTL_INCREMENT_SEC;
+		if (ttl >= 254)
+			ttlb = 254;
+		else if (ttl == 0)
+			ttlb = 1;
+		else ttlb = (uint8_t)ttl;
 	}
-	rb->data.r.ttl = (uint8_t)ttlb;
+	rb->data.r.ttl = ttlb;
 	rb->data.r.algorithms = (uint8_t)(
 		((encryptValue ? ZTLF_RECORD_ALG_CIPHER_AES256CFB : ZTLF_RECORD_ALG_CIPHER_NONE) << 6) |
 		(ZTLF_RECORD_ALG_WORK_WHARRGARBL << 4) |
@@ -133,16 +140,40 @@ bool ZTLF_Record_expand(struct ZTLF_ExpandedRecord *const er,const struct ZTLF_R
 	er->ownerSignatureAlgorithm = r->algorithms & 3;
 
 	ZTLF_Shandwich256(er->hash,r,rsize);
-	er->timestamp = ZTLF_Record_timestamp(r);
-	er->ttl = ZTLF_Record_ttl(r);
+	er->timestamp = ((((uint64_t)r->timestamp[0]) << 32) | (((uint64_t)r->timestamp[1]) << 24) | (((uint64_t)r->timestamp[2]) << 16) | (((uint64_t)r->timestamp[3]) << 8) | (uint64_t)r->timestamp[4]);
+	if (r->ttl == 0) {
+		er->ttl = 0;
+		er->expiration = er->timestamp;
+	} else if (r->ttl == 0xff) {
+		er->ttl = ZTLF_TTL_FOREVER;
+		er->expiration = ZTLF_TTL_FOREVER;
+	} else {
+		er->ttl = ((uint64_t)r->ttl) * ZTLF_RECORD_TTL_INCREMENT_SEC;
+		er->expiration = er->timestamp + er->ttl;
+	}
 	er->size = rsize;
 
 	const unsigned int vlSize = (((unsigned int)r->vlSize[0]) << 8) | (unsigned int)r->vlSize[1];
 
 	er->valueSize = vlSize & 0x7ff;
-	er->linkCount = vlSize >> 11;
 	if (er->valueSize > ZTLF_RECORD_MAX_VALUE_SIZE)
 		return false;
+	er->linkCount = vlSize >> 11;
+	er->metaDataType[0] = r->metadata >> 4;
+	er->metaDataType[1] = r->metadata & 0xf;
+	for(int i=0;i<2;++i) {
+		switch(er->metaDataType[i]) {
+			case ZTLF_RECORD_METADATA_NIL:
+				er->metaDataSize[i] = 0;
+				break;
+			case ZTLF_RECORD_METADATA_SELECTOR:
+			case ZTLF_RECORD_METADATA_CHANGE_OWNER:
+				er->metaDataSize[i] = 32;
+				break;
+			default:
+				return false;
+		}
+	}
 	switch (er->workAlgorithm) {
 		case ZTLF_RECORD_ALG_WORK_NONE:
 			er->workSize = 0;
@@ -175,6 +206,10 @@ bool ZTLF_Record_expand(struct ZTLF_ExpandedRecord *const er,const struct ZTLF_R
 	dp += er->valueSize;
 	er->links = dp;
 	dp += (32 * er->linkCount);
+	for(int i=0;i<2;++i) {
+		er->metaData[i] = dp;
+		dp += er->metaDataSize[i];
+	}
 	er->work = dp;
 	dp += er->workSize;
 	er->idClaimSignature = dp;
@@ -185,7 +220,7 @@ bool ZTLF_Record_expand(struct ZTLF_ExpandedRecord *const er,const struct ZTLF_R
 		return false;
 
 	if (er->workSize > 0) {
-		ZTLF_SHA384(er->scoringHash,r,sizeof(struct ZTLF_Record) + er->valueSize + (32 * er->linkCount) + er->workSize);
+		ZTLF_SHA384(er->scoringHash,r,(unsigned long)(((const uint8_t *)er->work) - ((const uint8_t *)r)));
 		er->workScore = ZTLF_score(er->scoringHash);
 		er->weight = 1.0 + (((double)er->workScore) / 4294967295.0);
 	} else {

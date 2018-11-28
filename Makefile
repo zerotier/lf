@@ -13,6 +13,7 @@ OBJS=\
 	node.o \
 	record.o \
 	selftest.o \
+	tiny-json.o \
 	wharrgarbl.o
 
 all:	lf

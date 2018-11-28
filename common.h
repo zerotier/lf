@@ -8,6 +8,13 @@
 #ifndef ZT_LF_COMMON_H
 #define ZT_LF_COMMON_H
 
+/* LF internal error return codes */
+#define ZTLF_ERR_NONE                         0
+#define ZTLF_ERR_OUT_OF_MEMORY                1
+#define ZTLF_ERR_ABORTED                      2
+#define ZTLF_ERR_OBJECT_TOO_LARGE             3
+
+/* Only necessary on some old 32-bit machines which aren't "officially" supported, but do it anyway. */
 #ifndef _FILE_OFFSET_BITS
 #define _FILE_OFFSET_BITS 64
 #endif
@@ -27,23 +34,8 @@
 #include <time.h>
 #include <fcntl.h>
 #include <errno.h>
-#include <sys/ioctl.h>
 #include <sys/time.h>
 #include <sys/types.h>
-#include <sys/socket.h>
-#include <sys/select.h>
-#include <sys/stat.h>
-#include <netinet/in.h>
-#include <netinet/tcp.h>
-#include <arpa/inet.h>
-
-#ifndef MSG_DONTWAIT
-#ifdef MSG_NONBLOCK
-#define MSG_DONTWAIT MSG_NONBLOCK
-#else
-#error Neither MSG_DONTWAIT nor MSG_NONBLOCK exist
-#endif
-#endif
 
 #ifndef PATH_MAX
 #define PATH_MAX 1024
@@ -65,7 +57,14 @@
 
 #else /* not Windows -------------------------------------------------- */
 
+#include <sys/ioctl.h>
+#include <sys/stat.h>
+#include <sys/socket.h>
+#include <sys/select.h>
 #include <sys/mman.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
+#include <arpa/inet.h>
 #include <unistd.h>
 #include <signal.h>
 #include <pthread/pthread.h>
@@ -80,10 +79,21 @@
 #define ZTLF_PATH_SEPARATOR_C '/'
 #define ZTLF_EOL "\n"
 
+/* Create thread, optionally with lower-than-normal priority */
 pthread_t ZTLF_threadCreate(void *(*threadMain)(void *),void *arg,bool lowPriority);
 
 #endif /* Windows or non-Windows? ------------------------------------- */
 
+/* send flag to selectively invoke non-blocking socket behavior */
+#ifndef MSG_DONTWAIT
+#ifdef MSG_NONBLOCK
+#define MSG_DONTWAIT MSG_NONBLOCK
+#else
+#error Neither MSG_DONTWAIT nor MSG_NONBLOCK exist
+#endif
+#endif
+
+/* Branch optimization macros if supported, otherwise these are no-ops. */
 #if (defined(__GNUC__) && (__GNUC__ >= 3)) || (defined(__INTEL_COMPILER) && (__INTEL_COMPILER >= 800)) || defined(__clang__)
 #ifndef likely
 #define likely(x) __builtin_expect((x),1)
@@ -112,11 +122,12 @@ pthread_t ZTLF_threadCreate(void *(*threadMain)(void *),void *arg,bool lowPriori
 #define __BYTE_ORDER__ __ORDER_LITTLE_ENDIAN__
 #endif
 
+/* Define a macro to byte swap 64-bit values if needed. */
 #if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
 #if (defined(__GNUC__) && (__GNUC__ >= 3)) || (defined(__INTEL_COMPILER) && (__INTEL_COMPILER >= 800)) || defined(__clang__)
 #define ZTLF_htonll(n) ((uint64_t)(__builtin_bswap64((uint64_t)(n))))
 #else
-static inline uint64_t ZTLF_htonll(uint64_t n)
+static inline uint64_t ZTLF_htonll(const uint64_t n)
 {
 	return (
 		((n & 0x00000000000000ffULL) << 56) |
@@ -134,6 +145,44 @@ static inline uint64_t ZTLF_htonll(uint64_t n)
 #define ZTLF_htonll(n) ((uint64_t)(n))
 #endif
 #define ZTLF_ntohll(n) ZTLF_htonll((n))
+
+/* Macros to safely deal with longer values in packed structures or unaligned arrays */
+#if defined(_M_AMD64) || defined(_M_X64) || defined(__amd64__) || defined(__x86_64__) || defined(__amd64) || defined(__x86_64) || defined(i386) || defined(__i386) || defined(__i386__) || defined(_M_IX86)
+
+#define ZTLF_UNALIGNED_ASSIGN_8(d,s) (d) = (s)
+#define ZTLF_UNALIGNED_ASSIGN_4(d,s) (d) = (s)
+#define ZTLF_UNALIGNED_ASSIGN_2(d,s) (d) = (s)
+
+#define ZTLF_setu16(f,v) *((uint16_t *)&(f)) = (uint16_t)htons((uint16_t)(v))
+#define ZTLF_setu32(f,v) *((uint32_t *)&(f)) = (uint32_t)htonl((uint32_t)(v))
+#define ZTLF_setu64(f,v) *((uint64_t *)&(f)) = (uint64_t)ZTLF_htonll((uint64_t)(v))
+
+#define ZTLF_getu16(f) ((uint16_t)ntohs(*((const uint16_t *)&(f))))
+#define ZTLF_getu32(f) ((uint32_t)ntohl(*((const uint32_t *)&(f))))
+#define ZTLF_getu64(f) ((uint64_t)ZTLF_ntohll(*((const uint64_t *)&(f))))
+
+#else /* many other CPUs don't like unaligned access, so assume we need to not type pun ---------------- */
+
+#define ZTLF_UNALIGNED_ASSIGN_8(d,s) { \
+	((uint8_t *)&(d))[0] = ((const uint8_t *)&(s))[0]; \
+	((uint8_t *)&(d))[1] = ((const uint8_t *)&(s))[1]; \
+	((uint8_t *)&(d))[2] = ((const uint8_t *)&(s))[2]; \
+	((uint8_t *)&(d))[3] = ((const uint8_t *)&(s))[3]; \
+	((uint8_t *)&(d))[4] = ((const uint8_t *)&(s))[4]; \
+	((uint8_t *)&(d))[5] = ((const uint8_t *)&(s))[5]; \
+	((uint8_t *)&(d))[6] = ((const uint8_t *)&(s))[6]; \
+	((uint8_t *)&(d))[7] = ((const uint8_t *)&(s))[7]; \
+}
+#define ZTLF_UNALIGNED_ASSIGN_4(d,s) { \
+	((uint8_t *)&(d))[0] = ((const uint8_t *)&(s))[0]; \
+	((uint8_t *)&(d))[1] = ((const uint8_t *)&(s))[1]; \
+	((uint8_t *)&(d))[2] = ((const uint8_t *)&(s))[2]; \
+	((uint8_t *)&(d))[3] = ((const uint8_t *)&(s))[3]; \
+}
+#define ZTLF_UNALIGNED_ASSIGN_2(d,s) { \
+	((uint8_t *)&(d))[0] = ((const uint8_t *)&(s))[0]; \
+	((uint8_t *)&(d))[1] = ((const uint8_t *)&(s))[1]; \
+}
 
 #define ZTLF_setu16(f,v) { \
 	const uint16_t _setu_v = (uint16_t)(v); \
@@ -174,49 +223,21 @@ static inline uint64_t ZTLF_htonll(uint64_t n)
 	(((uint64_t)(((uint8_t *)&(f))[6])) << 8) | \
 	((uint64_t)(((uint8_t *)&(f))[7])) )
 
-/* LF internal error return codes */
-#define ZTLF_ERR_NONE                         0
-#define ZTLF_ERR_OUT_OF_MEMORY                1
-#define ZTLF_ERR_ABORTED                      2
-#define ZTLF_ERR_OBJECT_TOO_LARGE             3
-
-/* Macro to safely assign identical primitive types to unaligned variables */
-#if defined(_M_AMD64) || defined(__amd64__) || defined(__x86_64__) || defined(__amd64) || defined(__x86_64)
-#define ZTLF_UNALIGNED_ASSIGN_8(d,s) (d) = (s)
-#define ZTLF_UNALIGNED_ASSIGN_4(d,s) (d) = (s)
-#define ZTLF_UNALIGNED_ASSIGN_2(d,s) (d) = (s)
-#else
-#define ZTLF_UNALIGNED_ASSIGN_8(d,s) { \
-	((uint8_t *)&(d))[0] = ((const uint8_t *)&(s))[0]; \
-	((uint8_t *)&(d))[1] = ((const uint8_t *)&(s))[1]; \
-	((uint8_t *)&(d))[2] = ((const uint8_t *)&(s))[2]; \
-	((uint8_t *)&(d))[3] = ((const uint8_t *)&(s))[3]; \
-	((uint8_t *)&(d))[4] = ((const uint8_t *)&(s))[4]; \
-	((uint8_t *)&(d))[5] = ((const uint8_t *)&(s))[5]; \
-	((uint8_t *)&(d))[6] = ((const uint8_t *)&(s))[6]; \
-	((uint8_t *)&(d))[7] = ((const uint8_t *)&(s))[7]; \
-}
-#define ZTLF_UNALIGNED_ASSIGN_4(d,s) { \
-	((uint8_t *)&(d))[0] = ((const uint8_t *)&(s))[0]; \
-	((uint8_t *)&(d))[1] = ((const uint8_t *)&(s))[1]; \
-	((uint8_t *)&(d))[2] = ((const uint8_t *)&(s))[2]; \
-	((uint8_t *)&(d))[3] = ((const uint8_t *)&(s))[3]; \
-}
-#define ZTLF_UNALIGNED_ASSIGN_2(d,s) { \
-	((uint8_t *)&(d))[0] = ((const uint8_t *)&(s))[0]; \
-	((uint8_t *)&(d))[1] = ((const uint8_t *)&(s))[1]; \
-}
-#endif
+#endif /* ---------------------------------------------------------------------------------------------- */
 
 #define ZTLF_NEG(e) (((e) <= 0) ? (e) : -(e))
 #define ZTLF_POS(e) (((e) >= 0) ? (e) : -(e))
 
-#define ZTLF_timeSec() ((uint64_t)time(NULL))
-
+/* Non-cryptographic random number generator */
 uint64_t ZTLF_prng();
+
+/* Get number of CPU cores */
 unsigned int ZTLF_ncpus();
+
+/* Secure PRNG */
 void ZTLF_secureRandom(void *b,const unsigned long n);
 
+/* Logging functions */
 void ZTLF_L_func(int level,const char *srcf,int line,const char *fmt,...);
 #define ZTLF_L(...) ZTLF_L_func(0,__FILE__,__LINE__,__VA_ARGS__)
 #define ZTLF_L_warning(...) ZTLF_L_func(-1,__FILE__,__LINE__,__VA_ARGS__)
@@ -224,7 +245,10 @@ void ZTLF_L_func(int level,const char *srcf,int line,const char *fmt,...);
 #define ZTLF_L_verbose(...) ZTLF_L_func(1,__FILE__,__LINE__,__VA_ARGS__)
 #define ZTLF_L_trace(...) ZTLF_L_func(2,__FILE__,__LINE__,__VA_ARGS__)
 
+/* Aborts on malloc failure */
 #define ZTLF_MALLOC_CHECK(m) if (unlikely(!((m)))) { ZTLF_L_fatal("malloc() failed!"); abort(); }
+
+#define ZTLF_timeSec() ((uint64_t)time(NULL))
 
 static inline uint64_t ZTLF_timeMs()
 {
