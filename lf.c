@@ -13,7 +13,7 @@
 #define ZTLF_DEFAULT_TCP_PORT 19379
 #define ZTLF_DEFAULT_HTTP_PORT 19380
 
-static volatile running = false;
+static volatile bool running = false;
 static struct ZTLF_Node node;
 
 static void printHelp()
@@ -27,7 +27,7 @@ static void printHelp()
 "  -v                         - Display version" ZTLF_EOL
 "  -T                         - Run internal self-test and exit" ZTLF_EOL
 "  -W                         - Benchmark record PoW (CTRL+C to stop)" ZTLF_EOL
-"",ZTLF_VERSION_MAJOR,ZTLF_VERSION_MINOR,ZTLF_VERSION_REVISION,ZTLF_VERSION_BUILD,ZTLF_DEFAULT_TCP_PORT,ZTLF_DEFAULT_HTTP_PORT);
+"",ZTLF_VERSION_MAJOR,ZTLF_VERSION_MINOR,ZTLF_VERSION_REVISION,ZTLF_VERSION_BUILD);
 }
 
 static void exitSignal(int sig)
@@ -39,7 +39,7 @@ static void exitSignal(int sig)
 
 int main(int argc,char **argv)
 {
-	for (int ch;(ch=getopt(argc,argv,"hvtW"))!=-1;) {
+	for (int ch;(ch=getopt(argc,argv,"hvTW"))!=-1;) {
 		switch(ch) {
 			case 'v':
 				printf("%d.%d.%d.%d" ZTLF_EOL,ZTLF_VERSION_MAJOR,ZTLF_VERSION_MINOR,ZTLF_VERSION_REVISION,ZTLF_VERSION_BUILD);

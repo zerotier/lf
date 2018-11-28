@@ -13,6 +13,7 @@
 bool ZTLF_selftest_core(FILE *o);
 bool ZTLF_selftest_wharrgarbl(FILE *o);
 bool ZTLF_selftest_modelProofOfWork(FILE *o);
+bool ZTLF_selftest_db(FILE *o,const char *p);
 bool ZTLF_selftest(FILE *o);
 
 #endif

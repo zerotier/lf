@@ -165,3 +165,18 @@ void ZTLF_L_func(int level,const char *srcf,int line,const char *fmt,...)
 	}
 	pthread_mutex_unlock(&lock);
 }
+
+const char *ZTLF_hexstr(const void *d,const unsigned long l,const unsigned int bufno)
+{
+	static const char *const hexdigits = "0123456789abcdef";
+	static char buf[4][256];
+	unsigned long i,j;
+	memset(buf[bufno],0,256);
+	for(i=0,j=0;i<l;++i) {
+		buf[bufno][j++] = hexdigits[((const uint8_t *)d)[i] >> 4];
+		buf[bufno][j++] = hexdigits[((const uint8_t *)d)[i] & 0xf];
+		if (j >= 253)
+			break;
+	}
+	return buf[bufno];
+}

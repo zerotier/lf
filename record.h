@@ -182,6 +182,7 @@ void ZTLF_Record_keyToId(uint64_t id[4],const void *k,const unsigned long klen);
  * @param linkCount Number of links (theoretical max 255, links beyond this are ignored)
  * @param timestamp Timestamp in seconds since epoch
  * @param ttl TTL in seconds (will be quantized to ZTLF_RECORD_TTL_INCREMENT_SEC)
+ * @param skipWork If true, work will be skipped and work space will be filled with all-zero (for testing)
  * @param encryptValue If true, value will be hidden from anyone who doesn't know the plain text key (default behavior)
  * @param statusCallback If non-NULL call this periodically and if it returns false terminate work and return false from create
  * @return 0 on success or error code
@@ -198,6 +199,7 @@ int ZTLF_Record_create(
 	unsigned int linkCount,
 	uint64_t timestamp,
 	uint64_t ttl,
+	bool skipWork,
 	bool encryptValue,
 	bool (*statusCallback)(uint32_t,uint32_t));
 
@@ -207,8 +209,8 @@ int ZTLF_Record_create(
  * @param er Expanded record structure to fill
  * @param r Packed record to expand (er contains pointers into this, so it must be held while er is used)
  * @param rsize Total size of record in bytes
- * @return True if packed record appears valid
+ * @return 0 on success or error code
  */
-bool ZTLF_Record_expand(struct ZTLF_ExpandedRecord *const er,const struct ZTLF_Record *const r,const unsigned int rsize);
+int ZTLF_Record_expand(struct ZTLF_ExpandedRecord *const er,const struct ZTLF_Record *const r,const unsigned int rsize);
 
 #endif

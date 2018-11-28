@@ -13,6 +13,8 @@
 #define ZTLF_ERR_OUT_OF_MEMORY                1
 #define ZTLF_ERR_ABORTED                      2
 #define ZTLF_ERR_OBJECT_TOO_LARGE             3
+#define ZTLF_ERR_OBJECT_INVALID               4
+#define ZTLF_ERR_ALGORITHM_NOT_SUPPORTED      5
 
 /* Only necessary on some old 32-bit machines which aren't "officially" supported, but do it anyway. */
 #ifndef _FILE_OFFSET_BITS
@@ -153,13 +155,13 @@ static inline uint64_t ZTLF_htonll(const uint64_t n)
 #define ZTLF_UNALIGNED_ASSIGN_4(d,s) (d) = (s)
 #define ZTLF_UNALIGNED_ASSIGN_2(d,s) (d) = (s)
 
-#define ZTLF_setu16(f,v) *((uint16_t *)&(f)) = (uint16_t)htons((uint16_t)(v))
-#define ZTLF_setu32(f,v) *((uint32_t *)&(f)) = (uint32_t)htonl((uint32_t)(v))
-#define ZTLF_setu64(f,v) *((uint64_t *)&(f)) = (uint64_t)ZTLF_htonll((uint64_t)(v))
+#define ZTLF_setu16(f,v) (f) = (uint16_t)htons((uint16_t)(v))
+#define ZTLF_setu32(f,v) (f) = (uint32_t)htonl((uint32_t)(v))
+#define ZTLF_setu64(f,v) (f) = (uint64_t)ZTLF_htonll((uint64_t)(v))
 
-#define ZTLF_getu16(f) ((uint16_t)ntohs(*((const uint16_t *)&(f))))
-#define ZTLF_getu32(f) ((uint32_t)ntohl(*((const uint32_t *)&(f))))
-#define ZTLF_getu64(f) ((uint64_t)ZTLF_ntohll(*((const uint64_t *)&(f))))
+#define ZTLF_getu16(f) ((uint16_t)ntohs((uint16_t)(f)))
+#define ZTLF_getu32(f) ((uint32_t)ntohl((uint32_t)(f)))
+#define ZTLF_getu64(f) ((uint64_t)ZTLF_ntohll((uint64_t)(f)))
 
 #else /* many other CPUs don't like unaligned access, so assume we need to not type pun ---------------- */
 
@@ -236,6 +238,9 @@ unsigned int ZTLF_ncpus();
 
 /* Secure PRNG */
 void ZTLF_secureRandom(void *b,const unsigned long n);
+
+/* Returns a static hex string (used for logging) */
+const char *ZTLF_hexstr(const void *d,const unsigned long l,const unsigned int bufno);
 
 /* Logging functions */
 void ZTLF_L_func(int level,const char *srcf,int line,const char *fmt,...);

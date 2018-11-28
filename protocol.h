@@ -13,14 +13,14 @@
 
 #define ZTLF_PROTO_VERSION                                        0x00
 
-#define ZTLF_PROTO_MESSAGE_TYPE_NOP                               0x00
-#define ZTLF_PROTO_MESSAGE_TYPE_HELLO                             0x01
-#define ZTLF_PROTO_MESSAGE_TYPE_OK                                0x02
-#define ZTLF_PROTO_MESSAGE_TYPE_GOODBYE                           0x03
-#define ZTLF_PROTO_MESSAGE_TYPE_PEER_INFO                         0x04
-#define ZTLF_PROTO_MESSAGE_TYPE_RECORD                            0x05
-#define ZTLF_PROTO_MESSAGE_TYPE_RECORD_REQUEST_BY_ID              0x06
-#define ZTLF_PROTO_MESSAGE_TYPE_RECORD_REQUEST_BY_HASH            0x07
+#define ZTLF_PROTO_MESSAGE_TYPE_NOP                               0x0
+#define ZTLF_PROTO_MESSAGE_TYPE_HELLO                             0xf /* set to 0xf to distinguish from any possible HTTP request */
+#define ZTLF_PROTO_MESSAGE_TYPE_OK                                0xe
+#define ZTLF_PROTO_MESSAGE_TYPE_GOODBYE                           0xd
+#define ZTLF_PROTO_MESSAGE_TYPE_PEER_INFO                         0xc
+#define ZTLF_PROTO_MESSAGE_TYPE_RECORD                            0xb
+#define ZTLF_PROTO_MESSAGE_TYPE_RECORD_REQUEST_BY_ID              0xa
+#define ZTLF_PROTO_MESSAGE_TYPE_RECORD_REQUEST_BY_HASH            0x9
 
 #define ZTLF_PROTO_CIPHER_C25519_AES256_CFB                       0x01
 

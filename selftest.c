@@ -8,6 +8,7 @@
 #include "selftest.h"
 #include "wharrgarbl.h"
 #include "record.h"
+#include "db.h"
 
 bool ZTLF_selftest_core(FILE *o)
 {
@@ -117,8 +118,58 @@ bool ZTLF_selftest_modelProofOfWork(FILE *o)
 	return true;
 }
 
+bool ZTLF_selftest_db(FILE *o,const char *p)
+{
+	struct ZTLF_DB db;
+	struct ZTLF_RecordBuffer rb;
+	struct ZTLF_ExpandedRecord er;
+	uint8_t tmp[128];
+	int e;
+
+	fprintf(o,"Opening database in '%s'... ",p);
+	e = ZTLF_DB_open(&db,p);
+	if (e) {
+		fprintf(o,"FAILED: %d" ZTLF_EOL,e);
+		return false;
+	}
+	fprintf(o,"OK" ZTLF_EOL);
+
+	unsigned char pub[ZTLF_ED25519_PUBLIC_KEY_SIZE];
+	unsigned char priv[ZTLF_ED25519_PRIVATE_KEY_SIZE];
+	ZTLF_secureRandom(tmp,32);
+	ZTLF_Ed25519CreateKeypair(pub,priv,tmp);
+
+	fprintf(o,"Adding records to database..." ZTLF_EOL);
+	uint64_t ts = ZTLF_timeMs();
+	for(;;) {
+		++ts;
+		e = ZTLF_Record_create(&rb,"test",4,"test",4,pub,priv,NULL,0,ts,0,true,true,NULL);
+		if (e) {
+			fprintf(o,"  FAILED: error generating test record: %d" ZTLF_EOL,e);
+			return false;
+		}
+		e = ZTLF_Record_expand(&er,&(rb.data.r),rb.size);
+		if (e) {
+			fprintf(o,"  FAILED: error expanding generated record: %d" ZTLF_EOL,e);
+			return false;
+		}
+
+		e = ZTLF_DB_putRecord(&db,&er);
+		if (e) {
+			fprintf(o,"  FAILED: error adding record to database: %d (%s)" ZTLF_EOL,e,(e > 0) ? ZTLF_DB_lastSqliteErrorMessage(&db) : strerror(errno));
+			return false;
+		}
+	}
+
+	ZTLF_DB_close(&db);
+
+	return true;
+}
+
 bool ZTLF_selftest(FILE *o)
 {
+	if (!ZTLF_selftest_db(o,"/tmp/ztlf-selftest")) return false;
+	fprintf(o,ZTLF_EOL);
 	if (!ZTLF_selftest_core(o)) return false;
 	fprintf(o,ZTLF_EOL);
 	if (!ZTLF_selftest_wharrgarbl(o)) return false;

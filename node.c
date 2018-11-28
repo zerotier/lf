@@ -81,7 +81,7 @@ static void _ZTLF_Node_mkHello(struct ZTLF_Node_PeerConnection *const c,struct Z
 	ZTLF_Message_setHdr(h,ZTLF_PROTO_MESSAGE_TYPE_HELLO,sizeof(struct ZTLF_Message_Hello));
 
 	ZTLF_secureRandom(h->iv,sizeof(h->iv));
-	h->protoVersion = 0;
+	h->protoVersion = ZTLF_PROTO_VERSION;
 	h->protoFlags = 0;
 	ZTLF_setu64(h->currentTime,ZTLF_timeMs());
 	ZTLF_setu64(h->flags,flags);
@@ -148,11 +148,11 @@ static void *_ZTLF_Node_connectionHandler(void *tptr)
 		setsockopt(c->sock,IPPROTO_TCP,TCP_NODELAY,&fl,sizeof(fl));
 #endif
 #ifdef TCP_KEEPALIVE /* name of KEEPIDLE on Mac, probably others */
-		fl = 30;
+		fl = 10;
 		setsockopt(c->sock,IPPROTO_TCP,TCP_KEEPALIVE,&fl,sizeof(fl));
 #endif
 #ifdef TCP_KEEPIDLE
-		fl = 30;
+		fl = 10;
 		setsockopt(c->sock,IPPROTO_TCP,TCP_KEEPIDLE,&fl,sizeof(fl));
 #endif
 #ifdef TCP_KEEPCNT
@@ -160,7 +160,7 @@ static void *_ZTLF_Node_connectionHandler(void *tptr)
 		setsockopt(c->sock,IPPROTO_TCP,TCP_KEEPCNT,&fl,sizeof(fl));
 #endif
 #ifdef TCP_KEEPINTVL
-		fl = 30;
+		fl = 10;
 		setsockopt(c->sock,IPPROTO_TCP,TCP_KEEPINTVL,&fl,sizeof(fl));
 #endif
 
@@ -182,6 +182,8 @@ static void *_ZTLF_Node_connectionHandler(void *tptr)
 	ZTLF_AES256CFB decryptor;
 	bool encryptionInitialized = false;
 	bool connectionEstablished = false;
+	bool firstFourBytes = true;
+	bool sockHandedOff = false;
 	unsigned int termReason = ZTLF_PROTO_GOODBYE_REASON_TCP_ERROR;
 
 	struct ZTLF_Message_Hello lastHelloSent;
@@ -203,6 +205,23 @@ static void *_ZTLF_Node_connectionHandler(void *tptr)
 		rptr += (unsigned int)nr;
 
 		while (rptr >= sizeof(struct ZTLF_Message)) {
+			/* Detect HTTP connections and hand these off to the HTTP API code. The 
+			 * P2P protocol is designed so initial HELLO will never look like this. */
+			if (firstFourBytes) {
+				bool http = false;
+				switch (mbuf[0]) {
+					case 'G': if ((mbuf[1] == 'E')&&(mbuf[2] == 'T')&&(mbuf[3] == ' ')) http = true; break;
+					case 'H': if ((mbuf[1] == 'E')&&(mbuf[2] == 'E')&&(mbuf[3] == 'D')) http = true; break;
+					case 'P': if ( ((mbuf[1] == 'O')&&(mbuf[2] == 'S')&&(mbuf[3] == 'T')) || ((mbuf[1] == 'U')&&(mbuf[2] == 'T')&&(mbuf[3] == ' ')) ) http = true; break;
+					case 'D': if ((mbuf[1] == 'E')&&(mbuf[2] == 'L')&&(mbuf[3] == 'E')) http = true; break;
+				}
+				if (http) {
+					sockHandedOff = true;
+					goto terminate_connection;
+				}
+				firstFourBytes = false;
+			}
+
 			unsigned int msize = (((unsigned int)mbuf[0]) << 8) | (unsigned int)mbuf[1];
 			const unsigned int mtype = (msize >> 12) & 0xf;
 			msize &= 0xfff;
@@ -437,15 +456,17 @@ terminate_connection:
 	--c->parent->connCount;
 	pthread_mutex_unlock(&(c->parent->connLock));
 
-	pthread_mutex_lock(&(c->sendLock));
-	_ZTLF_Node_closeConnection(c,termReason);
-	pthread_mutex_unlock(&(c->sendLock));
+	if (!sockHandedOff) {
+		pthread_mutex_lock(&(c->sendLock));
+		_ZTLF_Node_closeConnection(c,termReason);
+		pthread_mutex_unlock(&(c->sendLock));
+		free(mbuf);
+	}
 
 	if (encryptionInitialized) {
 		ZTLF_AES256CFB_destroy(&decryptor);
 		ZTLF_AES256CFB_destroy(&encryptor);
 	}
-	free(mbuf);
 
 	pthread_mutex_destroy(&(c->sendLock));
 

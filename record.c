@@ -27,6 +27,7 @@ int ZTLF_Record_create(
 	unsigned int linkCount,
 	uint64_t timestamp,
 	uint64_t ttl,
+	bool skipWork,
 	bool encryptValue,
 	bool (*statusCallback)(uint32_t,uint32_t))
 {
@@ -68,6 +69,7 @@ int ZTLF_Record_create(
 		(ZTLF_RECORD_ALG_SIG_ED25519 << 2) |
 		(ZTLF_RECORD_ALG_SIG_ED25519)
 	);
+	rb->data.r.metadata = 0;
 	const unsigned long vlSize = ((linkCount & 0x1f) << 11) | (valueLength & 0x7ff);
 	rb->data.r.vlSize[0] = (uint8_t)(((vlSize) >> 8) & 0xff);
 	rb->data.r.vlSize[1] = (uint8_t)(vlSize & 0xff);
@@ -94,29 +96,34 @@ int ZTLF_Record_create(
 	uint64_t neededScore64 = (uint64_t)neededBytes * (uint64_t)ZTLF_RECORD_WORK_COST_DIVISOR;
 	const uint32_t neededScore = (neededScore64 > 0xffffffffULL) ? (uint32_t)0xffffffff : (uint32_t)neededScore64;
 
-	uint8_t workHash[64],scoringHash[48];
-	ZTLF_SHA512(workHash,rb->data.b,s);
-	void *const workMemory = malloc(ZTLF_RECORD_WHARRGARBL_POW_ITERATION_MEMORY);
-	if (!workMemory)
-		return ZTLF_ERR_OUT_OF_MEMORY;
-	uint32_t bestScoreSoFar = 0;
-	for(;;) {
-		ZTLF_wharrgarbl(rb->data.b + s,workHash,sizeof(workHash),ZTLF_RECORD_WHARRGARBL_POW_ITERATION_DIFFICULTY,workMemory,ZTLF_RECORD_WHARRGARBL_POW_ITERATION_MEMORY,0);
-		ZTLF_SHA384(scoringHash,rb->data.b,s + ZTLF_WHARRGARBL_POW_BYTES);
-		const uint32_t score = ZTLF_score(scoringHash);
-		if (score >= neededScore)
-			break;
-		if (score > bestScoreSoFar)
-			bestScoreSoFar = score;
-		if (statusCallback) {
-			if (!statusCallback(bestScoreSoFar,neededScore)) {
-				free(workMemory);
-				return ZTLF_ERR_ABORTED;
+	if (skipWork) {
+		memset(rb->data.b + s,0,ZTLF_WHARRGARBL_POW_BYTES);
+		s += ZTLF_WHARRGARBL_POW_BYTES;
+	} else {
+		uint8_t workHash[64],scoringHash[48];
+		ZTLF_SHA512(workHash,rb->data.b,s);
+		void *const workMemory = malloc(ZTLF_RECORD_WHARRGARBL_POW_ITERATION_MEMORY);
+		if (!workMemory)
+			return ZTLF_ERR_OUT_OF_MEMORY;
+		uint32_t bestScoreSoFar = 0;
+		for(;;) {
+			ZTLF_wharrgarbl(rb->data.b + s,workHash,sizeof(workHash),ZTLF_RECORD_WHARRGARBL_POW_ITERATION_DIFFICULTY,workMemory,ZTLF_RECORD_WHARRGARBL_POW_ITERATION_MEMORY,0);
+			ZTLF_SHA384(scoringHash,rb->data.b,s + ZTLF_WHARRGARBL_POW_BYTES);
+			const uint32_t score = ZTLF_score(scoringHash);
+			if (score >= neededScore)
+				break;
+			if (score > bestScoreSoFar)
+				bestScoreSoFar = score;
+			if (statusCallback) {
+				if (!statusCallback(bestScoreSoFar,neededScore)) {
+					free(workMemory);
+					return ZTLF_ERR_ABORTED;
+				}
 			}
 		}
+		free(workMemory);
+		s += ZTLF_WHARRGARBL_POW_BYTES;
 	}
-	free(workMemory);
-	s += ZTLF_WHARRGARBL_POW_BYTES;
 
 	uint8_t signHash[64];
 	ZTLF_SHA512(signHash,rb->data.b,s);
@@ -132,7 +139,7 @@ int ZTLF_Record_create(
 	return ZTLF_ERR_NONE;
 }
 
-bool ZTLF_Record_expand(struct ZTLF_ExpandedRecord *const er,const struct ZTLF_Record *const r,const unsigned int rsize)
+int ZTLF_Record_expand(struct ZTLF_ExpandedRecord *const er,const struct ZTLF_Record *const r,const unsigned int rsize)
 {
 	er->valueCipher = (r->algorithms >> 6) & 3;
 	er->workAlgorithm = (r->algorithms >> 4) & 3;
@@ -157,21 +164,20 @@ bool ZTLF_Record_expand(struct ZTLF_ExpandedRecord *const er,const struct ZTLF_R
 
 	er->valueSize = vlSize & 0x7ff;
 	if (er->valueSize > ZTLF_RECORD_MAX_VALUE_SIZE)
-		return false;
+		return ZTLF_ERR_OBJECT_TOO_LARGE;
 	er->linkCount = vlSize >> 11;
 	er->metaDataType[0] = r->metadata >> 4;
 	er->metaDataType[1] = r->metadata & 0xf;
 	for(int i=0;i<2;++i) {
 		switch(er->metaDataType[i]) {
-			case ZTLF_RECORD_METADATA_NIL:
+			/*case ZTLF_RECORD_METADATA_NIL:*/
+			default:
 				er->metaDataSize[i] = 0;
 				break;
 			case ZTLF_RECORD_METADATA_SELECTOR:
 			case ZTLF_RECORD_METADATA_CHANGE_OWNER:
 				er->metaDataSize[i] = 32;
 				break;
-			default:
-				return false;
 		}
 	}
 	switch (er->workAlgorithm) {
@@ -182,21 +188,21 @@ bool ZTLF_Record_expand(struct ZTLF_ExpandedRecord *const er,const struct ZTLF_R
 			er->workSize = ZTLF_WHARRGARBL_POW_BYTES;
 			break;
 		default:
-			return false;
+			return ZTLF_ERR_ALGORITHM_NOT_SUPPORTED;
 	}
 	switch (er->idClaimSignatureAlgorithm) {
 		case ZTLF_RECORD_ALG_SIG_ED25519:
 			er->idClaimSignatureSize = ZTLF_ED25519_SIGNATURE_SIZE;
 			break;
 		default:
-			return false;
+			return ZTLF_ERR_ALGORITHM_NOT_SUPPORTED;
 	}
 	switch (er->ownerSignatureAlgorithm) {
 		case ZTLF_RECORD_ALG_SIG_ED25519:
 			er->ownerSignatureSize = ZTLF_ED25519_SIGNATURE_SIZE;
 			break;
 		default:
-			return false;
+			return ZTLF_ERR_ALGORITHM_NOT_SUPPORTED;
 	}
 
 	er->r = r;
@@ -217,7 +223,7 @@ bool ZTLF_Record_expand(struct ZTLF_ExpandedRecord *const er,const struct ZTLF_R
 	er->ownerSignature = dp;
 	dp += er->ownerSignatureSize;
 	if (dp > (((const uint8_t *)r) + rsize))
-		return false;
+		return ZTLF_ERR_OBJECT_INVALID;
 
 	if (er->workSize > 0) {
 		ZTLF_SHA384(er->scoringHash,r,(unsigned long)(((const uint8_t *)er->work) - ((const uint8_t *)r)));
@@ -227,5 +233,5 @@ bool ZTLF_Record_expand(struct ZTLF_ExpandedRecord *const er,const struct ZTLF_R
 		er->weight = 1.0;
 	}
 
-	return true;
+	return 0;
 }
