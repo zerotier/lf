@@ -179,8 +179,8 @@ static void *_ZTLF_DB_graphThreadMain(void *arg)
 			ZTLF_L_trace("graph thread: adjusting weights for records below graph node %lld",(long long)waitingGoff);
 
 			/* Get any previously known holes in the graph below this node. */
-			ZTLF_Map128_clear(&holes);
 			bool hadHoles = false;
+			ZTLF_Map128_clear(&holes);
 			pthread_mutex_lock(&db->dbcLock);
 			sqlite3_reset(db->sGetHoles);
 			sqlite3_bind_int64(db->sGetHoles,1,waitingGoff);
