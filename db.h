@@ -28,15 +28,22 @@ struct ZTLF_DB
 	sqlite3_stmt *sGetLatestRecordTimestamp;
 	sqlite3_stmt *sGetRecordHistoryById;
 	sqlite3_stmt *sGetRecordCount;
-	sqlite3_stmt *sGetRecordInfoByHash;
+	sqlite3_stmt *sGetRecordGoffByHash;
 	sqlite3_stmt *sGetDanglingLinks;
 	sqlite3_stmt *sDeleteDanglingLinks;
+	sqlite3_stmt *sDeleteWantedHash;
 	sqlite3_stmt *sAddDanglingLink;
-	sqlite3_stmt *sGetDanglingLinksForRetry;
-	sqlite3_stmt *sUpdateDanglingLinkRetryInfo;
+	sqlite3_stmt *sAddWantedHash;
+	sqlite3_stmt *sAddHole;
+	sqlite3_stmt *sFlagRecordWeightApplicationPending;
 	sqlite3_stmt *sGetPeerFirstConnectTime;
 	sqlite3_stmt *sAddUpdatePeer;
 	sqlite3_stmt *sAddPotentialPeer;
+	sqlite3_stmt *sGetRecordsForWeightApplication;
+	sqlite3_stmt *sGetHoles;
+	sqlite3_stmt *sDeleteHole;
+	sqlite3_stmt *sUpdatePendingHoleCount;
+	sqlite3_stmt *sDeleteCompletedPending;
 
 	uint64_t gfcap;
 	volatile uint8_t *gfm;
@@ -44,7 +51,9 @@ struct ZTLF_DB
 
 	int df;
 
-	volatile int running;
+	pthread_t graphThread;
+	volatile bool graphThreadStarted;
+	volatile bool running;
 
 	pthread_mutex_t dbcLock;
 	pthread_mutex_t gfLock;

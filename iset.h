@@ -11,7 +11,7 @@
 #include "common.h"
 #include "vector.h"
 
-#define ZTLF_ISET_BUCKET_COUNT 2097152
+#define ZTLF_ISET_BUCKET_COUNT 8388608
 
 struct ZTLF_ISet { struct ZTLF_Vector_i64 buckets[ZTLF_ISET_BUCKET_COUNT]; };
 
@@ -29,6 +29,13 @@ static inline void ZTLF_ISet_free(struct ZTLF_ISet *s)
 		ZTLF_Vector_i64_free(s->buckets + k);
 	}
 	free(s);
+}
+
+static inline void ZTLF_ISet_clear(struct ZTLF_ISet *s)
+{
+	for(unsigned long k=0;k<ZTLF_ISET_BUCKET_COUNT;++k) {
+		ZTLF_Vector_i64_clear(s->buckets + k);
+	}
 }
 
 static inline bool ZTLF_ISet_put(struct ZTLF_ISet *s,const int64_t i)

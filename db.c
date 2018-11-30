@@ -14,6 +14,7 @@
 
 ZTLF_PACKED_STRUCT(struct ZTLF_DB_GraphNode
 {
+	double weight;
 	double totalWeight;
 	uint8_t linkCount;
 	int64_t linkedRecordGoff[];
@@ -21,27 +22,55 @@ ZTLF_PACKED_STRUCT(struct ZTLF_DB_GraphNode
 
 /*
  * record
- *   doff:                 offset of record data in 'records' flat file (primary key)
- *   dlen:                 length of record data
- *   goff:                 offset of graph node in memory mapped graph file (in graph nodes, not bytes)
- *   ts:                   record timestamp in seconds since epoch
- *   exp:                  record expiration time in seconds since epoch
- *   id:                   record ID
- *   owner:                record owner
- *   hash:                 shandwich256(record data)
+ *   doff                     offset of record data in 'records' flat file (primary key)
+ *   dlen                     length of record data
+ *   goff                     offset of graph node in memory mapped graph file (in graph nodes, not bytes)
+ *   ts                       record timestamp in seconds since epoch
+ *   exp                      record expiration time in seconds since epoch
+ *   id                       record ID
+ *   owner                    record owner
+ *   hash                     shandwich256(record data)
  * 
  * dangling_link
- *   hash:                 hash of record we don't have
- *   linking_record_doff:  primary key of record that 'wants' this record
- *   last_retry_time:      time of last retry in seconds since epoch
- *   retry_count:          number of attempst that have been made to get this record
+ *   hash                     hash of record we don't have
+ *   linking_record_goff      graph node offset of record with dangling link
+ *   linking_record_link_idx  index in linkedRecordGoff[] of missing link
+ * 
+ * hole
+ *   waiting_record_goff      graph offset of record that is waiting on this hole to be filled
+ *   incomplete_goff          graph offset of graph node with missing links
+ *   incomplete_link_idx      index of missing link in linkedRecordGoff[]
+ * 
+ * graph_pending
+ *   record_goff              graph offset of record pending completion of weight application
+ *   hole_count               most recent count of entries in hole that are blocking this node
+ * 
+ * wanted
+ *   hash                     hash of wanted record
+ *   retries                  number of retries attempted so far
+ *   last_retry_time          time of last retry
  * 
  * peer
- *   key_hash:             SHA384(public key)
- *   address_type:         currently either 4 or 6
- *   address:              IPv4 or IPv6 IP
- *   last_connect_time:    timestamp of most recent outgoing connect to this peer key at this IP/port (ms)
- *   first_connect_time:   timestamp of first outgoing connect to this peer key at this IP/port (ms)
+ *   key_hash                 SHA384(public key)
+ *   address_type             currently either 4 or 6
+ *   address                  IPv4 or IPv6 IP
+ *   last_connect_time        timestamp of most recent outgoing connect to this peer key at this IP/port (ms)
+ *   first_connect_time       timestamp of first outgoing connect to this peer key at this IP/port (ms)
+ *
+ * Most tables are somewhat self-explanatory.
+ * 
+ * The hole and dangling_link tables are similar but serve different functions. The dangling link table
+ * documents the hash of the missing record and which record(s) reference it. This allows those records'
+ * graph nodes to be updated when the record comes in. The hole table documents a hole in the graph that
+ * was discovered last time an attempt was made to apply a node's weights to the nodes below it. It allows
+ * the graph traversal algorithm to effectively pick up where it left off. One dangling link could result
+ * in many holes since it may eventually show up in the graphs of many records above it.
+ * 
+ * The graph_pending table tracks records whose weights have not yet been fully applied to the entire
+ * graph below them. This occurs if there are holes in the graph. The current value of hole_count can
+ * be compared with a computed value to determine if some of those holes have been filled and if graph
+ * traversal and weight application should be attempted again. When the graph is successfully traversed
+ * completely with no holes detected these entries are deleted.
  */
 
 #define ZTLF_DB_INIT_SQL \
@@ -78,14 +107,32 @@ ZTLF_PACKED_STRUCT(struct ZTLF_DB_GraphNode
 \
 "CREATE TABLE IF NOT EXISTS dangling_link (" \
 "hash BLOB(32) NOT NULL," \
-"linking_record_doff INTEGER NOT NULL," \
-"last_retry_time INTEGER NOT NULL," \
-"retry_count INTEGER NOT NULL," \
-"PRIMARY KEY(hash,linking_record_doff)" \
+"linking_record_goff INTEGER NOT NULL," \
+"linking_record_link_idx INTEGER NOT NULL," \
+"PRIMARY KEY(hash,linking_record_goff,linking_record_link_idx)" \
 ") WITHOUT ROWID;\n" \
 \
-"CREATE INDEX IF NOT EXISTS dangling_link_linking_record_doff ON dangling_link(linking_record_doff);\n" \
-"CREATE INDEX IF NOT EXISTS dangling_link_retry_count_last_retry_time ON dangling_link(retry_count,last_retry_time);\n" \
+"CREATE INDEX IF NOT EXISTS dangling_link_linking_record_goff_linking_record_link_idx ON dangling_link(linking_record_goff,linking_record_link_idx);\n" \
+\
+"CREATE TABLE IF NOT EXISTS hole (" \
+"waiting_record_goff INTEGER NOT NULL," \
+"incomplete_goff INTEGER NOT NULL," \
+"incomplete_link_idx INTEGER NOT NULL," \
+"PRIMARY KEY(waiting_record_goff,incomplete_goff,incomplete_link_idx)" \
+") WITHOUT ROWID;\n" \
+\
+"CREATE TABLE IF NOT EXISTS graph_pending (" \
+"record_goff INTEGER PRIMARY KEY NOT NULL," \
+"hole_count INTEGER NOT NULL" \
+") WITHOUT ROWID;\n" \
+\
+"CREATE TABLE IF NOT EXISTS wanted (" \
+"hash BLOB(32) PRIMARY KEY NOT NULL," \
+"retries INTEGER NOT NULL," \
+"last_retry_time INTEGER NOT NULL" \
+") WITHOUT ROWID;\n" \
+\
+"CREATE INDEX IF NOT EXISTS wanted_retries_last_retry_time ON wanted(retries,last_retry_time);\n" \
 \
 "CREATE TABLE IF NOT EXISTS peer (" \
 "key_hash BLOB(48) PRIMARY KEY NOT NULL," \
@@ -98,6 +145,191 @@ ZTLF_PACKED_STRUCT(struct ZTLF_DB_GraphNode
 \
 "CREATE INDEX IF NOT EXISTS peer_last_connect_time_first_connect_time ON peer(last_connect_time,first_connect_time);\n"
 
+static void *_ZTLF_DB_graphThreadMain(void *arg)
+{
+	struct ZTLF_DB *const db = (struct ZTLF_DB *)arg;
+	uint64_t hk[2];
+	struct ZTLF_Vector_i64 recordQueue,graphTraversalQueue;
+	struct ZTLF_Map128 holes;
+	struct ZTLF_ISet *const visited = ZTLF_ISet_new();
+	ZTLF_Vector_i64_init(&graphTraversalQueue,1048576);
+	ZTLF_Vector_i64_init(&recordQueue,1024);
+	ZTLF_Map128_init(&holes,1024,NULL);
+
+	while (db->running) {
+		/* Sleep 0.5s between each pending record query as these are somewhat expensive. */
+		for(int i=0;i<5;++i) {
+			usleep(100000);
+			if (!db->running) goto end_graph_thread;
+		}
+
+		/* Get records that are pending because they're new or some of their holes appear filled. */
+		pthread_mutex_lock(&db->dbcLock);
+		sqlite3_reset(db->sGetRecordsForWeightApplication);
+		while (sqlite3_step(db->sGetRecordsForWeightApplication) == SQLITE_ROW) {
+			ZTLF_Vector_i64_append(&recordQueue,sqlite3_column_int64(db->sGetRecordsForWeightApplication,0));
+		}
+		pthread_mutex_unlock(&db->dbcLock);
+
+		ZTLF_L_trace("graph thread: found %lu records to process",recordQueue.size);
+
+		while ((recordQueue.size > 0)&&(db->running)) {
+			const int64_t waitingGoff = recordQueue.v[recordQueue.size-1];
+			--recordQueue.size;
+			ZTLF_L_trace("graph thread: adjusting weights for records below graph node %lld",(long long)waitingGoff);
+
+			/* Get any previously known holes in the graph below this node. */
+			ZTLF_Map128_clear(&holes);
+			bool hadHoles = false;
+			pthread_mutex_lock(&db->dbcLock);
+			sqlite3_reset(db->sGetHoles);
+			sqlite3_bind_int64(db->sGetHoles,1,waitingGoff);
+			while (sqlite3_step(db->sGetHoles) == SQLITE_ROW) {
+				hk[0] = (uint64_t)sqlite3_column_int64(db->sGetHoles,0);
+				hk[1] = (uint64_t)sqlite3_column_int(db->sGetHoles,1);
+				ZTLF_Map128_set(&holes,hk,(void *)1);
+				ZTLF_L_trace("graph thread: graph below %lld previously led to hole at %llu[%llu]",(long long)waitingGoff,(unsigned long long)hk[0],(unsigned long long)hk[1]);
+				hadHoles = true;
+			}
+			pthread_mutex_unlock(&db->dbcLock);
+
+			ZTLF_ISet_clear(visited);
+			ZTLF_Vector_i64_clear(&graphTraversalQueue);
+
+			pthread_mutex_lock(&db->gfLock);
+
+			/* Initialize queue and weight from this record's node to start graph traversal. */
+			volatile struct ZTLF_DB_GraphNode *gn = (volatile struct ZTLF_DB_GraphNode *)(db->gfm + (uintptr_t)waitingGoff);
+			double weight;
+			ZTLF_setdbl(weight,gn->weight);
+			for(unsigned int i=0,j=gn->linkCount;i<j;++i) {
+				hk[0] = (uint64_t)waitingGoff;
+				hk[1] = (uint64_t)i;
+				if (!ZTLF_Map128_get(&holes,hk)) {
+					const int64_t nextGoff = ZTLF_get64(gn->linkedRecordGoff[i]);
+					if (nextGoff >= 0) {
+						ZTLF_Vector_i64_append(&graphTraversalQueue,nextGoff);
+					} else {
+						pthread_mutex_lock(&db->dbcLock);
+						sqlite3_reset(db->sAddHole);
+						sqlite3_bind_int64(db->sAddHole,1,waitingGoff);
+						sqlite3_bind_int64(db->sAddHole,2,waitingGoff);
+						sqlite3_bind_int(db->sAddHole,3,i);
+						sqlite3_step(db->sAddHole);
+						pthread_mutex_unlock(&db->dbcLock);
+					}
+				}
+			}
+
+			/* Pass 1: if there are pre-existing holes it means this is a second or Nth pass. Traverse
+			 * the graph once and skip previously detected holes and without changing weights. This
+			 * populates the visited node set with nodes that would have been visited before so their
+			 * weights are not adjusted a second time. */
+			if (hadHoles) {
+				for(unsigned long i=0;i<graphTraversalQueue.size;) {
+					const int64_t goff = graphTraversalQueue.v[i++];
+					if (ZTLF_ISet_put(visited,goff)) {
+						gn = (volatile struct ZTLF_DB_GraphNode *)(db->gfm + (uintptr_t)goff);
+						for(unsigned int i=0,j=gn->linkCount;i<j;++i) {
+							hk[0] = (uint64_t)goff;
+							hk[1] = (uint64_t)i;
+							if (!ZTLF_Map128_get(&holes,hk)) {
+								const int64_t nextGoff = ZTLF_get64(gn->linkedRecordGoff[i]);
+								if (nextGoff >= 0) {
+									ZTLF_Vector_i64_append(&graphTraversalQueue,nextGoff);
+								} else {
+									ZTLF_L_warning("found unexpected hole in graph below %lld at %lld[%u] (should have been previously marked)",(long long)waitingGoff,(long long)goff,i);
+									pthread_mutex_lock(&db->dbcLock);
+									sqlite3_reset(db->sAddHole);
+									sqlite3_bind_int64(db->sAddHole,1,waitingGoff);
+									sqlite3_bind_int64(db->sAddHole,2,goff);
+									sqlite3_bind_int(db->sAddHole,3,i);
+									sqlite3_step(db->sAddHole);
+									pthread_mutex_unlock(&db->dbcLock);
+								}
+							}
+						}
+						if (i >= 1048576) { /* compact queue periodically to save memory */
+							memmove(graphTraversalQueue.v,graphTraversalQueue.v + i,sizeof(int64_t) * (graphTraversalQueue.size -= i));
+							i = 0;
+						}
+					}
+				}
+			}
+
+			/* Add any now-filled holes to queue and delete hole records for them. */
+			ZTLF_Map128_each(&holes,{
+				const int64_t goff = ((volatile struct ZTLF_DB_GraphNode *)(db->gfm + (uintptr_t)ztlfMapKey[0]))->linkedRecordGoff[(uintptr_t)ztlfMapKey[1]];
+				if (goff >= 0) {
+					ZTLF_Vector_i64_append(&graphTraversalQueue,goff);
+					pthread_mutex_lock(&db->dbcLock);
+					sqlite3_reset(db->sDeleteHole);
+					sqlite3_bind_int64(db->sDeleteHole,1,waitingGoff);
+					sqlite3_bind_int64(db->sDeleteHole,2,(sqlite_int64)ztlfMapKey[0]);
+					sqlite3_bind_int(db->sDeleteHole,3,(int)ztlfMapKey[1]);
+					sqlite3_step(db->sDeleteHole);
+					pthread_mutex_unlock(&db->dbcLock);
+				}
+			});
+
+			/* Pass 2: traverse the graph starting with the holes -- or if there were none, from the record
+			 * itself -- and adjust weights. This adjusts weights that were not adjusted last time. Make sure
+			 * to record any newly discovered holes (insert ignores holes that are still there from before). */
+			for(unsigned long i=0;i<graphTraversalQueue.size;) {
+				const int64_t goff = graphTraversalQueue.v[i++];
+				if (ZTLF_ISet_put(visited,goff)) {
+					gn = (volatile struct ZTLF_DB_GraphNode *)(db->gfm + (uintptr_t)goff);
+					for(unsigned int i=0,j=gn->linkCount;i<j;++i) {
+						const int64_t nextGoff = ZTLF_get64(gn->linkedRecordGoff[i]);
+						if (nextGoff >= 0) {
+							ZTLF_Vector_i64_append(&graphTraversalQueue,nextGoff);
+							double tw;
+							ZTLF_setdbl(tw,gn->totalWeight);
+							tw += weight;
+							ZTLF_setdbl(gn->totalWeight,tw);
+						} else {
+							pthread_mutex_lock(&db->dbcLock);
+							sqlite3_reset(db->sAddHole);
+							sqlite3_bind_int64(db->sAddHole,1,waitingGoff);
+							sqlite3_bind_int64(db->sAddHole,2,goff);
+							sqlite3_bind_int(db->sAddHole,3,i);
+							sqlite3_step(db->sAddHole);
+							pthread_mutex_unlock(&db->dbcLock);
+						}
+					}
+					if (i >= 1048576) { /* compact queue periodically to save memory */
+						memmove(graphTraversalQueue.v,graphTraversalQueue.v + i,sizeof(int64_t) * (graphTraversalQueue.size -= i));
+						i = 0;
+					}
+				}
+			}
+
+			pthread_mutex_unlock(&db->gfLock);
+
+			/* Update hole count and delete pending entry for this record if there are no more holes. */
+			pthread_mutex_lock(&db->dbcLock);
+			sqlite3_reset(db->sUpdatePendingHoleCount);
+			sqlite3_bind_int64(db->sUpdatePendingHoleCount,1,waitingGoff);
+			sqlite3_bind_int64(db->sUpdatePendingHoleCount,2,waitingGoff);
+			sqlite3_step(db->sUpdatePendingHoleCount);
+			sqlite3_reset(db->sDeleteCompletedPending);
+			sqlite3_bind_int64(db->sDeleteCompletedPending,1,waitingGoff);
+			sqlite3_step(db->sDeleteCompletedPending);
+			pthread_mutex_unlock(&db->dbcLock);
+
+			usleep(2000); /* 2ms sleep between record processing iterations */
+		}
+	}
+
+end_graph_thread:
+	ZTLF_Map128_destroy(&holes);
+	ZTLF_Vector_i64_free(&recordQueue);
+	ZTLF_Vector_i64_free(&graphTraversalQueue);
+	ZTLF_ISet_free(visited);
+
+	return NULL;
+}
+
 int ZTLF_DB_open(struct ZTLF_DB *db,const char *path)
 {
 	char tmp[PATH_MAX];
@@ -109,6 +341,7 @@ int ZTLF_DB_open(struct ZTLF_DB *db,const char *path)
 	strncpy(db->path,path,PATH_MAX);
 	db->gfd = -1;
 	db->df = -1;
+	db->graphThreadStarted = false;
 	pthread_mutex_init(&db->dbcLock,NULL);
 	pthread_mutex_init(&db->gfLock,NULL);
 
@@ -137,27 +370,41 @@ int ZTLF_DB_open(struct ZTLF_DB *db,const char *path)
 		goto exit_with_error;
 	if ((e = sqlite3_prepare_v2(db->dbc,"SELECT MAX(ts) FROM record",-1,&db->sGetLatestRecordTimestamp,NULL)) != SQLITE_OK)
 		goto exit_with_error;
-	if ((e = sqlite3_prepare_v2(db->dbc,"SELECT doff,dlen,goff,ts,exp,owner FROM record WHERE id = ? AND doff NOT IN (SELECT dangling_link.linking_record_doff FROM dangling_link WHERE dangling_link.linking_record_doff = record.doff) ORDER BY ts DESC",-1,&db->sGetRecordHistoryById,NULL)) != SQLITE_OK)
+	if ((e = sqlite3_prepare_v2(db->dbc,"SELECT doff,dlen,goff,ts,exp,owner FROM record WHERE id = ? AND goff NOT IN (SELECT dangling_link.linking_record_goff FROM dangling_link WHERE dangling_link.linking_record_goff = record.goff) ORDER BY ts DESC",-1,&db->sGetRecordHistoryById,NULL)) != SQLITE_OK)
 		goto exit_with_error;
 	if ((e = sqlite3_prepare_v2(db->dbc,"SELECT COUNT(1) FROM record",-1,&db->sGetRecordCount,NULL)) != SQLITE_OK)
 		goto exit_with_error;
-	if ((e = sqlite3_prepare_v2(db->dbc,"SELECT doff,goff FROM record WHERE hash = ?",-1,&db->sGetRecordInfoByHash,NULL)) != SQLITE_OK)
+	if ((e = sqlite3_prepare_v2(db->dbc,"SELECT goff FROM record WHERE hash = ?",-1,&db->sGetRecordGoffByHash,NULL)) != SQLITE_OK)
 		goto exit_with_error;
-	if ((e = sqlite3_prepare_v2(db->dbc,"SELECT r.goff FROM dangling_link AS dl,record AS r WHERE dl.hash = ? AND r.doff = dl.linking_record_doff",-1,&db->sGetDanglingLinks,NULL)) != SQLITE_OK)
+	if ((e = sqlite3_prepare_v2(db->dbc,"SELECT linking_record_goff FROM dangling_link WHERE hash = ?",-1,&db->sGetDanglingLinks,NULL)) != SQLITE_OK)
 		goto exit_with_error;
 	if ((e = sqlite3_prepare_v2(db->dbc,"DELETE FROM dangling_link WHERE hash = ?",-1,&db->sDeleteDanglingLinks,NULL)) != SQLITE_OK)
 		goto exit_with_error;
-	if ((e = sqlite3_prepare_v2(db->dbc,"INSERT OR REPLACE INTO dangling_link (hash,linking_record_doff,last_retry_time,retry_count) VALUES (?,?,0,0)",-1,&db->sAddDanglingLink,NULL)) != SQLITE_OK)
+	if ((e = sqlite3_prepare_v2(db->dbc,"DELETE FROM wanted WHERE hash = ?",-1,&db->sDeleteWantedHash,NULL)) != SQLITE_OK)
 		goto exit_with_error;
-	if ((e = sqlite3_prepare_v2(db->dbc,"SELECT DISTINCT hash FROM dangling_link WHERE retry_count < ? ORDER BY last_retry_time ASC LIMIT ?",-1,&db->sGetDanglingLinksForRetry,NULL)) != SQLITE_OK)
+	if ((e = sqlite3_prepare_v2(db->dbc,"INSERT OR IGNORE INTO dangling_link (hash,linking_record_goff,linking_record_link_idx) VALUES (?,?,?)",-1,&db->sAddDanglingLink,NULL)) != SQLITE_OK)
 		goto exit_with_error;
-	if ((e = sqlite3_prepare_v2(db->dbc,"UPDATE dangling_link SET last_retry_time = ?,retry_count = (retry_count + 1) WHERE hash = ?",-1,&db->sUpdateDanglingLinkRetryInfo,NULL)) != SQLITE_OK)
+	if ((e = sqlite3_prepare_v2(db->dbc,"INSERT OR REPLACE INTO wanted (hash,retries,last_retry_time) VALUES (?,0,0)",-1,&db->sAddWantedHash,NULL)) != SQLITE_OK)
+		goto exit_with_error;
+	if ((e = sqlite3_prepare_v2(db->dbc,"INSERT OR IGNORE INTO hole (waiting_record_goff,incomplete_goff,incomplete_link_idx) VALUES (?,?,?)",-1,&db->sAddHole,NULL)) != SQLITE_OK)
+		goto exit_with_error;
+	if ((e = sqlite3_prepare_v2(db->dbc,"INSERT OR REPLACE INTO graph_pending (record_goff,hole_count) VALUES (?,?)",-1,&db->sFlagRecordWeightApplicationPending,NULL)) != SQLITE_OK)
 		goto exit_with_error;
 	if ((e = sqlite3_prepare_v2(db->dbc,"SELECT first_connect_time FROM peer WHERE key_hash = ?",-1,&db->sGetPeerFirstConnectTime,NULL)) != SQLITE_OK)
 		goto exit_with_error;
 	if ((e = sqlite3_prepare_v2(db->dbc,"INSERT OR REPLACE INTO peer (key_hash,address,address_type,port,last_connect_time,first_connect_time) VALUES (?,?,?,?,?,?)",-1,&db->sAddUpdatePeer,NULL)) != SQLITE_OK)
 		goto exit_with_error;
 	if ((e = sqlite3_prepare_v2(db->dbc,"INSERT OR IGNORE INTO peer (key_hash,address,address_type,port,last_connect_time,first_connect_time) VALUES (?,?,?,?,0,0)",-1,&db->sAddPotentialPeer,NULL)) != SQLITE_OK)
+		goto exit_with_error;
+	if ((e = sqlite3_prepare_v2(db->dbc,"SELECT wap.record_goff FROM graph_pending AS wap WHERE wap.hole_count <= 0 OR wap.hole_count != (SELECT COUNT(1) FROM hole AS h WHERE h.waiting_record_goff = wap.record_goff AND (SELECT COUNT(1) FROM dangling_link AS dl WHERE dl.linking_record_goff = h.incomplete_goff AND dl.linking_record_link_idx = h.incomplete_link_idx) = 0)",-1,&db->sGetRecordsForWeightApplication,NULL)) != SQLITE_OK)
+		goto exit_with_error;
+	if ((e = sqlite3_prepare_v2(db->dbc,"SELECT incomplete_goff,incomplete_link_idx FROM hole WHERE waiting_record_goff = ?",-1,&db->sGetHoles,NULL)) != SQLITE_OK)
+		goto exit_with_error;
+	if ((e = sqlite3_prepare_v2(db->dbc,"DELETE FROM hole WHERE waiting_record_goff = ? AND incomplete_goff = ? AND incomplete_link_idx = ?",-1,&db->sDeleteHole,NULL)) != SQLITE_OK)
+		goto exit_with_error;
+	if ((e = sqlite3_prepare_v2(db->dbc,"UPDATE graph_pending SET hole_count = (SELECT COUNT(1) FROM hole WHERE hole.waiting_record_goff = ?) WHERE record_goff = ?",-1,&db->sUpdatePendingHoleCount,NULL)) != SQLITE_OK)
+		goto exit_with_error;
+	if ((e = sqlite3_prepare_v2(db->dbc,"DELETE FROM graph_pending WHERE record_goff = ? AND hole_count = 0",-1,&db->sDeleteCompletedPending,NULL)) != SQLITE_OK)
 		goto exit_with_error;
 
 	snprintf(tmp,sizeof(tmp),"%s" ZTLF_PATH_SEPARATOR "graph.bin",path);
@@ -183,7 +430,9 @@ int ZTLF_DB_open(struct ZTLF_DB *db,const char *path)
 	if (db->df < 0)
 		goto exit_with_error;
 
-	db->running = 1;
+	db->running = true;
+	db->graphThread = ZTLF_threadCreate(&_ZTLF_DB_graphThreadMain,db,false);
+	db->graphThreadStarted = true;
 
 	return 0;
 
@@ -205,19 +454,27 @@ void ZTLF_DB_close(struct ZTLF_DB *db)
 		close(db->df);
 
 	if (db->dbc) {
-		if (db->sAddRecord)                 sqlite3_finalize(db->sAddRecord);
-		if (db->sGetMaxRecordGoff)          sqlite3_finalize(db->sGetMaxRecordGoff);
-		if (db->sGetLatestRecordTimestamp)  sqlite3_finalize(db->sGetLatestRecordTimestamp);
-		if (db->sGetRecordHistoryById)      sqlite3_finalize(db->sGetRecordHistoryById);
-		if (db->sGetRecordCount)            sqlite3_finalize(db->sGetRecordCount);
-		if (db->sGetRecordInfoByHash)       sqlite3_finalize(db->sGetRecordInfoByHash);
-		if (db->sGetDanglingLinks)          sqlite3_finalize(db->sGetDanglingLinks);
-		if (db->sDeleteDanglingLinks)       sqlite3_finalize(db->sDeleteDanglingLinks);
-		if (db->sAddDanglingLink)           sqlite3_finalize(db->sAddDanglingLink);
-		if (db->sGetDanglingLinksForRetry)  sqlite3_finalize(db->sGetDanglingLinksForRetry);
-		if (db->sGetPeerFirstConnectTime)   sqlite3_finalize(db->sGetPeerFirstConnectTime);
-		if (db->sAddUpdatePeer)             sqlite3_finalize(db->sAddUpdatePeer);
-		if (db->sAddPotentialPeer)          sqlite3_finalize(db->sAddPotentialPeer);
+		if (db->sAddRecord)                          sqlite3_finalize(db->sAddRecord);
+		if (db->sGetMaxRecordGoff)                   sqlite3_finalize(db->sGetMaxRecordGoff);
+		if (db->sGetLatestRecordTimestamp)           sqlite3_finalize(db->sGetLatestRecordTimestamp);
+		if (db->sGetRecordHistoryById)               sqlite3_finalize(db->sGetRecordHistoryById);
+		if (db->sGetRecordCount)                     sqlite3_finalize(db->sGetRecordCount);
+		if (db->sGetRecordGoffByHash)                sqlite3_finalize(db->sGetRecordGoffByHash);
+		if (db->sGetDanglingLinks)                   sqlite3_finalize(db->sGetDanglingLinks);
+		if (db->sDeleteDanglingLinks)                sqlite3_finalize(db->sDeleteDanglingLinks);
+		if (db->sDeleteWantedHash)                   sqlite3_finalize(db->sDeleteWantedHash);
+		if (db->sAddDanglingLink)                    sqlite3_finalize(db->sAddDanglingLink);
+		if (db->sAddWantedHash)                      sqlite3_finalize(db->sAddWantedHash);
+		if (db->sAddHole)                            sqlite3_finalize(db->sAddHole);
+		if (db->sFlagRecordWeightApplicationPending) sqlite3_finalize(db->sFlagRecordWeightApplicationPending);
+		if (db->sGetPeerFirstConnectTime)            sqlite3_finalize(db->sGetPeerFirstConnectTime);
+		if (db->sAddUpdatePeer)                      sqlite3_finalize(db->sAddUpdatePeer);
+		if (db->sAddPotentialPeer)                   sqlite3_finalize(db->sAddPotentialPeer);
+		if (db->sGetRecordsForWeightApplication)     sqlite3_finalize(db->sGetRecordsForWeightApplication);
+		if (db->sGetHoles)                           sqlite3_finalize(db->sGetHoles);
+		if (db->sDeleteHole)                         sqlite3_finalize(db->sDeleteHole);
+		if (db->sUpdatePendingHoleCount)             sqlite3_finalize(db->sUpdatePendingHoleCount);
+		if (db->sDeleteCompletedPending)             sqlite3_finalize(db->sDeleteCompletedPending);
 		sqlite3_close_v2(db->dbc);
 	}
 
@@ -226,7 +483,9 @@ void ZTLF_DB_close(struct ZTLF_DB *db)
 	if (db->gfd >= 0)
 		close(db->gfd);
 
-	db->running = 0;
+	db->running = false;
+	if (db->graphThreadStarted)
+		pthread_join(db->graphThread,NULL);
 
 	snprintf(tmp,sizeof(tmp),"%s" ZTLF_PATH_SEPARATOR "lf.pid",db->path);
 	unlink(tmp);
@@ -371,14 +630,9 @@ int ZTLF_DB_putRecord(struct ZTLF_DB *db,struct ZTLF_ExpandedRecord *const er)
 		return ZTLF_NEG(EINVAL);
 	}
 
-	struct ZTLF_Vector_i64 graphTraversalQueue;
-	ZTLF_Vector_i64_init(&graphTraversalQueue,1048576);
-
 	bool dbLocked = true;
 	pthread_mutex_lock(&db->dbcLock);
 	pthread_mutex_lock(&db->gfLock);
-
-	ZTLF_L_trace("adding record %s (%s)",ZTLF_hexstr(er->r->id,32,0),ZTLF_hexstr(er->hash,32,1));
 
 	/* Figure out where the next record's graph node offset should be: right after previous highest. */
 	int64_t goff = 0;
@@ -392,11 +646,19 @@ int ZTLF_DB_putRecord(struct ZTLF_DB *db,struct ZTLF_ExpandedRecord *const er)
 			goff += sizeof(double) - (uintptr_t)(goff % sizeof(double));
 	}
 
-	ZTLF_L_trace("graph node offset: %lld",(long long)goff);
+	/* Figure out where record will be appended to record data file. */
+	int64_t doff = lseek(db->df,0,SEEK_END);
+	if (doff < 0) {
+		result = ZTLF_NEG(errno);
+		goto exit_putRecord;
+	}
+	doff += 2; /* actual offset is +2 to account for size prefix before record */
+
+	ZTLF_L_trace("adding version %llu of %s with hash %s at graph node offset %lld and data file offset %lld",(unsigned long long)er->timestamp,ZTLF_hexstr(er->r->id,32,0),ZTLF_hexstr(er->hash,32,1),(long long)goff,(long long)doff);
 
 	/* Grow graph file if needed. */
 	if ((uint64_t)(goff + ZTLF_RECORD_MAX_SIZE) >= db->gfcap) {
-		ZTLF_L_trace("growing graph file: %llu -> %llu",(unsigned long long)db->gfcap,(unsigned long long)(db->gfcap + ZTLF_GRAPH_FILE_CAPACITY_INCREMENT));
+		ZTLF_L_trace("increasing size of graph file: %llu -> %llu",(unsigned long long)db->gfcap,(unsigned long long)(db->gfcap + ZTLF_GRAPH_FILE_CAPACITY_INCREMENT));
 		munmap((void *)db->gfm,(size_t)db->gfcap);
 		if (ftruncate(db->gfd,(off_t)(db->gfcap + ZTLF_GRAPH_FILE_CAPACITY_INCREMENT))) {
 			db->gfm = mmap(NULL,(size_t)db->gfcap,PROT_READ|PROT_WRITE,MAP_FILE|MAP_SHARED,db->gfd,0);
@@ -418,16 +680,6 @@ int ZTLF_DB_putRecord(struct ZTLF_DB *db,struct ZTLF_ExpandedRecord *const er)
 	/* Get pointer to current record's graph node. */
 	volatile struct ZTLF_DB_GraphNode *const graphNode = (volatile struct ZTLF_DB_GraphNode *)(db->gfm + (uintptr_t)goff);
 
-	/* Figure out where record will be appended to record data file. */
-	int64_t doff = lseek(db->df,0,SEEK_END);
-	if (doff < 0) {
-		result = ZTLF_NEG(errno);
-		goto exit_putRecord;
-	}
-	doff += 2; /* actual offset is +2 to account for size prefix before record */
-
-	ZTLF_L_trace("data file offset: %lld",(long long)doff);
-
 	/* Write record size and record to data file. Size prefix is not used by this
 	 * code but allows the record data file to be parsed and used as input for e.g.
 	 * bulk loading of records. */
@@ -435,14 +687,13 @@ int ZTLF_DB_putRecord(struct ZTLF_DB *db,struct ZTLF_ExpandedRecord *const er)
 	rwtmp[1] = (uint8_t)(er->size & 0xff);
 	memcpy(rwtmp + 2,er->r,er->size); 
 	if (write(db->df,rwtmp,(size_t)(er->size + 2)) != (ssize_t)(er->size + 2)) {
+		ZTLF_L_warning("error writing record %s to data file: %d (%s)",ZTLF_hexstr(er->hash,32,0),errno,strerror(errno));
 		result = ZTLF_NEG(errno);
 		goto exit_putRecord;
 	}
 	fsync(db->df);
 
-	ZTLF_L_trace("record appended to data file (%u bytes)",er->size);
-
-	/* Add entry to main record table. */
+	/* Add main record entry. */
 	sqlite3_reset(db->sAddRecord);
 	sqlite3_bind_int64(db->sAddRecord,1,doff);
 	sqlite3_bind_int64(db->sAddRecord,2,(sqlite3_int64)er->size);
@@ -474,108 +725,90 @@ int ZTLF_DB_putRecord(struct ZTLF_DB *db,struct ZTLF_ExpandedRecord *const er)
 		goto exit_putRecord;
 	}
 
-	/* Set links from this record in graph node or create dangling link entries. */
-	ZTLF_L_trace("checking %u links from this record",er->linkCount);
+	/* Set this record's initial and total weight in its graph node. */
+	ZTLF_setdbl(graphNode->weight,er->weight);
+	ZTLF_setdbl(graphNode->totalWeight,er->weight);
+
+	/* Populate this record's graph node with links to graph node offsets of linked records, or add
+	 * records indicating wanted hashes and holes in graph if links are missing. */
+	ZTLF_L_trace("resolving %u links from %s",er->linkCount,ZTLF_hexstr(er->hash,32,0));
 	graphNode->linkCount = (uint8_t)er->linkCount;
-	const int64_t neg1 = -1;
 	for(unsigned int i=0,j=er->linkCount;i<j;++i) {
-		const uint8_t *l = er->links + (i * 32);
-		sqlite3_reset(db->sGetRecordInfoByHash);
-		sqlite3_bind_blob(db->sGetRecordInfoByHash,1,l,32,SQLITE_STATIC);
-		if (sqlite3_step(db->sGetRecordInfoByHash) == SQLITE_ROW) {
-			const int64_t linkedGoff = sqlite3_column_int64(db->sGetRecordInfoByHash,1);
-			ZTLF_L_trace("linked record %s exists, offset in graph file: %lld",ZTLF_hextr(l,32,0),linkedGoff);
-			ZTLF_UNALIGNED_ASSIGN_8(graphNode->linkedRecordGoff[i],linkedGoff);
-			ZTLF_Vector_i64_append(&graphTraversalQueue,linkedGoff);
+		const uint8_t *l = (const uint8_t *)er->links + (i * 32);
+		sqlite3_reset(db->sGetRecordGoffByHash);
+		sqlite3_bind_blob(db->sGetRecordGoffByHash,1,l,32,SQLITE_STATIC);
+		if (sqlite3_step(db->sGetRecordGoffByHash) == SQLITE_ROW) {
+			ZTLF_set64(graphNode->linkedRecordGoff[i],sqlite3_column_int64(db->sGetRecordGoffByHash,0));
 		} else {
-			ZTLF_L_trace("linked record %s does not exist, adding to dangling links",ZTLF_hexstr(l,32,0));
+			ZTLF_L_trace("linked record %s does not exist, adding to dangling links and adding or resetting wanted hash",ZTLF_hexstr(l,32,0));
+
+			ZTLF_set64(graphNode->linkedRecordGoff[i],-1LL);
+
+			/* Dangling links specifically document this record's unfulfilled links. */
 			sqlite3_reset(db->sAddDanglingLink);
 			sqlite3_bind_blob(db->sAddDanglingLink,1,l,32,SQLITE_STATIC);
-			sqlite3_bind_int64(db->sAddDanglingLink,2,doff);
+			sqlite3_bind_int64(db->sAddDanglingLink,2,goff);
+			sqlite3_bind_int(db->sAddDanglingLink,3,i);
 			if ((e = sqlite3_step(db->sAddDanglingLink)) != SQLITE_DONE) {
 				ZTLF_L_warning("database error adding dangling link: %d (%s)",e,sqlite3_errmsg(db->dbc));
 			}
-			ZTLF_UNALIGNED_ASSIGN_8(graphNode->linkedRecordGoff[i],neg1);
+
+			/* Wanted hash records track attempts to get records. */
+			sqlite3_reset(db->sAddWantedHash);
+			sqlite3_bind_blob(db->sAddWantedHash,1,l,32,SQLITE_STATIC);
+			if ((e = sqlite3_step(db->sAddWantedHash)) != SQLITE_DONE) {
+				ZTLF_L_warning("database error adding/resetting wanted hash: %d (%s)",e,sqlite3_errmsg(db->dbc));
+			}
 		}
 	}
 
-	/* Compute this record's total weight from its internal weight plus the total weights of
-	 * records linking to it. Also set this record's graph node offset in linking records'
-	 * graph nodes. */
-	double totalWeight = er->weight;
+	/* Update graph nodes of any records linking to this record with this record's graph node offset. */
 	sqlite3_reset(db->sGetDanglingLinks);
 	sqlite3_bind_blob(db->sGetDanglingLinks,1,er->hash,32,SQLITE_STATIC);
-	ZTLF_L_trace("getting any dangling links to this record and adding linking records' weights to this record's total weight (initial weight: %f)",totalWeight);
+	ZTLF_L_trace("updating graph nodes of parent records with dangling links to %s",ZTLF_hexstr(er->hash,32,0));
 	while (sqlite3_step(db->sGetDanglingLinks) == SQLITE_ROW) {
 		const int64_t linkingGoff = sqlite3_column_int64(db->sGetDanglingLinks,0);
 		volatile struct ZTLF_DB_GraphNode *const linkingRecordGraphNode = (volatile struct ZTLF_DB_GraphNode *)(db->gfm + (uintptr_t)linkingGoff);
-		double tw;
-		ZTLF_UNALIGNED_ASSIGN_8(tw,linkingRecordGraphNode->totalWeight);
-		totalWeight += tw;
-		ZTLF_L_trace("added weight %f from graph node @%lld (new weight: %f)",tw,(long long)linkingGoff,totalWeight);
 		for(unsigned int j=0,k=linkingRecordGraphNode->linkCount;j<k;++j) {
 			int64_t lrgoff;
-			ZTLF_UNALIGNED_ASSIGN_8(lrgoff,linkingRecordGraphNode->linkedRecordGoff[j]);
+			ZTLF_set64(lrgoff,linkingRecordGraphNode->linkedRecordGoff[j]);
 			if (lrgoff < 0) {
 				ZTLF_L_trace("updated graph node @%lld with pointer to this record's graph node",(long long)linkingGoff);
-				ZTLF_UNALIGNED_ASSIGN_8(linkingRecordGraphNode->linkedRecordGoff[j],goff);
+				ZTLF_set64(linkingRecordGraphNode->linkedRecordGoff[j],goff);
 				break;
 			}
 		}
 	}
 
-	/* Delete dangling links to this record. */
-	ZTLF_L_trace("deleting all dangling links to this record");
+	/* Delete dangling link records referencing this record. */
 	sqlite3_reset(db->sDeleteDanglingLinks);
 	sqlite3_bind_blob(db->sDeleteDanglingLinks,1,er->hash,32,SQLITE_STATIC);
 	if ((e = sqlite3_step(db->sDeleteDanglingLinks)) != SQLITE_DONE) {
 		ZTLF_L_warning("database error deleting dangling links: %d (%s)",e,sqlite3_errmsg(db->dbc));
 	}
 
-	/* Set this record's initial total weight in its graph node. */
-	ZTLF_UNALIGNED_ASSIGN_8(graphNode->totalWeight,totalWeight);
+	/* Delete wanted record entries for this record. */
+	sqlite3_reset(db->sDeleteWantedHash);
+	sqlite3_bind_blob(db->sDeleteWantedHash,1,er->hash,32,SQLITE_STATIC);
+	if ((e = sqlite3_step(db->sDeleteWantedHash)) != SQLITE_DONE) {
+		ZTLF_L_warning("database error deleting wanted hash: %d (%s)",e,sqlite3_errmsg(db->dbc));
+	}
 
-	/* SQLite database work is now done. */
-	pthread_mutex_unlock(&db->dbcLock);
-	dbLocked = false;
-
-	/* Traverse graph of all records below this one and add this record's weight
-	 * to their total weights. */
-	ZTLF_L_trace("updating weights of all records below this record in graph");
-	struct ZTLF_ISet *const visited = ZTLF_ISet_new();
-	const double wtmp = er->weight;
-	for(unsigned long i=0;i<graphTraversalQueue.size;) {
-		const int64_t goff = graphTraversalQueue.v[i++];
-		if (ZTLF_ISet_put(visited,goff)) {
-			ZTLF_L_trace("adding %f to weight @%lld",wtmp,(long long)goff);
-
-			volatile struct ZTLF_DB_GraphNode *const gn = (volatile struct ZTLF_DB_GraphNode *)(db->gfm + (uintptr_t)goff);
-			double tw;
-			ZTLF_UNALIGNED_ASSIGN_8(tw,gn->totalWeight);
-			tw += wtmp;
-			ZTLF_UNALIGNED_ASSIGN_8(gn->totalWeight,tw);
-			for(unsigned int j=0,k=gn->linkCount;j<k;++j) {
-				int64_t tmp;
-				ZTLF_UNALIGNED_ASSIGN_8(tmp,gn->linkedRecordGoff[j]);
-				if (tmp >= 0) {
-					ZTLF_Vector_i64_append(&graphTraversalQueue,tmp);
-				}
-			}
-
-			if (i >= 1048576) { /* compact queue periodically to save memory */
-				memmove(graphTraversalQueue.v,graphTraversalQueue.v + i,sizeof(int64_t) * (graphTraversalQueue.size -= i));
-				i = 0;
-			}
+	/* Flag this record as needing graph traversal and weight application. If hole count
+	 * is zero the graph thread will pick it up immediately. Otherwise it will wait for holes
+	 * to be filled. */
+	if (er->linkCount > 0) {
+		sqlite3_reset(db->sFlagRecordWeightApplicationPending);
+		sqlite3_bind_int64(db->sFlagRecordWeightApplicationPending,1,goff);
+		sqlite3_bind_int(db->sFlagRecordWeightApplicationPending,2,-1); /* hole count of -1 means new */
+		if ((e = sqlite3_step(db->sFlagRecordWeightApplicationPending)) != SQLITE_DONE) {
+			ZTLF_L_warning("database error flagging record as needing weight application: %d (%s)",e,sqlite3_errmsg(db->dbc));
 		}
 	}
-	ZTLF_ISet_free(visited);
 
 exit_putRecord:
 	pthread_mutex_unlock(&db->gfLock);
-	if (dbLocked)
-		pthread_mutex_unlock(&db->dbcLock);
-
-	ZTLF_Vector_i64_free(&graphTraversalQueue);
+	pthread_mutex_unlock(&db->dbcLock);
 
 	return result;
 }

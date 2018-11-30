@@ -46,6 +46,11 @@
 #define ZTLF_RECORD_MIN_LINKS 3
 
 /**
+ * Maximum number of links from a record (cannot be changed)
+ */
+#define ZTLF_RECORD_MAX_LINKS 31
+
+/**
  * Unit for TTL in seconds (about 34 hours and set so that max TTL is about one year, cannot be changed)
  */
 #define ZTLF_RECORD_TTL_INCREMENT_SEC 124158
