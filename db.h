@@ -25,9 +25,7 @@ struct ZTLF_DB
 	sqlite3 *dbc;
 	sqlite3_stmt *sAddRecord;
 	sqlite3_stmt *sGetMaxRecordGoff;
-	sqlite3_stmt *sGetLatestRecordTimestamp;
 	sqlite3_stmt *sGetRecordHistoryById;
-	sqlite3_stmt *sGetRecordCount;
 	sqlite3_stmt *sGetRecordGoffByHash;
 	sqlite3_stmt *sGetDanglingLinks;
 	sqlite3_stmt *sDeleteDanglingLinks;
@@ -65,6 +63,6 @@ bool ZTLF_DB_logOutgoingPeerConnectSuccess(struct ZTLF_DB *const db,const void *
 void ZTLF_DB_logPotentialPeer(struct ZTLF_DB *const db,const void *keyHash,const unsigned int addressType,const void *address,const unsigned int addressLength,const unsigned int port);
 int ZTLF_DB_putRecord(struct ZTLF_DB *db,struct ZTLF_ExpandedRecord *const er);
 
-static inline const char *ZTLF_DB_lastSqliteErrorMessage(struct ZTLF_DB *db) { return sqlite3_errmsg(&db); }
+static inline const char *ZTLF_DB_lastSqliteErrorMessage(struct ZTLF_DB *db) { return sqlite3_errmsg(db->dbc); }
 
 #endif

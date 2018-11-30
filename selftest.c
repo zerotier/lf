@@ -118,8 +118,109 @@ bool ZTLF_selftest_modelProofOfWork(FILE *o)
 	return true;
 }
 
+#define ZTLF_SELFTEST_DB_TEST_RECORD_COUNT 10
+#define ZTLF_SELFTEST_DB_TEST_DB_COUNT 5
+
+struct ZTLF_TestRec
+{
+	uint64_t hash[4];
+	struct ZTLF_RecordBuffer rb;
+};
+
 bool ZTLF_selftest_db(FILE *o,const char *p)
 {
+	bool success = true;
+	struct ZTLF_TestRec *testRecords = malloc(ZTLF_SELFTEST_DB_TEST_RECORD_COUNT * sizeof(struct ZTLF_TestRec));
+	char tmp[128],basePath[1024];;
+	uint8_t links[ZTLF_RECORD_MIN_LINKS][32];
+	struct ZTLF_DB testDb[ZTLF_SELFTEST_DB_TEST_DB_COUNT];
+	bool testDbOpen[ZTLF_SELFTEST_DB_TEST_DB_COUNT];
+	unsigned int order[ZTLF_SELFTEST_DB_TEST_RECORD_COUNT];
+	struct ZTLF_ExpandedRecord er;
+
+	for(int i=0;i<ZTLF_SELFTEST_DB_TEST_DB_COUNT;++i) testDbOpen[i] = false;
+
+	fprintf(o,"Testing LF database and graph weight application algorithm..." ZTLF_EOL);
+
+	unsigned char pub[ZTLF_ED25519_PUBLIC_KEY_SIZE];
+	unsigned char priv[ZTLF_ED25519_PRIVATE_KEY_SIZE];
+	ZTLF_secureRandom(tmp,32);
+	ZTLF_Ed25519CreateKeypair(pub,priv,(const unsigned char *)tmp);
+
+	fprintf(o,"Generating %d test records..." ZTLF_EOL,ZTLF_SELFTEST_DB_TEST_RECORD_COUNT);
+	uint64_t ts = ZTLF_timeMs();
+	for(unsigned int ri=0;ri<ZTLF_SELFTEST_DB_TEST_RECORD_COUNT;++ri) {
+		++ts;
+
+		unsigned int lc = 0;
+		for(unsigned int x=ri;x>0;) {
+			--x;
+			if ((ZTLF_prng() % 2) == 0) {
+				memcpy(links[lc++],testRecords[x].hash,32);
+				if (lc == ZTLF_RECORD_MIN_LINKS)
+					break;
+			}
+		}
+
+		snprintf(tmp,sizeof(tmp),"%u",ri);
+		int e = ZTLF_Record_create(&(testRecords[ri].rb),tmp,strlen(tmp),"test",4,pub,priv,links,lc,ts,ZTLF_TTL_FOREVER,true,true,NULL);
+		if (e) {
+			fprintf(o,"  FAILED: error generating test record: %d\n" ZTLF_EOL,e);
+			success = false;
+			goto selftest_db_exit;
+		}
+
+		ZTLF_Shandwich256(testRecords[ri].hash,testRecords[ri].rb.data.b,testRecords[ri].rb.size);
+		/* fprintf(o,"  %s (%u links, %u bytes)" ZTLF_EOL,ZTLF_hexstr(testRecords[ri].hash,32,0),lc,testRecords[ri].rb.size); */
+	}
+
+	snprintf(basePath,sizeof(basePath),"/tmp/ztlf-selftest/test-%d",(int)getpid());
+	mkdir("/tmp/ztlf-selftest",0755);
+	mkdir(basePath,0755);
+	fprintf(o,"Opening %d test databases under '%s'..." ZTLF_EOL,ZTLF_SELFTEST_DB_TEST_DB_COUNT,basePath);
+	for(unsigned int dbi=0;dbi<ZTLF_SELFTEST_DB_TEST_DB_COUNT;++dbi) {
+		snprintf(tmp,sizeof(tmp),"%s" ZTLF_PATH_SEPARATOR "%u",basePath,dbi);
+		int e = ZTLF_DB_open(&(testDb[dbi]),tmp);
+		if (e) {
+			fprintf(o,"  FAILED: error opening database: %d\n" ZTLF_EOL,e);
+			success = false;
+			goto selftest_db_exit;
+		}
+		fprintf(o,"  %s" ZTLF_EOL,tmp);
+	}
+
+	fprintf(o,"Inserting records into each database in a different order..." ZTLF_EOL);
+	for(unsigned int i=0;i<ZTLF_SELFTEST_DB_TEST_RECORD_COUNT;++i)
+		order[i] = i;
+
+	for(unsigned int dbi=0;dbi<ZTLF_SELFTEST_DB_TEST_DB_COUNT;++dbi) {
+		for(unsigned int oi=0;oi<ZTLF_SELFTEST_DB_TEST_RECORD_COUNT;++oi) {
+			const unsigned int ri = order[oi];
+			int e = ZTLF_Record_expand(&er,&(testRecords[ri].rb.data.r),testRecords[ri].rb.size);
+			if (e) {
+				fprintf(o,"  FAILED: error expanding record: %d" ZTLF_EOL,e);
+				success = false;
+				goto selftest_db_exit;
+			}
+			e = ZTLF_DB_putRecord(&testDb[dbi],&er);
+			if (e) {
+				fprintf(o,"  FAILED: error adding record to database: %d (%s)" ZTLF_EOL,e,(e > 0) ? ZTLF_DB_lastSqliteErrorMessage(&testDb[dbi]) : strerror(-e));
+				success = false;
+				goto selftest_db_exit;
+			}
+		}
+
+		for(unsigned int oi=0;oi<ZTLF_SELFTEST_DB_TEST_RECORD_COUNT;++oi) {
+			const unsigned int another = ((unsigned int)ZTLF_prng()) % ZTLF_SELFTEST_DB_TEST_RECORD_COUNT;
+			unsigned int x = order[oi];
+			order[oi] = order[another];
+			order[another] = x;
+		}
+
+		usleep(5000000);
+	}
+
+#if 0
 	struct ZTLF_DB db;
 	struct ZTLF_RecordBuffer rb;
 	struct ZTLF_ExpandedRecord er;
@@ -133,11 +234,6 @@ bool ZTLF_selftest_db(FILE *o,const char *p)
 		return false;
 	}
 	fprintf(o,"OK" ZTLF_EOL);
-
-	unsigned char pub[ZTLF_ED25519_PUBLIC_KEY_SIZE];
-	unsigned char priv[ZTLF_ED25519_PRIVATE_KEY_SIZE];
-	ZTLF_secureRandom(tmp,32);
-	ZTLF_Ed25519CreateKeypair(pub,priv,tmp);
 
 	fprintf(o,"Adding records to database..." ZTLF_EOL);
 	uint64_t ts = ZTLF_timeMs();
@@ -162,8 +258,15 @@ bool ZTLF_selftest_db(FILE *o,const char *p)
 	}
 
 	ZTLF_DB_close(&db);
+#endif
 
-	return true;
+selftest_db_exit:
+	for(int i=0;i<ZTLF_SELFTEST_DB_TEST_DB_COUNT;++i) {
+		if (testDbOpen[i])
+			ZTLF_DB_close(&testDb[i]);
+	}
+	free(testRecords);
+	return success;
 }
 
 bool ZTLF_selftest(FILE *o)

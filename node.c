@@ -315,7 +315,7 @@ static void *_ZTLF_Node_connectionHandler(void *tptr)
 							memset(&ok,0,sizeof(ok));
 							ZTLF_Message_setHdr(&ok,ZTLF_PROTO_MESSAGE_TYPE_OK,sizeof(struct ZTLF_Message_OK));
 							ZTLF_SHA384_final(&ackHash,ok.ack);
-							ZTLF_UNALIGNED_ASSIGN_8(ok.helloTime,h->currentTime);
+							for(int i=0;i<sizeof(uint64_t);++i) ((uint8_t *)&(ok.helloTime))[i] = ((const uint8_t *)&(h->currentTime))[i];
 							ZTLF_setu64(ok.currentTime,now);
 							ok.version[0] = ZTLF_VERSION_MAJOR;
 							ok.version[1] = ZTLF_VERSION_MINOR;

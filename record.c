@@ -147,6 +147,7 @@ int ZTLF_Record_expand(struct ZTLF_ExpandedRecord *const er,const struct ZTLF_Re
 	er->ownerSignatureAlgorithm = r->algorithms & 3;
 
 	ZTLF_Shandwich256(er->hash,r,rsize);
+
 	er->timestamp = ((((uint64_t)r->timestamp[0]) << 32) | (((uint64_t)r->timestamp[1]) << 24) | (((uint64_t)r->timestamp[2]) << 16) | (((uint64_t)r->timestamp[3]) << 8) | (uint64_t)r->timestamp[4]);
 	if (r->ttl == 0) {
 		er->ttl = 0;
