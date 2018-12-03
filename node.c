@@ -182,8 +182,6 @@ static void *_ZTLF_Node_connectionHandler(void *tptr)
 	ZTLF_AES256CFB decryptor;
 	bool encryptionInitialized = false;
 	bool connectionEstablished = false;
-	bool firstFourBytes = true;
-	bool sockHandedOff = false;
 	unsigned int termReason = ZTLF_PROTO_GOODBYE_REASON_TCP_ERROR;
 
 	struct ZTLF_Message_Hello lastHelloSent;
@@ -205,23 +203,6 @@ static void *_ZTLF_Node_connectionHandler(void *tptr)
 		rptr += (unsigned int)nr;
 
 		while (rptr >= sizeof(struct ZTLF_Message)) {
-			/* Detect HTTP connections and hand these off to the HTTP API code. The 
-			 * P2P protocol is designed so initial HELLO will never look like this. */
-			if (firstFourBytes) {
-				bool http = false;
-				switch (mbuf[0]) {
-					case 'G': if ((mbuf[1] == 'E')&&(mbuf[2] == 'T')&&(mbuf[3] == ' ')) http = true; break;
-					case 'H': if ((mbuf[1] == 'E')&&(mbuf[2] == 'E')&&(mbuf[3] == 'D')) http = true; break;
-					case 'P': if ( ((mbuf[1] == 'O')&&(mbuf[2] == 'S')&&(mbuf[3] == 'T')) || ((mbuf[1] == 'U')&&(mbuf[2] == 'T')&&(mbuf[3] == ' ')) ) http = true; break;
-					case 'D': if ((mbuf[1] == 'E')&&(mbuf[2] == 'L')&&(mbuf[3] == 'E')) http = true; break;
-				}
-				if (http) {
-					sockHandedOff = true;
-					goto terminate_connection;
-				}
-				firstFourBytes = false;
-			}
-
 			unsigned int msize = (((unsigned int)mbuf[0]) << 8) | (unsigned int)mbuf[1];
 			const unsigned int mtype = (msize >> 12) & 0xf;
 			msize &= 0xfff;
@@ -456,12 +437,10 @@ terminate_connection:
 	--c->parent->connCount;
 	pthread_mutex_unlock(&(c->parent->connLock));
 
-	if (!sockHandedOff) {
-		pthread_mutex_lock(&(c->sendLock));
-		_ZTLF_Node_closeConnection(c,termReason);
-		pthread_mutex_unlock(&(c->sendLock));
-		free(mbuf);
-	}
+	pthread_mutex_lock(&(c->sendLock));
+	_ZTLF_Node_closeConnection(c,termReason);
+	pthread_mutex_unlock(&(c->sendLock));
+	free(mbuf);
 
 	if (encryptionInitialized) {
 		ZTLF_AES256CFB_destroy(&decryptor);

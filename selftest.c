@@ -12,6 +12,10 @@
 
 bool ZTLF_selftest_core(FILE *o)
 {
+	if (sizeof(void *) < 8) {
+		fprintf(o,"WARNING: a 64-bit platform is recommended to avoid possible address space and file size constraints!" ZTLF_EOL ZTLF_EOL);
+	}
+
 	uint64_t tmp[4];
 	ZTLF_secureRandom(tmp,sizeof(tmp));
 	fprintf(o,"Testing cryptographic PRNG:     %.16llx%.16llx%.16llx%.16llx" ZTLF_EOL,tmp[0],tmp[1],tmp[2],tmp[3]);
@@ -22,6 +26,9 @@ bool ZTLF_selftest_core(FILE *o)
 	ZTLF_secureRandom(tmp,sizeof(tmp));
 	fprintf(o,"                                %.16llx%.16llx%.16llx%.16llx" ZTLF_EOL,tmp[0],tmp[1],tmp[2],tmp[3]);
 	fprintf(o,"Testing non-cryptographic PRNG: %.16llx%.16llx%.16llx%.16llx" ZTLF_EOL,ZTLF_prng(),ZTLF_prng(),ZTLF_prng(),ZTLF_prng());
+	fprintf(o,"                                %.16llx%.16llx%.16llx%.16llx" ZTLF_EOL,ZTLF_prng(),ZTLF_prng(),ZTLF_prng(),ZTLF_prng());
+	fprintf(o,"                                %.16llx%.16llx%.16llx%.16llx" ZTLF_EOL,ZTLF_prng(),ZTLF_prng(),ZTLF_prng(),ZTLF_prng());
+	fprintf(o,"                                %.16llx%.16llx%.16llx%.16llx" ZTLF_EOL,ZTLF_prng(),ZTLF_prng(),ZTLF_prng(),ZTLF_prng());
 
 	return true;
 }
@@ -118,7 +125,7 @@ bool ZTLF_selftest_modelProofOfWork(FILE *o)
 	return true;
 }
 
-#define ZTLF_SELFTEST_DB_TEST_RECORD_COUNT 10
+#define ZTLF_SELFTEST_DB_TEST_RECORD_COUNT 1000
 #define ZTLF_SELFTEST_DB_TEST_DB_COUNT 5
 
 struct ZTLF_TestRec
@@ -187,6 +194,7 @@ bool ZTLF_selftest_db(FILE *o,const char *p)
 			goto selftest_db_exit;
 		}
 		fprintf(o,"  %s" ZTLF_EOL,tmp);
+		testDbOpen[dbi] = true;
 	}
 
 	fprintf(o,"Inserting records into each database in a different order..." ZTLF_EOL);
@@ -216,49 +224,14 @@ bool ZTLF_selftest_db(FILE *o,const char *p)
 			order[oi] = order[another];
 			order[another] = x;
 		}
-
-		usleep(5000000);
 	}
 
-#if 0
-	struct ZTLF_DB db;
-	struct ZTLF_RecordBuffer rb;
-	struct ZTLF_ExpandedRecord er;
-	uint8_t tmp[128];
-	int e;
-
-	fprintf(o,"Opening database in '%s'... ",p);
-	e = ZTLF_DB_open(&db,p);
-	if (e) {
-		fprintf(o,"FAILED: %d" ZTLF_EOL,e);
-		return false;
-	}
-	fprintf(o,"OK" ZTLF_EOL);
-
-	fprintf(o,"Adding records to database..." ZTLF_EOL);
-	uint64_t ts = ZTLF_timeMs();
-	for(;;) {
-		++ts;
-		e = ZTLF_Record_create(&rb,"test",4,"test",4,pub,priv,NULL,0,ts,0,true,true,NULL);
-		if (e) {
-			fprintf(o,"  FAILED: error generating test record: %d" ZTLF_EOL,e);
-			return false;
-		}
-		e = ZTLF_Record_expand(&er,&(rb.data.r),rb.size);
-		if (e) {
-			fprintf(o,"  FAILED: error expanding generated record: %d" ZTLF_EOL,e);
-			return false;
-		}
-
-		e = ZTLF_DB_putRecord(&db,&er);
-		if (e) {
-			fprintf(o,"  FAILED: error adding record to database: %d (%s)" ZTLF_EOL,e,(e > 0) ? ZTLF_DB_lastSqliteErrorMessage(&db) : strerror(errno));
-			return false;
+	for(int i=0;i<ZTLF_SELFTEST_DB_TEST_DB_COUNT;++i) {
+		if (ZTLF_DB_hasGraphPendingRecords(&testDb[i])) {
+			usleep(1000000);
+			i = 0;
 		}
 	}
-
-	ZTLF_DB_close(&db);
-#endif
 
 selftest_db_exit:
 	for(int i=0;i<ZTLF_SELFTEST_DB_TEST_DB_COUNT;++i) {

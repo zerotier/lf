@@ -1,5 +1,6 @@
 CC=cc
 CFLAGS=-O3 -fvectorize -std=c99 -Wall
+#CFLAGS=-g
 LIBS=-lsqlite3
 
 OBJS=\

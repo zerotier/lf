@@ -13,6 +13,9 @@
 
 #define ZTLF_ISET_BUCKET_COUNT 8388608
 
+/**
+ * A fast integer set with a currently fixed number of buckets
+ */
 struct ZTLF_ISet { struct ZTLF_Vector_i64 buckets[ZTLF_ISET_BUCKET_COUNT]; };
 
 static inline struct ZTLF_ISet *ZTLF_ISet_new()

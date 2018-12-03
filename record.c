@@ -229,7 +229,7 @@ int ZTLF_Record_expand(struct ZTLF_ExpandedRecord *const er,const struct ZTLF_Re
 	if (er->workSize > 0) {
 		ZTLF_SHA384(er->scoringHash,r,(unsigned long)(((const uint8_t *)er->work) - ((const uint8_t *)r)));
 		er->workScore = ZTLF_score(er->scoringHash);
-		er->weight = 1.0 + (((double)er->workScore) / 4294967295.0);
+		er->weight = (((double)er->workScore) / 4294967295.0);
 	} else {
 		er->weight = 1.0;
 	}
