@@ -44,17 +44,18 @@ struct ZTLF_DB
 	sqlite3_stmt *sUpdatePendingHoleCount;
 	sqlite3_stmt *sDeleteCompletedPending;
 
+	pthread_mutex_t dbLock;
+
 	uint64_t gfcap;
 	uint8_t *gfm;
 	int gfd;
+	pthread_rwlock_t gfLock;
 
 	int df;
 
 	pthread_t graphThread;
 	volatile bool graphThreadStarted;
 	volatile bool running;
-
-	pthread_mutex_t lock;
 };
 
 int ZTLF_DB_open(struct ZTLF_DB *db,const char *path);

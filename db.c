@@ -23,9 +23,9 @@
  */
 ZTLF_PACKED_STRUCT(struct ZTLF_DB_GraphNode
 {
-	double totalWeight;
+	volatile double totalWeight;
 	uint8_t linkCount;
-	int64_t linkedRecordGoff[];
+	volatile int64_t linkedRecordGoff[];
 });
 
 /*
@@ -92,6 +92,7 @@ ZTLF_PACKED_STRUCT(struct ZTLF_DB_GraphNode
 "PRAGMA auto_vacuum = 0;\n" \
 "PRAGMA foreign_keys = OFF;\n" \
 "PRAGMA automatic_index = OFF;\n" \
+"PRAGMA threads = 0;\n" \
 \
 "CREATE TABLE IF NOT EXISTS config (\"k\" TEXT PRIMARY KEY NOT NULL,\"v\" BLOB NOT NULL) WITHOUT ROWID;\n" \
 \
@@ -177,12 +178,12 @@ static void *_ZTLF_DB_graphThreadMain(void *arg)
 		}
 
 		/* Get records that are pending because they're new or some of their holes appear filled. */
-		pthread_mutex_lock(&db->lock);
+		pthread_mutex_lock(&db->dbLock);
 		sqlite3_reset(db->sGetRecordsForWeightApplication);
 		while (sqlite3_step(db->sGetRecordsForWeightApplication) == SQLITE_ROW) {
 			ZTLF_Vector_i64_append(&recordQueue,sqlite3_column_int64(db->sGetRecordsForWeightApplication,0));
 		}
-		pthread_mutex_unlock(&db->lock);
+		pthread_mutex_unlock(&db->dbLock);
 
 		if (recordQueue.size > 0) {
 			ZTLF_L_trace("graph: found %lu records to process",recordQueue.size);
@@ -199,7 +200,7 @@ static void *_ZTLF_DB_graphThreadMain(void *arg)
 			int holeCount = 0;
 			double weight = 0.0;
 			ZTLF_Map128_clear(&holes);
-			pthread_mutex_lock(&db->lock);
+			pthread_mutex_lock(&db->dbLock);
 			sqlite3_reset(db->sGetRecordWeightByGoff);
 			sqlite3_bind_int64(db->sGetRecordWeightByGoff,1,waitingGoff);
 			if (sqlite3_step(db->sGetRecordWeightByGoff) == SQLITE_ROW) {
@@ -214,7 +215,7 @@ static void *_ZTLF_DB_graphThreadMain(void *arg)
 				ZTLF_L_trace("graph: graph below %lld previously led to hole at %llu[%llu]",(long long)waitingGoff,(unsigned long long)hk[0],(unsigned long long)hk[1]);
 				++holeCount;
 			}
-			pthread_mutex_unlock(&db->lock);
+			pthread_mutex_unlock(&db->dbLock);
 
 			if (weight <= 0.0) {
 				ZTLF_L_warning("graph: record with graph node offset %lld appears to have invalid weight %f, using 0.0 but the database may be corrupt or there's a bug!",waitingGoff,weight);
@@ -224,7 +225,7 @@ static void *_ZTLF_DB_graphThreadMain(void *arg)
 			ZTLF_ISet_clear(visited);
 			ZTLF_Vector_i64_clear(&graphTraversalQueue);
 
-			pthread_mutex_lock(&db->lock);
+			pthread_rwlock_rdlock(&db->gfLock);
 
 			/* Initialize queue and weight from this record's node to start graph traversal. */
 			struct ZTLF_DB_GraphNode *gn = (struct ZTLF_DB_GraphNode *)(db->gfm + (uintptr_t)waitingGoff);
@@ -237,11 +238,13 @@ static void *_ZTLF_DB_graphThreadMain(void *arg)
 						ZTLF_Vector_i64_append(&graphTraversalQueue,nextGoff);
 					} else {
 						ZTLF_L_warning("graph: found unexpected dangling link in %lld",waitingGoff);
+						pthread_mutex_lock(&db->dbLock);
 						sqlite3_reset(db->sAddHole);
 						sqlite3_bind_int64(db->sAddHole,1,waitingGoff);
 						sqlite3_bind_int64(db->sAddHole,2,waitingGoff);
 						sqlite3_bind_int(db->sAddHole,3,i);
 						sqlite3_step(db->sAddHole);
+						pthread_mutex_unlock(&db->dbLock);
 					}
 				}
 			}
@@ -266,11 +269,13 @@ static void *_ZTLF_DB_graphThreadMain(void *arg)
 									ZTLF_Vector_i64_append(&graphTraversalQueue,nextGoff);
 								} else {
 									ZTLF_L_warning("graph: found unexpected hole in graph below %lld at %lld[%u] (should have been previously marked, marking now)",(long long)waitingGoff,(long long)goff,i);
+									pthread_mutex_lock(&db->dbLock);
 									sqlite3_reset(db->sAddHole);
 									sqlite3_bind_int64(db->sAddHole,1,waitingGoff);
 									sqlite3_bind_int64(db->sAddHole,2,goff);
 									sqlite3_bind_int(db->sAddHole,3,i);
 									sqlite3_step(db->sAddHole);
+									pthread_mutex_unlock(&db->dbLock);
 								}
 							}
 						}
@@ -289,11 +294,13 @@ static void *_ZTLF_DB_graphThreadMain(void *arg)
 				if (goff >= 0) {
 					ZTLF_L_trace("graph: hole below %lld at %llu[%u] is now filled with pointer to %lld",(long long)waitingGoff,(unsigned long long)ztlfMapKey[0],(unsigned int)ztlfMapKey[1],(long long)goff);
 					ZTLF_Vector_i64_append(&graphTraversalQueue,goff);
+					pthread_mutex_lock(&db->dbLock);
 					sqlite3_reset(db->sDeleteHole);
 					sqlite3_bind_int64(db->sDeleteHole,1,waitingGoff);
 					sqlite3_bind_int64(db->sDeleteHole,2,(sqlite_int64)ztlfMapKey[0]);
 					sqlite3_bind_int(db->sDeleteHole,3,(int)ztlfMapKey[1]);
 					sqlite3_step(db->sDeleteHole);
+					pthread_mutex_unlock(&db->dbLock);
 				}
 			});
 
@@ -334,11 +341,13 @@ static void *_ZTLF_DB_graphThreadMain(void *arg)
 							ZTLF_Vector_i64_append(&graphTraversalQueue,nextGoff);
 						} else {
 							ZTLF_L_trace("graph: found hole below %lld at %lld[%u]",(long long)waitingGoff,(long long)goff,i);
+							pthread_mutex_lock(&db->dbLock);
 							sqlite3_reset(db->sAddHole);
 							sqlite3_bind_int64(db->sAddHole,1,waitingGoff);
 							sqlite3_bind_int64(db->sAddHole,2,goff);
 							sqlite3_bind_int(db->sAddHole,3,i);
 							sqlite3_step(db->sAddHole);
+							pthread_mutex_unlock(&db->dbLock);
 						}
 					}
 
@@ -349,7 +358,10 @@ static void *_ZTLF_DB_graphThreadMain(void *arg)
 				}
 			}
 
+			pthread_rwlock_unlock(&db->gfLock);
+
 			/* Update hole count and delete pending entry for this record if there are no more holes. */
+			pthread_mutex_lock(&db->dbLock);
 			sqlite3_reset(db->sUpdatePendingHoleCount);
 			sqlite3_bind_int64(db->sUpdatePendingHoleCount,1,waitingGoff);
 			sqlite3_bind_int64(db->sUpdatePendingHoleCount,2,waitingGoff);
@@ -357,9 +369,7 @@ static void *_ZTLF_DB_graphThreadMain(void *arg)
 			sqlite3_reset(db->sDeleteCompletedPending);
 			sqlite3_bind_int64(db->sDeleteCompletedPending,1,waitingGoff);
 			sqlite3_step(db->sDeleteCompletedPending);
-
-			pthread_mutex_unlock(&db->lock);
-			pthread_yield_np();
+			pthread_mutex_unlock(&db->dbLock);
 		}
 	}
 
@@ -386,7 +396,8 @@ int ZTLF_DB_open(struct ZTLF_DB *db,const char *path)
 	db->gfd = -1;
 	db->df = -1;
 	db->graphThreadStarted = false;
-	pthread_mutex_init(&db->lock,NULL);
+	pthread_mutex_init(&db->dbLock,NULL);
+	pthread_rwlock_init(&db->gfLock,NULL);
 
 	mkdir(path,0755);
 
@@ -543,7 +554,8 @@ void ZTLF_DB_close(struct ZTLF_DB *db)
 	if (db->graphThreadStarted)
 		pthread_join(db->graphThread,NULL);
 
-	pthread_mutex_lock(&db->lock);
+	pthread_rwlock_wrlock(&db->gfLock);
+	pthread_mutex_lock(&db->dbLock);
 
 	ZTLF_L_trace("closing database at %s",db->path);
 
@@ -582,14 +594,16 @@ void ZTLF_DB_close(struct ZTLF_DB *db)
 	snprintf(tmp,sizeof(tmp),"%s" ZTLF_PATH_SEPARATOR "lf.pid",db->path);
 	unlink(tmp);
 
-	pthread_mutex_unlock(&db->lock);
-	pthread_mutex_destroy(&db->lock);
+	pthread_mutex_unlock(&db->dbLock);
+	pthread_rwlock_unlock(&db->gfLock);
+	pthread_mutex_destroy(&db->dbLock);
+	pthread_rwlock_destroy(&db->gfLock);
 }
 
 bool ZTLF_DB_logOutgoingPeerConnectSuccess(struct ZTLF_DB *const db,const void *key_hash,const unsigned int address_type,const void *address,const unsigned int addressLength,const unsigned int port)
 {
 	bool r = true;
-	pthread_mutex_lock(&db->lock);
+	pthread_mutex_lock(&db->dbLock);
 
 	int64_t now = (int64_t)ZTLF_timeMs();
 	int64_t first_connect_time = now;
@@ -613,20 +627,20 @@ bool ZTLF_DB_logOutgoingPeerConnectSuccess(struct ZTLF_DB *const db,const void *
 	sqlite3_bind_int64(db->sAddUpdatePeer,6,first_connect_time);
 	sqlite3_step(db->sAddUpdatePeer);
 
-	pthread_mutex_unlock(&db->lock);
+	pthread_mutex_unlock(&db->dbLock);
 	return r;
 }
 
 void ZTLF_DB_logPotentialPeer(struct ZTLF_DB *const db,const void *key_hash,const unsigned int address_type,const void *address,const unsigned int addressLength,const unsigned int port)
 {
-	pthread_mutex_lock(&db->lock);
+	pthread_mutex_lock(&db->dbLock);
 	sqlite3_reset(db->sAddPotentialPeer);
 	sqlite3_bind_blob(db->sAddPotentialPeer,1,key_hash,48,SQLITE_STATIC);
 	sqlite3_bind_blob(db->sAddPotentialPeer,2,address,addressLength,SQLITE_STATIC);
 	sqlite3_bind_int(db->sAddPotentialPeer,3,(int)address_type);
 	sqlite3_bind_int(db->sAddPotentialPeer,4,(int)port);
 	sqlite3_step(db->sAddPotentialPeer);
-	pthread_mutex_unlock(&db->lock);
+	pthread_mutex_unlock(&db->dbLock);
 }
 
 int ZTLF_DB_putRecord(struct ZTLF_DB *db,struct ZTLF_ExpandedRecord *const er)
@@ -638,7 +652,8 @@ int ZTLF_DB_putRecord(struct ZTLF_DB *db,struct ZTLF_ExpandedRecord *const er)
 		return ZTLF_NEG(EINVAL);
 	}
 
-	pthread_mutex_lock(&db->lock);
+	pthread_rwlock_rdlock(&db->gfLock);
+	pthread_mutex_lock(&db->dbLock);
 
 	/* Figure out where the next record's graph node offset should be: right after previous highest. */
 	int64_t goff = 0;
@@ -664,6 +679,8 @@ int ZTLF_DB_putRecord(struct ZTLF_DB *db,struct ZTLF_ExpandedRecord *const er)
 
 	/* Grow graph file if needed. */
 	if ((uint64_t)(goff + ZTLF_RECORD_MAX_SIZE) >= db->gfcap) {
+		pthread_rwlock_unlock(&db->gfLock);
+		pthread_rwlock_wrlock(&db->gfLock);
 		ZTLF_L_trace("increasing size of graph file: %llu -> %llu",(unsigned long long)db->gfcap,(unsigned long long)(db->gfcap + ZTLF_GRAPH_FILE_CAPACITY_INCREMENT));
 		munmap((void *)db->gfm,(size_t)db->gfcap);
 		if (ftruncate(db->gfd,(off_t)(db->gfcap + ZTLF_GRAPH_FILE_CAPACITY_INCREMENT))) {
@@ -681,6 +698,8 @@ int ZTLF_DB_putRecord(struct ZTLF_DB *db,struct ZTLF_ExpandedRecord *const er)
 			result = ZTLF_NEG(errno);
 			goto exit_putRecord;
 		}
+		pthread_rwlock_unlock(&db->gfLock);
+		pthread_rwlock_rdlock(&db->gfLock);
 	}
 
 	/* Get pointer to current record's graph node. */
@@ -808,6 +827,7 @@ int ZTLF_DB_putRecord(struct ZTLF_DB *db,struct ZTLF_ExpandedRecord *const er)
 	}
 
 exit_putRecord:
-	pthread_mutex_unlock(&db->lock);
+	pthread_mutex_unlock(&db->dbLock);
+	pthread_rwlock_unlock(&db->gfLock);
 	return result;
 }
