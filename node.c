@@ -9,6 +9,7 @@
 #include "protocol.h"
 #include "curve25519.h"
 #include "version.h"
+#include "api.h"
 
 #define ZTLF_RECV_BUF_SIZE 131072
 #define ZTLF_SEND_BUF_SIZE 524288
@@ -106,7 +107,7 @@ static void _ZTLF_Node_announcePeersTo(struct ZTLF_Node_PeerConnection *const c)
 	struct ZTLF_Message_PeerInfo *pi = (struct ZTLF_Message_PeerInfo *)tmp;
 	pthread_mutex_lock(&(c->parent->connLock));
 	for(unsigned long i=0;i<c->parent->connCount;++i) {
-		if ((&(c->parent->conn[i]) != c)&&(c->parent->conn[i].connectionEstablished)&&(!c->parent->conn[i].incoming)) {
+		if ((&(c->parent->conn[i]) != c)&&(c->parent->conn[i].connectionEstablished)&&(!c->parent->conn[i].incoming)&&(!c->http)) {
 			struct ZTLF_Node_PeerConnection *c2 = (struct ZTLF_Node_PeerConnection *)&(c->parent->conn[i]);
 			memcpy(pi->keyHash,c2->remoteKeyHash,48);
 			unsigned int pilen = 0;
@@ -136,7 +137,10 @@ static void _ZTLF_Node_announcePeersTo(struct ZTLF_Node_PeerConnection *const c)
 /* Handler invoked when the protocol on a connection is detected to be HTTP rather than P2P */
 static void _ZTLF_Node_httpConnectionHandler(uint8_t *mbuf,unsigned int rptr,struct ZTLF_Node_PeerConnection *const c)
 {
-	char responseBuf[32768];
+	char responseBuf[1024];
+	/* This is a very very basic HTTP request parser that calls the API. It only supports
+	 * simple GET and POST and HTTP/1.1 semantics. We can switch to a more comprehensive
+	 * web server library if anything more advanced is ever needed. */
 	for(;;) {
 		/* Look for \r\n\r\n or \n\n, which ends the header. */
 		unsigned int eoh = 3;
@@ -150,12 +154,14 @@ static void _ZTLF_Node_httpConnectionHandler(uint8_t *mbuf,unsigned int rptr,str
 		}
 
 		if (haveHeader) {
-			/* In the header we only care about the method, path, and content length. */
+			/* We only care about the method and a few headers. */
 			long contentLength = 0;
 			char *sptr1 = NULL;
 			int lineNo = 0;
 			char path[256];
+			char auth[64];
 			memset(path,0,sizeof(path));
+			memset(auth,0,sizeof(auth));
 			int method = -1;
 			for(char *hl=strtok_r((char *)mbuf,"\r\n",&sptr1);(hl);hl=strtok_r(NULL,"\r\n",&sptr1)) {
 				if (hl[0]) {
@@ -172,9 +178,6 @@ static void _ZTLF_Node_httpConnectionHandler(uint8_t *mbuf,unsigned int rptr,str
 						} else if (!strncmp(hl,"PUT ",4)) {
 							method = 3;
 							hl += 4;
-						} else if (!strncmp(hl,"DELETE ",7)) {
-							method = 4;
-							hl += 7;
 						} else {
 							ZTLF_L_trace("http: dropping connection: bad request verb");
 							return;
@@ -188,6 +191,11 @@ static void _ZTLF_Node_httpConnectionHandler(uint8_t *mbuf,unsigned int rptr,str
 						while ((*hl == ':')||(*hl == ' '))
 							++hl;
 						contentLength = strtol(hl,(char **)0,10);
+					} else if (!strncasecmp(hl,"authorization",13)) {
+						hl += 13;
+						while ((*hl == ':')||(*hl == ' '))
+							++hl;
+						strncpy(auth,hl,sizeof(auth)-1);
 					}
 					++lineNo;
 				}
@@ -211,30 +219,43 @@ static void _ZTLF_Node_httpConnectionHandler(uint8_t *mbuf,unsigned int rptr,str
 				rptr += (unsigned int)nr;
 			}
 
+			int responseSize = 0;
+			bool closeConnection = false;
 			switch(method) {
 				case 1:
 					ZTLF_L_trace("http: GET %s",path);
+					closeConnection = !ZTLF_API_GET(c,false,false,path);
 					break;
 				case 2:
 					ZTLF_L_trace("http: HEAD %s",path);
+					closeConnection = !ZTLF_API_GET(c,false,true,path);
 					break;
 				case 3:
 					ZTLF_L_trace("http: POST/PUT %s with payload size %ld",path,contentLength);
+					closeConnection = !ZTLF_API_POST(c,false,path,mbuf,(unsigned int)contentLength);
 					break;
-				case 4:
-					ZTLF_L_trace("http: DELETE %s",path);
-					break;
-
 				default:
-					ZTLF_L_trace("http: dropping connection: bad request");
+					responseSize = snprintf(responseBuf,sizeof(responseBuf),"HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
+					closeConnection = true;
+					break;
+			}
+			if (responseSize > 0) {
+				pthread_mutex_lock(&(c->sendLock));
+				if (send(c->sock,responseBuf,responseSize,MSG_DONTWAIT) != (ssize_t)responseSize) {
+					pthread_mutex_unlock(&(c->sendLock));
+					ZTLF_L_trace("http: dropping connection: response write error");
 					return;
+				}
+				pthread_mutex_unlock(&(c->sendLock));
+			}
+			if (closeConnection) {
+				return;
 			}
 
 			if (contentLength > 0)
 				memmove(mbuf,mbuf + contentLength,rptr -= (unsigned int)contentLength);
 
-			const uint64_t now = ZTLF_timeMs();
-			c->lastReceiveTime = now;
+			c->lastReceiveTime = ZTLF_timeMs();
 		}
 
 		const int nr = (int)recv(c->sock,mbuf + rptr,ZTLF_RECV_BUF_SIZE - rptr,0);
@@ -267,11 +288,11 @@ static void *_ZTLF_Node_connectionHandler(void *tptr)
 		setsockopt(c->sock,IPPROTO_TCP,TCP_NODELAY,&fl,sizeof(fl));
 #endif
 #ifdef TCP_KEEPALIVE /* name of KEEPIDLE on Mac, probably others */
-		fl = 10;
+		fl = (int)(ZTLF_TCP_TIMEOUT_MS/3000);
 		setsockopt(c->sock,IPPROTO_TCP,TCP_KEEPALIVE,&fl,sizeof(fl));
 #endif
 #ifdef TCP_KEEPIDLE
-		fl = 10;
+		fl = (int)(ZTLF_TCP_TIMEOUT_MS/3000);
 		setsockopt(c->sock,IPPROTO_TCP,TCP_KEEPIDLE,&fl,sizeof(fl));
 #endif
 #ifdef TCP_KEEPCNT
@@ -279,7 +300,7 @@ static void *_ZTLF_Node_connectionHandler(void *tptr)
 		setsockopt(c->sock,IPPROTO_TCP,TCP_KEEPCNT,&fl,sizeof(fl));
 #endif
 #ifdef TCP_KEEPINTVL
-		fl = 10;
+		fl = (int)(ZTLF_TCP_TIMEOUT_MS/3000);
 		setsockopt(c->sock,IPPROTO_TCP,TCP_KEEPINTVL,&fl,sizeof(fl));
 #endif
 
@@ -323,7 +344,13 @@ static void *_ZTLF_Node_connectionHandler(void *tptr)
 		rptr += (unsigned int)nr;
 
 		while (rptr >= sizeof(struct ZTLF_Message)) {
-			if (!gotFirst4Bytes) { /* ZTLF_Message header is 4 bytes */
+			/* P2P protocol is designed so that the initial HELLO packet will never
+			 * look like the first four bytes of a normal HTTP request. This allows
+			 * the same TCP socket to be used for both P2P transport and HTTP access.
+			 * The size of the ZTLF_Message header is 4 bytes, so once we get the
+			 * first 4 bytes in a TCP stream we can detect if this is HTTP and switch
+			 * handlers to the simple HTTP request parser. */
+			if (!gotFirst4Bytes) {
 				gotFirst4Bytes = true;
 				bool http = false;
 				switch(mbuf[0]) {
@@ -564,7 +591,8 @@ terminate_connection:
 			++j;
 		}
 	}
-	--c->parent->connCount;
+	if (c->parent->connCount > 0) /* sanity check */
+		--c->parent->connCount;
 	pthread_mutex_unlock(&(c->parent->connLock));
 
 	pthread_mutex_lock(&(c->sendLock));
@@ -600,6 +628,7 @@ static void _ZTLF_Node_newConnection(struct ZTLF_Node *const n,const struct sock
 	if (expectedRemoteKeyHash)
 		memcpy(c->remoteKeyHash,expectedRemoteKeyHash,sizeof(c->remoteKeyHash));
 	c->incoming = incoming;
+	c->lastReceiveTime = ZTLF_timeMs();
 	c->latency = -1;
 	c->connectionEstablished = false;
 	c->http = false;
@@ -662,6 +691,7 @@ int ZTLF_Node_start(struct ZTLF_Node *const n,const char *path,const unsigned in
 	FD_ZERO(&rfds);
 	FD_ZERO(&wfds);
 	FD_ZERO(&efds);
+	uint64_t lastCheckedConnections = ZTLF_timeMs();
 	while (n->run) {
 		struct timeval tv;
 		tv.tv_sec = 1;
@@ -674,18 +704,23 @@ int ZTLF_Node_start(struct ZTLF_Node *const n,const char *path,const unsigned in
 			memset(&from,0,sizeof(from));
 			socklen_t fromlen = 0;
 			const int ns = accept(sock,(struct sockaddr *)&from,&fromlen);
-			if (ns < 0) {
-				if ((errno == EINTR)||(errno == EAGAIN))
-					continue;
-				break;
-			}
-			_ZTLF_Node_newConnection(n,&from,ns,true,NULL);
+			if (ns >= 0)
+				_ZTLF_Node_newConnection(n,&from,ns,true,NULL);
 		}
 
-		pthread_mutex_lock(&(n->connLock));
-		if (n->connCount < n->connDesiredCount) {
+		const uint64_t now = ZTLF_timeMs();
+		if ((now - lastCheckedConnections) >= 5000) {
+			lastCheckedConnections = now;
+			pthread_mutex_lock(&(n->connLock));
+			for(unsigned long i=0;i<n->connCount;++i) {
+				if ((now - n->conn[i].lastReceiveTime) > ZTLF_TCP_TIMEOUT_MS) {
+					_ZTLF_Node_closeConnection(&(n->conn[i]),ZTLF_PROTO_GOODBYE_REASON_NONE);
+				}
+			}
+			while (n->connCount < n->connDesiredCount) {
+			}
+			pthread_mutex_unlock(&(n->connLock));
 		}
-		pthread_mutex_unlock(&(n->connLock));
 	}
 
 	pthread_mutex_lock(&(n->connLock));

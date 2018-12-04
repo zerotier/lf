@@ -15,6 +15,8 @@
 #include "map.h"
 #include "ed25519.h"
 
+#define ZTLF_TCP_TIMEOUT_MS 30000
+
 struct ZTLF_Node_PeerConnection
 {
 	struct ZTLF_Node *parent;

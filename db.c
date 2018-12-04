@@ -35,7 +35,7 @@ ZTLF_PACKED_STRUCT(struct ZTLF_DB_GraphNode
  *   goff                     offset of graph node in memory mapped graph file (unique key)
  *   ts                       record timestamp in seconds since epoch
  *   exp                      record expiration time in seconds since epoch
- *   weight                   weight of this record (not including those that link to it)
+ *   weight                   weight of this record (not cumulative, just this record alone)
  *   id                       record ID (key)
  *   owner                    record owner
  *   hash                     shandwich256(record data) (unique key)
