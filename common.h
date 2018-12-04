@@ -38,6 +38,7 @@
 #include <time.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <math.h>
 #include <sys/time.h>
 #include <sys/types.h>
 

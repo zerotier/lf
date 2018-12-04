@@ -9,6 +9,7 @@ OBJS=\
 	curve25519.o \
 	db.o \
 	ed25519.o \
+	ieee754.o \
 	lf.o \
 	map.o \
 	node.o \

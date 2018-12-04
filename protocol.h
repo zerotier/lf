@@ -19,8 +19,7 @@
 #define ZTLF_PROTO_MESSAGE_TYPE_GOODBYE                           0xd
 #define ZTLF_PROTO_MESSAGE_TYPE_PEER_INFO                         0xc
 #define ZTLF_PROTO_MESSAGE_TYPE_RECORD                            0xb
-#define ZTLF_PROTO_MESSAGE_TYPE_RECORD_REQUEST_BY_ID              0xa
-#define ZTLF_PROTO_MESSAGE_TYPE_RECORD_REQUEST_BY_HASH            0x9
+#define ZTLF_PROTO_MESSAGE_TYPE_RECORD_REQUEST_BY_HASH            0xa
 
 #define ZTLF_PROTO_CIPHER_C25519_AES256_CFB                       0x01
 
@@ -90,13 +89,6 @@ ZTLF_PACKED_STRUCT(struct ZTLF_Message_Record {
 	uint16_t fletcher16;
 
 	struct ZTLF_Record record;
-});
-
-ZTLF_PACKED_STRUCT(struct ZTLF_Message_RecordRequestByID {
-	uint16_t hdr;
-	uint32_t crc;
-
-	uint8_t id[32];
 });
 
 ZTLF_PACKED_STRUCT(struct ZTLF_Message_RecordRequestByHash {

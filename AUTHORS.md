@@ -8,3 +8,4 @@
 
 * [tiny-json](https://github.com/rafagafe/tiny-json) by Rafa García (MIT license)
 * [libbase58](https://github.com/luke-jr/libbase58) by Luke Dash Jr. (MIT license)
+* [IEEE754 binary encoder](https://github.com/Daniel-Abrecht/IEEE754_binary_encoder) by Daniel Abrecht (MIT license)

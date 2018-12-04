@@ -38,7 +38,7 @@
 /**
  * Maximum record value size (cannot be changed without network-wide upgrade)
  */
-#define ZTLF_RECORD_MAX_VALUE_SIZE 1024
+#define ZTLF_RECORD_MAX_VALUE_SIZE 512
 
 /**
  * Minimum number of links for a non-genesis record

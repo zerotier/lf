@@ -32,6 +32,7 @@ struct ZTLF_Node_PeerConnection
 	volatile uint64_t lastReceiveTime;
 	volatile long latency;
 	volatile bool connectionEstablished;
+	volatile bool http;
 };
 
 struct ZTLF_Node

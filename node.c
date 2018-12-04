@@ -133,6 +133,125 @@ static void _ZTLF_Node_announcePeersTo(struct ZTLF_Node_PeerConnection *const c)
 	pthread_mutex_unlock(&(c->parent->connLock));
 }
 
+/* Handler invoked when the protocol on a connection is detected to be HTTP rather than P2P */
+static void _ZTLF_Node_httpConnectionHandler(uint8_t *mbuf,unsigned int rptr,struct ZTLF_Node_PeerConnection *const c)
+{
+	char responseBuf[32768];
+	for(;;) {
+		/* Look for \r\n\r\n or \n\n, which ends the header. */
+		unsigned int eoh = 3;
+		bool haveHeader = false;
+		while (eoh < rptr) {
+			if ( ((mbuf[eoh-3] == '\r')&&(mbuf[eoh-2] == '\n')&&(mbuf[eoh-1] == '\r')&&(mbuf[eoh] == '\n')) || ((mbuf[eoh-1] == '\n')&&(mbuf[eoh] == '\n')) ) {
+				haveHeader = true;
+				mbuf[eoh++] = 0;
+				break;
+			}
+		}
+
+		if (haveHeader) {
+			/* In the header we only care about the method, path, and content length. */
+			long contentLength = 0;
+			char *sptr1 = NULL;
+			int lineNo = 0;
+			char path[256];
+			memset(path,0,sizeof(path));
+			int method = -1;
+			for(char *hl=strtok_r((char *)mbuf,"\r\n",&sptr1);(hl);hl=strtok_r(NULL,"\r\n",&sptr1)) {
+				if (hl[0]) {
+					if (lineNo == 0) {
+						if (!strncmp(hl,"GET ",4)) {
+							method = 1;
+							hl += 4;
+						} else if (!strncmp(hl,"HEAD ",5)) {
+							method = 2;
+							hl += 5;
+						} else if (!strncmp(hl,"POST ",5)) {
+							method = 3;
+							hl += 5;
+						} else if (!strncmp(hl,"PUT ",4)) {
+							method = 3;
+							hl += 4;
+						} else if (!strncmp(hl,"DELETE ",7)) {
+							method = 4;
+							hl += 7;
+						} else {
+							ZTLF_L_trace("http: dropping connection: bad request verb");
+							return;
+						}
+						int pl = 0;
+						while ((*hl)&&(*hl != ' ')&&(pl < 255))
+							path[pl++] = *(hl++);
+						path[pl] = (char)0;
+					} else if (!strncasecmp(hl,"content-length",14)) {
+						hl += 14;
+						while ((*hl == ':')||(*hl == ' '))
+							++hl;
+						contentLength = strtol(hl,(char **)0,10);
+					}
+					++lineNo;
+				}
+			}
+
+			if ((contentLength < 0)||(contentLength > ZTLF_RECV_BUF_SIZE)) {
+				ZTLF_L_trace("http: dropping connection: invalid or too long content length %ld",contentLength);
+				return;
+			}
+
+			memmove(mbuf,mbuf + eoh,rptr -= eoh);
+
+			while ((long)rptr < contentLength) {
+				const int nr = (int)recv(c->sock,mbuf + rptr,ZTLF_RECV_BUF_SIZE - rptr,0);
+				if (nr < 0) {
+					if ((errno == EINTR)||(errno == EAGAIN))
+						continue;
+					ZTLF_L_trace("http: dropping connection: error %d",errno);
+					return;
+				}
+				rptr += (unsigned int)nr;
+			}
+
+			switch(method) {
+				case 1:
+					ZTLF_L_trace("http: GET %s",path);
+					break;
+				case 2:
+					ZTLF_L_trace("http: HEAD %s",path);
+					break;
+				case 3:
+					ZTLF_L_trace("http: POST/PUT %s with payload size %ld",path,contentLength);
+					break;
+				case 4:
+					ZTLF_L_trace("http: DELETE %s",path);
+					break;
+
+				default:
+					ZTLF_L_trace("http: dropping connection: bad request");
+					return;
+			}
+
+			if (contentLength > 0)
+				memmove(mbuf,mbuf + contentLength,rptr -= (unsigned int)contentLength);
+
+			const uint64_t now = ZTLF_timeMs();
+			c->lastReceiveTime = now;
+		}
+
+		const int nr = (int)recv(c->sock,mbuf + rptr,ZTLF_RECV_BUF_SIZE - rptr,0);
+		if (nr < 0) {
+			if ((errno == EINTR)||(errno == EAGAIN))
+				continue;
+			ZTLF_L_trace("http: dropping connection: error %d",errno);
+			return;
+		}
+		rptr += (unsigned int)nr;
+		if (rptr >= (ZTLF_RECV_BUF_SIZE-2)) {
+			ZTLF_L_trace("http: dropping connection: read overflow");
+			return;
+		}
+	}
+}
+
 /* Per-connection thread main */
 static void *_ZTLF_Node_connectionHandler(void *tptr)
 {
@@ -182,6 +301,7 @@ static void *_ZTLF_Node_connectionHandler(void *tptr)
 	ZTLF_AES256CFB decryptor;
 	bool encryptionInitialized = false;
 	bool connectionEstablished = false;
+	bool gotFirst4Bytes = false;
 	unsigned int termReason = ZTLF_PROTO_GOODBYE_REASON_TCP_ERROR;
 
 	struct ZTLF_Message_Hello lastHelloSent;
@@ -203,6 +323,22 @@ static void *_ZTLF_Node_connectionHandler(void *tptr)
 		rptr += (unsigned int)nr;
 
 		while (rptr >= sizeof(struct ZTLF_Message)) {
+			if (!gotFirst4Bytes) { /* ZTLF_Message header is 4 bytes */
+				gotFirst4Bytes = true;
+				bool http = false;
+				switch(mbuf[0]) {
+					case 'G': http = (memcmp(mbuf,"GET ",4) == 0); break;
+					case 'P': http = ((memcmp(mbuf,"POST",4) == 0)||(memcmp(mbuf,"PUT ",4) == 0)); break;
+					case 'D': http = (memcmp(mbuf,"DELE",4) == 0); break;
+				}
+				if (http) {
+					c->http = true;
+					_ZTLF_Node_httpConnectionHandler(mbuf,rptr,c);
+					termReason = ZTLF_PROTO_GOODBYE_REASON_NONE;
+					goto terminate_connection;
+				}
+			}
+
 			unsigned int msize = (((unsigned int)mbuf[0]) << 8) | (unsigned int)mbuf[1];
 			const unsigned int mtype = (msize >> 12) & 0xf;
 			msize &= 0xfff;
@@ -398,12 +534,6 @@ static void *_ZTLF_Node_connectionHandler(void *tptr)
 						}
 						break;
 
-					case ZTLF_PROTO_MESSAGE_TYPE_RECORD_REQUEST_BY_ID:
-						if (likely(msize >= sizeof(struct ZTLF_Message_RecordRequestByID))) {
-							struct ZTLF_Message_RecordRequestByID *req = (struct ZTLF_Message_RecordRequestByID *)mbuf;
-						}
-						break;
-
 					case ZTLF_PROTO_MESSAGE_TYPE_RECORD_REQUEST_BY_HASH:
 						if (likely(msize >= sizeof(struct ZTLF_Message_RecordRequestByHash))) {
 							struct ZTLF_Message_RecordRequestByHash *req = (struct ZTLF_Message_RecordRequestByHash *)mbuf;
@@ -472,6 +602,7 @@ static void _ZTLF_Node_newConnection(struct ZTLF_Node *const n,const struct sock
 	c->incoming = incoming;
 	c->latency = -1;
 	c->connectionEstablished = false;
+	c->http = false;
 
 	pthread_mutex_unlock(&(n->connLock));
 
