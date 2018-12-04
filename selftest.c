@@ -226,12 +226,7 @@ bool ZTLF_selftest_db(FILE *o,const char *p)
 		}
 	}
 
-	for(int i=0;i<ZTLF_SELFTEST_DB_TEST_DB_COUNT;++i) {
-		if (ZTLF_DB_hasGraphPendingRecords(&testDb[i])) {
-			usleep(1000000);
-			i = 0;
-		}
-	}
+	usleep(2000000);
 
 selftest_db_exit:
 	for(int i=0;i<ZTLF_SELFTEST_DB_TEST_DB_COUNT;++i) {

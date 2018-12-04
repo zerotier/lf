@@ -10,8 +10,7 @@
 #include "selftest.h"
 #include "version.h"
 
-#define ZTLF_DEFAULT_TCP_PORT 19379
-#define ZTLF_DEFAULT_HTTP_PORT 19380
+#define ZTLF_DEFAULT_TCP_PORT 3993
 
 static volatile bool running = false;
 static struct ZTLF_Node node;

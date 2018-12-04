@@ -54,8 +54,7 @@ struct ZTLF_DB
 	volatile bool graphThreadStarted;
 	volatile bool running;
 
-	pthread_mutex_t dbcLock;
-	pthread_mutex_t gfLock;
+	pthread_mutex_t lock;
 };
 
 int ZTLF_DB_open(struct ZTLF_DB *db,const char *path);
@@ -63,7 +62,6 @@ void ZTLF_DB_close(struct ZTLF_DB *db);
 bool ZTLF_DB_logOutgoingPeerConnectSuccess(struct ZTLF_DB *const db,const void *keyHash,const unsigned int addressType,const void *address,const unsigned int addressLength,const unsigned int port);
 void ZTLF_DB_logPotentialPeer(struct ZTLF_DB *const db,const void *keyHash,const unsigned int addressType,const void *address,const unsigned int addressLength,const unsigned int port);
 int ZTLF_DB_putRecord(struct ZTLF_DB *db,struct ZTLF_ExpandedRecord *const er);
-bool ZTLF_DB_hasGraphPendingRecords(struct ZTLF_DB *db);
 
 static inline const char *ZTLF_DB_lastSqliteErrorMessage(struct ZTLF_DB *db) { return sqlite3_errmsg(db->dbc); }
 

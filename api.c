@@ -6,7 +6,6 @@
  */
 
 #include "api.h"
-#include "node.h"
 #include "db.h"
 #include "tiny-json.h"
 

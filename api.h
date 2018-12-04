@@ -9,6 +9,7 @@
 #define ZTLF_API_H
 
 #include "common.h"
+#include "node.h"
 
 bool ZTLF_API_GET(struct ZTLF_Node_PeerConnection *const c,const bool auth,const bool head,const char *path);
 bool ZTLF_API_POST(struct ZTLF_Node_PeerConnection *const c,const bool auth,const char *path,const void *const body,const unsigned int bodySize);
