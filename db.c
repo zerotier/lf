@@ -286,9 +286,10 @@ static void *_ZTLF_DB_graphThreadMain(void *arg)
 						}
 					}
 				}
+				ZTLF_Vector_i64_clear(&graphTraversalQueue);
 			}
 
-			/* Add any now-filled holes to graph traversal queue and delete hole records for them. */
+			/* Add any now-filled holes to graph traversal queue for adjustment pass and delete hole records for them. */
 			ZTLF_Map128_each(&holes,{
 				const int64_t goff = ((struct ZTLF_DB_GraphNode *)(db->gfm + (uintptr_t)ztlfMapKey[0]))->linkedRecordGoff[(uintptr_t)ztlfMapKey[1]];
 				if (goff >= 0) {
