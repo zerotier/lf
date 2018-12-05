@@ -37,7 +37,7 @@ void ZTLF_Map256_destroy(struct ZTLF_Map256 *m)
 
 int ZTLF_Map256_set(struct ZTLF_Map256 *m,const uint64_t k[4],void *v)
 {
-	const unsigned long bucket = ((unsigned long)(0x9e3779b97f4a7c13ULL * (m->nonce ^ k[0] ^ k[1] ^ k[2] ^ k[3]))) % m->bucketCount;
+	const unsigned long bucket = ((unsigned long)(0x9e3779b97f4a7c13ULL * (m->nonce + k[0] + k[1] + k[2] + k[3]))) % m->bucketCount;
 
 	if (!m->buckets[bucket].value) {
 		m->buckets[bucket].key[0] = k[0];
@@ -118,7 +118,7 @@ void ZTLF_Map128_destroy(struct ZTLF_Map128 *m)
 
 int ZTLF_Map128_set(struct ZTLF_Map128 *m,const uint64_t k[2],void *v)
 {
-	const unsigned long bucket = ((unsigned long)(0x9e3779b97f4a7c13ULL * (m->nonce ^ k[0] ^ k[1]))) % m->bucketCount;
+	const unsigned long bucket = ((unsigned long)(0x9e3779b97f4a7c13ULL * (m->nonce + k[0] + k[1]))) % m->bucketCount;
 
 	if (!m->buckets[bucket].value) {
 		m->buckets[bucket].key[0] = k[0];

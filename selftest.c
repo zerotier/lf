@@ -10,6 +10,9 @@
 #include "record.h"
 #include "db.h"
 
+#define ZTLF_SELFTEST_DB_TEST_RECORD_COUNT 1000
+#define ZTLF_SELFTEST_DB_TEST_DB_COUNT 3
+
 bool ZTLF_selftest_core(FILE *o)
 {
 	if (sizeof(void *) < 8) {
@@ -125,9 +128,6 @@ bool ZTLF_selftest_modelProofOfWork(FILE *o)
 	return true;
 }
 
-#define ZTLF_SELFTEST_DB_TEST_RECORD_COUNT 1000
-#define ZTLF_SELFTEST_DB_TEST_DB_COUNT 5
-
 struct ZTLF_TestRec
 {
 	uint64_t hash[4];
@@ -203,6 +203,14 @@ bool ZTLF_selftest_db(FILE *o,const char *p)
 
 	for(unsigned int dbi=0;dbi<ZTLF_SELFTEST_DB_TEST_DB_COUNT;++dbi) {
 		for(unsigned int oi=0;oi<ZTLF_SELFTEST_DB_TEST_RECORD_COUNT;++oi) {
+			const unsigned int another = ((unsigned int)ZTLF_prng()) % ZTLF_SELFTEST_DB_TEST_RECORD_COUNT;
+			unsigned int x = order[oi];
+			order[oi] = order[another];
+			order[another] = x;
+		}
+
+		for(unsigned int oi=0;oi<ZTLF_SELFTEST_DB_TEST_RECORD_COUNT;++oi) {
+			if ((oi % 1000) == 999) usleep(100000); /* sleep to make background thread in DB do partial work */
 			const unsigned int ri = order[oi];
 			int e = ZTLF_Record_expand(&er,&(testRecords[ri].rb.data.r),testRecords[ri].rb.size);
 			if (e) {
@@ -217,19 +225,29 @@ bool ZTLF_selftest_db(FILE *o,const char *p)
 				goto selftest_db_exit;
 			}
 		}
-
-		for(unsigned int oi=0;oi<ZTLF_SELFTEST_DB_TEST_RECORD_COUNT;++oi) {
-			const unsigned int another = ((unsigned int)ZTLF_prng()) % ZTLF_SELFTEST_DB_TEST_RECORD_COUNT;
-			unsigned int x = order[oi];
-			order[oi] = order[another];
-			order[another] = x;
-		}
 	}
 
 	for(unsigned int dbi=0;dbi<ZTLF_SELFTEST_DB_TEST_DB_COUNT;++dbi) {
 		while (ZTLF_DB_hasGraphPendingRecords(&testDb[dbi])) {
 			usleep(250000);
 		}
+	}
+
+	uint8_t lastHash[48];
+	for(unsigned int dbi=0;dbi<ZTLF_SELFTEST_DB_TEST_DB_COUNT;++dbi) {
+		uint8_t hash[48];
+		uint64_t w = 0;
+		unsigned long cnt = 0;
+		ZTLF_DB_hashState(&testDb[dbi],hash,&w,&cnt);
+		fprintf(o,"  #%u hash %s total weight %.16llx record count %lu" ZTLF_EOL,dbi,ZTLF_hexstr(hash,48,0),w,cnt);
+		if (dbi > 0) {
+			if (memcmp(lastHash,hash,48)) {
+				fprintf(o,"  FAILED: hash does not match previous hash, different databases yielded different results!");
+				success = false;
+				goto selftest_db_exit;
+			}
+		}
+		memcpy(lastHash,hash,48);
 	}
 
 selftest_db_exit:

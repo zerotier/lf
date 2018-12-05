@@ -137,7 +137,7 @@ struct ZTLF_ExpandedRecord
 	uint64_t timestamp;
 	uint64_t ttl;
 	uint64_t expiration;
-	double weight;
+	uint32_t score;
 
 	unsigned int size;
 
@@ -150,7 +150,6 @@ struct ZTLF_ExpandedRecord
 	unsigned int ownerSignatureSize;
 
 	uint8_t scoringHash[48]; /* only first 32 bytes are used to compute score */
-	uint32_t workScore;
 
 	uint8_t valueCipher;
 	uint8_t workAlgorithm;
