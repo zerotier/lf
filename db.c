@@ -12,6 +12,10 @@
 
 #define ZTLF_GRAPH_FILE_CAPACITY_INCREMENT 1048576
 
+#ifdef ZTLF_TRACE
+/* #define ZTLF_TRACE_GRAPH_TRAVERSAL_VERBOSE */
+#endif
+
 /**
  * Structure making up graph.bin
  * 
@@ -308,13 +312,13 @@ static void *_ZTLF_DB_graphThreadMain(void *arg)
 			/* Pass 2: traverse the graph starting with the holes -- or if there were none, from the record
 			 * itself -- and adjust weights. This adjusts weights that were not adjusted last time. Make sure
 			 * to record any newly discovered holes (insert ignores holes that are still there from before). */
-#ifdef ZTLF_TRACE
+#ifdef ZTLF_TRACE_GRAPH_TRAVERSAL_VERBOSE
 			int64_t depth = 0;
 #endif
 			for(unsigned long i=0;i<graphTraversalQueue.size;) {
 				const int64_t goff = graphTraversalQueue.v[i++];
 
-#ifdef ZTLF_TRACE
+#ifdef ZTLF_TRACE_GRAPH_TRAVERSAL_VERBOSE
 				if (goff < 0) { /* negative values are used to track depth */
 					depth = goff;
 					continue;
@@ -326,13 +330,13 @@ static void *_ZTLF_DB_graphThreadMain(void *arg)
 
 					double tw;
 					ZTLF_setdbl_le(tw,gn->totalWeight);
-#ifdef ZTLF_TRACE
+#ifdef ZTLF_TRACE_GRAPH_TRAVERSAL_VERBOSE
 					ZTLF_L_trace("graph: [depth: %lld] adding weight %f from %lld to %lld, new weight is %f",-depth,weight,(long long)waitingGoff,(long long)goff,tw + weight);
 #endif
 					tw += weight;
 					ZTLF_setdbl_le(gn->totalWeight,tw);
 
-#ifdef ZTLF_TRACE
+#ifdef ZTLF_TRACE_GRAPH_TRAVERSAL_VERBOSE
 					ZTLF_Vector_i64_append(&graphTraversalQueue,depth - 1);
 #endif
 
