@@ -25,6 +25,6 @@ lf:	$(OBJS)
 	$(CC) -o lf $(OBJS) -lsqlite3
 
 clean:	FORCE
-	rm -rf lf $(OBJS) *.o *.dSYM
+	rm -rf lf $(OBJS) *.o *.dSYM lf-selftest-*
 
 FORCE:

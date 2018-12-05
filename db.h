@@ -18,6 +18,8 @@
 #include <sqlite3.h>
 #endif
 
+#define ZTLF_DB_GRAPH_NODE_LOCK_ARRAY_SIZE 197 /* prime to randomize lock distribution */
+
 struct ZTLF_DB
 {
 	char path[PATH_MAX];
@@ -47,6 +49,7 @@ struct ZTLF_DB
 	sqlite3_stmt *sGetPendingCount;
 
 	pthread_mutex_t dbLock;
+	pthread_mutex_t graphNodeLocks[ZTLF_DB_GRAPH_NODE_LOCK_ARRAY_SIZE]; /* used to lock graph nodes by locking node lock goff % NODE_LOCK_ARRAY_SIZE */
 
 	uint64_t gfcap;
 	uint8_t *gfm;

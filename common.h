@@ -8,7 +8,7 @@
 #ifndef ZT_LF_COMMON_H
 #define ZT_LF_COMMON_H
 
-#define ZTLF_TRACE 1
+/* #define ZTLF_TRACE 1 */
 
 /* LF internal error return codes */
 #define ZTLF_ERR_NONE                         0
@@ -172,13 +172,13 @@ static inline uint64_t ZTLF_htonll(const uint64_t n)
 #define ZTLF_get32(f) ((int32_t)ntohl((uint32_t)(f)))
 #define ZTLF_get64(f) ((int64_t)ZTLF_ntohll((uint64_t)(f)))
 
-#define ZTLF_setu16_le(f,v) (f) = ((int16_t)(v))
-#define ZTLF_setu32_le(f,v) (f) = ((int32_t)(v))
-#define ZTLF_setu64_le(f,v) (f) = ((int64_t)(v))
+#define ZTLF_setu16_le(f,v) (f) = ((uint16_t)(v))
+#define ZTLF_setu32_le(f,v) (f) = ((uint32_t)(v))
+#define ZTLF_setu64_le(f,v) (f) = ((uint64_t)(v))
 
-#define ZTLF_getu16_le(f) ((int16_t)(f))
-#define ZTLF_getu32_le(f) ((int32_t)(f))
-#define ZTLF_getu64_le(f) ((int64_t)(f))
+#define ZTLF_getu16_le(f) ((uint16_t)(f))
+#define ZTLF_getu32_le(f) ((uint32_t)(f))
+#define ZTLF_getu64_le(f) ((uint64_t)(f))
 
 #define ZTLF_set16_le(f,v) (f) = ((int16_t)(v))
 #define ZTLF_set32_le(f,v) (f) = ((int32_t)(v))
@@ -187,8 +187,6 @@ static inline uint64_t ZTLF_htonll(const uint64_t n)
 #define ZTLF_get16_le(f) ((int16_t)(f))
 #define ZTLF_get32_le(f) ((int32_t)(f))
 #define ZTLF_get64_le(f) ((int64_t)(f))
-
-#define ZTLF_setdbl_le(f,v) (f) = (v)
 
 #else /* many other CPUs don't like unaligned access, so assume we can't ---------------- */
 
@@ -347,12 +345,6 @@ static inline uint64_t ZTLF_htonll(const uint64_t n)
 	(((uint64_t)(((uint8_t *)&(f))[5])) << 40) | \
 	(((uint64_t)(((uint8_t *)&(f))[6])) << 48) | \
 	(((uint64_t)(((uint8_t *)&(f))[7])) << 56) )
-
-#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
-#define ZTLF_setdbl_le(f,v) for(int i=0;i<sizeof(double);++i) ((uint8_t *)&(f))[i] = ((const uint8_t *)&(v))[i]
-#else
-#define ZTLF_setdbl_le(f,v) for(int i=0;i<sizeof(double);++i) ((uint8_t *)&(f))[7 - i] = ((const uint8_t *)&(v))[i]
-#endif
 
 #endif /* ---------------------------------------------------------------------------------------------- */
 

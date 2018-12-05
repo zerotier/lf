@@ -28,7 +28,6 @@
 ZTLF_PACKED_STRUCT(struct ZTLF_DB_GraphNode
 {
 	volatile uint64_t weight;
-	volatile char lock; /* spinlock */
 	uint8_t linkCount;
 	volatile int64_t linkedRecordGoff[];
 });
@@ -317,33 +316,19 @@ static void *_ZTLF_DB_graphThreadMain(void *arg)
 			/* Pass 2: traverse the graph starting with the holes -- or if there were none, from the record
 			 * itself -- and adjust weights. This adjusts weights that were not adjusted last time. Make sure
 			 * to record any newly discovered holes (insert ignores holes that are still there from before). */
-#ifdef ZTLF_TRACE_GRAPH_TRAVERSAL_VERBOSE
-			int64_t depth = 0;
-#endif
 			for(unsigned long i=0;i<graphTraversalQueue.size;) {
 				const int64_t goff = graphTraversalQueue.v[i++];
-
-#ifdef ZTLF_TRACE_GRAPH_TRAVERSAL_VERBOSE
-				if (goff < 0) { /* negative values are used to track depth */
-					depth = goff;
-					continue;
-				}
-#endif
-
 				if (ZTLF_ISet_put(visited,goff)) {
 					gn = (struct ZTLF_DB_GraphNode *)(db->gfm + (uintptr_t)goff);
 
+					/* Alignment-safe saturating addition to weight at this graph node. Weights are currently
+					 * only changed in one thread, but if this is further threaded in the future this may
+					 * need to be thread-safe. */
 					uint64_t tw = ZTLF_getu64_le(gn->weight);
-#ifdef ZTLF_TRACE_GRAPH_TRAVERSAL_VERBOSE
-					ZTLF_L_trace("graph: [depth: %lld] adding weight %.8x from %lld to %lld, new weight is %.16llx",-depth,score,(long long)waitingGoff,(long long)goff,tw + weight);
-#endif
 					const uint64_t twx = tw;
 					tw += score;
-					tw |= -(tw < twx); /* saturating add (no overflow) */
+					tw |= -(tw < twx);
 					ZTLF_setu64_le(gn->weight,tw);
-#ifdef ZTLF_TRACE_GRAPH_TRAVERSAL_VERBOSE
-					ZTLF_Vector_i64_append(&graphTraversalQueue,depth - 1);
-#endif
 
 					for(unsigned int i=0,j=gn->linkCount;i<j;++i) {
 						const int64_t nextGoff = ZTLF_get64_le(gn->linkedRecordGoff[i]);
@@ -413,6 +398,8 @@ int ZTLF_DB_open(struct ZTLF_DB *db,const char *path)
 	db->df = -1;
 	db->graphThreadStarted = false;
 	pthread_mutex_init(&db->dbLock,NULL);
+	for(int i=0;i<ZTLF_DB_GRAPH_NODE_LOCK_ARRAY_SIZE;++i)
+		pthread_mutex_init(&db->graphNodeLocks[i],NULL);
 	pthread_rwlock_init(&db->gfLock,NULL);
 
 	mkdir(path,0755);
@@ -623,6 +610,8 @@ void ZTLF_DB_close(struct ZTLF_DB *db)
 	pthread_mutex_unlock(&db->dbLock);
 	pthread_rwlock_unlock(&db->gfLock);
 	pthread_mutex_destroy(&db->dbLock);
+	for(int i=0;i<ZTLF_DB_GRAPH_NODE_LOCK_ARRAY_SIZE;++i)
+		pthread_mutex_destroy(&db->graphNodeLocks[i]);
 	pthread_rwlock_destroy(&db->gfLock);
 }
 
@@ -732,7 +721,7 @@ int ZTLF_DB_putRecord(struct ZTLF_DB *db,struct ZTLF_ExpandedRecord *const er)
 
 	/* Get pointer to record's new graph node. */
 	struct ZTLF_DB_GraphNode *const graphNode = (struct ZTLF_DB_GraphNode *)(db->gfm + (uintptr_t)goff);
-	graphNode->lock = 1;
+	pthread_mutex_lock(&db->graphNodeLocks[((uintptr_t)goff) % ZTLF_DB_GRAPH_NODE_LOCK_ARRAY_SIZE]);
 
 	/* Write record size and record to data file. Size prefix is not used by this
 	 * code but allows the record data file to be parsed and used as input for e.g.
@@ -812,7 +801,7 @@ int ZTLF_DB_putRecord(struct ZTLF_DB *db,struct ZTLF_ExpandedRecord *const er)
 		}
 	}
 
-	graphNode->lock = 0;
+	pthread_mutex_unlock(&db->graphNodeLocks[((uintptr_t)goff) % ZTLF_DB_GRAPH_NODE_LOCK_ARRAY_SIZE]);
 
 	/* Update graph nodes of any records linking to this record with this record's graph node offset. */
 	sqlite3_reset(db->sGetDanglingLinks);
@@ -820,7 +809,8 @@ int ZTLF_DB_putRecord(struct ZTLF_DB *db,struct ZTLF_ExpandedRecord *const er)
 	while (sqlite3_step(db->sGetDanglingLinks) == SQLITE_ROW) {
 		const int64_t linkingGoff = sqlite3_column_int64(db->sGetDanglingLinks,0);
 		struct ZTLF_DB_GraphNode *const linkingRecordGraphNode = (struct ZTLF_DB_GraphNode *)(db->gfm + (uintptr_t)linkingGoff);
-		while (!__sync_bool_compare_and_swap_1(&linkingRecordGraphNode->lock,0,1)) pthread_yield_np();
+		pthread_mutex_t *const graphNodeLock = &db->graphNodeLocks[((uintptr_t)linkingGoff) % ZTLF_DB_GRAPH_NODE_LOCK_ARRAY_SIZE];
+		pthread_mutex_lock(graphNodeLock);
 		for(unsigned int j=0,k=linkingRecordGraphNode->linkCount;j<k;++j) {
 			int64_t lrgoff;
 			ZTLF_set64_le(lrgoff,linkingRecordGraphNode->linkedRecordGoff[j]);
@@ -830,7 +820,7 @@ int ZTLF_DB_putRecord(struct ZTLF_DB *db,struct ZTLF_ExpandedRecord *const er)
 				break;
 			}
 		}
-		linkingRecordGraphNode->lock = 0;
+		pthread_mutex_unlock(graphNodeLock);
 	}
 
 	/* Delete dangling link records referencing this record. */
@@ -885,9 +875,10 @@ void ZTLF_DB_hashState(struct ZTLF_DB *db,uint8_t stateHash[48],uint64_t *weight
 	sqlite3_reset(db->sGetAllRecords);
 	while (sqlite3_step(db->sGetAllRecords) == SQLITE_ROW) {
 		++*recordCount;
-		uint64_t w;
-		ZTLF_setu64_le(w,((struct ZTLF_DB_GraphNode *)(db->gfm + (uintptr_t)sqlite3_column_int64(db->sGetAllRecords,0)))->weight);
+		const uint64_t w = ZTLF_getu64_le(((struct ZTLF_DB_GraphNode *)(db->gfm + (uintptr_t)sqlite3_column_int64(db->sGetAllRecords,0)))->weight);
+		const uint64_t wsx = *weightSum;
 		*weightSum += w;
+		*weightSum |= -(*weightSum < wsx);
 		ZTLF_SHA384_update(&h,&w,sizeof(w));
 		ZTLF_SHA384_update(&h,sqlite3_column_blob(db->sGetAllRecords,1),32);
 	}

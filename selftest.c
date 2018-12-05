@@ -11,7 +11,7 @@
 #include "db.h"
 
 #define ZTLF_SELFTEST_DB_TEST_RECORD_COUNT 1000
-#define ZTLF_SELFTEST_DB_TEST_DB_COUNT 3
+#define ZTLF_SELFTEST_DB_TEST_DB_COUNT 8
 
 bool ZTLF_selftest_core(FILE *o)
 {
@@ -181,8 +181,8 @@ bool ZTLF_selftest_db(FILE *o,const char *p)
 		/* fprintf(o,"  %s (%u links, %u bytes)" ZTLF_EOL,ZTLF_hexstr(testRecords[ri].hash,32,0),lc,testRecords[ri].rb.size); */
 	}
 
-	snprintf(basePath,sizeof(basePath),"/tmp/ztlf-selftest/test-%d",(int)getpid());
-	mkdir("/tmp/ztlf-selftest",0755);
+	mkdir(p,0755);
+	snprintf(basePath,sizeof(basePath),"%s" ZTLF_PATH_SEPARATOR "test-%d",p,(int)getpid());
 	mkdir(basePath,0755);
 	fprintf(o,"Opening %d test databases under '%s'..." ZTLF_EOL,ZTLF_SELFTEST_DB_TEST_DB_COUNT,basePath);
 	for(unsigned int dbi=0;dbi<ZTLF_SELFTEST_DB_TEST_DB_COUNT;++dbi) {
@@ -233,6 +233,7 @@ bool ZTLF_selftest_db(FILE *o,const char *p)
 		}
 	}
 
+	fprintf(o,"Checking that all databases' records and record weights are the same..." ZTLF_EOL);
 	uint8_t lastHash[48];
 	for(unsigned int dbi=0;dbi<ZTLF_SELFTEST_DB_TEST_DB_COUNT;++dbi) {
 		uint8_t hash[48];
@@ -261,9 +262,9 @@ selftest_db_exit:
 
 bool ZTLF_selftest(FILE *o)
 {
-	if (!ZTLF_selftest_db(o,"/tmp/ztlf-selftest")) return false;
-	fprintf(o,ZTLF_EOL);
 	if (!ZTLF_selftest_core(o)) return false;
+	fprintf(o,ZTLF_EOL);
+	if (!ZTLF_selftest_db(o,"lf-selftest-db-work")) return false;
 	fprintf(o,ZTLF_EOL);
 	if (!ZTLF_selftest_wharrgarbl(o)) return false;
 	fprintf(o,ZTLF_EOL);
