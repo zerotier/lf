@@ -419,17 +419,6 @@ static inline uint64_t ZTLF_xorshift64star(uint64_t *const state)
 	return x * 0x2545F4914F6CDD1DULL;
 }
 
-/* This is a version of xorshift64star that is designed to only be run once for e.g. hash mixing. */
-static inline uint64_t ZTLF_xorshift64starOnce(uint64_t x)
-{
-	if (unlikely(!x))
-		x = 1;
-	x ^= x >> 12;
-	x ^= x << 25;
-	x ^= x >> 27;
-	return x * 0x2545F4914F6CDD1D;
-}
-
 /* https://en.wikipedia.org/wiki/Fletcher%27s_checksum */
 static inline uint16_t ZTLF_fletcher16(const uint8_t *data,unsigned int len)
 {

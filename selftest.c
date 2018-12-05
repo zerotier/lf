@@ -226,12 +226,16 @@ bool ZTLF_selftest_db(FILE *o,const char *p)
 		}
 	}
 
-	usleep(2000000);
+	for(unsigned int dbi=0;dbi<ZTLF_SELFTEST_DB_TEST_DB_COUNT;++dbi) {
+		while (ZTLF_DB_hasGraphPendingRecords(&testDb[dbi])) {
+			usleep(250000);
+		}
+	}
 
 selftest_db_exit:
-	for(int i=0;i<ZTLF_SELFTEST_DB_TEST_DB_COUNT;++i) {
-		if (testDbOpen[i])
-			ZTLF_DB_close(&testDb[i]);
+	for(int dbi=0;dbi<ZTLF_SELFTEST_DB_TEST_DB_COUNT;++dbi) {
+		if (testDbOpen[dbi])
+			ZTLF_DB_close(&testDb[dbi]);
 	}
 	free(testRecords);
 	return success;

@@ -11,7 +11,7 @@
 #include "common.h"
 #include "vector.h"
 
-#define ZTLF_ISET_BUCKET_COUNT 8388608
+#define ZTLF_ISET_BUCKET_COUNT 1048576
 
 /**
  * A fast integer set with a currently fixed number of buckets
@@ -43,7 +43,7 @@ static inline void ZTLF_ISet_clear(struct ZTLF_ISet *s)
 
 static inline bool ZTLF_ISet_put(struct ZTLF_ISet *s,const int64_t i)
 {
-	struct ZTLF_Vector_i64 *const v = s->buckets + ((unsigned long)ZTLF_xorshift64starOnce((uint64_t)i) % ZTLF_ISET_BUCKET_COUNT);
+	struct ZTLF_Vector_i64 *const v = s->buckets + ((unsigned long)(0x9e3779b97f4a7c13ULL * (uint64_t)i) % ZTLF_ISET_BUCKET_COUNT);
 	for(unsigned long k=0;k<v->size;k++) {
 		if (v->v[k] == i)
 			return false;
@@ -54,7 +54,7 @@ static inline bool ZTLF_ISet_put(struct ZTLF_ISet *s,const int64_t i)
 
 static inline bool ZTLF_ISet_contains(struct ZTLF_ISet *s,const int64_t i)
 {
-	struct ZTLF_Vector_i64 *const v = s->buckets + ((unsigned long)ZTLF_xorshift64starOnce((uint64_t)i) % ZTLF_ISET_BUCKET_COUNT);
+	struct ZTLF_Vector_i64 *const v = s->buckets + ((unsigned long)(0x9e3779b97f4a7c13ULL * (uint64_t)i) % ZTLF_ISET_BUCKET_COUNT);
 	for(unsigned long k=0;k<v->size;k++) {
 		if (v->v[k] == i)
 			return true;

@@ -40,7 +40,7 @@ int ZTLF_Map256_set(struct ZTLF_Map256 *m,const uint64_t k[4],void *v);
 /* Returns NULL if key is not found */
 static inline void *ZTLF_Map256_get(struct ZTLF_Map256 *m,const uint64_t k[4])
 {
-	const unsigned long bucket = ((unsigned long)ZTLF_xorshift64starOnce(m->nonce ^ k[0] ^ k[1] ^ k[2] ^ k[3])) % m->bucketCount;
+	const unsigned long bucket = ((unsigned long)(0x9e3779b97f4a7c13ULL * (m->nonce ^ k[0] ^ k[1] ^ k[2] ^ k[3]))) % m->bucketCount;
 	return ((ZTLF_eq256qw(m->buckets[bucket].key,k)) ? m->buckets[bucket].value : (void *)0);
 }
 
@@ -91,7 +91,7 @@ int ZTLF_Map128_set(struct ZTLF_Map128 *m,const uint64_t k[2],void *v);
 /* Returns NULL if key is not found */
 static inline void *ZTLF_Map128_get(struct ZTLF_Map128 *m,const uint64_t k[2])
 {
-	const unsigned long bucket = ((unsigned long)ZTLF_xorshift64starOnce(m->nonce ^ k[0] ^ k[1])) % m->bucketCount;
+	const unsigned long bucket = ((unsigned long)(0x9e3779b97f4a7c13ULL * (m->nonce ^ k[0] ^ k[1]))) % m->bucketCount;
 	return ((ZTLF_eq128qw(m->buckets[bucket].key,k)) ? m->buckets[bucket].value : (void *)0);
 }
 

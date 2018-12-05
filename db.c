@@ -170,7 +170,7 @@ static void *_ZTLF_DB_graphThreadMain(void *arg)
 	struct ZTLF_ISet *const visited = ZTLF_ISet_new();
 	ZTLF_Vector_i64_init(&graphTraversalQueue,2097152);
 	ZTLF_Vector_i64_init(&recordQueue,1024);
-	ZTLF_Map128_init(&holes,1024,NULL);
+	ZTLF_Map128_init(&holes,128,NULL);
 
 	ZTLF_L_verbose("graph: weight distribution thread starting");
 
@@ -198,7 +198,7 @@ static void *_ZTLF_DB_graphThreadMain(void *arg)
 		while (recordQueue.size > 0) {
 			const int64_t waitingGoff = recordQueue.v[recordQueue.size-1];
 			--recordQueue.size;
-			ZTLF_L_trace("graph: adjusting weights for records below graph node %lld",(long long)waitingGoff);
+			/* ZTLF_L_trace("graph: adjusting weights for records below graph node %lld",(long long)waitingGoff); */
 
 			/* Get weight and any previously known holes in the graph below this node. */
 			int holeCount = 0;
@@ -335,7 +335,6 @@ static void *_ZTLF_DB_graphThreadMain(void *arg)
 #endif
 					tw += weight;
 					ZTLF_setdbl_le(gn->totalWeight,tw);
-
 #ifdef ZTLF_TRACE_GRAPH_TRAVERSAL_VERBOSE
 					ZTLF_Vector_i64_append(&graphTraversalQueue,depth - 1);
 #endif
@@ -835,4 +834,15 @@ exit_putRecord:
 	pthread_mutex_unlock(&db->dbLock);
 	pthread_rwlock_unlock(&db->gfLock);
 	return result;
+}
+
+bool ZTLF_DB_hasGraphPendingRecords(struct ZTLF_DB *db)
+{
+	bool canHas = false;
+	pthread_mutex_lock(&db->dbLock);
+	sqlite3_reset(db->sGetRecordsForWeightApplication);
+	if (sqlite3_step(db->sGetRecordsForWeightApplication) == SQLITE_ROW)
+		canHas = true;
+	pthread_mutex_unlock(&db->dbLock);
+	return canHas;
 }

@@ -10,6 +10,7 @@
 
 #include "common.h"
 
+#if 0
 /* Vector for arbitrary size byte arrays */
 
 struct ZTLF_Vector
@@ -52,6 +53,8 @@ static inline void ZTLF_Vector_init(struct ZTLF_Vector *const vec,const unsigned
 #define ZTLF_Vector_clear(vec) { (vec)->p = (uint8_t *)(vec)->v; (vec)->size = 0; }
 
 #define ZTLF_Vector_free(vec) if ((vec)->v) { free((vec)->v); }
+
+#endif
 
 /* Vector for 64-bit ints */
 
