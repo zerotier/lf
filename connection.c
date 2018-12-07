@@ -5,17 +5,15 @@
  * Licensed under the terms of the MIT license (see LICENSE.txt).
  */
 
-#include "node.h"
+#include "connection.h"
 #include "protocol.h"
-#include "curve25519.h"
 #include "version.h"
 
-#if 0
-/* Compute fletcher16, encrypt, and send to destination peer if possible. */
-static bool _ZTLF_Node_sendTo(struct ZTLF_Node_Connection *const c,void *const msgp,const unsigned int len)
+static bool _ZTLF_Connection_send(struct ZTLF_Connection *const c,void *const msgp,const unsigned int len)
 {
 	struct ZTLF_Message *const msg = (struct ZTLF_Message *)msgp;
 
+	if (unlikely(len < sizeof(struct ZTLF_Message))) return false;
 	ZTLF_setu16(msg->fletcher16,ZTLF_fletcher16(((const uint8_t *)msg) + sizeof(struct ZTLF_Message),len - sizeof(struct ZTLF_Message)));
 
 	pthread_mutex_lock(&(c->sendLock));
@@ -59,30 +57,9 @@ static bool _ZTLF_Node_sendTo(struct ZTLF_Node_Connection *const c,void *const m
 	return true;
 }
 
-/* Send goodbye if provided and close. */
-static void _ZTLF_Node_closeConnection(struct ZTLF_Node_Connection *const c,unsigned int reason)
-{
-	pthread_mutex_lock(&(c->sendLock));
-	if (c->sock >= 0) {
-		if (reason != ZTLF_PROTO_GOODBYE_REASON_NONE) {
-			struct ZTLF_Message_Goodbye bye;
-			ZTLF_Message_setHdr(&bye,ZTLF_PROTO_MESSAGE_TYPE_GOODBYE,sizeof(struct ZTLF_Message_Goodbye));
-			bye.reason = (uint8_t)reason;
-			if (c->encryptor != NULL)
-				ZTLF_AES256CFB_crypt(c->encryptor,&bye,&bye,sizeof(bye));
-			send(c->sock,&bye,sizeof(bye),MSG_DONTWAIT);
-		}
-		close(c->sock);
-		c->sock = -1;
-	}
-	pthread_mutex_unlock(&(c->sendLock));
-}
-
-/* Create a HELLO message to send to a peer. */
-static void _ZTLF_Node_mkHello(struct ZTLF_Node_Connection *const c,struct ZTLF_Message_Hello *const h,const uint8_t *const publicKey,const uint32_t flags)
+static void _ZTLF_Connection_mkHello(struct ZTLF_Connection *const c,struct ZTLF_Message_Hello *const h,const uint8_t *const publicKey,const uint32_t flags)
 {
 	ZTLF_Message_setHdr(h,ZTLF_PROTO_MESSAGE_TYPE_HELLO,sizeof(struct ZTLF_Message_Hello));
-
 	ZTLF_secureRandom(h->iv,sizeof(h->iv));
 	h->protoVersion = ZTLF_PROTO_VERSION;
 	h->protoFlags = 0;
@@ -92,46 +69,10 @@ static void _ZTLF_Node_mkHello(struct ZTLF_Node_Connection *const c,struct ZTLF_
 	memcpy(h->publicKey,publicKey,sizeof(h->publicKey));
 }
 
-/* Announce all currently successfully connected outbound (and thus verified) peers to a given peer. */
-static void _ZTLF_Node_announcePeersTo(struct ZTLF_Node_Connection *const c)
+static void *_ZTLF_Connection_connectionHandler(void *tptr)
 {
-	uint64_t tmp[32];
-	struct ZTLF_Message_PeerInfo *pi = (struct ZTLF_Message_PeerInfo *)tmp;
-	pthread_mutex_lock(&(c->parent->connLock));
-	for(unsigned long i=0;i<c->parent->connCount;++i) {
-		if ((&(c->parent->conn[i]) != c)&&(c->parent->conn[i].connectionEstablished)&&(!c->parent->conn[i].incoming)&&((c->subscriptions & ZTLF_PROTO_MESSAGE_HELLO_FLAG_SUBSCRIBE_PEERS) != 0)) {
-			struct ZTLF_Node_Connection *c2 = (struct ZTLF_Node_Connection *)&(c->parent->conn[i]);
-			memcpy(pi->keyHash,c2->remoteKeyHash,48);
-			unsigned int pilen = 0;
-			switch(c2->remoteAddress.ss_family) {
-				case AF_INET:
-					pilen = sizeof(struct ZTLF_Message_PeerInfo) + 6;
-					pi->addressType = 4;
-					memcpy(pi->address,&(((const struct sockaddr_in *)&(c2->remoteAddress))->sin_addr),4);
-					memcpy(pi->address + 4,&(((const struct sockaddr_in6 *)&(c2->remoteAddress))->sin6_port),2);
-					break;
-				case AF_INET6:
-					pilen = sizeof(struct ZTLF_Message_PeerInfo) + 18;
-					pi->addressType = 6;
-					memcpy(pi->address,(((const struct sockaddr_in6 *)&(c2->remoteAddress))->sin6_addr.s6_addr),16);
-					memcpy(pi->address + 16,&(((const struct sockaddr_in6 *)&(c2->remoteAddress))->sin6_port),2);
-					break;
-			}
-			if (pilen > 0) {
-				ZTLF_Message_setHdr(pi,ZTLF_PROTO_MESSAGE_TYPE_PEER_INFO,pilen);
-				_ZTLF_Node_sendTo(c,pi,pilen);
-			}
-		}
-	}
-	pthread_mutex_unlock(&(c->parent->connLock));
-}
-
-/* Per-connection thread main */
-static void *_ZTLF_Node_connectionHandler(void *tptr)
-{
-	struct ZTLF_Node_Connection *const c = (struct ZTLF_Node_Connection *)tptr;
-	uint8_t *mbuf;
-	ZTLF_MALLOC_CHECK(mbuf = (uint8_t *)malloc(ZTLF_RECV_BUF_SIZE));
+	struct ZTLF_Connection *const c = (struct ZTLF_Connection *)tptr;
+	uint8_t *mbuf = c->recvBuf;
 
 	{
 		int fl = 1;
@@ -175,11 +116,10 @@ static void *_ZTLF_Node_connectionHandler(void *tptr)
 	ZTLF_AES256CFB decryptor;
 	bool encryptionInitialized = false;
 	bool connectionEstablished = false;
-	unsigned int termReason = ZTLF_PROTO_GOODBYE_REASON_TCP_ERROR;
 
 	struct ZTLF_Message_Hello lastHelloSent;
-	_ZTLF_Node_mkHello(c,&lastHelloSent,c->parent->publicKey,0ULL);
-	_ZTLF_Node_sendTo(c,&lastHelloSent,sizeof(lastHelloSent));
+	_ZTLF_Connection_mkHello(c,&lastHelloSent,c->param->publicKey,c->param->helloFlags);
+	_ZTLF_Connection_send(c,&lastHelloSent,sizeof(lastHelloSent));
 
 	unsigned int rptr = 0;
 	for(;;) {
@@ -204,15 +144,12 @@ static void *_ZTLF_Node_connectionHandler(void *tptr)
 			if (rptr >= msize) { /* a complete message was received */
 				const uint16_t f16 = ZTLF_getu16(((struct ZTLF_Message *)mbuf)->fletcher16);
 				if (f16 != ZTLF_fletcher16(mbuf + sizeof(struct ZTLF_Message),msize - sizeof(struct ZTLF_Message))) {
-					termReason = ZTLF_PROTO_GOODBYE_REASON_NONE;
 					goto terminate_connection;
 				}
 
 				if ((!encryptionInitialized)&&(mtype != ZTLF_PROTO_MESSAGE_TYPE_HELLO)) {
-					termReason = (mtype == ZTLF_PROTO_MESSAGE_TYPE_GOODBYE) ? ZTLF_PROTO_GOODBYE_REASON_NONE : ZTLF_PROTO_GOODBYE_REASON_INVALID_MESSAGE;
 					goto terminate_connection;
 				} else if ((!connectionEstablished)&&(mtype != ZTLF_PROTO_MESSAGE_TYPE_OK)) {
-					termReason = (mtype == ZTLF_PROTO_MESSAGE_TYPE_GOODBYE) ? ZTLF_PROTO_GOODBYE_REASON_NONE : ZTLF_PROTO_GOODBYE_REASON_INVALID_MESSAGE;
 					goto terminate_connection;
 				}
 
@@ -220,9 +157,6 @@ static void *_ZTLF_Node_connectionHandler(void *tptr)
 				c->lastReceiveTime = now;
 
 				switch(mtype) {
-
-					case ZTLF_PROTO_MESSAGE_TYPE_NOP:
-						break;
 
 					case ZTLF_PROTO_MESSAGE_TYPE_HELLO:
 						if (likely(msize >= sizeof(struct ZTLF_Message_Hello))) {
@@ -233,7 +167,6 @@ static void *_ZTLF_Node_connectionHandler(void *tptr)
 							ZTLF_SHA384_update(&ackHash,mbuf,msize);
 
 							if ((h->protoVersion != ZTLF_PROTO_VERSION)||(h->cipher != ZTLF_PROTO_CIPHER_C25519_AES256_CFB)) {
-								termReason = ZTLF_PROTO_GOODBYE_REASON_UNSUPPORTED_PROTOCOL;
 								goto terminate_connection;
 							}
 
@@ -242,24 +175,14 @@ static void *_ZTLF_Node_connectionHandler(void *tptr)
 							ZTLF_SHA384(remoteKeyHash,h->publicKey,32);
 							if (c->incoming) {
 								memcpy(c->remoteKeyHash,remoteKeyHash,sizeof(c->remoteKeyHash));
-							} else if (memcmp(remoteKeyHash,c->remoteKeyHash,sizeof(remoteKeyHash)) != 0) {
-								termReason = ZTLF_PROTO_GOODBYE_REASON_NONE;
+							} else if ((memcmp(remoteKeyHash,c->remoteKeyHash,sizeof(remoteKeyHash)) != 0)&&(!ZTLF_allZero(c->remoteKeyHash,sizeof(c->remoteKeyHash)))) {
 								goto terminate_connection;
 							}
 
 							/* Perform key agreement with remote. */
-							ZTLF_Curve25519_agree(sharedSecret,h->publicKey,c->parent->privateKey);
+							ZTLF_Curve25519_agree(sharedSecret,h->publicKey,c->param->privateKey);
 
 							ZTLF_SHA384_update(&ackHash,sharedSecret,sizeof(sharedSecret));
-
-							pthread_mutex_lock(&(c->parent->connLock));
-
-							/* Close any other connections that are to/from the same peer. */
-							for(unsigned long i=0;i<c->parent->connCount;++i) {
-								if ((c != &(c->parent->conn[i]))&&(memcmp(c->parent->conn[i].sharedSecret,sharedSecret,sizeof(sharedSecret)) == 0)) {
-									_ZTLF_Node_closeConnection(&(c->parent->conn[i]),ZTLF_PROTO_GOODBYE_REASON_DUPLICATE_LINK);
-								}
-							}
 
 							/* Initialize or re-initialize cipher. */
 							pthread_mutex_lock(&(c->sendLock));
@@ -270,13 +193,10 @@ static void *_ZTLF_Node_connectionHandler(void *tptr)
 							ZTLF_AES256CFB_init(&encryptor,sharedSecret,lastHelloSent.iv,true);
 							ZTLF_AES256CFB_init(&decryptor,sharedSecret,h->iv,false);
 							c->encryptor = &encryptor;
-							memcpy(c->sharedSecret,sharedSecret,sizeof(c->sharedSecret));
 							pthread_mutex_unlock(&(c->sendLock));
 
-							c->subscriptions = ZTLF_getu32(h->flags);
+							c->helloFlags = ZTLF_getu32(h->flags);
 							encryptionInitialized = true;
-
-							pthread_mutex_unlock(&(c->parent->connLock));
 
 							/* Send encrypted OK to peer with acknowledgement of HELLO. */
 							struct ZTLF_Message_OK ok;
@@ -289,7 +209,7 @@ static void *_ZTLF_Node_connectionHandler(void *tptr)
 							ok.version[1] = ZTLF_VERSION_MINOR;
 							ok.version[2] = ZTLF_VERSION_REVISION;
 							ok.version[3] = ZTLF_VERSION_REVISION;
-							_ZTLF_Node_sendTo(c,&ok,sizeof(ok));
+							_ZTLF_Connection_send(c,&ok,sizeof(ok));
 						}
 						break;
 
@@ -305,11 +225,12 @@ static void *_ZTLF_Node_connectionHandler(void *tptr)
 							ZTLF_SHA384_update(&ackHash,sharedSecret,sizeof(sharedSecret));
 							ZTLF_SHA384_final(&ackHash,expectedAck);
 							if (memcmp(expectedAck,ok->ack,sizeof(ok->ack)) != 0) {
-								termReason = ZTLF_PROTO_GOODBYE_REASON_NONE;
 								goto terminate_connection;
 							}
 
 							if ((!c->incoming)&&(!connectionEstablished)) {
+								if (c->param->onConnectionEstablished)
+									c->param->onConnectionEstablished(c);
 #if 0
 								uint64_t tmp[32];
 								struct ZTLF_Message_PeerInfo *pi = (struct ZTLF_Message_PeerInfo *)tmp;
@@ -345,54 +266,51 @@ static void *_ZTLF_Node_connectionHandler(void *tptr)
 #endif
 							}
 
-							_ZTLF_Node_announcePeersTo(c);
-
 							const uint64_t ht = ZTLF_getu64(ok->helloTime);
 							c->latency = (now > ht) ? (long)(now - ht) : (long)0;
-							c->connectionEstablished = true;
+							c->established = true;
 							connectionEstablished = true;
 						}
 						break;
 
-					case ZTLF_PROTO_MESSAGE_TYPE_GOODBYE:
-						if (likely(msize >= sizeof(struct ZTLF_Message_Goodbye))) {
-							termReason = ZTLF_PROTO_GOODBYE_REASON_NONE;
-							goto terminate_connection;
-						}
-						break;
-
 					case ZTLF_PROTO_MESSAGE_TYPE_PEER_INFO:
-						if (likely(msize >= sizeof(struct ZTLF_Message_PeerInfo))) {
-#if 0
+						if ((msize >= sizeof(struct ZTLF_Message_PeerInfo))&&(c->param->onPeerInfo)) {
 							struct ZTLF_Message_PeerInfo *pi = (struct ZTLF_Message_PeerInfo *)mbuf;
 							switch(pi->addressType) {
 								case 4:
 									if (msize >= (sizeof(struct ZTLF_Message_PeerInfo) + 6)) {
 										const unsigned int port = (((unsigned int)pi->address[4]) << 8) | (unsigned int)pi->address[5];
-										ZTLF_DB_logPotentialPeer(&(c->parent->db),pi->keyHash,4,pi->address,4,port);
+										c->param->onPeerInfo(c,4,pi->address,port,pi->keyHash);
 									}
 									break;
 								case 6:
 									if (msize >= (sizeof(struct ZTLF_Message_PeerInfo) + 18)) {
 										const unsigned int port = (((unsigned int)pi->address[16]) << 8) | (unsigned int)pi->address[17];
-										ZTLF_DB_logPotentialPeer(&(c->parent->db),pi->keyHash,6,pi->address,16,port);
+										c->param->onPeerInfo(c,6,pi->address,port,pi->keyHash);
 									}
 									break;
 							}
-#endif
 						}
 						break;
 
 					case ZTLF_PROTO_MESSAGE_TYPE_RECORD:
-						if (likely(msize >= ZTLF_RECORD_MIN_SIZE)) {
+						if ((msize >= (sizeof(struct ZTLF_Message_Record) + ZTLF_RECORD_MIN_SIZE))&&(c->param->onRecord)) {
 							struct ZTLF_Message_Record *rm = (struct ZTLF_Message_Record *)mbuf;
+							c->param->onRecord(c,(const struct ZTLF_Record *)&(rm->record),msize - sizeof(struct ZTLF_Message_Record));
 						}
 						break;
 
 					case ZTLF_PROTO_MESSAGE_TYPE_RECORD_REQUEST_BY_HASH:
-						if (likely(msize >= sizeof(struct ZTLF_Message_RecordRequestByHash))) {
+						if ((msize >= sizeof(struct ZTLF_Message_RecordRequestByHash))&&(c->param->onRecordRequestByHash)) {
 							struct ZTLF_Message_RecordRequestByHash *req = (struct ZTLF_Message_RecordRequestByHash *)mbuf;
+							c->param->onRecordRequestByHash(c,req->hash);
 						}
+						break;
+
+					case ZTLF_PROTO_MESSAGE_TYPE_RECORD_QUERY_RESULT:
+						break;
+
+					case ZTLF_PROTO_MESSAGE_TYPE_RECORD_QUERY:
 						break;
 
 					default:
@@ -409,24 +327,18 @@ static void *_ZTLF_Node_connectionHandler(void *tptr)
 	}
 
 terminate_connection:
-	c->connectionEstablished = false;
+	c->established = false;
 
-	pthread_mutex_lock(&(c->parent->connLock));
-	for(unsigned long i=0,j=0;i<c->parent->connCount;++i) {
-		if (&(c->parent->conn[i]) != c) {
-			if (i != j)
-				memcpy(&(c->parent->conn[j]),&(c->parent->conn[i]),sizeof(struct ZTLF_Node_Connection));
-			++j;
-		}
-	}
-	if (c->parent->connCount > 0) /* sanity check */
-		--c->parent->connCount;
-	pthread_mutex_unlock(&(c->parent->connLock));
+	if (c->param->onConnectionClosed)
+		c->param->onConnectionClosed(c);
 
 	pthread_mutex_lock(&(c->sendLock));
-	_ZTLF_Node_closeConnection(c,termReason);
+	if (c->sock >= 0) {
+		close(c->sock);
+		c->sock = -1;
+	}
+	c->encryptor = NULL;
 	pthread_mutex_unlock(&(c->sendLock));
-	free(mbuf);
 
 	if (encryptionInitialized) {
 		ZTLF_AES256CFB_destroy(&decryptor);
@@ -434,140 +346,41 @@ terminate_connection:
 	}
 
 	pthread_mutex_destroy(&(c->sendLock));
+	free(c);
 
 	return NULL;
 }
 
-static void _ZTLF_Node_newConnection(struct ZTLF_Node *const n,const struct sockaddr_storage *addr,const int sock,const bool incoming,const void *expectedRemoteKeyHash)
+struct ZTLF_Connection *ZTLF_Connection_New(const struct ZTLF_ConnectionParameters *param,const struct sockaddr_storage *remoteAddress,const int sock,const bool incoming,const void *expectedRemoteKeyHash)
 {
-	pthread_mutex_lock(&(n->connLock));
+	struct ZTLF_Connection *c;
+	ZTLF_MALLOC_CHECK(c = (struct ZTLF_Connection *)malloc(sizeof(struct ZTLF_Connection)));
 
-	if (n->connCount >= n->connCapacity) {
-		ZTLF_MALLOC_CHECK(n->conn = (struct ZTLF_Node_Connection *)realloc(n->conn,sizeof(struct ZTLF_Node_Connection) * (n->connCapacity << 1)));
-	}
-	struct ZTLF_Node_Connection *const c = &(n->conn[n->connCount++]);
-
-	c->parent = n;
-	memcpy(&(c->remoteAddress),addr,sizeof(struct sockaddr_storage));
+	c->param = param;
+	memcpy(&c->remoteAddress,remoteAddress,sizeof(struct sockaddr_storage));
 	c->sock = sock;
 	c->sockSendBufSize = 0;
 	c->encryptor = NULL;
-	pthread_mutex_init(&(c->sendLock),NULL);
+	pthread_mutex_init(&c->sendLock,NULL);
 	if (expectedRemoteKeyHash)
 		memcpy(c->remoteKeyHash,expectedRemoteKeyHash,sizeof(c->remoteKeyHash));
+	else memset(c->remoteKeyHash,0,sizeof(c->remoteKeyHash));
 	c->incoming = incoming;
 	c->lastReceiveTime = ZTLF_timeMs();
+	c->helloFlags = 0;
 	c->latency = -1;
-	c->connectionEstablished = false;
+	c->established = false;
+	c->thread = ZTLF_threadCreate(_ZTLF_Connection_connectionHandler,(void *)c,false);
 
-	pthread_mutex_unlock(&(n->connLock));
-
-	pthread_t t;
-	if (pthread_create(&t,NULL,_ZTLF_Node_connectionHandler,(void *)c) != 0) {
-		fprintf(stderr,"FATAL: pthread_create failed: %d\n",errno);
-		abort();
-	}
-	pthread_detach(t);
+	return c;
 }
 
-int ZTLF_Node_start(struct ZTLF_Node *const n,const unsigned int port)
+void ZTLF_Connection_Close(struct ZTLF_Connection *const c)
 {
-	const int sock = socket(AF_INET6,SOCK_STREAM,0);
-	if (sock < 0)
-		return errno;
-	int fl = 0;
-	setsockopt(sock,IPPROTO_IPV6,IPV6_V6ONLY,&fl,sizeof(fl));
-	fl = 1;
-	setsockopt(sock,SOL_SOCKET,SO_REUSEADDR,&fl,sizeof(fl));
-	fl = 1;
-	setsockopt(sock,SOL_SOCKET,SO_REUSEPORT,&fl,sizeof(fl));
-	struct sockaddr_in6 sin6;
-	memset(&sin6,0,sizeof(sin6));
-	sin6.sin6_family = AF_INET6;
-	sin6.sin6_len = sizeof(struct sockaddr_in6);
-	sin6.sin6_port = htons((uint16_t)port);
-	if (bind(sock,(const struct sockaddr *)&sin6,sizeof(sin6))) {
-		close(sock);
-		return errno;
+	pthread_mutex_lock(&(c->sendLock));
+	if (c->sock >= 0) {
+		shutdown(c->sock,SHUT_RD);
 	}
-	if (listen(sock,64)) {
-		close(sock);
-		return errno;
-	}
-	fcntl(sock,F_SETFL,fcntl(sock,F_GETFL)|O_NONBLOCK);
-
-	n->listenPort = port;
-	n->listenSocket = sock;
-	ZTLF_MALLOC_CHECK(n->conn = (struct ZTLF_Node_Connection *)malloc(sizeof(struct ZTLF_Node_Connection) * 128));
-	n->connCount = 0;
-	n->connCapacity = 128;
-	n->connDesiredCount = 64;
-	pthread_mutex_init(&(n->connLock),NULL);
-	n->run = true;
-
-	struct sockaddr_storage from;
-	fd_set rfds,wfds,efds;
-	FD_ZERO(&rfds);
-	FD_ZERO(&wfds);
-	FD_ZERO(&efds);
-	uint64_t lastCheckedConnections = ZTLF_timeMs();
-	while (n->run) {
-		struct timeval tv;
-		tv.tv_sec = 1;
-		tv.tv_usec = 0;
-		FD_SET(sock,&rfds);
-		FD_SET(sock,&efds);
-		select(sock+1,&rfds,&wfds,&efds,&tv);
-
-		if (FD_ISSET(sock,&rfds)||FD_ISSET(sock,&efds)) {
-			memset(&from,0,sizeof(from));
-			socklen_t fromlen = 0;
-			const int ns = accept(sock,(struct sockaddr *)&from,&fromlen);
-			if (ns >= 0)
-				_ZTLF_Node_newConnection(n,&from,ns,true,NULL);
-		}
-
-		const uint64_t now = ZTLF_timeMs();
-		if ((now - lastCheckedConnections) >= 5000) {
-			lastCheckedConnections = now;
-			pthread_mutex_lock(&(n->connLock));
-			for(unsigned long i=0;i<n->connCount;++i) {
-				if ((now - n->conn[i].lastReceiveTime) > ZTLF_TCP_TIMEOUT_MS) {
-					_ZTLF_Node_closeConnection(&(n->conn[i]),ZTLF_PROTO_GOODBYE_REASON_NONE);
-				}
-			}
-			while (n->connCount < n->connDesiredCount) {
-			}
-			pthread_mutex_unlock(&(n->connLock));
-		}
-	}
-
-	pthread_mutex_lock(&(n->connLock));
-	for(unsigned long i=0;i<n->connCount;++i) {
-		pthread_mutex_lock(&(n->conn[i].sendLock));
-		_ZTLF_Node_closeConnection(&(n->conn[i]),ZTLF_PROTO_GOODBYE_REASON_SHUTDOWN);
-		pthread_mutex_unlock(&(n->conn[i].sendLock));
-	}
-	pthread_mutex_unlock(&(n->connLock));
-
-	for(;;) {
-		pthread_mutex_lock(&(n->connLock));
-		const unsigned long cc = n->connCount;
-		pthread_mutex_unlock(&(n->connLock));
-		if (!cc)
-			break;
-		usleep(50);
-	}
-
-	pthread_mutex_destroy(&(n->connLock));
-
-	return 0;
+	pthread_mutex_unlock(&(c->sendLock));
+	pthread_join(c->thread,NULL);
 }
-
-void ZTLF_Node_stop(struct ZTLF_Node *n)
-{
-	n->run = false;
-	if (n->listenSocket >= 0)
-		close(n->listenSocket);
-}
-#endif

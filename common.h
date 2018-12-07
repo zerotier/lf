@@ -17,6 +17,7 @@
 #define ZTLF_ERR_OBJECT_TOO_LARGE             3
 #define ZTLF_ERR_OBJECT_INVALID               4
 #define ZTLF_ERR_ALGORITHM_NOT_SUPPORTED      5
+#define ZTLF_ERR_DATABASE_MAY_BE_CORRUPT      6
 
 /* Only necessary on some old 32-bit machines which aren't "officially" supported, but do it anyway. */
 #ifndef _FILE_OFFSET_BITS
@@ -431,6 +432,17 @@ static inline uint16_t ZTLF_fletcher16(const uint8_t *data,unsigned int len)
 	c0 = c0 % 255;
 	c1 = c1 % 255;
 	return (uint16_t)((c1 << 8) | c0);
+}
+
+static inline bool ZTLF_allZero(const void *b,const unsigned long len)
+{
+	const uint8_t *p = (const uint8_t *)b;
+	const uint8_t *const eof = p + len;
+	while (p != eof) {
+		if (*p) return false;
+		++p;
+	}
+	return true;
 }
 
 #endif

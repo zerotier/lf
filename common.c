@@ -131,7 +131,7 @@ void ZTLF_L_func(int level,const char *srcf,int line,const char *fmt,...)
 	static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 
 	va_list ap;
-	char msg[1024];
+	char msg[4096];
 	va_start(ap, fmt);
 	(void)vsnprintf(msg,sizeof(msg),fmt,ap);
 	va_end(ap);

@@ -35,7 +35,9 @@ void ZTLF_Map256_init(struct ZTLF_Map256 *m,unsigned long initialBucketCountHint
 void ZTLF_Map256_destroy(struct ZTLF_Map256 *m);
 
 /* Set key to NULL to delete; returns >0 if new, 0 if existing */
-int ZTLF_Map256_set(struct ZTLF_Map256 *m,const uint64_t k[4],void *v);
+bool ZTLF_Map256_set(struct ZTLF_Map256 *m,const uint64_t k[4],void *v);
+
+bool ZTLF_Map256_rename(struct ZTLF_Map256 *m,const uint64_t oldKey[4],const uint64_t newKey[4]);
 
 /* Returns NULL if key is not found */
 static inline void *ZTLF_Map256_get(struct ZTLF_Map256 *m,const uint64_t k[4])
@@ -50,10 +52,10 @@ void ZTLF_Map256_clear(struct ZTLF_Map256 *m);
  * ztlfMapValue are set in the loop to keys and values. ZTLF_Map_set is not safe here, but ztlfMapValue
  * is safe to change in place to change or delete existing keys. A root level "break" in the supplied
  * code fragment will terminate iteration. */
-#define ZTLF_Map256_eachValue(m,c) \
+#define ZTLF_Map256_each(m,c) \
 	for(unsigned long _ztmi_i=0;_ztmi_i<(m)->bucketCount;++_ztmi_i) { \
 		if ((m)->buckets[_ztmi_i].value) { \
-			/* const uint64_t *const ztlfMapKey = (m)->buckets[_ztmi_i].key; */ \
+			const uint64_t *const ztlfMapKey = (m)->buckets[_ztmi_i].key; \
 			void *ztlfMapValue = (void *)(m)->buckets[_ztmi_i].value; \
 			c \
 			if (ztlfMapValue != (void *)(m)->buckets[_ztmi_i].value) { \
@@ -61,6 +63,15 @@ void ZTLF_Map256_clear(struct ZTLF_Map256 *m);
 					(m)->valueDeleter((m)->buckets[_ztmi_i].value); \
 				(m)->buckets[_ztmi_i].value = ztlfMapValue; \
 			} \
+		} \
+	}
+
+/* Version of each that omits key to avoid compiler warnings. */
+#define ZTLF_Map256_eachValueRO(m,c) \
+	for(unsigned long _ztmi_i=0;_ztmi_i<(m)->bucketCount;++_ztmi_i) { \
+		if ((m)->buckets[_ztmi_i].value) { \
+			void *const ztlfMapValue = (void *)(m)->buckets[_ztmi_i].value; \
+			c \
 		} \
 	}
 
@@ -86,7 +97,7 @@ void ZTLF_Map128_init(struct ZTLF_Map128 *m,unsigned long initialBucketCountHint
 void ZTLF_Map128_destroy(struct ZTLF_Map128 *m);
 
 /* Set key to NULL to delete; returns >0 if new, 0 if existing */
-int ZTLF_Map128_set(struct ZTLF_Map128 *m,const uint64_t k[2],void *v);
+bool ZTLF_Map128_set(struct ZTLF_Map128 *m,const uint64_t k[2],void *v);
 
 /* Returns NULL if key is not found */
 static inline void *ZTLF_Map128_get(struct ZTLF_Map128 *m,const uint64_t k[2])

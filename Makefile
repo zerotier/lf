@@ -4,10 +4,9 @@ CFLAGS=-O3 -fvectorize -std=c99 -Wall
 LIBS=-lsqlite3
 
 OBJS=\
-	api.o \
 	base58.o \
-	base64url.o \
 	common.o \
+	connection.o \
 	curve25519.o \
 	db.o \
 	ed25519.o \
@@ -16,7 +15,6 @@ OBJS=\
 	node.o \
 	record.o \
 	selftest.o \
-	tiny-json.o \
 	wharrgarbl.o
 
 all:	lf

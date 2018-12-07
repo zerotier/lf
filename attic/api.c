@@ -12,7 +12,7 @@
 static bool s(const int sock,const char *fmt,...)
 {
 	va_list ap;
-	char msg[4096];
+	char msg[16384];
 	va_start(ap, fmt);
 	long ml = (long)vsnprintf(msg,sizeof(msg),fmt,ap);
 	va_end(ap);

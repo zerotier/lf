@@ -11,6 +11,7 @@
 #include "common.h"
 #include "vector.h"
 #include "record.h"
+#include "mappedfile.h"
 
 #ifdef ZTLF_SQLITE_INCLUDE
 #include ZTLF_SQLITE_INCLUDE
@@ -27,6 +28,7 @@ struct ZTLF_DB
 	sqlite3 *dbc;
 	sqlite3_stmt *sAddRecord;
 	sqlite3_stmt *sGetAllRecords;
+	sqlite3_stmt *sGetMaxRecordDoff;
 	sqlite3_stmt *sGetMaxRecordGoff;
 	sqlite3_stmt *sGetRecordHistoryById;
 	sqlite3_stmt *sGetRecordGoffByHash;
@@ -51,26 +53,25 @@ struct ZTLF_DB
 	pthread_mutex_t dbLock;
 	pthread_mutex_t graphNodeLocks[ZTLF_DB_GRAPH_NODE_LOCK_ARRAY_SIZE]; /* used to lock graph nodes by locking node lock goff % NODE_LOCK_ARRAY_SIZE */
 
-	uint64_t gfcap;
-	uint8_t *gfm;
-	int gfd;
+	struct ZTLF_MappedFile gf;
 	pthread_rwlock_t gfLock;
-
-	int df;
+	struct ZTLF_MappedFile df;
+	pthread_rwlock_t dfLock;
 
 	pthread_t graphThread;
 	volatile bool graphThreadStarted;
 	volatile bool running;
 };
 
-int ZTLF_DB_open(struct ZTLF_DB *db,const char *path);
-void ZTLF_DB_close(struct ZTLF_DB *db);
-bool ZTLF_DB_logOutgoingPeerConnectSuccess(struct ZTLF_DB *const db,const void *keyHash,const unsigned int addressType,const void *address,const unsigned int addressLength,const unsigned int port);
-void ZTLF_DB_logPotentialPeer(struct ZTLF_DB *const db,const void *keyHash,const unsigned int addressType,const void *address,const unsigned int addressLength,const unsigned int port);
-int ZTLF_DB_putRecord(struct ZTLF_DB *db,struct ZTLF_ExpandedRecord *const er);
-bool ZTLF_DB_hasGraphPendingRecords(struct ZTLF_DB *db);
-void ZTLF_DB_hashState(struct ZTLF_DB *db,uint8_t stateHash[48],uint64_t *weightSum,unsigned long *recordCount);
+int ZTLF_DB_Open(struct ZTLF_DB *db,const char *path);
+void ZTLF_DB_Close(struct ZTLF_DB *db);
+void ZTLF_DB_EachByID(struct ZTLF_DB *const db,const void *id,void (*handler)(const uint64_t *,const struct ZTLF_Record *,unsigned int));
+bool ZTLF_DB_LogOutgoingPeerConnectSuccess(struct ZTLF_DB *const db,const void *keyHash,const unsigned int addressType,const void *address,const unsigned int addressLength,const unsigned int port);
+void ZTLF_DB_LogPotentialPeer(struct ZTLF_DB *const db,const void *keyHash,const unsigned int addressType,const void *address,const unsigned int addressLength,const unsigned int port);
+int ZTLF_DB_PutRecord(struct ZTLF_DB *db,struct ZTLF_ExpandedRecord *const er);
+bool ZTLF_DB_HasGraphPendingRecords(struct ZTLF_DB *db);
+unsigned long ZTLF_DB_HashState(struct ZTLF_DB *db,uint8_t stateHash[48]);
 
-static inline const char *ZTLF_DB_lastSqliteErrorMessage(struct ZTLF_DB *db) { return sqlite3_errmsg(db->dbc); }
+static inline const char *ZTLF_DB_LastSqliteErrorMessage(struct ZTLF_DB *db) { return sqlite3_errmsg(db->dbc); }
 
 #endif

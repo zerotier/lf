@@ -175,19 +175,24 @@ void ZTLF_Record_keyToId(uint64_t id[4],const void *k,const unsigned long klen);
  * of this record in bytes (including overhead). If the status callback returns false
  * the search is aborted and this function returns false.
  * 
+ * If ownerSignHash is non-NULL it will be filled with a 64-byte/512-bit hash to be signed
+ * by the owner. Coupled with leaving ownerPrivateKey NULL this can allow signing to happen
+ * after initial record creation.
+ * 
  * @param rb Record buffer (existing contents will be lost)
  * @param plainTextKey Plain text key
  * @param plainTextKeyLength Plain text key length
  * @param value Plain text value
  * @param valueLength Length of value in bytes
  * @param ownerPublicKey Public key of owner (currently must be 32-byte ed25519 public key)
- * @param ownerPrivateKey Private key of owner (currently must be 32-byte ed25519 private key)
+ * @param ownerPrivateKey Private key of owner (currently must be 32-byte ed25519 private key) (NULL to not sign now)
  * @param links Links (must be 32*linkCount bytes in size)
  * @param linkCount Number of links (theoretical max 255, links beyond this are ignored)
  * @param timestamp Timestamp in seconds since epoch
  * @param ttl TTL in seconds (will be quantized to ZTLF_RECORD_TTL_INCREMENT_SEC)
  * @param skipWork If true, work will be skipped and work space will be filled with all-zero (for testing)
  * @param encryptValue If true, value will be hidden from anyone who doesn't know the plain text key (default behavior)
+ * @param ownerSignHash If non-NULL points to a 64-byte buffer to receive the hash to be signed by the owner
  * @param statusCallback If non-NULL call this periodically and if it returns false terminate work and return false from create
  * @return 0 on success or error code
  */
@@ -205,7 +210,21 @@ int ZTLF_Record_create(
 	uint64_t ttl,
 	bool skipWork,
 	bool encryptValue,
+	void *ownerSignHash,
 	bool (*statusCallback)(uint32_t,uint32_t));
+
+/**
+ * Add an owner signature calculated outside Record_create or on a different system.
+ * 
+ * This appends the record owner signature to an already prepared record buffer. Currently
+ * the owner signature size must be 64, the size of an ed25519 signature. The signature must
+ * be a signature of the ownerSignHash generated in the Record_create step.
+ * 
+ * @param rb Record buffer containing unfinished record
+ * @param ownerSignature 64-byte ed25519 signature
+ * @param ownerSignatureSize Size of signature
+ */
+void ZTLF_Record_addOwnerSignature(struct ZTLF_RecordBuffer *rb,const void *ownerSignature,const unsigned int ownerSignatureSize);
 
 /**
  * Expand record into its constituent fields and perform basic validation

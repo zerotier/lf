@@ -16,7 +16,7 @@ typedef uint32_t b58_almostmaxint_t;
 static const b58_almostmaxint_t b58_almostmaxint_mask = ((((b58_maxint_t)1) << b58_almostmaxint_bits) - 1);
 static const char b58digits_ordered[] = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 
-bool ZTLF_b58dec(void *bin, size_t *binszp, const char *b58, size_t b58sz)
+bool ZTLF_Base58Decode(void *bin, size_t *binszp, const char *b58, size_t b58sz)
 {
 	size_t binsz = *binszp;
 	const unsigned char *b58u = (void*)b58;
@@ -92,7 +92,7 @@ bool ZTLF_b58dec(void *bin, size_t *binszp, const char *b58, size_t b58sz)
 	return true;
 }
 
-bool ZTLF_b58enc(char *b58, size_t *b58sz, const void *data, size_t binsz)
+bool ZTLF_Base58Encode(char *b58, size_t *b58sz, const void *data, size_t binsz)
 {
 	const uint8_t *bin = data;
 	int carry;

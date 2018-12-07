@@ -13,32 +13,42 @@
 
 #define ZTLF_PROTO_VERSION                                        0x00
 
-#define ZTLF_PROTO_MESSAGE_TYPE_NOP                               0x0
-#define ZTLF_PROTO_MESSAGE_TYPE_HELLO                             0xf /* set to 0xf to distinguish from any possible HTTP request */
-#define ZTLF_PROTO_MESSAGE_TYPE_OK                                0xe
-#define ZTLF_PROTO_MESSAGE_TYPE_GOODBYE                           0xd
-#define ZTLF_PROTO_MESSAGE_TYPE_PEER_INFO                         0xc
-#define ZTLF_PROTO_MESSAGE_TYPE_RECORD                            0xb
-#define ZTLF_PROTO_MESSAGE_TYPE_RECORD_REQUEST_BY_HASH            0xa
+#define ZTLF_PROTO_MESSAGE_TYPE_HELLO                             0x0
+#define ZTLF_PROTO_MESSAGE_TYPE_OK                                0x1
+#define ZTLF_PROTO_MESSAGE_TYPE_PEER_INFO                         0x2
+#define ZTLF_PROTO_MESSAGE_TYPE_RECORD                            0x3
+#define ZTLF_PROTO_MESSAGE_TYPE_RECORD_REQUEST_BY_HASH            0x4
+#define ZTLF_PROTO_MESSAGE_TYPE_RECORD_QUERY_RESULT               0x5
+#define ZTLF_PROTO_MESSAGE_TYPE_RECORD_QUERY                      0x6
+#define ZTLF_PROTO_MESSAGE_TYPE_WORK                              0x7
+#define ZTLF_PROTO_MESSAGE_TYPE_WORK_REQUEST                      0x8
+
+#define ZTLF_PROTO_MESSAGE_HELLO_FLAG_SUBSCRIBE_RECORDS           0x00000001
+#define ZTLF_PROTO_MESSAGE_HELLO_FLAG_SUBSCRIBE_PEERS             0x00000002
+#define ZTLF_PROTO_MESSAGE_HELLO_FLAG_SUBSCRIBE_WORK              0x00000004
+#define ZTLF_PROTO_MESSAGE_HELLO_FLAG_ANNOUNCE_THIS_PEER          0x00010000
 
 #define ZTLF_PROTO_CIPHER_C25519_AES256_CFB                       0x01
 
-#define ZTLF_PROTO_GOODBYE_REASON_NONE                            0x00
-#define ZTLF_PROTO_GOODBYE_REASON_TCP_ERROR                       0x01
-#define ZTLF_PROTO_GOODBYE_REASON_SHUTDOWN                        0x02
-#define ZTLF_PROTO_GOODBYE_REASON_DUPLICATE_LINK                  0x03
-#define ZTLF_PROTO_GOODBYE_REASON_INVALID_MESSAGE                 0x04
-#define ZTLF_PROTO_GOODBYE_REASON_UNSUPPORTED_PROTOCOL            0x05
+#define ZTLF_PROTO_RECORD_REQUEST_FLAG_KEY_ID                     0x0001
+#define ZTLF_PROTO_RECORD_REQUEST_FLAG_KEY_OWNER                  0x0002
+#define ZTLF_PROTO_RECORD_REQUEST_FLAG_KEY_SEL0                   0x0004
+#define ZTLF_PROTO_RECORD_REQUEST_FLAG_KEY_SEL1                   0x0008
+
+#define ZTLF_PROTO_RECORD_REQUEST_MAX_RESULTS                     256
+
+#define ZTLF_PROTO_MESSAGE_HELLO_FLAGS_P2P_NODE                   (ZTLF_PROTO_MESSAGE_HELLO_FLAG_SUBSCRIBE_RECORDS|ZTLF_PROTO_MESSAGE_HELLO_FLAG_SUBSCRIBE_PEERS|ZTLF_PROTO_MESSAGE_HELLO_FLAG_ANNOUNCE_THIS_PEER)
 
 /* Message header prefixing every message: type, size, CRC32 */
 ZTLF_PACKED_STRUCT(struct ZTLF_Message {
-	uint16_t hdr;        /* TTTTSSSSSSSSSSSS: T == type, S == inclusive message size - 1 (1-4096) */
+	uint16_t hdr;        /* TTTTSSSSSSSSSSSS: T == type, S == (message size - 1) (-1 means range is 1-4096) */
 	uint16_t fletcher16; /* fletcher16 checksum of data after header */
 });
 
 #define ZTLF_Message_setHdr(m,t,s) { \
-	((uint8_t *)(m))[0] = (uint8_t)((t) << 4) | (uint8_t)(((s) >> 8) & 0xf); \
-	((uint8_t *)(m))[1] = (uint8_t)(s); \
+	const unsigned int _setHdrSTmp = ((unsigned int)(s)) - (sizeof(struct ZTLF_Message) + 1); \
+	((uint8_t *)(m))[0] = (uint8_t)((t) << 4) | (uint8_t)(((_setHdrSTmp) >> 8) & 0xf); \
+	((uint8_t *)(m))[1] = (uint8_t)(_setHdrSTmp); \
 }
 #define ZTLF_Message_type(m) (((const uint8_t *)(m))[0] >> 4)
 #define ZTLF_Message_size(m) ((((unsigned int)(((const uint8_t *)(m))[0] & 0xf)) << 8) | ((unsigned int)(((const uint8_t *)(m))[1])))
@@ -48,14 +58,12 @@ ZTLF_PACKED_STRUCT(struct ZTLF_Message_Hello {
 	uint16_t fletcher16;
 
 	uint8_t iv[16];
-
-	/* Fields after the IV are encrypted with the network key using AES256-CFB and the first 16 bytes of SHA384(iv) as the IV. */
 	uint8_t protoVersion;
 	uint8_t protoFlags;
 	uint64_t currentTime;
-	uint64_t flags;
+	uint32_t flags;
 	uint8_t cipher;
-	uint8_t publicKey[32]; /* length depends on cipher, but there's only one valid cipher right now */
+	uint8_t publicKey[32];      /* length depends on cipher, but there's only one valid cipher right now */
 });
 
 ZTLF_PACKED_STRUCT(struct ZTLF_Message_OK {
@@ -66,13 +74,6 @@ ZTLF_PACKED_STRUCT(struct ZTLF_Message_OK {
 	uint64_t helloTime;         /* time echoed from original hello */
 	uint64_t currentTime;
 	uint8_t version[4];
-});
-
-ZTLF_PACKED_STRUCT(struct ZTLF_Message_Goodbye {
-	uint16_t hdr;
-	uint16_t fletcher16;
-
-	uint8_t reason;
 });
 
 ZTLF_PACKED_STRUCT(struct ZTLF_Message_PeerInfo {
@@ -88,15 +89,55 @@ ZTLF_PACKED_STRUCT(struct ZTLF_Message_Record {
 	uint16_t hdr;
 	uint16_t fletcher16;
 
-	struct ZTLF_Record record;
+	uint8_t record[];
 });
 
 ZTLF_PACKED_STRUCT(struct ZTLF_Message_RecordRequestByHash {
 	uint16_t hdr;
 	uint16_t fletcher16;
 
-	uint8_t count;  /* maximum number of records to return */
-	uint8_t hash[]; /* hash prefix of arbitrary length, up to 32 bytes */
+	uint8_t hash[32];
+});
+
+ZTLF_PACKED_STRUCT(struct ZTLF_Message_RecordQueryResult {
+	uint16_t hdr;
+	uint16_t fletcher16;
+
+	uint32_t requestId;
+	uint32_t resultNo;
+	uint32_t totalResults;
+	uint32_t flags;
+	uint64_t weight[2];         /* 128-bit in little-endian quadword order (low, high) */
+
+	uint8_t record[];
+});
+
+ZTLF_PACKED_STRUCT(struct ZTLF_Message_RecordQuery {
+	uint16_t hdr;
+	uint16_t fletcher16;
+
+	uint32_t requestId;
+	uint32_t maxResults;
+	uint16_t flags;             /* flags indicate which keys are present */
+	uint8_t keys[];             /* series of keys specified by flags */
+});
+
+ZTLF_PACKED_STRUCT(struct ZTLF_Message_Work {
+	uint16_t hdr;
+	uint16_t fletcher16;
+
+	uint8_t workHash[48];
+	uint8_t workAlgorithm;
+	uint8_t work[];
+});
+
+ZTLF_PACKED_STRUCT(struct ZTLF_Message_WorkRequest {
+	uint16_t hdr;
+	uint16_t fletcher16;
+
+	uint8_t workHash[48];
+	uint8_t workAlgorithm;
+	uint8_t work[];
 });
 
 #endif

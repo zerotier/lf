@@ -170,7 +170,7 @@ bool ZTLF_selftest_db(FILE *o,const char *p)
 		}
 
 		snprintf(tmp,sizeof(tmp),"%u",ri);
-		int e = ZTLF_Record_create(&(testRecords[ri].rb),tmp,strlen(tmp),"test",4,pub,priv,links,lc,ts,ZTLF_TTL_FOREVER,true,true,NULL);
+		int e = ZTLF_Record_create(&(testRecords[ri].rb),tmp,strlen(tmp),"test",4,pub,priv,links,lc,ts,ZTLF_TTL_FOREVER,true,true,NULL,NULL);
 		if (e) {
 			fprintf(o,"  FAILED: error generating test record: %d\n" ZTLF_EOL,e);
 			success = false;
@@ -187,7 +187,7 @@ bool ZTLF_selftest_db(FILE *o,const char *p)
 	fprintf(o,"Opening %d test databases under '%s'..." ZTLF_EOL,ZTLF_SELFTEST_DB_TEST_DB_COUNT,basePath);
 	for(unsigned int dbi=0;dbi<ZTLF_SELFTEST_DB_TEST_DB_COUNT;++dbi) {
 		snprintf(tmp,sizeof(tmp),"%s" ZTLF_PATH_SEPARATOR "%u",basePath,dbi);
-		int e = ZTLF_DB_open(&(testDb[dbi]),tmp);
+		int e = ZTLF_DB_Open(&(testDb[dbi]),tmp);
 		if (e) {
 			fprintf(o,"  FAILED: error opening database: %d\n" ZTLF_EOL,e);
 			success = false;
@@ -218,9 +218,9 @@ bool ZTLF_selftest_db(FILE *o,const char *p)
 				success = false;
 				goto selftest_db_exit;
 			}
-			e = ZTLF_DB_putRecord(&testDb[dbi],&er);
+			e = ZTLF_DB_PutRecord(&testDb[dbi],&er);
 			if (e) {
-				fprintf(o,"  FAILED: error adding record to database: %d (%s)" ZTLF_EOL,e,(e > 0) ? ZTLF_DB_lastSqliteErrorMessage(&testDb[dbi]) : strerror(-e));
+				fprintf(o,"  FAILED: error adding record to database: %d (%s)" ZTLF_EOL,e,(e > 0) ? ZTLF_DB_LastSqliteErrorMessage(&testDb[dbi]) : strerror(-e));
 				success = false;
 				goto selftest_db_exit;
 			}
@@ -228,7 +228,7 @@ bool ZTLF_selftest_db(FILE *o,const char *p)
 	}
 
 	for(unsigned int dbi=0;dbi<ZTLF_SELFTEST_DB_TEST_DB_COUNT;++dbi) {
-		while (ZTLF_DB_hasGraphPendingRecords(&testDb[dbi])) {
+		while (ZTLF_DB_HasGraphPendingRecords(&testDb[dbi])) {
 			usleep(250000);
 		}
 	}
@@ -237,10 +237,8 @@ bool ZTLF_selftest_db(FILE *o,const char *p)
 	uint8_t lastHash[48];
 	for(unsigned int dbi=0;dbi<ZTLF_SELFTEST_DB_TEST_DB_COUNT;++dbi) {
 		uint8_t hash[48];
-		uint64_t w = 0;
-		unsigned long cnt = 0;
-		ZTLF_DB_hashState(&testDb[dbi],hash,&w,&cnt);
-		fprintf(o,"  #%u hash %s total weight %.16llx record count %lu" ZTLF_EOL,dbi,ZTLF_hexstr(hash,48,0),w,cnt);
+		const unsigned long cnt = ZTLF_DB_HashState(&testDb[dbi],hash);
+		fprintf(o,"  #%u hash %s record count %lu" ZTLF_EOL,dbi,ZTLF_hexstr(hash,48,0),cnt);
 		if (dbi > 0) {
 			if (memcmp(lastHash,hash,48)) {
 				fprintf(o,"  FAILED: hash does not match previous hash, different databases yielded different results!");
@@ -251,10 +249,12 @@ bool ZTLF_selftest_db(FILE *o,const char *p)
 		memcpy(lastHash,hash,48);
 	}
 
+	fprintf(o,"Database looks to be working OK, closing test instances." ZTLF_EOL);
+
 selftest_db_exit:
 	for(int dbi=0;dbi<ZTLF_SELFTEST_DB_TEST_DB_COUNT;++dbi) {
 		if (testDbOpen[dbi])
-			ZTLF_DB_close(&testDb[dbi]);
+			ZTLF_DB_Close(&testDb[dbi]);
 	}
 	free(testRecords);
 	return success;

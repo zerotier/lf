@@ -29,6 +29,7 @@ int ZTLF_Record_create(
 	uint64_t ttl,
 	bool skipWork,
 	bool encryptValue,
+	void *ownerSignHash,
 	bool (*statusCallback)(uint32_t,uint32_t))
 {
 	if (valueLength > ZTLF_RECORD_MAX_VALUE_SIZE)
@@ -100,8 +101,8 @@ int ZTLF_Record_create(
 		memset(rb->data.b + s,0,ZTLF_WHARRGARBL_POW_BYTES);
 		s += ZTLF_WHARRGARBL_POW_BYTES;
 	} else {
-		uint8_t workHash[64],scoringHash[48];
-		ZTLF_SHA512(workHash,rb->data.b,s);
+		uint8_t workHash[48],scoringHash[48];
+		ZTLF_SHA384(workHash,rb->data.b,s);
 		void *const workMemory = malloc(ZTLF_RECORD_WHARRGARBL_POW_ITERATION_MEMORY);
 		if (!workMemory)
 			return ZTLF_ERR_OUT_OF_MEMORY;
@@ -131,12 +132,22 @@ int ZTLF_Record_create(
 	s += ZTLF_ED25519_SIGNATURE_SIZE;
 
 	ZTLF_SHA512(signHash,rb->data.b,s);
-	ZTLF_Ed25519Sign((unsigned char *)(rb->data.b + s),signHash,sizeof(signHash),(const unsigned char *)ownerPublicKey,(const unsigned char *)ownerPrivateKey);
-	s += ZTLF_ED25519_SIGNATURE_SIZE;
+	if (ownerPrivateKey) {
+		ZTLF_Ed25519Sign((unsigned char *)(rb->data.b + s),signHash,sizeof(signHash),(const unsigned char *)ownerPublicKey,(const unsigned char *)ownerPrivateKey);
+		s += ZTLF_ED25519_SIGNATURE_SIZE;
+	}
+	if (ownerSignHash)
+		memcpy(ownerSignHash,signHash,64);
 
 	rb->size = s;
 
 	return ZTLF_ERR_NONE;
+}
+
+void ZTLF_Record_addOwnerSignature(struct ZTLF_RecordBuffer *rb,const void *ownerSignature,const unsigned int ownerSignatureSize)
+{
+	memcpy(rb->data.b + rb->size,ownerSignature,ownerSignatureSize);
+	rb->size += ownerSignatureSize;
 }
 
 int ZTLF_Record_expand(struct ZTLF_ExpandedRecord *const er,const struct ZTLF_Record *const r,const unsigned int rsize)
