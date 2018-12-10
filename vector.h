@@ -10,51 +10,37 @@
 
 #include "common.h"
 
-#if 0
-/* Vector for arbitrary size byte arrays */
+/* Vector for pointers */
 
 struct ZTLF_Vector
 {
-	void *v;
-	uint8_t *p;
+	void **v;
 	unsigned long size;
-	unsigned long esize;
 	unsigned long cap;
 };
 
-static inline void ZTLF_Vector_init(struct ZTLF_Vector *const vec,const unsigned long elementSize,const unsigned long initialCapacity)
+static inline void ZTLF_Vector_Init(struct ZTLF_Vector *const vec,const unsigned long initialCapacity)
 {
 	if (initialCapacity > 0) {
-		ZTLF_MALLOC_CHECK(vec->v = malloc(elementSize * initialCapacity));
+		ZTLF_MALLOC_CHECK(vec->v = (void **)malloc(sizeof(void *) * initialCapacity));
 	} else {
 		vec->v = NULL;
 	}
-	vec->p = (uint8_t *)vec->v;
 	vec->size = 0;
-	vec->esize = elementSize;
 	vec->cap = initialCapacity;
 }
 
-#define ZTLF_Vector_append(vec,e) { \
+#define ZTLF_Vector_Append(vec,i) { \
 	if (unlikely((vec)->size >= (vec)->cap)) { \
 		(vec)->cap = ((vec)->cap) ? ((vec)->cap << 1) : 1024; \
-		ZTLF_MALLOC_CHECK((vec)->v = realloc((vec)->v,(vec)->esize * (vec)->cap)); \
-		(vec)->p = (((uint8_t *)(vec)->v) + ((vec)->size * (vec)->esize)); \
+		ZTLF_MALLOC_CHECK((vec)->v = (void **)realloc((vec)->v,sizeof(void *) * (vec)->cap)); \
 	} \
-	memcpy((void *)((vec)->p),(const void *)(e),(vec)->esize); \
-	(vec)->p += (vec)->esize; \
-	(vec)->size++; \
+	(vec)->v[(vec)->size++] = (i); \
 }
 
-#define ZTLF_Vector_get(vec,i) ((void *)(((uint8_t *)(vec)->p) + ((unsigned long)(i) * (vec)->esize)))
+#define ZTLF_Vector_Clear(vec) (vec)->size = 0
 
-#define ZTLF_Vector_getb(vec,i) (((uint8_t *)(vec)->p) + ((unsigned long)(i) * (vec)->esize))
-
-#define ZTLF_Vector_clear(vec) { (vec)->p = (uint8_t *)(vec)->v; (vec)->size = 0; }
-
-#define ZTLF_Vector_free(vec) if ((vec)->v) { free((vec)->v); }
-
-#endif
+#define ZTLF_Vector_Free(vec) if ((vec)->v) { free((vec)->v); }
 
 /* Vector for 64-bit ints */
 
@@ -65,7 +51,7 @@ struct ZTLF_Vector_i64
 	unsigned long cap;
 };
 
-static inline void ZTLF_Vector_i64_init(struct ZTLF_Vector_i64 *const vec,const unsigned long initialCapacity)
+static inline void ZTLF_Vector_i64_Init(struct ZTLF_Vector_i64 *const vec,const unsigned long initialCapacity)
 {
 	if (initialCapacity > 0) {
 		ZTLF_MALLOC_CHECK(vec->v = (int64_t *)malloc(sizeof(int64_t) * initialCapacity));
@@ -76,7 +62,7 @@ static inline void ZTLF_Vector_i64_init(struct ZTLF_Vector_i64 *const vec,const 
 	vec->cap = initialCapacity;
 }
 
-#define ZTLF_Vector_i64_append(vec,i) { \
+#define ZTLF_Vector_i64_Append(vec,i) { \
 	if (unlikely((vec)->size >= (vec)->cap)) { \
 		(vec)->cap = ((vec)->cap) ? ((vec)->cap << 1) : 1024; \
 		ZTLF_MALLOC_CHECK((vec)->v = (int64_t *)realloc((vec)->v,sizeof(int64_t) * (vec)->cap)); \
@@ -84,8 +70,8 @@ static inline void ZTLF_Vector_i64_init(struct ZTLF_Vector_i64 *const vec,const 
 	(vec)->v[(vec)->size++] = (i); \
 }
 
-#define ZTLF_Vector_i64_clear(vec) (vec)->size = 0
+#define ZTLF_Vector_i64_Clear(vec) (vec)->size = 0
 
-#define ZTLF_Vector_i64_free(vec) if ((vec)->v) { free((vec)->v); }
+#define ZTLF_Vector_i64_Free(vec) if ((vec)->v) { free((vec)->v); }
 
 #endif

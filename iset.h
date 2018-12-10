@@ -29,7 +29,7 @@ static inline struct ZTLF_ISet *ZTLF_ISet_new()
 static inline void ZTLF_ISet_free(struct ZTLF_ISet *s)
 {
 	for(unsigned long k=0;k<ZTLF_ISET_BUCKET_COUNT;++k) {
-		ZTLF_Vector_i64_free(s->buckets + k);
+		ZTLF_Vector_i64_Free(s->buckets + k);
 	}
 	free(s);
 }
@@ -37,7 +37,7 @@ static inline void ZTLF_ISet_free(struct ZTLF_ISet *s)
 static inline void ZTLF_ISet_clear(struct ZTLF_ISet *s)
 {
 	for(unsigned long k=0;k<ZTLF_ISET_BUCKET_COUNT;++k) {
-		ZTLF_Vector_i64_clear(s->buckets + k);
+		ZTLF_Vector_i64_Clear(s->buckets + k);
 	}
 }
 
@@ -48,7 +48,7 @@ static inline bool ZTLF_ISet_put(struct ZTLF_ISet *s,const int64_t i)
 		if (v->v[k] == i)
 			return false;
 	}
-	ZTLF_Vector_i64_append(v,i);
+	ZTLF_Vector_i64_Append(v,i);
 	return true;
 }
 

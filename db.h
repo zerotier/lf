@@ -33,6 +33,7 @@ struct ZTLF_DB
 	sqlite3_stmt *sGetRecordHistoryById;
 	sqlite3_stmt *sGetRecordGoffByHash;
 	sqlite3_stmt *sGetRecordScoreByGoff;
+	sqlite3_stmt *sGetRecordInfoByGoff;
 	sqlite3_stmt *sGetDanglingLinks;
 	sqlite3_stmt *sDeleteDanglingLinks;
 	sqlite3_stmt *sDeleteWantedHash;
@@ -49,6 +50,7 @@ struct ZTLF_DB
 	sqlite3_stmt *sUpdatePendingHoleCount;
 	sqlite3_stmt *sDeleteCompletedPending;
 	sqlite3_stmt *sGetPendingCount;
+	sqlite3_stmt *sAddLinkable;
 
 	pthread_mutex_t dbLock;
 	pthread_mutex_t graphNodeLocks[ZTLF_DB_GRAPH_NODE_LOCK_ARRAY_SIZE]; /* used to lock graph nodes by locking node lock goff % NODE_LOCK_ARRAY_SIZE */
@@ -65,7 +67,7 @@ struct ZTLF_DB
 
 int ZTLF_DB_Open(struct ZTLF_DB *db,const char *path);
 void ZTLF_DB_Close(struct ZTLF_DB *db);
-void ZTLF_DB_EachByID(struct ZTLF_DB *const db,const void *id,void (*handler)(const uint64_t *,const struct ZTLF_Record *,unsigned int));
+void ZTLF_DB_EachByID(struct ZTLF_DB *const db,const void *id,void (*handler)(const uint64_t *,const struct ZTLF_Record *,unsigned int),const uint64_t cutoffTime);
 bool ZTLF_DB_LogOutgoingPeerConnectSuccess(struct ZTLF_DB *const db,const void *keyHash,const unsigned int addressType,const void *address,const unsigned int addressLength,const unsigned int port);
 void ZTLF_DB_LogPotentialPeer(struct ZTLF_DB *const db,const void *keyHash,const unsigned int addressType,const void *address,const unsigned int addressLength,const unsigned int port);
 int ZTLF_DB_PutRecord(struct ZTLF_DB *db,struct ZTLF_ExpandedRecord *const er);

@@ -45,10 +45,10 @@ struct ZTLF_ConnectionParameters
 	 * The last four parameters are fields to match and any of these can be NULL to omit it. */
 	void (*onRecordQuery)(struct ZTLF_Connection *,uint32_t,unsigned int,const uint8_t [32],const uint8_t [32],const uint8_t [32],const uint8_t [32]);
 
-	uint8_t publicKey[ZTLF_ED25519_PUBLIC_KEY_SIZE];   /* local public key */
-	uint8_t privateKey[ZTLF_ED25519_PRIVATE_KEY_SIZE]; /* local private key */
-	void *ptr;                                         /* Arbitrary user-settable pointer */
-	uint32_t helloFlags;                               /* flags to send to peer in our HELLO */
+	uint8_t publicKey[ZTLF_CURVE25519_PUBLIC_KEY_SIZE];   /* local public key */
+	uint8_t privateKey[ZTLF_CURVE25519_PRIVATE_KEY_SIZE]; /* local private key */
+	void *ptr;                                            /* Arbitrary user-settable pointer */
+	uint32_t helloFlags;                                  /* flags to send to peer in our HELLO */
 };
 
 struct ZTLF_Connection

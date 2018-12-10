@@ -10,7 +10,10 @@
 
 #include "common.h"
 
-void ZTLF_Curve25519_generate(uint8_t pub[32],uint8_t priv[32]);
+#define ZTLF_CURVE25519_PUBLIC_KEY_SIZE 32
+#define ZTLF_CURVE25519_PRIVATE_KEY_SIZE 32
+
+void ZTLF_Curve25519_generate(uint8_t pub[32],uint8_t priv[64]);
 void ZTLF_Curve25519_agree(uint8_t secret[32],const uint8_t theirPublic[32],const uint8_t myPrivate[32]);
 
 #endif

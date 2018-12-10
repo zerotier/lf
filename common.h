@@ -445,4 +445,30 @@ static inline bool ZTLF_allZero(const void *b,const unsigned long len)
 	return true;
 }
 
+static inline long ZTLF_readFile(const char *const path,void *buf,const unsigned long bufSize)
+{
+	int fd = open(path,O_RDONLY);
+	if (fd < 0) {
+		return (long)ZTLF_NEG(errno);
+	}
+	long r = (long)read(fd,buf,bufSize);
+	if (r < 0)
+		r = (long)ZTLF_NEG(errno);
+	close(fd);
+	return r;
+}
+
+static inline int ZTLF_writeFile(const char *const path,const void *buf,const unsigned long bufSize,int mode)
+{
+	int fd = open(path,O_WRONLY|O_TRUNC|O_CREAT,mode);
+	if (fd < 0) {
+		return errno;
+	}
+	if (write(fd,buf,(size_t)bufSize) != (ssize_t)bufSize) {
+		return errno;
+	}
+	close(fd);
+	return 0;
+}
+
 #endif

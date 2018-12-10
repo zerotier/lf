@@ -58,7 +58,7 @@
 /**
  * Wharrgarbl difficulty per iteration for record PoW (takes ~1-3 sec on a quad-core Core i7 in 2018)
  */
-#define ZTLF_RECORD_WHARRGARBL_POW_ITERATION_DIFFICULTY 0x10000
+#define ZTLF_RECORD_WHARRGARBL_POW_ITERATION_DIFFICULTY 0x8000
 
 /**
  * Wharrgarbl memory per iteration for record PoW

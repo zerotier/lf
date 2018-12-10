@@ -59,8 +59,7 @@ void ZTLF_Map256_clear(struct ZTLF_Map256 *m);
 			void *ztlfMapValue = (void *)(m)->buckets[_ztmi_i].value; \
 			c \
 			if (ztlfMapValue != (void *)(m)->buckets[_ztmi_i].value) { \
-				if ((m)->valueDeleter) \
-					(m)->valueDeleter((m)->buckets[_ztmi_i].value); \
+				if ((m)->valueDeleter) (m)->valueDeleter((m)->buckets[_ztmi_i].value); \
 				(m)->buckets[_ztmi_i].value = ztlfMapValue; \
 			} \
 		} \
@@ -72,6 +71,18 @@ void ZTLF_Map256_clear(struct ZTLF_Map256 *m);
 		if ((m)->buckets[_ztmi_i].value) { \
 			void *const ztlfMapValue = (void *)(m)->buckets[_ztmi_i].value; \
 			c \
+		} \
+	}
+
+/* Version of each that also deletes entries after executing the block. */
+#define ZTLF_Map256_eachAndClear(m,c) \
+	for(unsigned long _ztmi_i=0;_ztmi_i<(m)->bucketCount;++_ztmi_i) { \
+		if ((m)->buckets[_ztmi_i].value) { \
+			const uint64_t *const ztlfMapKey = (m)->buckets[_ztmi_i].key; \
+			void *const ztlfMapValue = (void *)(m)->buckets[_ztmi_i].value; \
+			c \
+			if ((m)->valueDeleter) (m)->valueDeleter((m)->buckets[_ztmi_i].value); \
+			(m)->buckets[_ztmi_i].value = (void *)0; \
 		} \
 	}
 
@@ -119,8 +130,7 @@ void ZTLF_Map128_clear(struct ZTLF_Map128 *m);
 			void *ztlfMapValue = (void *)(m)->buckets[_ztmi_i].value; \
 			c \
 			if (ztlfMapValue != (void *)(m)->buckets[_ztmi_i].value) { \
-				if ((m)->valueDeleter) \
-					(m)->valueDeleter((m)->buckets[_ztmi_i].value); \
+				if ((m)->valueDeleter) (m)->valueDeleter((m)->buckets[_ztmi_i].value); \
 				(m)->buckets[_ztmi_i].value = ztlfMapValue; \
 			} \
 		} \

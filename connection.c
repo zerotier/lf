@@ -379,7 +379,9 @@ void ZTLF_Connection_Close(struct ZTLF_Connection *const c)
 {
 	pthread_mutex_lock(&(c->sendLock));
 	if (c->sock >= 0) {
-		shutdown(c->sock,SHUT_RD);
+		shutdown(c->sock,SHUT_RDWR);
+		close(c->sock);
+		c->sock = -1;
 	}
 	pthread_mutex_unlock(&(c->sendLock));
 	pthread_join(c->thread,NULL);

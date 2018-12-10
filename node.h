@@ -10,6 +10,8 @@
 
 #include "common.h"
 #include "ed25519.h"
+#include "connection.h"
+#include "vector.h"
 
 struct ZTLF_Node
 {
@@ -19,13 +21,16 @@ struct ZTLF_Node
 	unsigned int listenPort;
 	int listenSocket;
 
-	struct ZTLF_Node_Connection *conn;
-	unsigned long connCount;
-	unsigned long connCapacity;
-	unsigned long connDesiredCount;
-	pthread_mutex_t connLock;
+	struct ZTLF_Vector connections;
+	pthread_rwlock_t connectionsLock;
+
+	struct ZTLF_ConnectionParameters connectionParameters;
 
 	volatile bool run;
 };
+
+
+int ZTLF_Node_Start(struct ZTLF_Node *const n,const char *path,const unsigned int port);
+void ZTLF_Node_Stop(struct ZTLF_Node *n);
 
 #endif
