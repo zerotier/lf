@@ -147,12 +147,6 @@ struct ZTLF_DB_BestRecordWithTimeRange
 "CREATE UNIQUE INDEX IF NOT EXISTS record_goff ON record(goff);\n" \
 "CREATE UNIQUE INDEX IF NOT EXISTS record_hash ON record(hash);\n" \
 "CREATE INDEX IF NOT EXISTS record_id_ts ON record(id,ts);\n" \
-"CREATE INDEX IF NOT EXISTS record_id_owner_ts ON record(id,owner,ts);\n" \
-"CREATE INDEX IF NOT EXISTS record_owner_ts ON record(owner,ts);\n" \
-"CREATE INDEX IF NOT EXISTS record_owner_sel0_sel1_ts ON record(owner,sel0,sel1,ts);\n" \
-"CREATE INDEX IF NOT EXISTS record_owner_sel1_ts ON record(owner,sel1,ts);\n" \
-"CREATE INDEX IF NOT EXISTS record_sel0_sel1_ts ON record(sel0,sel1,ts);\n" \
-"CREATE INDEX IF NOT EXISTS record_sel1_ts ON record(sel1,ts);\n" \
 \
 "CREATE TABLE IF NOT EXISTS dangling_link (" \
 "hash BLOB(32) NOT NULL," \
