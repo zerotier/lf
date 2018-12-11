@@ -77,14 +77,6 @@ bool ZTLF_selftest_modelProofOfWork(FILE *o)
 		tmp[i] = (uint8_t)i;
 	uint8_t pow[ZTLF_WHARRGARBL_POW_BYTES];
 
-	int icols = -1;
-	char *cols = getenv("COLUMNS");
-	if (cols) {
-		icols = (int)strtol(cols,NULL,10);
-		if (icols <= 0)
-			icols = -1;
-	}
-	icols /= 15;
 	uint8_t scoringHash[48];
 	double avgTime[ZTLF_RECORD_MAX_SIZE][2];
 	uint64_t startTimes[ZTLF_RECORD_MAX_SIZE];
@@ -111,14 +103,8 @@ bool ZTLF_selftest_modelProofOfWork(FILE *o)
 			avgTime[i][0] += ((double)elapsed) / 1000.0;
 			avgTime[i][1] += 1.0;
 		}
-		for(int i=0;i<16;++i)
-			fprintf(o,ZTLF_EOL);
-		for(unsigned int i=0;i<ZTLF_RECORD_MAX_SIZE;++i) {
-			fprintf(o,"|%5u %7.2f ",i+1,(avgTime[i][1] > 0.0) ? (avgTime[i][0] / avgTime[i][1]) : 0.0);
-			if (icols > 0) {
-				if ((i % icols) == (icols-1))
-					fprintf(o,ZTLF_EOL);
-			}
+		for(unsigned int i=32;i<=ZTLF_RECORD_MAX_SIZE;i<<=1) {
+			fprintf(o,"%5u %7.2f %6u" ZTLF_EOL,i,(avgTime[i-1][1] > 0.0) ? (avgTime[i-1][0] / avgTime[i-1][1]) : 0.0,(unsigned int)avgTime[i-1][1]);
 		}
 		fprintf(o,ZTLF_EOL);
 	}
