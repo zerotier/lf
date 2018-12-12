@@ -116,7 +116,7 @@ int ZTLF_Record_Create(
 		void *const workMemory = malloc(ZTLF_RECORD_WHARRGARBL_POW_ITERATION_MEMORY);
 		if (!workMemory)
 			return ZTLF_ERR_OUT_OF_MEMORY;
-		ZTLF_wharrgarbl(rb->data.b + s,workHash,sizeof(workHash),ZTLF_Record_WharrgarblDifficultyRequired(neededBytes),workMemory,ZTLF_RECORD_WHARRGARBL_POW_ITERATION_MEMORY,0);
+		ZTLF_Wharrgarbl(rb->data.b + s,workHash,sizeof(workHash),ZTLF_Record_WharrgarblDifficultyRequired(neededBytes),workMemory,ZTLF_RECORD_WHARRGARBL_POW_ITERATION_MEMORY,0);
 		free(workMemory);
 		s += ZTLF_WHARRGARBL_POW_BYTES;
 	}

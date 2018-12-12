@@ -53,9 +53,9 @@ bool ZTLF_selftest_wharrgarbl(FILE *o)
 		uint64_t iter = 0;
 		uint64_t start = ZTLF_timeMs();
 		for(int k=0;k<trials;++k)
-			iter += ZTLF_wharrgarbl(pow,tmp,sizeof(tmp),diff,foo,mem,0);
+			iter += ZTLF_Wharrgarbl(pow,tmp,sizeof(tmp),diff,foo,mem,0);
 		uint64_t end = ZTLF_timeMs();
-		if (!ZTLF_wharrgarblVerify(pow,tmp,sizeof(tmp))) {
+		if (!ZTLF_WharrgarblVerify(pow,tmp,sizeof(tmp))) {
 			fprintf(o,"FAILED! (verify)" ZTLF_EOL);
 			free(foo);
 			return false;
@@ -84,7 +84,7 @@ bool ZTLF_selftest_modelProofOfWork(FILE *o)
 	fflush(o);
 	const uint64_t minTimeStart = ZTLF_timeMs();
 	for(int k=0;k<sampleCount;++k)
-		ZTLF_wharrgarbl(wout,junk,sizeof(junk),startingDifficulty,foo,mem,0);
+		ZTLF_Wharrgarbl(wout,junk,sizeof(junk),startingDifficulty,foo,mem,0);
 	const uint64_t minTimeEnd = ZTLF_timeMs();
 	const uint64_t minTime = (minTimeEnd - minTimeStart) / (uint64_t)sampleCount;
 	fprintf(o,"%llu ms" ZTLF_EOL ZTLF_EOL,(unsigned long long)minTime);
@@ -118,7 +118,7 @@ bool ZTLF_selftest_modelProofOfWork(FILE *o)
 			const uint64_t st = ZTLF_timeMs();
 			for(int k=0;k<sampleCount;++k) {
 				++junk[0];
-				ZTLF_wharrgarbl(wout,junk,sizeof(junk),difficulty,foo,mem,0);
+				ZTLF_Wharrgarbl(wout,junk,sizeof(junk),difficulty,foo,mem,0);
 			}
 			const uint64_t et = ZTLF_timeMs();
 			const uint64_t t = (et - st) / (uint64_t)sampleCount;
