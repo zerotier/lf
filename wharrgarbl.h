@@ -18,9 +18,9 @@
  * @param inlen Length of input
  * @param difficulty Difficulty determining number of bits that must collide
  * @param memory Memory to use (does not need to be zeroed)
- * @param memorySize Memory size in bytes (must be at least 16)
+ * @param memorySize Memory size in bytes
  * @param threads Number of threads or 0 to use hardware thread count
- * @return Approximate number of iterations required
+ * @return Approximate number of iterations required or 0 if there was a problem (right now can only be memory size < 12)
  */
 uint64_t ZTLF_wharrgarbl(void *pow,const void *in,const unsigned long inlen,const uint32_t difficulty,void *memory,const unsigned long memorySize,unsigned int threads);
 

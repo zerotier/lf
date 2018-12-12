@@ -55,11 +55,6 @@
 #define ZTLF_RECORD_TTL_INCREMENT_SEC 124158
 
 /**
- * Wharrgarbl difficulty per iteration for record PoW (takes ~1-3 sec on a quad-core Core i7 in 2018)
- */
-#define ZTLF_RECORD_WHARRGARBL_POW_ITERATION_DIFFICULTY 0x8
-
-/**
  * Wharrgarbl memory per iteration for record PoW
  */
 #define ZTLF_RECORD_WHARRGARBL_POW_ITERATION_MEMORY 268435456
@@ -143,8 +138,6 @@ struct ZTLF_ExpandedRecord
 	unsigned int idClaimSignatureSize;
 	unsigned int ownerSignatureSize;
 
-	uint8_t scoringHash[48]; /* only first 32 bytes are used to compute score */
-
 	uint8_t valueCipher;
 	uint8_t workAlgorithm;
 	uint8_t idClaimSignatureAlgorithm;
@@ -158,7 +151,13 @@ struct ZTLF_ExpandedRecord
  * @param k Plain text key
  * @param klen Length of plain text key
  */
-void ZTLF_Record_keyToId(uint64_t id[4],const void *k,const unsigned long klen);
+void ZTLF_Record_KeyToId(uint64_t id[4],const void *k,const unsigned long klen);
+
+/**
+ * @param bytes Size of record in bytes
+ * @return Wharrgarbl difficulty parameter required to 'pay' for this record
+ */
+uint32_t ZTLF_Record_WharrgarblDifficultyRequired(const unsigned int bytes);
 
 /**
  * Create a record
@@ -190,7 +189,7 @@ void ZTLF_Record_keyToId(uint64_t id[4],const void *k,const unsigned long klen);
  * @param statusCallback If non-NULL call this periodically and if it returns false terminate work and return false from create
  * @return 0 on success or error code
  */
-int ZTLF_Record_create(
+int ZTLF_Record_Create(
 	struct ZTLF_RecordBuffer *rb,
 	const void *plainTextKey,
 	unsigned int plainTextKeyLength,
@@ -204,8 +203,7 @@ int ZTLF_Record_create(
 	uint64_t ttl,
 	bool skipWork,
 	bool encryptValue,
-	void *ownerSignHash,
-	bool (*statusCallback)(uint32_t,uint32_t));
+	void *ownerSignHash);
 
 /**
  * Add an owner signature calculated outside Record_create or on a different system.
@@ -218,7 +216,7 @@ int ZTLF_Record_create(
  * @param ownerSignature 64-byte ed25519 signature
  * @param ownerSignatureSize Size of signature
  */
-void ZTLF_Record_addOwnerSignature(struct ZTLF_RecordBuffer *rb,const void *ownerSignature,const unsigned int ownerSignatureSize);
+void ZTLF_Record_AddOwnerSignature(struct ZTLF_RecordBuffer *rb,const void *ownerSignature,const unsigned int ownerSignatureSize);
 
 /**
  * Expand record into its constituent fields and perform basic validation
@@ -228,6 +226,6 @@ void ZTLF_Record_addOwnerSignature(struct ZTLF_RecordBuffer *rb,const void *owne
  * @param rsize Total size of record in bytes
  * @return 0 on success or error code
  */
-int ZTLF_Record_expand(struct ZTLF_ExpandedRecord *const er,const struct ZTLF_Record *const r,const unsigned int rsize);
+int ZTLF_Record_Expand(struct ZTLF_ExpandedRecord *const er,const struct ZTLF_Record *const r,const unsigned int rsize);
 
 #endif

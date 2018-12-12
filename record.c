@@ -7,14 +7,27 @@
 
 #include "record.h"
 
-void ZTLF_Record_keyToId(uint64_t id[4],const void *k,const unsigned long klen)
+void ZTLF_Record_KeyToId(uint64_t id[4],const void *k,const unsigned long klen)
 {
 	uint8_t seed[64],priv[64];
 	ZTLF_SHA512(seed,k,klen);
 	ZTLF_Ed25519CreateKeypair((unsigned char *)id,priv,seed); /* only the first 32 bytes of the hash are used here */
 }
 
-int ZTLF_Record_create(
+uint32_t ZTLF_Record_WharrgarblDifficultyRequired(const unsigned int bytes)
+{
+	/* This function was figured out by:
+	 *
+	 * (1) Using the -W option to model difficulty for a target time appreciation curve.
+	 * (2) Using Microsoft Excel to fit the curve, yielding: d =~ 1.739*b^1.5605
+	 * (3) Figuring out an integer based equation that approximates this for our input range.
+	 */
+	if (bytes <= 64)
+		return 1024;
+	return ((ZTLF_isqrt((uint32_t)bytes) * (uint32_t)bytes * 3) - ((uint32_t)bytes * 8));
+}
+
+int ZTLF_Record_Create(
 	struct ZTLF_RecordBuffer *rb,
 	const void *plainTextKey,
 	unsigned int plainTextKeyLength,
@@ -28,8 +41,7 @@ int ZTLF_Record_create(
 	uint64_t ttl,
 	bool skipWork,
 	bool encryptValue,
-	void *ownerSignHash,
-	bool (*statusCallback)(uint32_t,uint32_t))
+	void *ownerSignHash)
 {
 	if (valueLength > ZTLF_RECORD_MAX_VALUE_SIZE)
 		return ZTLF_ERR_OBJECT_TOO_LARGE;
@@ -100,27 +112,12 @@ int ZTLF_Record_create(
 		memset(rb->data.b + s,0,ZTLF_WHARRGARBL_POW_BYTES);
 		s += ZTLF_WHARRGARBL_POW_BYTES;
 	} else {
-		uint8_t workHash[48],scoringHash[48];
+		uint8_t workHash[48];
 		ZTLF_SHA384(workHash,rb->data.b,s);
 		void *const workMemory = malloc(ZTLF_RECORD_WHARRGARBL_POW_ITERATION_MEMORY);
 		if (!workMemory)
 			return ZTLF_ERR_OUT_OF_MEMORY;
-		uint32_t bestScoreSoFar = 0;
-		for(;;) {
-			ZTLF_wharrgarbl(rb->data.b + s,workHash,sizeof(workHash),ZTLF_RECORD_WHARRGARBL_POW_ITERATION_DIFFICULTY,workMemory,ZTLF_RECORD_WHARRGARBL_POW_ITERATION_MEMORY,0);
-			ZTLF_SHA384(scoringHash,rb->data.b,s + ZTLF_WHARRGARBL_POW_BYTES);
-			const uint32_t score = 31337;
-			if (score >= neededScore)
-				break;
-			if (score > bestScoreSoFar)
-				bestScoreSoFar = score;
-			if (statusCallback) {
-				if (!statusCallback(bestScoreSoFar,neededScore)) {
-					free(workMemory);
-					return ZTLF_ERR_ABORTED;
-				}
-			}
-		}
+		ZTLF_wharrgarbl(rb->data.b + s,workHash,sizeof(workHash),ZTLF_Record_WharrgarblDifficultyRequired(neededBytes),workMemory,ZTLF_RECORD_WHARRGARBL_POW_ITERATION_MEMORY,0);
 		free(workMemory);
 		s += ZTLF_WHARRGARBL_POW_BYTES;
 	}
@@ -143,13 +140,13 @@ int ZTLF_Record_create(
 	return ZTLF_ERR_NONE;
 }
 
-void ZTLF_Record_addOwnerSignature(struct ZTLF_RecordBuffer *rb,const void *ownerSignature,const unsigned int ownerSignatureSize)
+void ZTLF_Record_AddOwnerSignature(struct ZTLF_RecordBuffer *rb,const void *ownerSignature,const unsigned int ownerSignatureSize)
 {
 	memcpy(rb->data.b + rb->size,ownerSignature,ownerSignatureSize);
 	rb->size += ownerSignatureSize;
 }
 
-int ZTLF_Record_expand(struct ZTLF_ExpandedRecord *const er,const struct ZTLF_Record *const r,const unsigned int rsize)
+int ZTLF_Record_Expand(struct ZTLF_ExpandedRecord *const er,const struct ZTLF_Record *const r,const unsigned int rsize)
 {
 	er->valueCipher = (r->algorithms >> 6) & 3;
 	er->workAlgorithm = (r->algorithms >> 4) & 3;
@@ -236,10 +233,9 @@ int ZTLF_Record_expand(struct ZTLF_ExpandedRecord *const er,const struct ZTLF_Re
 	if (dp > (((const uint8_t *)r) + rsize))
 		return ZTLF_ERR_OBJECT_INVALID;
 
-	if (er->workSize > 0) {
-		ZTLF_SHA384(er->scoringHash,r,(unsigned long)(((const uint8_t *)er->work) - ((const uint8_t *)r)));
-		er->score = 31337;
-	} else {
+	if (er->workAlgorithm == ZTLF_RECORD_ALG_WORK_WHARRGARBL) {
+		er->score = ZTLF_wharrgarblGetDifficulty(er->work);
+	} else if (er->workSize == 0) {
 		er->score = 1;
 	}
 

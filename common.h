@@ -157,6 +157,8 @@ static inline uint64_t ZTLF_htonll(const uint64_t n)
 
 /* x86/x64 is an alignment honey badger, so it's fastest to just type cast and get/set primitive values. */
 
+#define ZTLF_UNALIGNED_OKAY 1
+
 #define ZTLF_setu16(f,v) (f) = (uint16_t)htons((uint16_t)(v))
 #define ZTLF_setu32(f,v) (f) = (uint32_t)htonl((uint32_t)(v))
 #define ZTLF_setu64(f,v) (f) = (uint64_t)ZTLF_htonll((uint64_t)(v))
@@ -439,7 +441,7 @@ static inline uint32_t ZTLF_isqrt(const uint32_t a_nInput)
 {
 	uint32_t op  = a_nInput;
 	uint32_t res = 0;
-	uint32_t one = 1uL << 30; // The second-to-top bit is set: use 1u << 14 for uint16_t type; use 1uL<<30 for uint32_t type
+	uint32_t one = 1 << 30;
 
 	while (one > op) one >>= 2;
 
@@ -452,7 +454,7 @@ static inline uint32_t ZTLF_isqrt(const uint32_t a_nInput)
 		one >>= 2;
 	}
 
-	if (op > res) ++res;
+	if (op > res) ++res; /* rounded */
 
 	return res;
 }

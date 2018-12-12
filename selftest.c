@@ -48,12 +48,8 @@ bool ZTLF_selftest_wharrgarbl(FILE *o)
 	uint8_t pow[ZTLF_WHARRGARBL_POW_BYTES];
 
 	fprintf(o,"Testing and benchmarking wharrgarbl proof of work..." ZTLF_EOL);
-	fprintf(o,"-----------------------------------------------------" ZTLF_EOL);
-	fprintf(o,"Difficulty (hex)  Threads    Iterations  Avg Time (s)" ZTLF_EOL);
-	fprintf(o,"-----------------------------------------------------" ZTLF_EOL);
-	const unsigned int thr = ZTLF_ncpus();
-	for(int i=12;i<24;++i) {
-		uint32_t diff = 1 << i;
+	for(unsigned int rsize=64;rsize<=ZTLF_RECORD_MAX_SIZE;rsize<<=1) {
+		uint32_t diff = ZTLF_Record_WharrgarblDifficultyRequired(rsize);
 		uint64_t iter = 0;
 		uint64_t start = ZTLF_timeMs();
 		for(int k=0;k<trials;++k)
@@ -64,7 +60,7 @@ bool ZTLF_selftest_wharrgarbl(FILE *o)
 			free(foo);
 			return false;
 		}
-		fprintf(o,"   %12x  %8u  %12llu   %.8f" ZTLF_EOL,diff,thr,iter / (uint64_t)trials,((double)(end - start)) / (double)trials / 1000.0);
+		fprintf(o,"  %8lx (%4u)   %12llu   %.8f" ZTLF_EOL,(unsigned long)diff,rsize,iter / (uint64_t)trials,((double)(end - start)) / (double)trials / 1000.0);
 	}
 
 	free(foo);
@@ -74,7 +70,8 @@ bool ZTLF_selftest_wharrgarbl(FILE *o)
 bool ZTLF_selftest_modelProofOfWork(FILE *o)
 {
 	const unsigned long mem = 1024 * 1024 * 1024;
-	const uint32_t startingDifficulty = 8;
+	const uint32_t startingDifficulty = 1;
+	const int sampleCount = 100;
 	uint8_t wout[ZTLF_WHARRGARBL_POW_BYTES];
 	uint8_t junk[48];
 	void *const foo = malloc(mem);
@@ -86,40 +83,45 @@ bool ZTLF_selftest_modelProofOfWork(FILE *o)
 	fprintf(o,"Timing base difficulty of %.8lx / %lu ... ",(unsigned long)startingDifficulty,(unsigned long)startingDifficulty);
 	fflush(o);
 	const uint64_t minTimeStart = ZTLF_timeMs();
-	for(int k=0;k<50;++k)
+	for(int k=0;k<sampleCount;++k)
 		ZTLF_wharrgarbl(wout,junk,sizeof(junk),startingDifficulty,foo,mem,0);
 	const uint64_t minTimeEnd = ZTLF_timeMs();
-	const uint64_t minTime = (minTimeEnd - minTimeStart) / 50ULL;
+	const uint64_t minTime = (minTimeEnd - minTimeStart) / (uint64_t)sampleCount;
 	fprintf(o,"%llu ms" ZTLF_EOL ZTLF_EOL,(unsigned long long)minTime);
 
 	fprintf(o,"Finding acceptable difficulties for linear time increase..." ZTLF_EOL);
 	uint64_t targetTime = minTime;
 	uint32_t difficulty = startingDifficulty;
 	for(unsigned int targetSize=2;targetSize<=ZTLF_RECORD_MAX_SIZE;targetSize<<=1) {
-		targetTime <<= 1;
+		targetTime += (targetTime / 4) * 3; /* increase target time by 75% for each doubling of target size */
 		fprintf(o,"  Target: %llu ms for %u bytes..." ZTLF_EOL,(unsigned long long)targetTime,targetSize);
 
 		bool direction = true;
 		double lastErr = 1.0;
 		for(;;) {
 			const uint32_t maxMove = (uint32_t)round(lastErr * (double)difficulty);
-			if (maxMove > 0) {
+			if (maxMove > 5) {
 				if (direction) {
 					difficulty += (uint32_t)ZTLF_prng() % maxMove;
 				} else {
 					difficulty -= (uint32_t)ZTLF_prng() % maxMove;
 				}
-			} else ++difficulty;
+			} else {
+				if (direction)
+					++difficulty;
+				else if (difficulty)
+					--difficulty;
+			}
 			if (difficulty < startingDifficulty)
 				difficulty = startingDifficulty;
 
 			const uint64_t st = ZTLF_timeMs();
-			for(int k=0;k<25;++k) {
+			for(int k=0;k<sampleCount;++k) {
 				++junk[0];
 				ZTLF_wharrgarbl(wout,junk,sizeof(junk),difficulty,foo,mem,0);
 			}
 			const uint64_t et = ZTLF_timeMs();
-			const uint64_t t = (et - st) / 25ULL;
+			const uint64_t t = (et - st) / (uint64_t)sampleCount;
 
 			const double perr = fabs((double)t - (double)targetTime) / (double)targetTime;
 			fprintf(o,"    Difficulty: %.8lx / %-10lu Time: %-8llu ms    Error: %f" ZTLF_EOL,(unsigned long)difficulty,(unsigned long)difficulty,(unsigned long long)t,perr);
@@ -179,7 +181,7 @@ bool ZTLF_selftest_db(FILE *o,const char *p)
 		}
 
 		snprintf(tmp,sizeof(tmp),"%u",ri);
-		int e = ZTLF_Record_create(&(testRecords[ri].rb),tmp,strlen(tmp),"test",4,pub,priv,links,lc,ts,ZTLF_TTL_FOREVER,true,true,NULL,NULL);
+		int e = ZTLF_Record_Create(&(testRecords[ri].rb),tmp,strlen(tmp),"test",4,pub,priv,links,lc,ts,ZTLF_TTL_FOREVER,true,true,NULL);
 		if (e) {
 			fprintf(o,"  FAILED: error generating test record: %d\n" ZTLF_EOL,e);
 			success = false;
@@ -221,7 +223,7 @@ bool ZTLF_selftest_db(FILE *o,const char *p)
 		for(unsigned int oi=0;oi<ZTLF_SELFTEST_DB_TEST_RECORD_COUNT;++oi) {
 			if ((oi % 1000) == 999) usleep(100000); /* sleep to make background thread in DB do partial work */
 			const unsigned int ri = order[oi];
-			int e = ZTLF_Record_expand(&er,&(testRecords[ri].rb.data.r),testRecords[ri].rb.size);
+			int e = ZTLF_Record_Expand(&er,&(testRecords[ri].rb.data.r),testRecords[ri].rb.size);
 			if (e) {
 				fprintf(o,"  FAILED: error expanding record: %d" ZTLF_EOL,e);
 				success = false;
