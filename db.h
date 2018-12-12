@@ -41,9 +41,6 @@ struct ZTLF_DB
 	sqlite3_stmt *sAddWantedHash;
 	sqlite3_stmt *sAddHole;
 	sqlite3_stmt *sFlagRecordWeightApplicationPending;
-	sqlite3_stmt *sGetPeerFirstConnectTime;
-	sqlite3_stmt *sAddUpdatePeer;
-	sqlite3_stmt *sAddPotentialPeer;
 	sqlite3_stmt *sGetRecordsForWeightApplication;
 	sqlite3_stmt *sGetHoles;
 	sqlite3_stmt *sDeleteHole;
@@ -68,8 +65,6 @@ struct ZTLF_DB
 int ZTLF_DB_Open(struct ZTLF_DB *db,const char *path);
 void ZTLF_DB_Close(struct ZTLF_DB *db);
 void ZTLF_DB_EachByID(struct ZTLF_DB *const db,const void *id,void (*handler)(const uint64_t *,const struct ZTLF_Record *,unsigned int),const uint64_t cutoffTime);
-bool ZTLF_DB_LogOutgoingPeerConnectSuccess(struct ZTLF_DB *const db,const void *keyHash,const unsigned int addressType,const void *address,const unsigned int addressLength,const unsigned int port);
-void ZTLF_DB_LogPotentialPeer(struct ZTLF_DB *const db,const void *keyHash,const unsigned int addressType,const void *address,const unsigned int addressLength,const unsigned int port);
 int ZTLF_DB_PutRecord(struct ZTLF_DB *db,struct ZTLF_ExpandedRecord *const er);
 bool ZTLF_DB_HasGraphPendingRecords(struct ZTLF_DB *db);
 unsigned long ZTLF_DB_HashState(struct ZTLF_DB *db,uint8_t stateHash[48]);

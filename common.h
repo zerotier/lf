@@ -401,41 +401,6 @@ static inline uint64_t ZTLF_timeMs()
 #endif
 };
 
-/* https://en.wikipedia.org/wiki/Xorshift#xorshift* */
-static inline uint64_t ZTLF_xorshift64star(uint64_t *const state)
-{
-	uint64_t x = *state;
-	if (unlikely(!x))
-		x = 1;
-	x ^= x >> 12;
-	x ^= x << 25;
-	x ^= x >> 27;
-	*state = x;
-	return x * 0x2545F4914F6CDD1DULL;
-}
-
-/* https://en.wikipedia.org/wiki/Fletcher%27s_checksum */
-static inline uint16_t ZTLF_fletcher16(const uint8_t *data,unsigned int len)
-{
-	uint32_t c0, c1;
-	unsigned int i;
-	for (c0=c1=0;len>=5802;len-=5802) {
-		for (i=0;i<5802;++i) {
-			c0 = c0 + *data++;
-			c1 = c1 + c0;
-		}
-		c0 = c0 % 255;
-		c1 = c1 % 255;
-	}
-	for (i=0;i<len;++i) {
-		c0 = c0 + *data++;
-		c1 = c1 + c0;
-	}
-	c0 = c0 % 255;
-	c1 = c1 % 255;
-	return (uint16_t)((c1 << 8) | c0);
-}
-
 /* https://stackoverflow.com/questions/1100090/looking-for-an-efficient-integer-square-root-algorithm-for-arm-thumb2 */
 static inline uint32_t ZTLF_isqrt(const uint32_t a_nInput)
 {

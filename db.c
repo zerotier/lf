@@ -94,13 +94,6 @@ struct ZTLF_DB_BestRecordWithTimeRange
  *   hash                     hash of wanted record
  *   retries                  number of retries attempted so far
  *   last_retry_time          time of last retry
- * 
- * peer
- *   key_hash                 SHA384(public key)
- *   address_type             currently either 4 or 6
- *   address                  IPv4 or IPv6 IP
- *   last_connect_time        timestamp of most recent outgoing connect to this peer key at this IP/port (ms)
- *   first_connect_time       timestamp of first outgoing connect to this peer key at this IP/port (ms)
  *
  * Most tables are somewhat self-explanatory.
  * 
@@ -182,18 +175,7 @@ struct ZTLF_DB_BestRecordWithTimeRange
 "last_retry_time INTEGER NOT NULL" \
 ") WITHOUT ROWID;\n" \
 \
-"CREATE INDEX IF NOT EXISTS wanted_retries_last_retry_time ON wanted(retries,last_retry_time);\n" \
-\
-"CREATE TABLE IF NOT EXISTS peer (" \
-"key_hash BLOB(48) PRIMARY KEY NOT NULL," \
-"address BLOB NOT NULL," \
-"address_type INTEGER NOT NULL," \
-"port INTEGER NOT NULL," \
-"last_connect_time INTEGER NOT NULL," \
-"first_connect_time INTEGER NOT NULL" \
-") WITHOUT ROWID;\n" \
-\
-"CREATE INDEX IF NOT EXISTS peer_last_connect_time_first_connect_time ON peer(last_connect_time,first_connect_time);\n"
+"CREATE INDEX IF NOT EXISTS wanted_retries_last_retry_time ON wanted(retries,last_retry_time);\n"
 
 /*
  * The graph thread grabs records that need their weights applied to records below them and
@@ -684,19 +666,6 @@ int ZTLF_DB_Open(struct ZTLF_DB *db,const char *path)
 	if ((e = sqlite3_prepare_v2(db->dbc,"INSERT OR REPLACE INTO graph_pending (record_goff,hole_count) VALUES (?,?)",-1,&db->sFlagRecordWeightApplicationPending,NULL)) != SQLITE_OK)
 		goto exit_with_error;
 
-	/* Get the very first time we connected (outbound) to a peer. */
-	if ((e = sqlite3_prepare_v2(db->dbc,"SELECT first_connect_time FROM peer WHERE key_hash = ?",-1,&db->sGetPeerFirstConnectTime,NULL)) != SQLITE_OK)
-		goto exit_with_error;
-
-	/* Add or replace a peer record. */
-	if ((e = sqlite3_prepare_v2(db->dbc,"INSERT OR REPLACE INTO peer (key_hash,address,address_type,port,last_connect_time,first_connect_time) VALUES (?,?,?,?,?,?)",-1,&db->sAddUpdatePeer,NULL)) != SQLITE_OK)
-		goto exit_with_error;
-
-	/* Add a potential but so far unverified peer, leaving record unchanged if a
-	 * peer record is already present in the databse. */
-	if ((e = sqlite3_prepare_v2(db->dbc,"INSERT OR IGNORE INTO peer (key_hash,address,address_type,port,last_connect_time,first_connect_time) VALUES (?,?,?,?,0,0)",-1,&db->sAddPotentialPeer,NULL)) != SQLITE_OK)
-		goto exit_with_error;
-
 	/* Get graph node offsets of records that still need graph traversal and weight application
 	 * where these records have no immediate dangling links and where the previous hole
 	 * count is zero or does not equal what seems to be the current hole count (holes minus
@@ -786,9 +755,6 @@ void ZTLF_DB_Close(struct ZTLF_DB *db)
 		if (db->sAddWantedHash)                       sqlite3_finalize(db->sAddWantedHash);
 		if (db->sAddHole)                             sqlite3_finalize(db->sAddHole);
 		if (db->sFlagRecordWeightApplicationPending)  sqlite3_finalize(db->sFlagRecordWeightApplicationPending);
-		if (db->sGetPeerFirstConnectTime)             sqlite3_finalize(db->sGetPeerFirstConnectTime);
-		if (db->sAddUpdatePeer)                       sqlite3_finalize(db->sAddUpdatePeer);
-		if (db->sAddPotentialPeer)                    sqlite3_finalize(db->sAddPotentialPeer);
 		if (db->sGetRecordsForWeightApplication)      sqlite3_finalize(db->sGetRecordsForWeightApplication);
 		if (db->sGetHoles)                            sqlite3_finalize(db->sGetHoles);
 		if (db->sDeleteHole)                          sqlite3_finalize(db->sDeleteHole);
@@ -883,49 +849,6 @@ void ZTLF_DB_EachByID(struct ZTLF_DB *const db,const void *id,void (*handler)(co
 	pthread_rwlock_unlock(&db->dfLock);
 
 	ZTLF_Map256_destroy(&byOwner);
-}
-
-bool ZTLF_DB_LogOutgoingPeerConnectSuccess(struct ZTLF_DB *const db,const void *key_hash,const unsigned int address_type,const void *address,const unsigned int addressLength,const unsigned int port)
-{
-	bool r = true;
-	pthread_mutex_lock(&db->dbLock);
-
-	int64_t now = (int64_t)ZTLF_timeMs();
-	int64_t first_connect_time = now;
-
-	sqlite3_reset(db->sGetPeerFirstConnectTime);
-	sqlite3_bind_blob(db->sGetPeerFirstConnectTime,1,key_hash,48,SQLITE_STATIC);
-	if (sqlite3_step(db->sGetPeerFirstConnectTime) == SQLITE_ROW) {
-		const int64_t fct = sqlite3_column_int64(db->sGetPeerFirstConnectTime,0);
-		if (fct > 0) {
-			first_connect_time = fct;
-			r = false;
-		}
-	}
-
-	sqlite3_reset(db->sAddUpdatePeer);
-	sqlite3_bind_blob(db->sAddUpdatePeer,1,key_hash,48,SQLITE_STATIC);
-	sqlite3_bind_blob(db->sAddUpdatePeer,2,address,addressLength,SQLITE_STATIC);
-	sqlite3_bind_int(db->sAddUpdatePeer,3,(int)address_type);
-	sqlite3_bind_int(db->sAddUpdatePeer,4,(int)port);
-	sqlite3_bind_int64(db->sAddUpdatePeer,5,now);
-	sqlite3_bind_int64(db->sAddUpdatePeer,6,first_connect_time);
-	sqlite3_step(db->sAddUpdatePeer);
-
-	pthread_mutex_unlock(&db->dbLock);
-	return r;
-}
-
-void ZTLF_DB_LogPotentialPeer(struct ZTLF_DB *const db,const void *key_hash,const unsigned int address_type,const void *address,const unsigned int addressLength,const unsigned int port)
-{
-	pthread_mutex_lock(&db->dbLock);
-	sqlite3_reset(db->sAddPotentialPeer);
-	sqlite3_bind_blob(db->sAddPotentialPeer,1,key_hash,48,SQLITE_STATIC);
-	sqlite3_bind_blob(db->sAddPotentialPeer,2,address,addressLength,SQLITE_STATIC);
-	sqlite3_bind_int(db->sAddPotentialPeer,3,(int)address_type);
-	sqlite3_bind_int(db->sAddPotentialPeer,4,(int)port);
-	sqlite3_step(db->sAddPotentialPeer);
-	pthread_mutex_unlock(&db->dbLock);
 }
 
 int ZTLF_DB_PutRecord(struct ZTLF_DB *db,struct ZTLF_ExpandedRecord *const er)
