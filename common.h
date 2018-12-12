@@ -434,6 +434,29 @@ static inline uint16_t ZTLF_fletcher16(const uint8_t *data,unsigned int len)
 	return (uint16_t)((c1 << 8) | c0);
 }
 
+/* https://stackoverflow.com/questions/1100090/looking-for-an-efficient-integer-square-root-algorithm-for-arm-thumb2 */
+static inline uint32_t ZTLF_isqrt(const uint32_t a_nInput)
+{
+	uint32_t op  = a_nInput;
+	uint32_t res = 0;
+	uint32_t one = 1uL << 30; // The second-to-top bit is set: use 1u << 14 for uint16_t type; use 1uL<<30 for uint32_t type
+
+	while (one > op) one >>= 2;
+
+	while (one != 0) {
+		if (op >= res + one) {
+			op = op - (res + one);
+			res = res + 2 * one;
+		}
+		res >>= 1;
+		one >>= 2;
+	}
+
+	if (op > res) ++res;
+
+	return res;
+}
+
 static inline bool ZTLF_allZero(const void *b,const unsigned long len)
 {
 	const uint8_t *p = (const uint8_t *)b;

@@ -89,7 +89,7 @@ uint64_t ZTLF_wharrgarbl(void *pow,const void *in,const unsigned long inlen,cons
 
 	uint64_t out[2];
 	ws.runNonce = ZTLF_prng(); /* nonce to avoid time-wasting false positives and so memset(0) is not needed */
-	ws.difficulty = ((uint64_t)difficulty) << 32;
+	ws.difficulty = (((uint64_t)difficulty) << 32) | 0x00000000ffffffffULL;
 	if (ws.difficulty == 0) {
 		++ws.difficulty;
 	}
@@ -143,7 +143,7 @@ uint32_t ZTLF_wharrgarblVerify(const void *pow,const void *in,const unsigned lon
 	for(unsigned int i=0;i<16;++i)
 		((uint8_t *)powq)[i] = ((const uint8_t *)pow)[i];
 	const uint32_t diff32 = ZTLF_wharrgarblGetDifficulty(pow);
-	const uint64_t difficulty = ((uint64_t)diff32) << 32;
+	const uint64_t difficulty = (((uint64_t)diff32) << 32) | 0x00000000ffffffffULL;
 
 	ZTLF_SHA384_init(&hash);
 	ZTLF_SHA384_update(&hash,in,inlen);

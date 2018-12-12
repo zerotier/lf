@@ -12,7 +12,6 @@
 #include "sha.h"
 #include "wharrgarbl.h"
 #include "ed25519.h"
-#include "score.h"
 
 #define ZTLF_RECORD_ALG_CIPHER_NONE       0x0
 #define ZTLF_RECORD_ALG_CIPHER_AES256CFB  0x1
@@ -58,17 +57,12 @@
 /**
  * Wharrgarbl difficulty per iteration for record PoW (takes ~1-3 sec on a quad-core Core i7 in 2018)
  */
-#define ZTLF_RECORD_WHARRGARBL_POW_ITERATION_DIFFICULTY 0x8000
+#define ZTLF_RECORD_WHARRGARBL_POW_ITERATION_DIFFICULTY 0x8
 
 /**
  * Wharrgarbl memory per iteration for record PoW
  */
 #define ZTLF_RECORD_WHARRGARBL_POW_ITERATION_MEMORY 268435456
-
-/**
- * Number by which 32-bit scoring hash score (see score.h) is divided to get the maximum number of bytes "paid for" by a record's work
- */
-#define ZTLF_RECORD_WORK_COST_DIVISOR 32768
 
 /**
  * Meta-data: [0] empty
