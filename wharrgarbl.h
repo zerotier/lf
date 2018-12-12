@@ -26,19 +26,21 @@
  */
 uint64_t ZTLF_Wharrgarbl(void *pow,const void *in,const unsigned long inlen,const uint32_t difficulty,void *memory,const unsigned long memorySize,unsigned int threads);
 
+/**
+ * Verify this proof of work
+ * 
+ * @param pow 20-byte PoW
+ * @param in Original input used to generate work
+ * @param inlen Length of original input
+ * @return Difficulty or 0 if work was not valid
+ */
 uint32_t ZTLF_WharrgarblVerify(const void *pow,const void *in,const unsigned long inlen);
 
-static inline uint32_t ZTLF_WharrgarblGetDifficulty(const void *pow)
-{
-	const uint8_t *p = ((const uint8_t *)pow) + 16;
-	uint32_t d = *p++;
-	d <<= 8;
-	d |= *p++;
-	d <<= 8;
-	d |= *p++;
-	d <<= 8;
-	d |= *p;
-	return d;
-}
+/**
+ * Extract difficulty from proof of work (no validation)
+ * 
+ * @param pow 20-byte PoW
+ */
+static inline uint32_t ZTLF_WharrgarblGetDifficulty(const void *pow) { return ZTLF_getu32((uint32_t *)(((const uint8_t *)pow) + 16)); }
 
 #endif

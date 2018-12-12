@@ -188,7 +188,7 @@ bool ZTLF_selftest_db(FILE *o,const char *p)
 			goto selftest_db_exit;
 		}
 
-		ZTLF_Shandwich256(testRecords[ri].hash,testRecords[ri].rb.data.b,testRecords[ri].rb.size);
+		ZTLF_ShaSha256(testRecords[ri].hash,testRecords[ri].rb.data.b,testRecords[ri].rb.size);
 		/* fprintf(o,"  %s (%u links, %u bytes)" ZTLF_EOL,ZTLF_hexstr(testRecords[ri].hash,32,0),lc,testRecords[ri].rb.size); */
 	}
 
@@ -275,8 +275,8 @@ bool ZTLF_selftest(FILE *o)
 {
 	if (!ZTLF_selftest_core(o)) return false;
 	fprintf(o,ZTLF_EOL);
-	//if (!ZTLF_selftest_db(o,"lf-selftest-db-work")) return false;
-	//fprintf(o,ZTLF_EOL);
+	if (!ZTLF_selftest_db(o,"lf-selftest-db-work")) return false;
+	fprintf(o,ZTLF_EOL);
 	if (!ZTLF_selftest_wharrgarbl(o)) return false;
 	fprintf(o,ZTLF_EOL);
 	return true;

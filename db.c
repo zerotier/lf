@@ -195,11 +195,11 @@ static void *_ZTLF_DB_graphThreadMain(void *arg)
 	struct ZTLF_Vector_i64 recordQueue,graphTraversalQueue;
 	struct ZTLF_Map128 holes;
 	struct ZTLF_Map256 byOwner;
-	struct ZTLF_ISet *const visited = ZTLF_ISet_new();
+	struct ZTLF_ISet *const visited = ZTLF_ISet_New();
 	ZTLF_Vector_i64_Init(&graphTraversalQueue,2097152);
 	ZTLF_Vector_i64_Init(&recordQueue,1024);
-	ZTLF_Map128_init(&holes,128,NULL);
-	ZTLF_Map256_init(&byOwner,16,free);
+	ZTLF_Map128_Init(&holes,128,NULL);
+	ZTLF_Map256_Init(&byOwner,16,free);
 
 	while (db->running) {
 		/* Sleep briefly between each pending record query as these are somewhat expensive. */
@@ -231,7 +231,7 @@ static void *_ZTLF_DB_graphThreadMain(void *arg)
 			/* Get record score and any previously known holes in the graph below this node. */
 			long holeCount = 0;
 			uint64_t score = 0;
-			ZTLF_Map128_clear(&holes);
+			ZTLF_Map128_Clear(&holes);
 			pthread_mutex_lock(&db->dbLock);
 			sqlite3_reset(db->sGetRecordScoreByGoff);
 			sqlite3_bind_int64(db->sGetRecordScoreByGoff,1,waitingGoff);
@@ -243,13 +243,13 @@ static void *_ZTLF_DB_graphThreadMain(void *arg)
 			while (sqlite3_step(db->sGetHoles) == SQLITE_ROW) {
 				hk[0] = (uint64_t)sqlite3_column_int64(db->sGetHoles,0);
 				hk[1] = (uint64_t)sqlite3_column_int(db->sGetHoles,1);
-				ZTLF_Map128_set(&holes,hk,(void *)1);
+				ZTLF_Map128_Set(&holes,hk,(void *)1);
 				/* ZTLF_L_trace("graph: graph below %lld previously led to hole at %llu[%llu]",(long long)waitingGoff,(unsigned long long)hk[0],(unsigned long long)hk[1]); */
 				++holeCount;
 			}
 			pthread_mutex_unlock(&db->dbLock);
 
-			ZTLF_ISet_clear(visited);
+			ZTLF_ISet_Clear(visited);
 			ZTLF_Vector_i64_Clear(&graphTraversalQueue);
 
 			pthread_rwlock_rdlock(&db->gfLock);
@@ -261,7 +261,7 @@ static void *_ZTLF_DB_graphThreadMain(void *arg)
 				hk[0] = (uint64_t)waitingGoff;
 				for(unsigned int i=0,j=graphNode->linkCount;i<j;++i) {
 					hk[1] = (uint64_t)i;
-					if (!ZTLF_Map128_get(&holes,hk)) {
+					if (!ZTLF_Map128_Get(&holes,hk)) {
 						const int64_t nextGoff = ZTLF_get64_le(graphNode->linkedRecordGoff[i]);
 						if (nextGoff >= 0) {
 							ZTLF_Vector_i64_Append(&graphTraversalQueue,nextGoff);
@@ -303,13 +303,13 @@ static void *_ZTLF_DB_graphThreadMain(void *arg)
 				/* ZTLF_L_trace("graph: node %lld has %d holes, performing no-op pass starting with %lu nodes to regenerate visited node set",waitingGoff,holeCount,graphTraversalQueue.size); */
 				for(unsigned long i=0;i<graphTraversalQueue.size;) {
 					const int64_t goff = graphTraversalQueue.v[i++];
-					if (ZTLF_ISet_put(visited,goff)) {
+					if (ZTLF_ISet_Put(visited,goff)) {
 						struct ZTLF_DB_GraphNode *const gn = (struct ZTLF_DB_GraphNode *)ZTLF_MappedFile_TryGet(&db->gf,(uintptr_t)goff,ZTLF_DB_MAX_GRAPH_NODE_SIZE);
 						if (gn) {
 							hk[0] = (uint64_t)goff;
 							for(unsigned int i=0,j=gn->linkCount;i<j;++i) {
 								hk[1] = (uint64_t)i;
-								if (!ZTLF_Map128_get(&holes,hk)) {
+								if (!ZTLF_Map128_Get(&holes,hk)) {
 									graphNodeFlags |= gn->flags;
 
 									const int64_t nextGoff = ZTLF_get64_le(gn->linkedRecordGoff[i]);
@@ -346,7 +346,7 @@ static void *_ZTLF_DB_graphThreadMain(void *arg)
 				ZTLF_Vector_i64_Clear(&graphTraversalQueue);
 
 				/* Add any now-filled holes to graph traversal queue for adjustment pass and delete hole records for them. */
-				ZTLF_Map128_each(&holes,{
+				ZTLF_Map128_Each(&holes,{
 					struct ZTLF_DB_GraphNode *const gn = (struct ZTLF_DB_GraphNode *)ZTLF_MappedFile_TryGet(&db->gf,(uintptr_t)ztlfMapKey[0],ZTLF_DB_MAX_GRAPH_NODE_SIZE);
 					if (gn) {
 						const int64_t goff = ZTLF_get64_le(gn->linkedRecordGoff[(uintptr_t)ztlfMapKey[1]]);
@@ -375,7 +375,7 @@ static void *_ZTLF_DB_graphThreadMain(void *arg)
 			 * a second pass we'll be starting at the now-filled holes we found last time. */
 			for(unsigned long i=0;i<graphTraversalQueue.size;) {
 				const int64_t goff = graphTraversalQueue.v[i++];
-				if (ZTLF_ISet_put(visited,goff)) {
+				if (ZTLF_ISet_Put(visited,goff)) {
 					struct ZTLF_DB_GraphNode *const gn = (struct ZTLF_DB_GraphNode *)ZTLF_MappedFile_TryGet(&db->gf,(uintptr_t)goff,ZTLF_DB_MAX_GRAPH_NODE_SIZE);
 					if (gn) {
 						/* Add score to graph node weight. */
@@ -453,11 +453,11 @@ static void *_ZTLF_DB_graphThreadMain(void *arg)
 							const uint64_t ts = (uint64_t)sqlite3_column_int64(db->sGetRecordHistoryById,3);
 
 							memcpy(o,sqlite3_column_blob(db->sGetRecordHistoryById,5),32);
-							struct ZTLF_DB_BestRecordWithTimeRange *br = (struct ZTLF_DB_BestRecordWithTimeRange *)ZTLF_Map256_get(&byOwner,o);
+							struct ZTLF_DB_BestRecordWithTimeRange *br = (struct ZTLF_DB_BestRecordWithTimeRange *)ZTLF_Map256_Get(&byOwner,o);
 							if (!br) {
 								ZTLF_MALLOC_CHECK(br = (struct ZTLF_DB_BestRecordWithTimeRange *)malloc(sizeof(struct ZTLF_DB_BestRecordWithTimeRange)));
 								memset(br,0,sizeof(struct ZTLF_DB_BestRecordWithTimeRange));
-								ZTLF_Map256_set(&byOwner,o,(void *)br);
+								ZTLF_Map256_Set(&byOwner,o,(void *)br);
 								br->firstTimestamp = ts;
 								br->isThisOwner = (memcmp(o,rowner,32) == 0);
 							}
@@ -465,7 +465,7 @@ static void *_ZTLF_DB_graphThreadMain(void *arg)
 							const void *newOwner = sqlite3_column_blob(db->sGetRecordHistoryById,6);
 							if (newOwner) {
 								memcpy(no,newOwner,32);
-								ZTLF_Map256_rename(&byOwner,o,no);
+								ZTLF_Map256_Rename(&byOwner,o,no);
 							}
 
 							if (ts >= br->prevExp) { /* if there's a gap in a set of records for a given owner that exceeds expiration, reset weight */
@@ -496,7 +496,7 @@ static void *_ZTLF_DB_graphThreadMain(void *arg)
 
 						bool bestIsThisOwner = true;
 
-						ZTLF_Map256_eachAndClear(&byOwner,{
+						ZTLF_Map256_EachAndClear(&byOwner,{
 							const struct ZTLF_DB_BestRecordWithTimeRange *const br = (const struct ZTLF_DB_BestRecordWithTimeRange *)ztlfMapValue;
 							if ( (linkableRecordTs >= br->firstTimestamp) && ((linkableRecordTs <= br->lastTimestamp)||(br->lastTimestamp == 0)) ) {
 								if ( (br->weight[1] > bestWeight[1]) || ((br->weight[1] == bestWeight[1])&&(br->weight[0] > bestWeight[0])) ) {
@@ -554,11 +554,11 @@ static void *_ZTLF_DB_graphThreadMain(void *arg)
 	}
 
 end_graph_thread:
-	ZTLF_Map256_destroy(&byOwner);
-	ZTLF_Map128_destroy(&holes);
+	ZTLF_Map256_Destroy(&byOwner);
+	ZTLF_Map128_Destroy(&holes);
 	ZTLF_Vector_i64_Free(&recordQueue);
 	ZTLF_Vector_i64_Free(&graphTraversalQueue);
-	ZTLF_ISet_free(visited);
+	ZTLF_ISet_Free(visited);
 
 	return NULL;
 }
@@ -787,7 +787,7 @@ void ZTLF_DB_EachByID(struct ZTLF_DB *const db,const void *id,void (*handler)(co
 {
 	struct ZTLF_Map256 byOwner;
 	uint64_t o[4],no[4];
-	ZTLF_Map256_init(&byOwner,16,free);
+	ZTLF_Map256_Init(&byOwner,16,free);
 
 	pthread_rwlock_rdlock(&db->gfLock);
 	pthread_mutex_lock(&db->dbLock);
@@ -796,16 +796,16 @@ void ZTLF_DB_EachByID(struct ZTLF_DB *const db,const void *id,void (*handler)(co
 	sqlite3_bind_blob(db->sGetRecordHistoryById,1,id,32,SQLITE_STATIC);
 	while (sqlite3_step(db->sGetRecordHistoryById) == SQLITE_ROW) {
 		memcpy(o,sqlite3_column_blob(db->sGetRecordHistoryById,5),32);
-		struct ZTLF_DB_BestRecord *br = (struct ZTLF_DB_BestRecord *)ZTLF_Map256_get(&byOwner,o);
+		struct ZTLF_DB_BestRecord *br = (struct ZTLF_DB_BestRecord *)ZTLF_Map256_Get(&byOwner,o);
 		if (!br) {
 			ZTLF_MALLOC_CHECK(br = (struct ZTLF_DB_BestRecord *)malloc(sizeof(struct ZTLF_DB_BestRecord)));
 			memset(br,0,sizeof(struct ZTLF_DB_BestRecord));
-			ZTLF_Map256_set(&byOwner,o,(void *)br);
+			ZTLF_Map256_Set(&byOwner,o,(void *)br);
 		}
 		const void *newOwner = sqlite3_column_blob(db->sGetRecordHistoryById,6);
 		if (newOwner) {
 			memcpy(no,newOwner,32);
-			ZTLF_Map256_rename(&byOwner,o,no);
+			ZTLF_Map256_Rename(&byOwner,o,no);
 		}
 
 		const uint64_t ts = (uint64_t)sqlite3_column_int64(db->sGetRecordHistoryById,3);
@@ -835,7 +835,7 @@ void ZTLF_DB_EachByID(struct ZTLF_DB *const db,const void *id,void (*handler)(co
 
 	const uint64_t now = ZTLF_timeMs();
 	pthread_rwlock_rdlock(&db->dfLock);
-	ZTLF_Map256_eachValueRO(&byOwner,{
+	ZTLF_Map256_EachValueRO(&byOwner,{
 		struct ZTLF_DB_BestRecord *const br = (struct ZTLF_DB_BestRecord *)ztlfMapValue;
 		if (br->prevExp > now) {
 			const void *r = ZTLF_MappedFile_TryGet(&db->df,(uintptr_t)br->doff,(uintptr_t)br->dlen);
@@ -848,7 +848,7 @@ void ZTLF_DB_EachByID(struct ZTLF_DB *const db,const void *id,void (*handler)(co
 	});
 	pthread_rwlock_unlock(&db->dfLock);
 
-	ZTLF_Map256_destroy(&byOwner);
+	ZTLF_Map256_Destroy(&byOwner);
 }
 
 int ZTLF_DB_PutRecord(struct ZTLF_DB *db,struct ZTLF_ExpandedRecord *const er)

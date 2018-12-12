@@ -11,14 +11,14 @@
 #include "common.h"
 #include "vector.h"
 
-#define ZTLF_ISET_BUCKET_COUNT 1048576
+#define ZTLF_ISET_BUCKET_COUNT 2097152
 
 /**
  * A fast integer set with a currently fixed number of buckets
  */
 struct ZTLF_ISet { struct ZTLF_Vector_i64 buckets[ZTLF_ISET_BUCKET_COUNT]; };
 
-static inline struct ZTLF_ISet *ZTLF_ISet_new()
+static inline struct ZTLF_ISet *ZTLF_ISet_New()
 {
 	struct ZTLF_ISet *s;
 	ZTLF_MALLOC_CHECK(s = (struct ZTLF_ISet *)malloc(sizeof(struct ZTLF_ISet)));
@@ -26,7 +26,7 @@ static inline struct ZTLF_ISet *ZTLF_ISet_new()
 	return s;
 }
 
-static inline void ZTLF_ISet_free(struct ZTLF_ISet *s)
+static inline void ZTLF_ISet_Free(struct ZTLF_ISet *s)
 {
 	for(unsigned long k=0;k<ZTLF_ISET_BUCKET_COUNT;++k) {
 		ZTLF_Vector_i64_Free(s->buckets + k);
@@ -34,14 +34,14 @@ static inline void ZTLF_ISet_free(struct ZTLF_ISet *s)
 	free(s);
 }
 
-static inline void ZTLF_ISet_clear(struct ZTLF_ISet *s)
+static inline void ZTLF_ISet_Clear(struct ZTLF_ISet *s)
 {
 	for(unsigned long k=0;k<ZTLF_ISET_BUCKET_COUNT;++k) {
 		ZTLF_Vector_i64_Clear(s->buckets + k);
 	}
 }
 
-static inline bool ZTLF_ISet_put(struct ZTLF_ISet *s,const int64_t i)
+static inline bool ZTLF_ISet_Put(struct ZTLF_ISet *s,const int64_t i)
 {
 	struct ZTLF_Vector_i64 *const v = s->buckets + ((unsigned long)(0x9e3779b97f4a7c13ULL * (uint64_t)i) % ZTLF_ISET_BUCKET_COUNT);
 	for(unsigned long k=0;k<v->size;k++) {
@@ -52,7 +52,7 @@ static inline bool ZTLF_ISet_put(struct ZTLF_ISet *s,const int64_t i)
 	return true;
 }
 
-static inline bool ZTLF_ISet_contains(struct ZTLF_ISet *s,const int64_t i)
+static inline bool ZTLF_ISet_Contains(struct ZTLF_ISet *s,const int64_t i)
 {
 	struct ZTLF_Vector_i64 *const v = s->buckets + ((unsigned long)(0x9e3779b97f4a7c13ULL * (uint64_t)i) % ZTLF_ISET_BUCKET_COUNT);
 	for(unsigned long k=0;k<v->size;k++) {

@@ -233,7 +233,7 @@ int ZTLF_Record_Expand(struct ZTLF_ExpandedRecord *const er,const struct ZTLF_Re
 		return ZTLF_ERR_OBJECT_INVALID;
 
 	if (er->workAlgorithm == ZTLF_RECORD_ALG_WORK_WHARRGARBL) {
-		er->score = ZTLF_wharrgarblGetDifficulty(er->work);
+		er->score = ZTLF_WharrgarblGetDifficulty(er->work);
 	} else if (er->workSize == 0) {
 		er->score = 1;
 	}

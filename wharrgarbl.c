@@ -90,7 +90,7 @@ static void *_wharrgarbl(void *ptr)
 	return NULL;
 }
 
-uint64_t ZTLF_wharrgarbl(void *pow,const void *in,const unsigned long inlen,const uint32_t difficulty,void *memory,const unsigned long memorySize,unsigned int threads)
+uint64_t ZTLF_Wharrgarbl(void *pow,const void *in,const unsigned long inlen,const uint32_t difficulty,void *memory,const unsigned long memorySize,unsigned int threads)
 {
 	struct _wharrgarblState ws;
 	uint64_t out[2];
@@ -138,7 +138,7 @@ uint64_t ZTLF_wharrgarbl(void *pow,const void *in,const unsigned long inlen,cons
 	return ws.iterations;
 }
 
-uint32_t ZTLF_wharrgarblVerify(const void *pow,const void *in,const unsigned long inlen)
+uint32_t ZTLF_WharrgarblVerify(const void *pow,const void *in,const unsigned long inlen)
 {
 	unsigned char inHash[48];
 	uint64_t hbuf[6];
@@ -149,7 +149,7 @@ uint32_t ZTLF_wharrgarblVerify(const void *pow,const void *in,const unsigned lon
 
 	for(unsigned int i=0;i<16;++i)
 		((uint8_t *)powq)[i] = ((const uint8_t *)pow)[i];
-	const uint32_t diff32 = ZTLF_wharrgarblGetDifficulty(pow);
+	const uint32_t diff32 = ZTLF_WharrgarblGetDifficulty(pow);
 	const uint64_t difficulty = (((uint64_t)diff32) << 32) | 0x00000000ffffffffULL;
 
 	ZTLF_SHA384_init(&hash);
