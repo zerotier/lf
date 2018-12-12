@@ -9,6 +9,7 @@
 #define ZT_LF_SHA384_H
 
 #include "common.h"
+#include "sha3.h"
 
 #ifdef __APPLE__
 
@@ -78,10 +79,22 @@ static inline void ZTLF_SHA512(void *d,const void *b,const unsigned long s)
 
 #endif
 
+/**
+ * Computes SHA384(SHA3-512(message)) and fills d[] with the first 32 bytes of the result.
+ * 
+ * This is intended to provide an extremely future-proof 256-bit hash that will remain secure
+ * if either SHA-2 or SHA-3 are significantly weakened.
+ * 
+ * @param d 32-byte buffer to receive digest
+ * @param b Message to hash
+ * @param s Size of message in bytes
+ */
 static inline void ZTLF_ShaSha256(void *d,const void *b,const unsigned long s)
 {
-	uint8_t s512[64],s384[48];
-	ZTLF_SHA512(s512,b,s);
-	ZTLF_SHA384(s384,s512,sizeof(s512));
+	sha3_context sha3;
+	uint8_t s384[48];
+	sha3_Init512(&sha3);
+	sha3_Update(&sha3,b,s);
+	ZTLF_SHA384(s384,sha3_Finalize(&sha3),64);
 	for(unsigned int i=0;i<32;++i) ((uint8_t *)d)[i] = s384[i];
 }

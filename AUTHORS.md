@@ -6,5 +6,4 @@
 
 ## Third Party Code Included in LF (possibly with minor modifications)
 
-* [tiny-json](https://github.com/rafagafe/tiny-json) by Rafa García (MIT license)
-* [libbase58](https://github.com/luke-jr/libbase58) by Luke Dash Jr. (MIT license)
+* [Sha3 portable C implementation](https://github.com/brainhub/SHA3IUF) by Andrey Jivsov (public domain)

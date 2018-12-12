@@ -4,7 +4,6 @@ CFLAGS=-O3 -fvectorize -std=c99 -Wall
 LIBS=-lsqlite3
 
 OBJS=\
-	base58.o \
 	common.o \
 	db.o \
 	ed25519.o \
@@ -13,6 +12,7 @@ OBJS=\
 	node.o \
 	record.o \
 	selftest.o \
+	sha3.o \
 	wharrgarbl.o
 
 all:	lf
