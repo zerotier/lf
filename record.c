@@ -6,6 +6,7 @@
  */
 
 #include "record.h"
+#include "aes.h"
 
 void ZTLF_Record_KeyToId(uint64_t id[4],const void *k,const unsigned long klen)
 {
@@ -105,8 +106,6 @@ int ZTLF_Record_Create(
 	const unsigned int neededBytes = s + ZTLF_WHARRGARBL_POW_BYTES + ZTLF_ED25519_SIGNATURE_SIZE + ZTLF_ED25519_SIGNATURE_SIZE;
 	if (neededBytes > ZTLF_RECORD_MAX_SIZE) /* sanity check, should be impossible */
 		return ZTLF_ERR_OBJECT_TOO_LARGE;
-	uint64_t neededScore64 = 31337;
-	const uint32_t neededScore = (neededScore64 > 0xffffffffULL) ? (uint32_t)0xffffffff : (uint32_t)neededScore64;
 
 	if (skipWork) {
 		memset(rb->data.b + s,0,ZTLF_WHARRGARBL_POW_BYTES);
@@ -153,7 +152,7 @@ int ZTLF_Record_Expand(struct ZTLF_ExpandedRecord *const er,const struct ZTLF_Re
 	er->idClaimSignatureAlgorithm = (r->algorithms >> 2) & 3;
 	er->ownerSignatureAlgorithm = r->algorithms & 3;
 
-	ZTLF_Shandwich256(er->hash,r,rsize);
+	ZTLF_ShaSha256(er->hash,r,rsize);
 
 	er->timestamp = ((((uint64_t)r->timestamp[0]) << 32) | (((uint64_t)r->timestamp[1]) << 24) | (((uint64_t)r->timestamp[2]) << 16) | (((uint64_t)r->timestamp[3]) << 8) | (uint64_t)r->timestamp[4]);
 	if (r->ttl == 0) {
