@@ -19,7 +19,7 @@
  * @param in Input data to hash
  * @param inlen Length of input
  * @param difficulty Difficulty determining number of bits that must collide
- * @param memory Memory to use (does not need to be zeroed)
+ * @param memory Memory to use (does not need to be zeroed, if NULL will be allocated based on memorySize and then freed)
  * @param memorySize Memory size in bytes
  * @param threads Number of threads or 0 to use hardware thread count
  * @return Approximate number of iterations required or 0 if there was a problem (right now can only be memory size < 12)
@@ -35,12 +35,5 @@ uint64_t ZTLF_Wharrgarbl(void *pow,const void *in,const unsigned long inlen,cons
  * @return Difficulty or 0 if work was not valid
  */
 uint32_t ZTLF_WharrgarblVerify(const void *pow,const void *in,const unsigned long inlen);
-
-/**
- * Extract difficulty from proof of work (no validation)
- * 
- * @param pow 20-byte PoW
- */
-static inline uint32_t ZTLF_WharrgarblGetDifficulty(const void *pow) { return ZTLF_getu32((uint32_t *)(((const uint8_t *)pow) + 16)); }
 
 #endif

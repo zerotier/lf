@@ -85,9 +85,6 @@
 #define ZTLF_PATH_SEPARATOR_C '/'
 #define ZTLF_EOL "\n"
 
-/* Create thread, optionally with lower-than-normal priority */
-pthread_t ZTLF_threadCreate(void *(*threadMain)(void *),void *arg,bool lowPriority);
-
 #endif /* Windows or non-Windows? ------------------------------------- */
 
 /* send flag to selectively invoke non-blocking socket behavior */
@@ -354,20 +351,42 @@ static inline uint64_t ZTLF_htonll(const uint64_t n)
 #define ZTLF_NEG(e) (((e) <= 0) ? (e) : -(e))
 #define ZTLF_POS(e) (((e) >= 0) ? (e) : -(e))
 
-/* Non-cryptographic random number generator */
-uint64_t ZTLF_prng();
+static inline void ZTLF_L_func(int level,const char *srcf,int line,const char *fmt,...)
+{
+	va_list ap;
+	char msg[4096];
+	va_start(ap, fmt);
+	(void)vsnprintf(msg,sizeof(msg),fmt,ap);
+	va_end(ap);
+	msg[sizeof(msg)-1] = (char)0;
 
-/* Get number of CPU cores */
-unsigned int ZTLF_ncpus();
+	char ts[128];
+	time_t t = time(0);
+	ctime_r(&t,ts);
+	ts[sizeof(ts)-1] = (char)0;
+	char *tsp = ts;
+	while (*tsp) {
+		if ((*tsp == '\r')||(*tsp == '\n')) {
+			*tsp = (char)0;
+			break;
+		}
+		++tsp;
+	}
 
-/* Secure PRNG */
-void ZTLF_secureRandom(void *b,const unsigned long n);
+	if (!srcf)
+		srcf = "<unknown>";
 
-/* Returns a static hex string (used for logging) */
-const char *ZTLF_hexstr(const void *d,const unsigned long l,const unsigned int bufno);
+	if (level < 0) {
+		fprintf(stderr,"%s (%s:%d) %s: %s" ZTLF_EOL,ts,(strrchr(srcf,ZTLF_PATH_SEPARATOR_C) != NULL) ? (strrchr(srcf,ZTLF_PATH_SEPARATOR_C) + 1) : srcf,line,((level == -1) ? "WARNING" : "FATAL"),msg);
+	} else {
+		if (level > 1) {
+			fprintf(stdout,"%s (%s:%d) TRACE %s" ZTLF_EOL,ts,(strrchr(srcf,ZTLF_PATH_SEPARATOR_C) != NULL) ? (strrchr(srcf,ZTLF_PATH_SEPARATOR_C) + 1) : srcf,line,msg);
+		} else {
+			fprintf(stdout,"%s %s" ZTLF_EOL,ts,msg);
+		}
+	}
+}
 
-/* Logging functions */
-void ZTLF_L_func(int level,const char *srcf,int line,const char *fmt,...);
 #define ZTLF_L(...) ZTLF_L_func(0,__FILE__,__LINE__,__VA_ARGS__)
 #define ZTLF_L_warning(...) ZTLF_L_func(-1,__FILE__,__LINE__,__VA_ARGS__)
 #define ZTLF_L_fatal(...) ZTLF_L_func(-2,__FILE__,__LINE__,__VA_ARGS__)
@@ -401,6 +420,7 @@ static inline uint64_t ZTLF_timeMs()
 #endif
 };
 
+#if 0
 /* https://stackoverflow.com/questions/1100090/looking-for-an-efficient-integer-square-root-algorithm-for-arm-thumb2 */
 static inline uint32_t ZTLF_isqrt(const uint32_t a_nInput)
 {
@@ -419,46 +439,18 @@ static inline uint32_t ZTLF_isqrt(const uint32_t a_nInput)
 		one >>= 2;
 	}
 
-	if (op > res) ++res; /* rounded */
+	if (op > res) ++res;
 
 	return res;
 }
 
-static inline bool ZTLF_allZero(const void *b,const unsigned long len)
+/* C version of difficulty cost function for Wharrgarbl -- see record.go in Go code. */
+static inline uint32_t ZTLF_RecordWharrgarblCost(const unsigned int bytes)
 {
-	const uint8_t *p = (const uint8_t *)b;
-	const uint8_t *const eof = p + len;
-	while (p != eof) {
-		if (*p) return false;
-		++p;
-	}
-	return true;
+	if (bytes <= 64)
+		return 1024;
+	return ((ZTLF_isqrt((uint32_t)bytes) * (uint32_t)bytes * 3) - ((uint32_t)bytes * 8));
 }
-
-static inline long ZTLF_readFile(const char *const path,void *buf,const unsigned long bufSize)
-{
-	int fd = open(path,O_RDONLY);
-	if (fd < 0) {
-		return (long)ZTLF_NEG(errno);
-	}
-	long r = (long)read(fd,buf,bufSize);
-	if (r < 0)
-		r = (long)ZTLF_NEG(errno);
-	close(fd);
-	return r;
-}
-
-static inline int ZTLF_writeFile(const char *const path,const void *buf,const unsigned long bufSize,int mode)
-{
-	int fd = open(path,O_WRONLY|O_TRUNC|O_CREAT,mode);
-	if (fd < 0) {
-		return errno;
-	}
-	if (write(fd,buf,(size_t)bufSize) != (ssize_t)bufSize) {
-		return errno;
-	}
-	close(fd);
-	return 0;
-}
+#endif
 
 #endif

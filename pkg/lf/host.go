@@ -5,9 +5,9 @@ import (
 	"crypto/sha512"
 	"encoding/binary"
 	"errors"
+	"fmt"
+	"math/rand"
 	"net"
-
-	"github.com/vmihailenco/msgpack"
 )
 
 // packedAddress is an IP and port packed into a uint64 array to use as a key in a map
@@ -30,6 +30,7 @@ func (p *packedAddress) set(a *net.UDPAddr) {
 // Host represents a remote host speaking the LF peer-to-peer UDP protocol.
 type Host struct {
 	packedAddress packedAddress
+	lastPingHash  [48]byte // SHA384(last ping sent)
 
 	LastSentPing       uint64
 	LastReceivedPing   uint64
@@ -45,10 +46,17 @@ type Host struct {
 	Latency            int
 }
 
-func (h *Host) handleIncomingPacket(n *Node, data []byte) error {
+func (h *Host) handleIncomingPacket(n *Node, data []byte) (err error) {
+	defer func() {
+		e := recover()
+		if e != nil {
+			err = fmt.Errorf("unexpected fatal error parsing packet: %s", e)
+		}
+	}()
+
 	r := bytes.NewReader(data)
 
-	for {
+	for r.Len() > 0 {
 		typeAndSize, err := binary.ReadUvarint(r)
 		if err != nil {
 			return err
@@ -75,10 +83,10 @@ func (h *Host) handleIncomingPacket(n *Node, data []byte) error {
 				msg := data[messageStart : messageStart+messageSize]
 
 				var pong [57]byte
+				pong[0] = byte(ProtoMessageTypePong) // type, no size == one message per packet
 				copy(pong[1:9], msg[0:8])
 				s384 := sha512.Sum384(msg)
 				copy(pong[9:57], s384[:])
-				pong[0] = byte(ProtoMessageTypePong) // type, no size == one message per packet
 
 				h.LastSend = now
 				_, err = n.udpSocket.WriteToUDP(pong[:], &h.RemoteAddress)
@@ -88,22 +96,35 @@ func (h *Host) handleIncomingPacket(n *Node, data []byte) error {
 			}
 
 		case ProtoMessageTypePong:
-
-		case ProtoMessageTypePeer:
-			var peer ProtoMessagePeer
-			mr := msgpack.NewDecoder(r)
-			err = mr.Decode(&peer)
-			if err != nil {
-				return err
+			if messageSize >= 56 {
+				msg := data[messageStart : messageStart+messageSize]
+				if bytes.Equal(msg[8:56], h.lastPingHash[:]) {
+					ts := binary.BigEndian.Uint64(msg[0:8])
+					if ts <= now && ts == h.LastSentPing {
+						h.LastReceivedPong = now
+						h.Latency = int(now - ts)
+					}
+				}
 			}
 
+		case ProtoMessageTypePeer:
+			/*
+				var peer ProtoMessagePeer
+				mr := msgpack.NewDecoder(r)
+				err = mr.Decode(&peer)
+				if err != nil {
+					return err
+				}
+			*/
+
 		case ProtoMessageTypeRecord:
-			if messageSize >= RecordMinSize && messageSize <= RecordMaxSize {
+			if messageSize >= RecordMinSize {
 			}
 
 		case ProtoMessageTypeRequestByHash:
 			if messageSize == 32 {
 			}
+
 		}
 
 		if !multipleMessages {
@@ -112,4 +133,17 @@ func (h *Host) handleIncomingPacket(n *Node, data []byte) error {
 	}
 
 	return nil
+}
+
+// Ping sends a ping message to the host (should not do more than once per second)
+func (h *Host) Ping(n *Node) error {
+	var ping [13]byte
+	ping[0] = byte(ProtoMessageTypePing) // type, no size == one message per packet
+	ts := TimeMs()
+	binary.BigEndian.PutUint64(ping[1:9], ts)
+	binary.BigEndian.PutUint32(ping[9:13], uint32(rand.Int31()))
+	h.lastPingHash = sha512.Sum384(ping[1:])
+	h.LastSentPing = ts
+	_, err := n.udpSocket.WriteToUDP(ping[:], &h.RemoteAddress)
+	return err
 }

@@ -177,6 +177,21 @@ struct ZTLF_DB_BestRecordWithTimeRange
 \
 "CREATE INDEX IF NOT EXISTS wanted_retries_last_retry_time ON wanted(retries,last_retry_time);\n"
 
+static const char *ZTLF_hexstr(const void *d,const unsigned long l,const unsigned int bufno)
+{
+	static const char *const hexdigits = "0123456789abcdef";
+	static char buf[8][128];
+	unsigned long i,j;
+	memset(buf[bufno],0,128);
+	for(i=0,j=0;i<l;++i) {
+		buf[bufno][j++] = hexdigits[((const uint8_t *)d)[i] >> 4];
+		buf[bufno][j++] = hexdigits[((const uint8_t *)d)[i] & 0xf];
+		if (j >= 125)
+			break;
+	}
+	return buf[bufno];
+}
+
 /*
  * The graph thread grabs records that need their weights applied to records below them and
  * traverses the graph along the path of links. If it encounters holes it logs them and
@@ -714,7 +729,10 @@ int ZTLF_DB_Open(struct ZTLF_DB *db,const char *path)
 	}
 
 	db->running = true;
-	db->graphThread = ZTLF_threadCreate(&_ZTLF_DB_graphThreadMain,db,false);
+	if (pthread_create(&db->graphThread,NULL,_ZTLF_DB_graphThreadMain,db) != 0) {
+		ZTLF_L_fatal("pthread_create() failed");
+		abort();
+	}
 	db->graphThreadStarted = true;
 
 	return 0;
@@ -783,6 +801,7 @@ void ZTLF_DB_Close(struct ZTLF_DB *db)
 	pthread_rwlock_destroy(&db->dfLock);
 }
 
+#if 0
 void ZTLF_DB_EachByID(struct ZTLF_DB *const db,const void *id,void (*handler)(const uint64_t *,const struct ZTLF_Record *,unsigned int),const uint64_t cutoffTime)
 {
 	struct ZTLF_Map256 byOwner;
@@ -1052,7 +1071,9 @@ bool ZTLF_DB_HasGraphPendingRecords(struct ZTLF_DB *db)
 	pthread_mutex_unlock(&db->dbLock);
 	return canHas;
 }
+#endif
 
+#if 0
 unsigned long ZTLF_DB_HashState(struct ZTLF_DB *db,uint8_t stateHash[48])
 {
 	unsigned long rc = 0;
@@ -1075,3 +1096,4 @@ unsigned long ZTLF_DB_HashState(struct ZTLF_DB *db,uint8_t stateHash[48])
 	ZTLF_SHA384_final(&h,stateHash);
 	return rc;
 }
+#endif

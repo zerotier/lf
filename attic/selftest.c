@@ -7,34 +7,10 @@
 
 #include "selftest.h"
 #include "wharrgarbl.h"
-#include "record.h"
 #include "db.h"
 
 #define ZTLF_SELFTEST_DB_TEST_RECORD_COUNT 1000
 #define ZTLF_SELFTEST_DB_TEST_DB_COUNT 8
-
-bool ZTLF_selftest_core(FILE *o)
-{
-	if (sizeof(void *) < 8) {
-		fprintf(o,"WARNING: a 64-bit platform is recommended to avoid possible address space and file size constraints!" ZTLF_EOL ZTLF_EOL);
-	}
-
-	uint64_t tmp[4];
-	ZTLF_secureRandom(tmp,sizeof(tmp));
-	fprintf(o,"Testing cryptographic PRNG:     %.16llx%.16llx%.16llx%.16llx" ZTLF_EOL,tmp[0],tmp[1],tmp[2],tmp[3]);
-	ZTLF_secureRandom(tmp,sizeof(tmp));
-	fprintf(o,"                                %.16llx%.16llx%.16llx%.16llx" ZTLF_EOL,tmp[0],tmp[1],tmp[2],tmp[3]);
-	ZTLF_secureRandom(tmp,sizeof(tmp));
-	fprintf(o,"                                %.16llx%.16llx%.16llx%.16llx" ZTLF_EOL,tmp[0],tmp[1],tmp[2],tmp[3]);
-	ZTLF_secureRandom(tmp,sizeof(tmp));
-	fprintf(o,"                                %.16llx%.16llx%.16llx%.16llx" ZTLF_EOL,tmp[0],tmp[1],tmp[2],tmp[3]);
-	fprintf(o,"Testing non-cryptographic PRNG: %.16llx%.16llx%.16llx%.16llx" ZTLF_EOL,ZTLF_prng(),ZTLF_prng(),ZTLF_prng(),ZTLF_prng());
-	fprintf(o,"                                %.16llx%.16llx%.16llx%.16llx" ZTLF_EOL,ZTLF_prng(),ZTLF_prng(),ZTLF_prng(),ZTLF_prng());
-	fprintf(o,"                                %.16llx%.16llx%.16llx%.16llx" ZTLF_EOL,ZTLF_prng(),ZTLF_prng(),ZTLF_prng(),ZTLF_prng());
-	fprintf(o,"                                %.16llx%.16llx%.16llx%.16llx" ZTLF_EOL,ZTLF_prng(),ZTLF_prng(),ZTLF_prng(),ZTLF_prng());
-
-	return true;
-}
 
 bool ZTLF_selftest_wharrgarbl(FILE *o)
 {
@@ -48,8 +24,8 @@ bool ZTLF_selftest_wharrgarbl(FILE *o)
 	uint8_t pow[ZTLF_WHARRGARBL_POW_BYTES];
 
 	fprintf(o,"Testing and benchmarking wharrgarbl proof of work..." ZTLF_EOL);
-	for(unsigned int rsize=64;rsize<=ZTLF_RECORD_MAX_SIZE;rsize<<=1) {
-		uint32_t diff = ZTLF_Record_WharrgarblDifficultyRequired(rsize);
+	for(unsigned int rsize=64;rsize<=2048;rsize<<=1) {
+		uint32_t diff = ZTLF_RecordWharrgarblCost(rsize);
 		uint64_t iter = 0;
 		uint64_t start = ZTLF_timeMs();
 		for(int k=0;k<trials;++k)
@@ -92,7 +68,7 @@ bool ZTLF_selftest_modelProofOfWork(FILE *o)
 	fprintf(o,"Finding acceptable difficulties for linear time increase..." ZTLF_EOL);
 	uint64_t targetTime = minTime;
 	uint32_t difficulty = startingDifficulty;
-	for(unsigned int targetSize=2;targetSize<=ZTLF_RECORD_MAX_SIZE;targetSize<<=1) {
+	for(unsigned int targetSize=2;targetSize<=4096;targetSize<<=1) {
 		targetTime += (targetTime / 4) * 3; /* increase target time by 75% for each doubling of target size */
 		fprintf(o,"  Target: %llu ms for %u bytes..." ZTLF_EOL,(unsigned long long)targetTime,targetSize);
 
@@ -139,6 +115,7 @@ bool ZTLF_selftest_modelProofOfWork(FILE *o)
 	return true;
 }
 
+#if 0
 struct ZTLF_TestRec
 {
 	uint64_t hash[4];
@@ -150,7 +127,7 @@ bool ZTLF_selftest_db(FILE *o,const char *p)
 	bool success = true;
 	struct ZTLF_TestRec *testRecords = malloc(ZTLF_SELFTEST_DB_TEST_RECORD_COUNT * sizeof(struct ZTLF_TestRec));
 	char tmp[128],basePath[1024];;
-	uint8_t links[ZTLF_RECORD_MIN_LINKS][32];
+	uint8_t links[3][32];
 	struct ZTLF_DB testDb[ZTLF_SELFTEST_DB_TEST_DB_COUNT];
 	bool testDbOpen[ZTLF_SELFTEST_DB_TEST_DB_COUNT];
 	unsigned int order[ZTLF_SELFTEST_DB_TEST_RECORD_COUNT];
@@ -270,11 +247,13 @@ selftest_db_exit:
 	free(testRecords);
 	return success;
 }
+#endif
 
 bool ZTLF_selftest(FILE *o)
 {
-	if (!ZTLF_selftest_core(o)) return false;
-	fprintf(o,ZTLF_EOL);
+	if (sizeof(void *) < 8) {
+		fprintf(o,"WARNING: a 64-bit platform is recommended to avoid possible address space and file size constraints!" ZTLF_EOL ZTLF_EOL);
+	}
 	if (!ZTLF_selftest_db(o,"lf-selftest-db-work")) return false;
 	fprintf(o,ZTLF_EOL);
 	if (!ZTLF_selftest_wharrgarbl(o)) return false;

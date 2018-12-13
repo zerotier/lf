@@ -1,7 +1,9 @@
 package lf
 
 import (
+	"encoding/binary"
 	"io"
+	"math"
 	"time"
 )
 
@@ -20,4 +22,36 @@ func (mr byteAndArrayReader) ReadByte() (byte, error) {
 	var tmp [1]byte
 	_, err := io.ReadFull(mr.r, tmp[:])
 	return tmp[0], err
+}
+
+func writeUVarint(out io.Writer, v uint64) (int, error) {
+	var tmp [10]byte
+	l := binary.PutUvarint(tmp[:], v)
+	return out.Write(tmp[0:l])
+}
+
+// IntegerSqrtRounded computes the rounded integer square root of a 32-bit unsigned int.
+func IntegerSqrtRounded(op uint32) (res uint32) {
+	// Just doing this is faster on most platforms and if your float sqrt or round are bad enough for this to be
+	// inconsistent with the integer version your platform has personal problems.
+	res = uint32(math.Round(math.Sqrt(float64(op))))
+	/*
+		// Translated from C at https://stackoverflow.com/questions/1100090/looking-for-an-efficient-integer-square-root-algorithm-for-arm-thumb2
+		one := uint32(1 << 30)
+		for one > op {
+			one >>= 2
+		}
+		for one != 0 {
+			if op >= (res + one) {
+				op = op - (res + one)
+				res = res + 2*one
+			}
+			res >>= 1
+			one >>= 2
+		}
+		if op > res { // rounding
+			res++
+		}
+	*/
+	return
 }

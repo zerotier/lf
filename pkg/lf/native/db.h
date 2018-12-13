@@ -10,7 +10,6 @@
 
 #include "common.h"
 #include "vector.h"
-#include "record.h"
 #include "mappedfile.h"
 
 #ifdef ZTLF_SQLITE_INCLUDE
@@ -64,10 +63,10 @@ struct ZTLF_DB
 
 int ZTLF_DB_Open(struct ZTLF_DB *db,const char *path);
 void ZTLF_DB_Close(struct ZTLF_DB *db);
-void ZTLF_DB_EachByID(struct ZTLF_DB *const db,const void *id,void (*handler)(const uint64_t *,const struct ZTLF_Record *,unsigned int),const uint64_t cutoffTime);
-int ZTLF_DB_PutRecord(struct ZTLF_DB *db,struct ZTLF_ExpandedRecord *const er);
+//void ZTLF_DB_EachByID(struct ZTLF_DB *const db,const void *id,void (*handler)(const uint64_t *,const struct ZTLF_Record *,unsigned int),const uint64_t cutoffTime);
+//int ZTLF_DB_PutRecord(struct ZTLF_DB *db,struct ZTLF_ExpandedRecord *const er);
 bool ZTLF_DB_HasGraphPendingRecords(struct ZTLF_DB *db);
-unsigned long ZTLF_DB_HashState(struct ZTLF_DB *db,uint8_t stateHash[48]);
+//unsigned long ZTLF_DB_HashState(struct ZTLF_DB *db,uint8_t stateHash[48]);
 
 static inline const char *ZTLF_DB_LastSqliteErrorMessage(struct ZTLF_DB *db) { return sqlite3_errmsg(db->dbc); }
 
