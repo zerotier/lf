@@ -8,6 +8,8 @@
 #ifndef ZTLF_ED25519_H
 #define ZTLF_ED25519_H
 
+#include "common.h"
+
 #define ZTLF_ED25519_PUBLIC_KEY_SIZE  32
 #define ZTLF_ED25519_PRIVATE_KEY_SIZE 64
 #define ZTLF_ED25519_SIGNATURE_SIZE   64

@@ -1,7 +1,7 @@
 CC=cc
 CFLAGS=-O3 -fvectorize -std=c99 -Wall
 #CFLAGS=-g
-LIBS=-lsqlite3
+#LIBS=-lsqlite3
 
 OBJS=\
 	common.o \
@@ -12,6 +12,8 @@ OBJS=\
 	selftest.o \
 	sha3.o \
 	wharrgarbl.o
+
+all:	libZTLF
 
 libZTLF:	$(OBJS)
 	ar rcs libZTLF.a $(OBJS)

@@ -9,7 +9,7 @@
 
 /****************************************************************************/
 
-void ZTLF_Map256_init(struct ZTLF_Map256 *m,unsigned long initialBucketCountHint,void (*valueDeleter)(void *))
+void ZTLF_Map256_Init(struct ZTLF_Map256 *m,unsigned long initialBucketCountHint,void (*valueDeleter)(void *))
 {
 	m->nonce = ZTLF_prng(); /* randomizes bucket allocation */
 	initialBucketCountHint >>= 12;
@@ -20,7 +20,7 @@ void ZTLF_Map256_init(struct ZTLF_Map256 *m,unsigned long initialBucketCountHint
 	m->valueDeleter = valueDeleter;
 }
 
-void ZTLF_Map256_destroy(struct ZTLF_Map256 *m)
+void ZTLF_Map256_Destroy(struct ZTLF_Map256 *m)
 {
 	if (m->buckets) {
 		if (m->valueDeleter) {
@@ -35,7 +35,7 @@ void ZTLF_Map256_destroy(struct ZTLF_Map256 *m)
 	m->buckets = NULL;
 }
 
-bool ZTLF_Map256_set(struct ZTLF_Map256 *m,const uint64_t k[4],void *v)
+bool ZTLF_Map256_Set(struct ZTLF_Map256 *m,const uint64_t k[4],void *v)
 {
 	const unsigned long bucket = ((unsigned long)(0x9e3779b97f4a7c13ULL * (m->nonce + k[0] + k[1] + k[2] + k[3]))) % m->bucketCount;
 
@@ -61,10 +61,10 @@ bool ZTLF_Map256_set(struct ZTLF_Map256 *m,const uint64_t k[4],void *v)
 	memset(nm.buckets,0,sizeof(struct ZTLF_Map256Entry) * nm.bucketCount);
 	for(unsigned long b=0;b<m->bucketCount;++b) {
 		if (m->buckets[b].value)
-			ZTLF_Map256_set(&nm,m->buckets[b].key,m->buckets[b].value);
+			ZTLF_Map256_Set(&nm,m->buckets[b].key,m->buckets[b].value);
 	}
 
-	ZTLF_Map256_set(&nm,k,v);
+	ZTLF_Map256_Set(&nm,k,v);
 
 	m->nonce = nm.nonce;
 	free(m->buckets);
@@ -74,18 +74,18 @@ bool ZTLF_Map256_set(struct ZTLF_Map256 *m,const uint64_t k[4],void *v)
 	return true;
 }
 
-bool ZTLF_Map256_rename(struct ZTLF_Map256 *m,const uint64_t oldKey[4],const uint64_t newKey[4])
+bool ZTLF_Map256_Rename(struct ZTLF_Map256 *m,const uint64_t oldKey[4],const uint64_t newKey[4])
 {
 	const unsigned long oldBucket = ((unsigned long)(0x9e3779b97f4a7c13ULL * (m->nonce + oldKey[0] + oldKey[1] + oldKey[2] + oldKey[3]))) % m->bucketCount;
 	if ((m->buckets[oldBucket].value)&&(ZTLF_eq256qw(m->buckets[oldBucket].key,oldKey))) {
 		void *oldValue = m->buckets[oldBucket].value;
 		m->buckets[oldBucket].value = NULL;
-		return ZTLF_Map256_set(m,newKey,oldValue);
+		return ZTLF_Map256_Set(m,newKey,oldValue);
 	}
 	return false;
 }
 
-void ZTLF_Map256_clear(struct ZTLF_Map256 *m)
+void ZTLF_Map256_Clear(struct ZTLF_Map256 *m)
 {
 	if (m->valueDeleter) {
 		for(unsigned long b=0;b<m->bucketCount;++b) {
@@ -101,7 +101,7 @@ void ZTLF_Map256_clear(struct ZTLF_Map256 *m)
 
 /****************************************************************************/
 
-void ZTLF_Map128_init(struct ZTLF_Map128 *m,unsigned long initialBucketCountHint,void (*valueDeleter)(void *))
+void ZTLF_Map128_Init(struct ZTLF_Map128 *m,unsigned long initialBucketCountHint,void (*valueDeleter)(void *))
 {
 	m->nonce = ZTLF_prng(); /* randomizes bucket allocation */
 	initialBucketCountHint >>= 12;
@@ -112,7 +112,7 @@ void ZTLF_Map128_init(struct ZTLF_Map128 *m,unsigned long initialBucketCountHint
 	m->valueDeleter = valueDeleter;
 }
 
-void ZTLF_Map128_destroy(struct ZTLF_Map128 *m)
+void ZTLF_Map128_Destroy(struct ZTLF_Map128 *m)
 {
 	if (m->buckets) {
 		if (m->valueDeleter) {
@@ -127,7 +127,7 @@ void ZTLF_Map128_destroy(struct ZTLF_Map128 *m)
 	m->buckets = NULL;
 }
 
-bool ZTLF_Map128_set(struct ZTLF_Map128 *m,const uint64_t k[2],void *v)
+bool ZTLF_Map128_Set(struct ZTLF_Map128 *m,const uint64_t k[2],void *v)
 {
 	const unsigned long bucket = ((unsigned long)(0x9e3779b97f4a7c13ULL * (m->nonce + k[0] + k[1]))) % m->bucketCount;
 
@@ -151,10 +151,10 @@ bool ZTLF_Map128_set(struct ZTLF_Map128 *m,const uint64_t k[2],void *v)
 	memset(nm.buckets,0,sizeof(struct ZTLF_Map128Entry) * nm.bucketCount);
 	for(unsigned long b=0;b<m->bucketCount;++b) {
 		if (m->buckets[b].value)
-			ZTLF_Map128_set(&nm,m->buckets[b].key,m->buckets[b].value);
+			ZTLF_Map128_Set(&nm,m->buckets[b].key,m->buckets[b].value);
 	}
 
-	ZTLF_Map128_set(&nm,k,v);
+	ZTLF_Map128_Set(&nm,k,v);
 
 	m->nonce = nm.nonce;
 	free(m->buckets);
@@ -164,7 +164,7 @@ bool ZTLF_Map128_set(struct ZTLF_Map128 *m,const uint64_t k[2],void *v)
 	return true;
 }
 
-void ZTLF_Map128_clear(struct ZTLF_Map128 *m)
+void ZTLF_Map128_Clear(struct ZTLF_Map128 *m)
 {
 	if (m->valueDeleter) {
 		for(unsigned long b=0;b<m->bucketCount;++b) {

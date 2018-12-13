@@ -147,6 +147,9 @@ void ZTLF_Record_AddOwnerSignature(struct ZTLF_RecordBuffer *rb,const void *owne
 
 int ZTLF_Record_Expand(struct ZTLF_ExpandedRecord *const er,const struct ZTLF_Record *const r,const unsigned int rsize)
 {
+	if (unlikely(rsize < ZTLF_RECORD_MIN_SIZE))
+		return ZTLF_ERR_OBJECT_INVALID;
+
 	er->valueCipher = (r->algorithms >> 6) & 3;
 	er->workAlgorithm = (r->algorithms >> 4) & 3;
 	er->idClaimSignatureAlgorithm = (r->algorithms >> 2) & 3;
@@ -170,7 +173,7 @@ int ZTLF_Record_Expand(struct ZTLF_ExpandedRecord *const er,const struct ZTLF_Re
 	const unsigned int vlSize = (((unsigned int)r->vlSize[0]) << 8) | (unsigned int)r->vlSize[1];
 
 	er->valueSize = vlSize & 0x7ff;
-	if (er->valueSize > ZTLF_RECORD_MAX_VALUE_SIZE)
+	if (unlikely(er->valueSize > ZTLF_RECORD_MAX_VALUE_SIZE))
 		return ZTLF_ERR_OBJECT_TOO_LARGE;
 	er->linkCount = vlSize >> 11;
 	er->metaDataType[0] = r->metadata >> 4;
@@ -229,7 +232,7 @@ int ZTLF_Record_Expand(struct ZTLF_ExpandedRecord *const er,const struct ZTLF_Re
 	dp += er->idClaimSignatureSize;
 	er->ownerSignature = dp;
 	dp += er->ownerSignatureSize;
-	if (dp > (((const uint8_t *)r) + rsize))
+	if (unlikely(dp > (((const uint8_t *)r) + rsize)))
 		return ZTLF_ERR_OBJECT_INVALID;
 
 	if (er->workAlgorithm == ZTLF_RECORD_ALG_WORK_WHARRGARBL) {
