@@ -2,9 +2,12 @@ package lf
 
 import (
 	"bytes"
+	"crypto/sha512"
 	"encoding/binary"
+	"errors"
 	"net"
-	"sync"
+
+	"github.com/vmihailenco/msgpack"
 )
 
 // packedAddress is an IP and port packed into a uint64 array to use as a key in a map
@@ -26,11 +29,10 @@ func (p *packedAddress) set(a *net.UDPAddr) {
 
 // Host represents a remote host speaking the LF peer-to-peer UDP protocol.
 type Host struct {
-	packedAddress           packedAddress
-	queueWaitingForPong     [][]byte
-	queueWaitingForPongLock sync.Mutex
+	packedAddress packedAddress
 
 	LastSentPing       uint64
+	LastReceivedPing   uint64
 	LastReceivedPong   uint64
 	LastSend           uint64
 	LastReceive        uint64
@@ -43,46 +45,68 @@ type Host struct {
 	Latency            int
 }
 
-func (h *Host) handleIncomingPacket(data []byte) error {
+func (h *Host) handleIncomingPacket(n *Node, data []byte) error {
 	r := bytes.NewReader(data)
 
-	typeAndSize, err := binary.ReadUvarint(r)
-	if err != nil {
-		return err
-	}
-
-	messageType := int(typeAndSize & 31)
-	messageSize := int(typeAndSize >> 5)
-	multipleMessages := true
-	if messageSize <= 0 { // if the very first size is zero, the packet contains only one message filling its remaining size
-		messageSize = r.Len()
-		multipleMessages = false
-	}
-
 	for {
+		typeAndSize, err := binary.ReadUvarint(r)
+		if err != nil {
+			return err
+		}
+		messageStart := len(data) - r.Len()
+		messageType := int(typeAndSize & 31)
+		messageSize := int(typeAndSize >> 5)
+		multipleMessages := true
+		if messageSize <= 0 { // if the very first size is zero, the packet contains only one message filling its remaining size
+			messageSize = r.Len()
+			multipleMessages = false
+		}
+		if messageStart+messageSize > len(data) {
+			return errors.New("message incomplete")
+		}
+
+		now := TimeMs()
+
 		switch messageType {
+
 		case ProtoMessageTypePing:
+			if messageSize >= 8 && (now-h.LastReceivedPing) <= ProtoMinPingResponseInterval {
+				h.LastReceivedPing = now
+				msg := data[messageStart : messageStart+messageSize]
+
+				var pong [57]byte
+				copy(pong[1:9], msg[0:8])
+				s384 := sha512.Sum384(msg)
+				copy(pong[9:57], s384[:])
+				pong[0] = byte(ProtoMessageTypePong) // type, no size == one message per packet
+
+				h.LastSend = now
+				_, err = n.udpSocket.WriteToUDP(pong[:], &h.RemoteAddress)
+				if err == nil {
+					return err
+				}
+			}
+
 		case ProtoMessageTypePong:
+
 		case ProtoMessageTypePeer:
+			var peer ProtoMessagePeer
+			mr := msgpack.NewDecoder(r)
+			err = mr.Decode(&peer)
+			if err != nil {
+				return err
+			}
+
 		case ProtoMessageTypeRecord:
 			if messageSize >= RecordMinSize && messageSize <= RecordMaxSize {
 			}
+
 		case ProtoMessageTypeRequestByHash:
 			if messageSize == 32 {
 			}
 		}
 
-		if multipleMessages {
-			typeAndSize, err = binary.ReadUvarint(r)
-			if err != nil {
-				return err
-			}
-			messageType = int(typeAndSize & 31)
-			messageSize = int(typeAndSize >> 5)
-			if messageSize <= 0 {
-				break
-			}
-		} else {
+		if !multipleMessages {
 			break
 		}
 	}

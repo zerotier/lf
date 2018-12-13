@@ -63,7 +63,7 @@ func NewNode(path string, port int) (*Node, error) {
 						n.hostsByAddr[mapKey] = h
 						n.hostsLock.Unlock()
 					}
-					h.handleIncomingPacket(buf[0:bytes])
+					h.handleIncomingPacket(&n, buf[0:bytes])
 				}
 			}
 			n.udpReaderWG.Done()
