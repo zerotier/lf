@@ -24,10 +24,13 @@ const (
 // ProtoMinPingResponseInterval is the minimum interval in milliseconds between ping responses (more frequent pings are ignored)
 const ProtoMinPingResponseInterval = uint64(1000)
 
+// PeerProtocolLFUDP indicates the LF P2P UDP protocol.
+const PeerProtocolLFUDP = byte(0)
+
 // Peer stores information about another full LF node on the network.
 type Peer struct {
-	AddressType byte   `msgpack:"AT"` // 6 or 4
 	Protocol    byte   `msgpack:"Pr"` // currently always 0 for LF P2P UDP
+	AddressType byte   `msgpack:"AT"` // 6 or 4
 	IP          []byte `msgpack:"IP"`
 	Port        int    `msgpack:"Po"`
 	Zone        string `msgpack:"Z"`

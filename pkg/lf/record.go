@@ -282,29 +282,34 @@ func (r *Record) WorkHash() (h [64]byte, wharrgarblCost uint32, err error) {
 // It sets the Data and Hash fields to the result of final record serialization and signing. Note that the ID claim private
 // key must be set, so SetPlainTextKey must be called before this.
 func (r *Record) Seal(work []byte, ownerPrivateKey []byte) error {
-	b := bytes.NewBuffer(make([]byte, 0, 512))
+	if r.WorkAlgorithm == RecordWorkAlgorithmWharrgarbl && len(work) != WharrgarblProofOfWorkSize {
+		return errors.New("work size is not valid")
+	}
+	if !bytes.Equal(r.IDClaimPrivateKey[32:64], r.ID[0:32]) {
+		return errors.New("ID claim private key is not initialized, call SetPlainTextKey before Seal")
+	}
 
+	b := bytes.NewBuffer(make([]byte, 0, 512))
 	err := r.packMainSection(b)
 	if err != nil {
 		return err
 	}
 
-	if r.WorkAlgorithm == RecordWorkAlgorithmWharrgarbl && len(work) != WharrgarblProofOfWorkSize {
-		return errors.New("work size is not valid")
-	}
+	workHash := sha512.Sum512(b.Bytes())
 	b.Write(work)
 
-	if !bytes.Equal(r.IDClaimPrivateKey[32:64], r.ID[0:32]) {
-		return errors.New("ID claim private key is not initialized, call SetPlainTextKey before Seal")
-	}
-	sig := ed25519.Sign(r.IDClaimPrivateKey[:], b.Bytes())
+	// Signing hash is the hash of the work hash and the work. This makes it easy to both generate work
+	// and sign a record remotely. A remote only needs to know the work hash and it can do PoW, append
+	// it, hash again, then sign with the owner key.
+	sigHash := sha512.Sum512(append(workHash[:], work...))
+
+	sig := ed25519.Sign(r.IDClaimPrivateKey[:], sigHash[:])
 	b.Write(sig)
 
 	if r.OwnerSignatureAlgorithm == RecordSignatureAlgorithmEd25519 && len(ownerPrivateKey) != 64 {
 		return errors.New("invalid owner private key")
 	}
-	ownerSigHash := sha512.Sum512(b.Bytes()) // hash is signed for owner sig to make delegation of signing to remote signers easy
-	sig = ed25519.Sign(ownerPrivateKey, ownerSigHash[:])
+	sig = ed25519.Sign(ownerPrivateKey, sigHash[:])
 	b.Write(sig)
 
 	r.Data = b.Bytes()

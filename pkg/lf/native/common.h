@@ -397,7 +397,6 @@ static inline void ZTLF_L_func(int level,const char *srcf,int line,const char *f
 #define ZTLF_L_trace(...)
 #endif
 
-/* Aborts on malloc failure */
 #define ZTLF_MALLOC_CHECK(m) if (unlikely(!((m)))) { ZTLF_L_fatal("malloc() failed!"); abort(); }
 
 #define ZTLF_timeSec() ((uint64_t)time(NULL))
