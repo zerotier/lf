@@ -8,19 +8,26 @@ import (
 	"fmt"
 	"math/rand"
 	"net"
+	"sync"
+
+	"github.com/vmihailenco/msgpack"
 )
 
 // packedAddress is an IP and port packed into a uint64 array to use as a key in a map
 type packedAddress [3]uint64
 
-func (p *packedAddress) set(a *net.UDPAddr) {
-	(*p)[0] = (uint64(a.Port) << 48) | (uint64(len(a.Zone)) << 8) | uint64(len(a.IP))
-	if len(a.IP) == 4 {
+func (p *packedAddress) set(ip net.IP, port int, zone string) {
+	var zoneSum uint64
+	for i := range zone {
+		zoneSum += uint64(zone[i])
+	}
+	(*p)[0] = (uint64(port) << 48) | (zoneSum << 8) | uint64(len(ip))
+	if len(ip) == 4 {
 		(*p)[1] = 0
-		(*p)[2] = uint64(binary.LittleEndian.Uint32(a.IP))
-	} else if len(a.IP) == 16 {
-		(*p)[1] = binary.LittleEndian.Uint64(a.IP[0:8])
-		(*p)[2] = binary.LittleEndian.Uint64(a.IP[8:16])
+		(*p)[2] = uint64(binary.LittleEndian.Uint32(ip))
+	} else if len(ip) == 16 {
+		(*p)[1] = binary.LittleEndian.Uint64(ip[0:8])
+		(*p)[2] = binary.LittleEndian.Uint64(ip[8:16])
 	} else {
 		(*p)[1] = 0
 		(*p)[2] = 0
@@ -31,6 +38,10 @@ func (p *packedAddress) set(a *net.UDPAddr) {
 type Host struct {
 	packedAddress packedAddress
 	lastPingHash  [48]byte // SHA384(last ping sent)
+
+	queuedPeers          []*ProtoMessagePeer
+	queuedRecordRequests [][32]byte
+	queuedLock           sync.Mutex
 
 	LastSentPing       uint64
 	LastReceivedPing   uint64
@@ -46,15 +57,21 @@ type Host struct {
 	Latency            int
 }
 
+func (h *Host) doRecordRequest(recordHash []byte) (err error) {
+	return nil
+}
+
+// handleIncomingPacket is called from Node's I/O code when UDP packets arrive.
 func (h *Host) handleIncomingPacket(n *Node, data []byte) (err error) {
 	defer func() {
 		e := recover()
 		if e != nil {
-			err = fmt.Errorf("unexpected fatal error parsing packet: %s", e)
+			err = fmt.Errorf("trapped unexpected error: %s", e)
 		}
 	}()
 
 	r := bytes.NewReader(data)
+	now := TimeMs()
 
 	for r.Len() > 0 {
 		typeAndSize, err := binary.ReadUvarint(r)
@@ -72,8 +89,6 @@ func (h *Host) handleIncomingPacket(n *Node, data []byte) (err error) {
 		if messageStart+messageSize > len(data) {
 			return errors.New("message incomplete")
 		}
-
-		now := TimeMs()
 
 		switch messageType {
 
@@ -103,26 +118,65 @@ func (h *Host) handleIncomingPacket(n *Node, data []byte) (err error) {
 					if ts <= now && ts == h.LastSentPing {
 						h.LastReceivedPong = now
 						h.Latency = int(now - ts)
+
+						// Do any queued things that are waiting for verification that this
+						// peer really exists. This queueing exists to prevent the use of LF
+						// nodes for amplification attacks.
+						h.queuedLock.Lock()
+						for i := range h.queuedPeers {
+							n.Try(h.queuedPeers[i].IP, int(h.queuedPeers[i].Port), h.queuedPeers[i].Zone)
+						}
+						h.queuedPeers = nil
+						for i := range h.queuedRecordRequests {
+							h.doRecordRequest(h.queuedRecordRequests[i][:])
+						}
+						h.queuedRecordRequests = nil
+						h.queuedLock.Unlock()
 					}
 				}
 			}
 
 		case ProtoMessageTypePeer:
-			/*
-				var peer ProtoMessagePeer
-				mr := msgpack.NewDecoder(r)
-				err = mr.Decode(&peer)
-				if err != nil {
-					return err
+			var peer ProtoMessagePeer
+			err = msgpack.NewDecoder(r).Decode(&peer)
+			if err != nil {
+				return err
+			}
+			if h.Connected() {
+				n.Try(peer.IP, int(peer.Port), peer.Zone)
+			} else {
+				h.queuedLock.Lock()
+				if len(h.queuedPeers) < 1024 { // sanity limit
+					h.queuedPeers = append(h.queuedPeers, &peer)
 				}
-			*/
+				h.queuedLock.Unlock()
+				h.Ping(n, false)
+			}
 
 		case ProtoMessageTypeRecord:
 			if messageSize >= RecordMinSize {
+				msg := data[messageStart : messageStart+messageSize]
+				n.AddRecord(msg)
+				if !h.Connected() {
+					h.Ping(n, false)
+				}
 			}
 
 		case ProtoMessageTypeRequestByHash:
 			if messageSize == 32 {
+				msg := data[messageStart : messageStart+messageSize]
+				if h.Connected() {
+					h.doRecordRequest(msg)
+				} else {
+					var rr [32]byte
+					copy(rr[:], msg)
+					h.queuedLock.Lock()
+					if len(h.queuedRecordRequests) < 1024 { // sanity limit
+						h.queuedRecordRequests = append(h.queuedRecordRequests, rr)
+					}
+					h.queuedLock.Unlock()
+					h.Ping(n, false)
+				}
 			}
 
 		}
@@ -132,18 +186,28 @@ func (h *Host) handleIncomingPacket(n *Node, data []byte) (err error) {
 		}
 	}
 
+	h.LastReceive = now
+
 	return nil
 }
 
-// Ping sends a ping message to the host (should not do more than once per second)
-func (h *Host) Ping(n *Node) error {
-	var ping [13]byte
-	ping[0] = byte(ProtoMessageTypePing) // type, no size == one message per packet
+// Connected returns true if this host has responded to a ping and was active within the timeout period.
+func (h *Host) Connected() bool {
+	return (h.LastReceivedPong > h.LastSentPing) && ((TimeMs() - h.LastReceive) < ProtoHostTimeout)
+}
+
+// Ping sends a ping message to the host. If force is not true this is only done if we haven't sent a ping in ProtoMinPingResponseInterval milliseconds.
+func (h *Host) Ping(n *Node, force bool) error {
 	ts := TimeMs()
-	binary.BigEndian.PutUint64(ping[1:9], ts)
-	binary.BigEndian.PutUint32(ping[9:13], uint32(rand.Int31()))
-	h.lastPingHash = sha512.Sum384(ping[1:])
-	h.LastSentPing = ts
-	_, err := n.udpSocket.WriteToUDP(ping[:], &h.RemoteAddress)
-	return err
+	if force || (ts-h.LastSentPing) < ProtoMinPingResponseInterval {
+		var ping [13]byte
+		ping[0] = byte(ProtoMessageTypePing) // type, no size == one message per packet
+		binary.BigEndian.PutUint64(ping[1:9], ts)
+		binary.BigEndian.PutUint32(ping[9:13], uint32(rand.Int31()))
+		h.lastPingHash = sha512.Sum384(ping[1:])
+		h.LastSentPing = ts
+		_, err := n.udpSocket.WriteToUDP(ping[:], &h.RemoteAddress)
+		return err
+	}
+	return nil
 }

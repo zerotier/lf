@@ -13,6 +13,21 @@
 #define ZTLF_WHARRGARBL_POW_BYTES 20
 
 /**
+ * This is a simple Davies-Meyer construction hash function built from the Speck block cipher.
+ * 
+ * It should not be considered secure for authentication or encryption purposes. Its purpose
+ * is to act as a cryptographic PRNG for use in Wharrgarbl's momentum-style collision search
+ * proof of work function.
+ * 
+ * It's exposed here so it can be tested.
+ * 
+ * @param out Output to receive 128-bit digest
+ * @param in Input to hash
+ * @param len Length of input
+ */
+void ZTLF_SpeckHash(uint64_t out[2],const void *in,const unsigned long len);
+
+/**
  * Compute a memory-hard proof of work from an input.
  * 
  * @param pow 20-byte buffer to receive proof of work results

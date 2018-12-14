@@ -14,26 +14,47 @@ import (
 // WharrgarblProofOfWorkSize is the size of Wharrgarbl's result in bytes.
 const WharrgarblProofOfWorkSize = 20
 
+// A single memory arena is kept around for performance reasons. All CPU cores are used by Wharrgarbl,
+// so there is no point in parallelizing it.
+var wharrgarblMemory unsafe.Pointer
+var wharrgarblMemorySize uint
+var wharrgarblMemoryLock sync.Mutex
+
+// SpeckHash computes a simple Davies-Meyer type hash.
+// This algorithm isn't for authentication or other security uses. It's only used in the Wharrgarbl
+// PoW collision search. It's exposed for testing/verification.
+func SpeckHash(out [2]uint64, in []byte) {
+	C.ZTLF_SpeckHash((*_Ctype_ulonglong)(unsafe.Pointer(&out)), unsafe.Pointer(&(in[0])), _Ctype_ulong(len(in)))
+}
+
 // Wharrgarbl computes the result of the Wharrgarbl proof of work function using input as a unique challenge.
 // This can of course be extremely time consuming, sometimes taking minutes for very high difficulties on some systems.
-// The concurrency parameter specifies how many hardware threads to use. If it's zero the number of CPUs in the system is used.
-// The memory must be at least 12 bytes in size and need not be cleared between calls to Wharrgarbl(). If computation fails
-// for some reason (e.g. memory is nil) zero iterations will be returned. Otherwise iterations is the total number of search
-// iterations executed on all threads to find the result.
-func Wharrgarbl(in []byte, difficulty uint32, memory []byte, concurrency uint) (out [20]byte, iterations uint64) {
-	if len(memory) < 12 {
+// The memory must be at least 12 bytes in size and need not be cleared between calls to Wharrgarbl(). Any failure results in
+// zero being returned for iterations and an undefined result in []out.
+func Wharrgarbl(in []byte, difficulty uint32, minMemorySize uint) (out [20]byte, iterations uint64) {
+	if minMemorySize < 12 {
 		return
 	}
-	var waitForCompletionLock sync.Mutex
-	waitForCompletionLock.Lock()
-	go func() {
-		runtime.LockOSThread()
-		iterations = uint64(C.ZTLF_Wharrgarbl(unsafe.Pointer(&out), unsafe.Pointer(&(in[0])), _Ctype_ulong(len(in)), _Ctype_uint(difficulty), unsafe.Pointer(&(memory[0])), _Ctype_ulong(len(memory)), _Ctype_uint(concurrency)))
-		waitForCompletionLock.Unlock()
-		runtime.UnlockOSThread()
-	}()
-	waitForCompletionLock.Lock() // wait for C function to complete
-	waitForCompletionLock.Unlock()
+
+	wharrgarblMemoryLock.Lock()
+	if wharrgarblMemorySize < minMemorySize {
+		if uintptr(wharrgarblMemory) != 0 {
+			C.free(wharrgarblMemory)
+		}
+		wharrgarblMemory = C.malloc(_Ctype_ulong(minMemorySize))
+		if uintptr(wharrgarblMemory) == 0 {
+			wharrgarblMemoryLock.Unlock()
+			panic("out of memory (C malloc)")
+		}
+		wharrgarblMemorySize = minMemorySize
+	}
+
+	runtime.LockOSThread()
+	iterations = uint64(C.ZTLF_Wharrgarbl(unsafe.Pointer(&out), unsafe.Pointer(&(in[0])), _Ctype_ulong(len(in)), _Ctype_uint(difficulty), wharrgarblMemory, _Ctype_ulong(wharrgarblMemorySize), _Ctype_uint(runtime.NumCPU())))
+	runtime.UnlockOSThread()
+
+	wharrgarblMemoryLock.Unlock()
+
 	return
 }
 
@@ -51,4 +72,16 @@ func WharrgarblGetDifficulty(work []byte) uint32 {
 		return binary.BigEndian.Uint32(work[16:20])
 	}
 	return 0
+}
+
+// WharrgarblFreeGlobalMemory frees any global memory areas allocated from previous calls to Wharrgarbl().
+// Memory will be re-allocated if needed.
+func WharrgarblFreeGlobalMemory() {
+	wharrgarblMemoryLock.Lock()
+	if uintptr(wharrgarblMemory) != 0 {
+		C.free(wharrgarblMemory)
+	}
+	wharrgarblMemory = nil
+	wharrgarblMemorySize = 0
+	wharrgarblMemoryLock.Unlock()
 }

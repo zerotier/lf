@@ -37,6 +37,7 @@ static unsigned int ZTLF_ncpus()
 #endif /* Windows / non-Windows */
 
 /* Speck algorithm from https://en.wikipedia.org/wiki/Speck_(cipher) */
+/* Byte swapping added so this will generate the same result on big or little endian systems. */
 #define SPECK_ROR(x, r) ((x >> r) | (x << (64 - r)))
 #define SPECK_ROL(x, r) ((x << r) | (x >> (64 - r)))
 #define SPECK_R(x, y, k) (x = SPECK_ROR(x, 8), x += y, x ^= k, y = SPECK_ROL(y, 3), y ^= x)
@@ -50,16 +51,14 @@ static inline void _ZTLF_SpeckEncrypt(uint64_t ct[2],uint64_t const pt[2],uint64
 	ct[1] = ZTLF_htonll(x);
 }
 
-/* Davies-Meyer hash function built from Speck algorithm. */
-/* https://en.wikipedia.org/wiki/One-way_compression_function#Davies–Meyer */
-static inline void _ZTLF_SpeckHash(uint64_t out[2],const void *in,const unsigned long len)
+void ZTLF_SpeckHash(uint64_t out[2],const void *in,const unsigned long len)
 {
 	uint64_t buf[2];
 	unsigned int p = 0;
 
 	/* Hash message block by block */
 	out[0] = 0x7171717171717171ULL;
-	out[1] = 0x1717171717171717ULL; /* endian-neutral initial constants */
+	out[1] = 0x1717171717171717ULL; /* endian-neutral initial state constants */
 	for(unsigned long i=0;i<len;++i) {
 		((uint8_t *)buf)[p++] = ((const uint8_t *)in)[i];
 		if (p == 16) {
@@ -116,7 +115,7 @@ static void *_wharrgarbl(void *ptr)
 	uint64_t iter = 0;
 	while (ws->done == 0) {
 		hin[2] = ++thisCollider;
-		_ZTLF_SpeckHash(hout,hin,sizeof(hin));
+		ZTLF_SpeckHash(hout,hin,sizeof(hin));
 		const uint64_t thisCollision = ZTLF_ntohll(hout[0] ^ hout[1]) % ws->difficulty;
 
 		uint32_t *ctabEntry = ws->collisionTable + (((thisCollision ^ ws->runNonce) % ws->collisionTableSize) * 3);
@@ -131,7 +130,7 @@ static void *_wharrgarbl(void *ptr)
 
 			if (otherCollider != thisCollider) {
 				hin[2] = otherCollider;
-				_ZTLF_SpeckHash(hout,hin,sizeof(hin));
+				ZTLF_SpeckHash(hout,hin,sizeof(hin));
 				const uint64_t otherCollision = ZTLF_ntohll(hout[0] ^ hout[1]) % ws->difficulty;
 
 				if (otherCollision == thisCollision) {
@@ -189,7 +188,7 @@ uint64_t ZTLF_Wharrgarbl(void *pow,const void *in,const unsigned long inlen,cons
 		needFree = true;
 	}
 	ws.collisionTable = (uint32_t *)memory;
-	_ZTLF_SpeckHash(ws.inHash,in,inlen);
+	ZTLF_SpeckHash(ws.inHash,in,inlen);
 	pthread_mutex_init(&ws.doneLock,NULL);
 	pthread_cond_init(&ws.doneCond,NULL);
 	ws.done = 0;
@@ -249,14 +248,14 @@ uint32_t ZTLF_WharrgarblVerify(const void *pow,const void *in,const unsigned lon
 	diff32 |= ((const uint8_t *)pow)[19];
 	const uint64_t difficulty = (((uint64_t)diff32) << 32) | 0x00000000ffffffffULL;
 
-	_ZTLF_SpeckHash(hin,in,inlen);
+	ZTLF_SpeckHash(hin,in,inlen);
 
 	if ((powq[0] == powq[1])||(!difficulty))
 		return 0;
 
 	for(i=0;i<2;++i) {
 		hin[2] = powq[i];
-		_ZTLF_SpeckHash(hout,hin,sizeof(hin));
+		ZTLF_SpeckHash(hout,hin,sizeof(hin));
 		collision[i] = ZTLF_ntohll(hout[0] ^ hout[1]) % difficulty;
 	}
 

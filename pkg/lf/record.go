@@ -8,6 +8,7 @@ import (
 	"crypto/sha512"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 
 	"golang.org/x/crypto/ed25519"
@@ -25,10 +26,9 @@ const (
 	RecordWorkAlgorithmWharrgarbl = byte(1)
 )
 
-// Record signature algorithm IDs (range 0-3)
+// Record signature algorithm IDs (range 0-3) (no "none" here since there must be signatures)
 const (
-	RecordSignatureAlgorithmNone    = byte(0)
-	RecordSignatureAlgorithmEd25519 = byte(1)
+	RecordSignatureAlgorithmEd25519 = byte(0)
 )
 
 // Record meta-data field types (range 0-15)
@@ -84,25 +84,23 @@ type Record struct {
 	OwnerSignature            []byte            // Signature of record by owner
 	ValueEncryptionAlgorithm  byte              // Encryption algorithm for record data
 	WorkAlgorithm             byte              // Work algorithm used to "pay" for record
-	IDClaimSignatureAlgorithm byte              // Signature algorithm used to prove knowledge of plain text key
 	OwnerSignatureAlgorithm   byte              // Signature algorithm used to sign record by owner
+	IDClaimSignatureAlgorithm byte              // Signature algorithm used to prove knowledge of plain text key
 }
 
 // RecordWharrgarblCost computes the cost in Wharrgarbl difficulty for a record whose total size is the supplied number of bytes.
 func RecordWharrgarblCost(bytes int) uint32 {
 	// This function was figured out by:
 	//
-	// (1) Using the -W option to model difficulty for a target time appreciation curve.
+	// (1) Sampling difficulty vs time.
 	// (2) Using Microsoft Excel to fit the curve, yielding: d =~ 1.739*b^1.5605
 	// (3) Figuring out an integer based equation that approximates this for our input range.
 	//
 	// It's an integer algorithm using a rounded integer square root to avoid FPU inconsistencies
 	// across different systems. Any FPU inconsistencies could make nodes disagree about costs.
-	if bytes <= 64 {
-		return 1024 // minimum work
-	}
-	c := (uint64(IntegerSqrtRounded(uint32(bytes))) * uint64(bytes) * uint64(3)) - uint64(bytes*8)
-	if c > 0xffffffff {
+	b := uint64(bytes * 2) // this adjusts the overall magnitude without affecting the curve's shape
+	c := (uint64(IntegerSqrtRounded(uint32(b))) * b * uint64(3)) - (b * 8)
+	if c > 0xffffffff { // sanity check, no record gets this big
 		return 0xffffffff
 	}
 	return uint32(c)
@@ -118,10 +116,10 @@ func (r *Record) packMainSection(b *bytes.Buffer) error {
 	writeUVarint(b, r.Timestamp)
 	writeUVarint(b, r.TTL)
 	writeUVarint(b, r.Flags)
-	if ((r.ValueEncryptionAlgorithm | r.WorkAlgorithm | r.IDClaimSignatureAlgorithm | r.OwnerSignatureAlgorithm) & 0xfc) != 0 {
+	if ((r.ValueEncryptionAlgorithm | r.WorkAlgorithm | r.OwnerSignatureAlgorithm | r.IDClaimSignatureAlgorithm) & 0xfc) != 0 {
 		return errors.New("at least one algorithm type field is out of range (range: 2 bits, 0-3)")
 	}
-	b.WriteByte((r.ValueEncryptionAlgorithm << 6) | (r.WorkAlgorithm << 4) | (r.IDClaimSignatureAlgorithm << 2) | r.OwnerSignatureAlgorithm)
+	b.WriteByte((r.ValueEncryptionAlgorithm << 6) | (r.WorkAlgorithm << 4) | (r.OwnerSignatureAlgorithm << 2) | r.IDClaimSignatureAlgorithm)
 	linkCount := len(r.Links) / 32
 	if (linkCount * 32) != len(r.Links) {
 		return errors.New("size of Links must be a multiple of 32")
@@ -129,15 +127,24 @@ func (r *Record) packMainSection(b *bytes.Buffer) error {
 	if linkCount > RecordMaxLinkCount {
 		return errors.New("too many links")
 	}
-	linkCountAndValueSize := (linkCount << 11) | len(r.Value)
+	linkCountAndValueSize := (linkCount << 11) | (len(r.Value) & 0x7ff)
 	b.WriteByte(byte(linkCountAndValueSize>>8) & 0xff)
 	b.WriteByte(byte(linkCountAndValueSize & 0xff))
-	b.WriteByte(((r.MetaData[0].Type & 15) << 4) | (r.MetaData[1].Type & 15))
+	b.WriteByte(((r.MetaData[0].Type & 0xf) << 4) | (r.MetaData[1].Type & 0xf))
 	b.Write(r.Value)
 	b.Write(r.Links)
 	for i := 0; i < 2; i++ {
 		if r.MetaData[i].Type != RecordMetaDataTypeNone {
-			b.Write(r.MetaData[i].Value)
+			if r.MetaData[i].Type == RecordMetaDataTypeChangeOwner || r.MetaData[i].Type == RecordMetaDataTypeSelector {
+				if len(r.MetaData[i].Value) == 32 {
+					b.WriteByte(32) // technically a varint but 32 can be written as a single byte
+					b.Write(r.MetaData[i].Value)
+				} else {
+					return errors.New("meta-data value length invalid for meta-data type")
+				}
+			} else {
+				return errors.New("unrecognized meta-data type")
+			}
 		}
 	}
 	return nil
@@ -207,6 +214,40 @@ func (r *Record) SetValue(value []byte, encrypt bool) error {
 	return nil
 }
 
+// NewRecord is a shortcut to configure, add proof of work, and seal a record. The only external
+// ingredient needed from a node is enough links.
+func NewRecord(key, value, links []byte, ts, ttl uint64, encryptValue bool, ownerPrivateKey []byte) (*Record, error) {
+	var r Record
+
+	if len(ownerPrivateKey) != 64 {
+		return nil, errors.New("invalid ed25519 owner private key")
+	}
+	r.SetPlainTextKey(key)
+	copy(r.Owner[:], ownerPrivateKey[32:64])
+	r.Timestamp = ts
+	r.TTL = ttl
+	err := r.SetValue(value, encryptValue)
+	if err != nil {
+		return nil, err
+	}
+
+	workHash, cost, err := r.WorkHash()
+	if err != nil {
+		return nil, err
+	}
+	work, workIterations := Wharrgarbl(workHash[:], cost, 1024*1024*128)
+	if workIterations == 0 {
+		return nil, errors.New("unknown error computing proof of work (0 returned for iterations)")
+	}
+
+	err = r.Seal(work[:], ownerPrivateKey)
+	if err != nil {
+		return nil, err
+	}
+
+	return &r, nil
+}
+
 // GetValue retrieves the plain text value from this record, decompressing and/or decrypting as needed.
 func (r *Record) GetValue(plainTextKey []byte) ([]byte, error) {
 	var dec []byte
@@ -249,8 +290,16 @@ func (r *Record) GetValue(plainTextKey []byte) ([]byte, error) {
 
 // Unpack deserializes a packed record and fills the record's fields.
 // If data is nil/empty, the record's Data field is used. If data is not nil it is used and
-// the record's Data field is set to a copy of the supplied slice.
-func (r *Record) Unpack(data []byte) error {
+// the record's Data field is set to a copy of the supplied slice. If validate is true signatures
+// and proof of work will be checked for validity.
+func (r *Record) Unpack(data []byte, validate bool) (err error) {
+	defer func() {
+		e := recover()
+		if e != nil {
+			err = fmt.Errorf("trapped unexpected error: %s", e)
+		}
+	}()
+
 	if len(data) == 0 {
 		data = r.Data
 	} else {
@@ -258,6 +307,118 @@ func (r *Record) Unpack(data []byte) error {
 		copy(r.Data, data)
 	}
 	r.Hash = Shandwich256(r.Data)
+
+	if len(r.Data) < RecordMinSize {
+		return errors.New("record too small")
+	}
+	copy(r.ID[:], data[0:32])
+	copy(r.Owner[:], data[32:64])
+	dr := bytes.NewReader(data[64:])
+	r.Timestamp, err = binary.ReadUvarint(dr)
+	if err != nil {
+		return
+	}
+	r.TTL, err = binary.ReadUvarint(dr)
+	if err != nil {
+		return
+	}
+	r.Flags, err = binary.ReadUvarint(dr)
+	if err != nil {
+		return
+	}
+	//b.WriteByte((r.ValueEncryptionAlgorithm << 6) | (r.WorkAlgorithm << 4) | (r.IDClaimSignatureAlgorithm << 2) | r.OwnerSignatureAlgorithm)
+	tmp, err := dr.ReadByte()
+	if err != nil {
+		return
+	}
+	r.ValueEncryptionAlgorithm = (tmp >> 6) & 3
+	r.WorkAlgorithm = (tmp >> 4) & 3
+	r.OwnerSignatureAlgorithm = (tmp >> 2) & 3
+	r.IDClaimSignatureAlgorithm = tmp & 3
+	tmp, err = dr.ReadByte()
+	if err != nil {
+		return
+	}
+	linkCountAndValueSize := uint(tmp) << 8
+	tmp, err = dr.ReadByte()
+	if err != nil {
+		return
+	}
+	linkCountAndValueSize |= uint(tmp)
+	linkCount := (linkCountAndValueSize >> 11) & 31
+	valueSize := linkCountAndValueSize & 0x7ff
+	if valueSize > RecordMaxValueSize {
+		return errors.New("record value too large")
+	}
+	tmp, err = dr.ReadByte()
+	if err != nil {
+		return
+	}
+	r.MetaData[0].Type = (tmp >> 4) & 0xf
+	r.MetaData[1].Type = tmp & 0xf
+
+	r.Value = make([]byte, valueSize)
+	_, err = io.ReadFull(dr, r.Value)
+	if err != nil {
+		return
+	}
+	r.Links = make([]byte, linkCount*32)
+	_, err = io.ReadFull(dr, r.Links)
+	if err != nil {
+		return
+	}
+
+	for i := 0; i < 2; i++ {
+		if r.MetaData[i].Type != RecordMetaDataTypeNone {
+			var mdl uint64
+			mdl, err = binary.ReadUvarint(dr)
+			if err != nil {
+				return
+			}
+			if (mdl > uint64(len(data))) || ((r.MetaData[i].Type == RecordMetaDataTypeChangeOwner || r.MetaData[i].Type == RecordMetaDataTypeSelector) && (mdl != 32)) {
+				return errors.New("meta-data size invalid")
+			}
+			r.MetaData[i].Value = make([]byte, uint(mdl))
+			_, err = io.ReadFull(dr, r.MetaData[i].Value)
+			if err != nil {
+				return
+			}
+		}
+	}
+
+	switch r.WorkAlgorithm {
+	case RecordWorkAlgorithmNone:
+	case RecordWorkAlgorithmWharrgarbl:
+		r.Work = make([]byte, WharrgarblProofOfWorkSize)
+		_, err = io.ReadFull(dr, r.Work)
+		if err != nil {
+			return
+		}
+	default:
+		return errors.New("unrecognized work type")
+	}
+
+	switch r.OwnerSignatureAlgorithm {
+	case RecordSignatureAlgorithmEd25519:
+		r.OwnerSignature = make([]byte, 64)
+		_, err = io.ReadFull(dr, r.Work)
+		if err != nil {
+			return
+		}
+	default:
+		return errors.New("unrecognized signature type")
+	}
+
+	switch r.IDClaimSignatureAlgorithm {
+	case RecordSignatureAlgorithmEd25519:
+		r.IDClaimSignature = make([]byte, 64)
+		_, err = io.ReadFull(dr, r.Work)
+		if err != nil {
+			return
+		}
+	default:
+		return errors.New("unrecognized signature type")
+	}
 
 	// Check whether plain text key in Record (if present) matches record's ID and null out if not.
 	if !bytes.Equal(r.IDClaimPrivateKey[32:64], r.ID[0:32]) {
@@ -288,6 +449,9 @@ func (r *Record) Seal(work []byte, ownerPrivateKey []byte) error {
 	if !bytes.Equal(r.IDClaimPrivateKey[32:64], r.ID[0:32]) {
 		return errors.New("ID claim private key is not initialized, call SetPlainTextKey before Seal")
 	}
+	if r.OwnerSignatureAlgorithm == RecordSignatureAlgorithmEd25519 && len(ownerPrivateKey) != 64 {
+		return errors.New("invalid owner private key")
+	}
 
 	b := bytes.NewBuffer(make([]byte, 0, 512))
 	err := r.packMainSection(b)
@@ -297,20 +461,19 @@ func (r *Record) Seal(work []byte, ownerPrivateKey []byte) error {
 
 	workHash := sha512.Sum512(b.Bytes())
 	b.Write(work)
+	r.Work = make([]byte, len(work))
+	copy(r.Work, work)
 
 	// Signing hash is the hash of the work hash and the work. This makes it easy to both generate work
 	// and sign a record remotely. A remote only needs to know the work hash and it can do PoW, append
 	// it, hash again, then sign with the owner key.
 	sigHash := sha512.Sum512(append(workHash[:], work...))
+	r.OwnerSignature = ed25519.Sign(ownerPrivateKey, sigHash[:])
+	b.Write(r.OwnerSignature)
 
-	sig := ed25519.Sign(r.IDClaimPrivateKey[:], sigHash[:])
-	b.Write(sig)
-
-	if r.OwnerSignatureAlgorithm == RecordSignatureAlgorithmEd25519 && len(ownerPrivateKey) != 64 {
-		return errors.New("invalid owner private key")
-	}
-	sig = ed25519.Sign(ownerPrivateKey, sigHash[:])
-	b.Write(sig)
+	// Finally the record is signed by the ID claim key, proving that the plain text key is known.
+	r.IDClaimSignature = ed25519.Sign(r.IDClaimPrivateKey[:], b.Bytes())
+	b.Write(r.IDClaimSignature)
 
 	r.Data = b.Bytes()
 	r.Hash = Shandwich256(r.Data)
