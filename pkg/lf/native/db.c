@@ -139,6 +139,7 @@ struct ZTLF_DB_BestRecordWithTimeRange
 \
 "CREATE UNIQUE INDEX IF NOT EXISTS record_goff ON record(goff);\n" \
 "CREATE UNIQUE INDEX IF NOT EXISTS record_hash ON record(hash);\n" \
+"CREATE UNIQUE INDEX IF NOT EXISTS record_owner_ts ON record(owner,ts);\n" \
 "CREATE INDEX IF NOT EXISTS record_id_ts ON record(id,ts);\n" \
 \
 "CREATE TABLE IF NOT EXISTS dangling_link (" \

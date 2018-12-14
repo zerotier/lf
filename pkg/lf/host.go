@@ -16,12 +16,8 @@ import (
 // packedAddress is an IP and port packed into a uint64 array to use as a key in a map
 type packedAddress [3]uint64
 
-func (p *packedAddress) set(ip net.IP, port int, zone string) {
-	var zoneSum uint64
-	for i := range zone {
-		zoneSum += uint64(zone[i])
-	}
-	(*p)[0] = (uint64(port) << 48) | (zoneSum << 8) | uint64(len(ip))
+func (p *packedAddress) set(ip net.IP, port int) {
+	(*p)[0] = (uint64(port) << 48) | uint64(len(ip))
 	if len(ip) == 4 {
 		(*p)[1] = 0
 		(*p)[2] = uint64(binary.LittleEndian.Uint32(ip))
@@ -43,13 +39,12 @@ type Host struct {
 	queuedRecordRequests [][32]byte
 	queuedLock           sync.Mutex
 
+	CreationTime       uint64
 	LastSentPing       uint64
 	LastReceivedPing   uint64
 	LastReceivedPong   uint64
 	LastSend           uint64
 	LastReceive        uint64
-	FirstSend          uint64
-	FirstReceive       uint64
 	TotalBytesSent     uint64
 	TotalBytesReceived uint64
 	Subscriptions      uint64
@@ -104,6 +99,7 @@ func (h *Host) handleIncomingPacket(n *Node, data []byte) (err error) {
 				copy(pong[9:57], s384[:])
 
 				h.LastSend = now
+				h.TotalBytesSent += uint64(len(pong))
 				_, err = n.udpSocket.WriteToUDP(pong[:], &h.RemoteAddress)
 				if err == nil {
 					return err
@@ -124,7 +120,7 @@ func (h *Host) handleIncomingPacket(n *Node, data []byte) (err error) {
 						// nodes for amplification attacks.
 						h.queuedLock.Lock()
 						for i := range h.queuedPeers {
-							n.Try(h.queuedPeers[i].IP, int(h.queuedPeers[i].Port), h.queuedPeers[i].Zone)
+							n.Try(h.queuedPeers[i].IP, int(h.queuedPeers[i].Port))
 						}
 						h.queuedPeers = nil
 						for i := range h.queuedRecordRequests {
@@ -143,7 +139,7 @@ func (h *Host) handleIncomingPacket(n *Node, data []byte) (err error) {
 				return err
 			}
 			if h.Connected() {
-				n.Try(peer.IP, int(peer.Port), peer.Zone)
+				n.Try(peer.IP, int(peer.Port))
 			} else {
 				h.queuedLock.Lock()
 				if len(h.queuedPeers) < 1024 { // sanity limit
@@ -187,6 +183,7 @@ func (h *Host) handleIncomingPacket(n *Node, data []byte) (err error) {
 	}
 
 	h.LastReceive = now
+	h.TotalBytesReceived += uint64(len(data))
 
 	return nil
 }
@@ -206,6 +203,7 @@ func (h *Host) Ping(n *Node, force bool) error {
 		binary.BigEndian.PutUint32(ping[9:13], uint32(rand.Int31()))
 		h.lastPingHash = sha512.Sum384(ping[1:])
 		h.LastSentPing = ts
+		h.TotalBytesSent += uint64(len(ping))
 		_, err := n.udpSocket.WriteToUDP(ping[:], &h.RemoteAddress)
 		return err
 	}

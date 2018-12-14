@@ -29,5 +29,4 @@ type ProtoMessagePeer struct {
 	AddressType byte   `msgpack:"AT"` // 6 or 4
 	IP          []byte `msgpack:"IP"`
 	Port        uint16 `msgpack:"Po"`
-	Zone        string `msgpack:"Z,omitempty"`
 }

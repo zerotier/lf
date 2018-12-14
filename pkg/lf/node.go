@@ -62,8 +62,8 @@ func NewNode(path string, port int) (*Node, error) {
 			var buf [16384]byte
 			for atomic.LoadUintptr(&n.shutdown) == 0 {
 				bytes, addr, err := n.udpSocket.ReadFromUDP(buf[:])
-				if bytes > 0 && err == nil {
-					n.GetHost(addr.IP, addr.Port, addr.Zone, true).handleIncomingPacket(n, buf[0:bytes])
+				if bytes > 0 && err == nil && len(addr.Zone) == 0 {
+					n.GetHost(addr.IP, addr.Port, true).handleIncomingPacket(n, buf[0:bytes])
 				}
 			}
 			n.backgroundThreadWG.Done()
@@ -94,7 +94,7 @@ func NewNode(path string, port int) (*Node, error) {
 			hostCount := 0
 			now := TimeMs()
 			for i := 0; i < len(n.hosts); i++ {
-				if (now - n.hosts[i].LastReceive) > ProtoHostTimeout {
+				if (now-n.hosts[i].LastReceive) > ProtoHostTimeout && (now-n.hosts[i].CreationTime) > ProtoHostTimeout {
 					delete(n.hostsByAddr, n.hosts[i].packedAddress)
 				} else {
 					if (now - n.hosts[i].LastSend) > (ProtoHostTimeout / 3) {
@@ -128,9 +128,9 @@ func (n *Node) Stop() {
 // GetHost gets the Host object for a given address.
 // If createIfMissing is true a new object is initialized if there is not one currently. Otherwise nil
 // is returned if no host is known.
-func (n *Node) GetHost(ip net.IP, port int, zone string, createIfMissing bool) *Host {
+func (n *Node) GetHost(ip net.IP, port int, createIfMissing bool) *Host {
 	var mapKey packedAddress
-	mapKey.set(ip, port, zone)
+	mapKey.set(ip, port)
 	n.hostsLock.RLock()
 	h := n.hostsByAddr[mapKey]
 	n.hostsLock.RUnlock()
@@ -138,8 +138,8 @@ func (n *Node) GetHost(ip net.IP, port int, zone string, createIfMissing bool) *
 		if createIfMissing {
 			h = &Host{
 				packedAddress: mapKey,
-				FirstReceive:  TimeMs(),
-				RemoteAddress: net.UDPAddr{IP: ip, Port: port, Zone: zone},
+				CreationTime:  TimeMs(),
+				RemoteAddress: net.UDPAddr{IP: ip, Port: port},
 				Latency:       -1}
 			n.hostsLock.Lock()
 			n.hosts = append(n.hosts, h)
@@ -153,8 +153,8 @@ func (n *Node) GetHost(ip net.IP, port int, zone string, createIfMissing bool) *
 }
 
 // Try makes an attempt to contact a peer if it's not already connected to us.
-func (n *Node) Try(ip []byte, port int, zone string) {
-	h := n.GetHost(ip, port, zone, true)
+func (n *Node) Try(ip []byte, port int) {
+	h := n.GetHost(ip, port, true)
 	if !h.Connected() {
 		h.Ping(n, false)
 	}

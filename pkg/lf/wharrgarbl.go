@@ -23,8 +23,13 @@ var wharrgarblMemoryLock sync.Mutex
 // SpeckHash computes a simple Davies-Meyer type hash.
 // This algorithm isn't for authentication or other security uses. It's only used in the Wharrgarbl
 // PoW collision search. It's exposed for testing/verification.
-func SpeckHash(out [2]uint64, in []byte) {
-	C.ZTLF_SpeckHash((*_Ctype_ulonglong)(unsafe.Pointer(&out)), unsafe.Pointer(&(in[0])), _Ctype_ulong(len(in)))
+func SpeckHash(in []byte) (out [2]uint64) {
+	if len(in) > 0 {
+		C.ZTLF_SpeckHash((*_Ctype_ulonglong)(unsafe.Pointer(&out)), unsafe.Pointer(&(in[0])), _Ctype_ulong(len(in)))
+	} else {
+		C.ZTLF_SpeckHash((*_Ctype_ulonglong)(unsafe.Pointer(&out)), nil, _Ctype_ulong(0))
+	}
+	return
 }
 
 // Wharrgarbl computes the result of the Wharrgarbl proof of work function using input as a unique challenge.

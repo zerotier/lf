@@ -11,7 +11,6 @@ const APIVersion = uint64(0)
 // APIPeer contains information about a connected peer for APIStatus.
 type APIPeer struct {
 	ProtoMessagePeer
-	ConnectedTime      uint64 `msgpack:"CT"`  // Time of first contact/connection in milliseconds since epoch
 	TotalBytesSent     uint64 `msgpack:"TBS"` // Total bytes sent to this peer
 	TotalBytesReceived uint64 `msgpack:"TBR"` // Total bytes received from this peer
 	Latency            int    `msgpack:"L"`   // Latency in millisconds or -1 if not known

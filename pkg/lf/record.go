@@ -49,6 +49,9 @@ const RecordMaxLinkCount = 31
 // RecordMaxValueSize is the maximum size of a value (protocol maximum: 2047)
 const RecordMaxValueSize = 512
 
+// RecordWharrgarblMemory is the memory size that should be used for Wharrgarbl PoW.
+const RecordWharrgarblMemory = uint(1024 * 1024 * 512)
+
 // RecordMinSize is the minimum possible size of a serialized record (real records will always be bigger but never smaller).
 const RecordMinSize = 32 + // ID
 	32 + // owner
@@ -175,33 +178,34 @@ func (r *Record) SetValue(value []byte, encrypt bool) error {
 		r.Value = nil
 		return nil
 	}
-	var v []byte
-	var cb bytes.Buffer
-	cw, err := flate.NewWriter(&cb, flate.BestCompression)
-	if err == nil {
-		_, err = cw.Write(value)
+
+	v := value
+	if len(value) > 32 {
+		var cb bytes.Buffer
+		cw, err := flate.NewWriter(&cb, flate.BestCompression)
 		if err == nil {
-			cw.Close()
-			if cb.Len() < len(value) {
-				v = cb.Bytes()
-				r.Flags |= RecordFlagValueDeflated
-			} else {
-				v = value
+			_, err = cw.Write(value)
+			if err == nil {
+				cw.Close()
+				if cb.Len() < len(value) {
+					v = cb.Bytes()
+					r.Flags |= RecordFlagValueDeflated
+				}
 			}
-		} else {
-			v = value
 		}
-	} else {
-		v = value
 	}
 	if len(v) > RecordMaxValueSize {
 		return errors.New("record value is too large even after compression")
 	}
+
 	r.Value = make([]byte, len(v))
-	if encrypt && len(r.PlainTextKey) > 0 {
+	if encrypt {
+		if len(r.PlainTextKey) == 0 {
+			return errors.New("cannot encrypt value without plain text key")
+		}
 		var iv [16]byte
-		binary.BigEndian.PutUint32(iv[0:4], uint32(r.Timestamp))
-		copy(iv[4:16], r.Owner[0:12])
+		binary.BigEndian.PutUint64(iv[0:8], r.Timestamp)
+		copy(iv[8:16], r.Owner[0:8]) // every owner+timestamp combo is unique since timestamp is also revision, thus unique IV
 		s512 := sha512.Sum512(r.PlainTextKey)
 		c, _ := aes.NewCipher(s512[32:64]) // first 32 bytes are used to derive ID, second 32 are used to encrypt value
 		cfb := cipher.NewCFBEncrypter(c, iv[:])
@@ -215,7 +219,9 @@ func (r *Record) SetValue(value []byte, encrypt bool) error {
 }
 
 // NewRecord is a shortcut to configure, add proof of work, and seal a record. The only external
-// ingredient needed from a node is enough links.
+// ingredient needed from a node is enough links. The timestamp (ts) and TTL are in seconds, not
+// milliseconds. The owner private key must be a 64-byte ed25519 private key since this is currently
+// the only signature algorithm supported.
 func NewRecord(key, value, links []byte, ts, ttl uint64, encryptValue bool, ownerPrivateKey []byte) (*Record, error) {
 	var r Record
 
@@ -235,7 +241,7 @@ func NewRecord(key, value, links []byte, ts, ttl uint64, encryptValue bool, owne
 	if err != nil {
 		return nil, err
 	}
-	work, workIterations := Wharrgarbl(workHash[:], cost, 1024*1024*128)
+	work, workIterations := Wharrgarbl(workHash[:], cost, RecordWharrgarblMemory)
 	if workIterations == 0 {
 		return nil, errors.New("unknown error computing proof of work (0 returned for iterations)")
 	}
