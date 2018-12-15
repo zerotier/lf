@@ -8,17 +8,6 @@
 #ifndef ZT_LF_COMMON_H
 #define ZT_LF_COMMON_H
 
-/* #define ZTLF_TRACE 1 */
-
-/* LF internal error return codes */
-#define ZTLF_ERR_NONE                         0
-#define ZTLF_ERR_OUT_OF_MEMORY                1
-#define ZTLF_ERR_ABORTED                      2
-#define ZTLF_ERR_OBJECT_TOO_LARGE             3
-#define ZTLF_ERR_OBJECT_INVALID               4
-#define ZTLF_ERR_ALGORITHM_NOT_SUPPORTED      5
-#define ZTLF_ERR_DATABASE_MAY_BE_CORRUPT      6
-
 /* Only necessary on some old 32-bit machines which aren't "officially" supported, but do it anyway. */
 #ifndef _FILE_OFFSET_BITS
 #define _FILE_OFFSET_BITS 64
@@ -26,6 +15,19 @@
 #ifndef _LARGEFILE_SOURCE
 #define _LARGEFILE_SOURCE 1
 #endif
+
+/* #define ZTLF_TRACE 1 */
+
+/* LF internal error return codes */
+/*
+#define ZTLF_ERR_NONE                         0
+#define ZTLF_ERR_OUT_OF_MEMORY                1
+#define ZTLF_ERR_ABORTED                      2
+#define ZTLF_ERR_OBJECT_TOO_LARGE             3
+#define ZTLF_ERR_OBJECT_INVALID               4
+#define ZTLF_ERR_ALGORITHM_NOT_SUPPORTED      5
+#define ZTLF_ERR_DATABASE_MAY_BE_CORRUPT      6
+*/
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -399,6 +401,7 @@ static inline void ZTLF_L_func(int level,const char *srcf,int line,const char *f
 
 #define ZTLF_MALLOC_CHECK(m) if (unlikely(!((m)))) { ZTLF_L_fatal("malloc() failed!"); abort(); }
 
+#if 0
 #define ZTLF_timeSec() ((uint64_t)time(NULL))
 
 static inline uint64_t ZTLF_timeMs()
@@ -419,7 +422,6 @@ static inline uint64_t ZTLF_timeMs()
 #endif
 };
 
-#if 0
 /* https://stackoverflow.com/questions/1100090/looking-for-an-efficient-integer-square-root-algorithm-for-arm-thumb2 */
 static inline uint32_t ZTLF_isqrt(const uint32_t a_nInput)
 {

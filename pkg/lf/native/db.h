@@ -46,7 +46,6 @@ struct ZTLF_DB
 	sqlite3_stmt *sUpdatePendingHoleCount;
 	sqlite3_stmt *sDeleteCompletedPending;
 	sqlite3_stmt *sGetPendingCount;
-	sqlite3_stmt *sAddLinkable;
 
 	pthread_mutex_t dbLock;
 	pthread_mutex_t graphNodeLocks[ZTLF_DB_GRAPH_NODE_LOCK_ARRAY_SIZE]; /* used to lock graph nodes by locking node lock goff % NODE_LOCK_ARRAY_SIZE */
@@ -62,10 +61,29 @@ struct ZTLF_DB
 };
 
 int ZTLF_DB_Open(struct ZTLF_DB *db,const char *path);
+
 void ZTLF_DB_Close(struct ZTLF_DB *db);
+
+int ZTLF_DB_PutRecord(
+	struct ZTLF_DB *db,
+	const void *rec,
+	const unsigned int rsize,
+	const void *id,
+	const void *owner,
+	const void *hash,
+	const uint64_t ts,
+	const uint64_t ttl,
+	const uint32_t score,
+	const void *changeOwner,
+	const void *sel0,
+	const void *sel1,
+	const void *links,
+	const unsigned int linkCount);
+
 //void ZTLF_DB_EachByID(struct ZTLF_DB *const db,const void *id,void (*handler)(const uint64_t *,const struct ZTLF_Record *,unsigned int),const uint64_t cutoffTime);
-//int ZTLF_DB_PutRecord(struct ZTLF_DB *db,struct ZTLF_ExpandedRecord *const er);
+
 bool ZTLF_DB_HasGraphPendingRecords(struct ZTLF_DB *db);
+
 //unsigned long ZTLF_DB_HashState(struct ZTLF_DB *db,uint8_t stateHash[48]);
 
 static inline const char *ZTLF_DB_LastSqliteErrorMessage(struct ZTLF_DB *db) { return sqlite3_errmsg(db->dbc); }

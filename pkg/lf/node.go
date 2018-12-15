@@ -17,7 +17,7 @@ type Node struct {
 	httpServer         *http.Server
 	backgroundThreadWG sync.WaitGroup
 
-	db DB
+	db db
 
 	hosts       []*Host
 	hostsByAddr map[packedAddress]*Host
@@ -46,7 +46,7 @@ func NewNode(path string, port int) (*Node, error) {
 		return nil, err
 	}
 
-	err = n.db.Open(path)
+	err = n.db.open(path)
 	if err != nil {
 		return nil, err
 	}
@@ -120,7 +120,7 @@ func (n *Node) Stop() {
 	n.httpServer.Close()
 	n.backgroundThreadWG.Wait()
 
-	n.db.Close()
+	n.db.close()
 
 	WharrgarblFreeGlobalMemory()
 }
