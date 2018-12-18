@@ -5,10 +5,10 @@ import (
 	"crypto/sha512"
 )
 
-// Shandwich256 computes a compound hash using SHA512, SHA384, and AES
-// This is designed to provide what will hopefully be an ultimately future-proof hash resistant to breaks
-// of either SHA-2 or AES (but not both). The function's name comes from the use of the middle hash to
-// key AES for use on the final outer hash.
+// Shandwich256 computes a 256-bit compound hash using SHA512, SHA384, and AES.
+// This is designed to provide an extremely future-proof hash function resistant to even full breaks
+// of either SHA-2 or AES. Its name comes from the use of SHA on both sides with AES keyed from the
+// hidden middle state.
 func Shandwich256(in []byte) (out [32]byte) {
 	s512 := sha512.Sum512(in)
 	s384 := sha512.Sum384(s512[:])

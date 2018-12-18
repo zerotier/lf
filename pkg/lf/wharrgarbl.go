@@ -65,7 +65,7 @@ func Wharrgarbl(in []byte, difficulty uint32, minMemorySize uint) (out [20]byte,
 
 // WharrgarblVerify checks whether work is valid for the provided input, returning the difficulty used or 0 if work is not valid.
 func WharrgarblVerify(work []byte, in []byte) uint32 {
-	if len(work) != 20 {
+	if len(work) != WharrgarblProofOfWorkSize {
 		return 0
 	}
 	return uint32(C.ZTLF_WharrgarblVerify(unsafe.Pointer(&(work[0])), unsafe.Pointer(&(in[0])), _Ctype_ulong(len(in))))
@@ -73,8 +73,8 @@ func WharrgarblVerify(work []byte, in []byte) uint32 {
 
 // WharrgarblGetDifficulty extracts the difficulty from a work result without performing any verification.
 func WharrgarblGetDifficulty(work []byte) uint32 {
-	if len(work) == 20 {
-		return binary.BigEndian.Uint32(work[16:20])
+	if len(work) == WharrgarblProofOfWorkSize {
+		return binary.BigEndian.Uint32(work[16:20]) // difficulty is appended as last 4 bytes
 	}
 	return 0
 }

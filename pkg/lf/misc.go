@@ -10,10 +10,13 @@ import (
 // TimeMs returns the time in milliseconds since epoch.
 func TimeMs() uint64 { return uint64(time.Now().UnixNano()) / uint64(1000000) }
 
+// TimeSec returns the time in seconds since epoch.
+func TimeSec() uint64 { return uint64(time.Now().UnixNano()) / uint64(1000000000) }
+
 // TimeMsToTime converts a time in milliseconds since epoch to a Go native time.Time structure.
 func TimeMsToTime(ms uint64) time.Time { return time.Unix(int64(ms/1000), int64((ms%1000)*1000000)) }
 
-// byteAndArrayReader wraps io.Reader to also make it support io.ByteReader because you can't read a varint from a Reader because derp
+// byteAndArrayReader wraps io.Reader to also make it support io.ByteReader because you can't read a varint from a Reader because derpity derpy derp
 type byteAndArrayReader struct{ r io.Reader }
 
 func (mr byteAndArrayReader) Read(p []byte) (int, error) { return mr.r.Read(p) }
@@ -30,8 +33,8 @@ func writeUVarint(out io.Writer, v uint64) (int, error) {
 	return out.Write(tmp[0:l])
 }
 
-// IntegerSqrtRounded computes the rounded integer square root of a 32-bit unsigned int.
-func IntegerSqrtRounded(op uint32) (res uint32) {
+// integerSqrtRounded computes the rounded integer square root of a 32-bit unsigned int.
+func integerSqrtRounded(op uint32) (res uint32) {
 	// Just doing this is faster on most platforms and if your float sqrt or round are bad enough for this to be
 	// inconsistent with the integer version your platform has personal problems.
 	res = uint32(math.Round(math.Sqrt(float64(op))))
@@ -54,4 +57,22 @@ func IntegerSqrtRounded(op uint32) (res uint32) {
 		}
 	*/
 	return
+}
+
+var skipBuf [256]byte
+
+// readSkip discards input from a reader (used for small inputs, so buffer doesn't need to be big)
+func readSkip(in io.Reader, skip int) error {
+	for skip >= 256 {
+		skip -= 256
+		_, err := io.ReadFull(in, skipBuf[:])
+		if err != nil {
+			return err
+		}
+	}
+	if skip > 0 {
+		_, err := io.ReadFull(in, skipBuf[0:skip])
+		return err
+	}
+	return nil
 }

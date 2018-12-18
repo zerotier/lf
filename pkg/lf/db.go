@@ -4,10 +4,16 @@ package lf
 // #cgo LDFLAGS: -lsqlite3
 // #include "./native/db.h"
 // #include "./native/db.c"
+// extern int ztlfDBInternalGetMatchingCCallback(int64_t,int64_t,uint64_t,uint64_t,void *,void *,void *,uint64_t,uint64_t,unsigned long);
+// static inline void ZTLF_DB_GetMatching_fromGo(struct ZTLF_DB *db,const void *id,const void *owner,const void *sel0,const void *sel1,unsigned long arg) { ZTLF_DB_GetMatching(db,id,owner,sel0,sel1,&ztlfDBInternalGetMatchingCCallback,arg); }
 import "C"
 import (
+	"bytes"
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"runtime"
+	"sort"
 	"unsafe"
 )
 
@@ -31,25 +37,17 @@ func (db *db) putRecord(r *Record) error {
 		return errors.New("record too short")
 	}
 
-	var changeOwner, sel0, sel1 unsafe.Pointer
-	for i := 0; i < len(r.MetaData); i++ {
-		switch r.MetaData[i].Type {
-		case RecordMetaDataTypeChangeOwner:
-			if uintptr(changeOwner) == 0 && len(r.MetaData[i].Value) == 32 {
-				changeOwner = unsafe.Pointer(&(r.MetaData[i].Value[0]))
-			}
-		case RecordMetaDataTypeSelector:
-			if len(r.MetaData[i].Value) == 32 {
-				if uintptr(sel0) == 0 {
-					sel0 = unsafe.Pointer(&(r.MetaData[i].Value[0]))
-				} else if uintptr(sel1) == 0 {
-					sel1 = unsafe.Pointer(&(r.MetaData[i].Value[0]))
-				}
-			}
+	var changeOwner, sel0, sel1, links unsafe.Pointer
+	if len(r.ChangeOwner) == 32 {
+		changeOwner = unsafe.Pointer(&(r.ChangeOwner[0]))
+	}
+	for i := range r.SelectorIDs {
+		if uintptr(sel0) == 0 {
+			sel0 = unsafe.Pointer(&(r.SelectorIDs[i][0]))
+		} else {
+			sel1 = unsafe.Pointer(&(r.SelectorIDs[i][0]))
 		}
 	}
-
-	var links unsafe.Pointer
 	lc := len(r.Links) / 32
 	if lc > 0 {
 		links = unsafe.Pointer(&(r.Links[0]))
@@ -69,21 +67,99 @@ func (db *db) putRecord(r *Record) error {
 	cerr := C.ZTLF_DB_PutRecord(
 		(*C.struct_ZTLF_DB)(db),
 		unsafe.Pointer(&(r.Data[0])),
-		_Ctype_uint(len(r.Data)),
+		C.uint(len(r.Data)),
 		unsafe.Pointer(&(r.ID)),
 		unsafe.Pointer(&(r.Owner)),
 		unsafe.Pointer(&(r.Hash)),
-		_Ctype_ulonglong(r.Timestamp),
-		_Ctype_ulonglong(r.TTL),
-		_Ctype_uint(score),
+		C.ulonglong(r.Timestamp),
+		C.ulonglong(r.TTL),
+		C.uint(score),
 		changeOwner,
 		sel0,
 		sel1,
 		links,
-		_Ctype_uint(lc))
+		C.uint(lc))
 	if cerr != 0 {
 		return fmt.Errorf("error %d", cerr)
 	}
 
 	return nil
+}
+
+func (db *db) getMatching(id, owner, sel0, sel1 []byte) (rd []APIRecordDetail) {
+	var idP, ownerP, sel0P, sel1P unsafe.Pointer
+	var doffdlen []uintptr
+
+	if len(id) == 32 {
+		idP = unsafe.Pointer(&(id[0]))
+	}
+	if len(owner) == 32 {
+		ownerP = unsafe.Pointer(&(owner[0]))
+	}
+	if len(sel0) == 32 {
+		sel0P = unsafe.Pointer(&(sel0[0]))
+	}
+	if len(sel1) == 32 {
+		sel1P = unsafe.Pointer(&(sel1[0]))
+	}
+
+	// This stuff is defined in db-native-callbacks.go
+	dbGetMatchingStateInstanceLock.Lock()
+	dbGetMatchingStateInstance.byIDOwner = make(map[[64]byte]*dbGetMatchingStateByIDOwner)
+
+	runtime.LockOSThread()
+	C.ZTLF_DB_GetMatching_fromGo((*C.struct_ZTLF_DB)(db), idP, ownerP, sel0P, sel1P, C.ulong(0))
+	runtime.UnlockOSThread()
+
+	now := TimeSec()
+	for _, info := range dbGetMatchingStateInstance.byIDOwner {
+		if info.exp > now {
+			rd = append(rd, APIRecordDetail{})
+			w := rd[len(rd)-1].Weight[:]
+			binary.BigEndian.PutUint64(w[0:8], info.weightH)
+			binary.BigEndian.PutUint64(w[8:16], info.weightL)
+			doffdlen = append(doffdlen, uintptr(info.doff), uintptr(info.dlen))
+		}
+	}
+
+	dbGetMatchingStateInstance.byIDOwner = nil
+	dbGetMatchingStateInstanceLock.Unlock()
+
+	for i, j := 0, 0; i < len(rd); i++ {
+		doff := doffdlen[j]
+		j++
+		dlen := doffdlen[j]
+		j++
+		rd[i].Record.Data = make([]byte, uint(dlen))
+		ok := C.ZTLF_DB_GetRecordData((*C.struct_ZTLF_DB)(db), C.ulonglong(doff), unsafe.Pointer(&(rd[i].Record.Data[0])), C.uint(dlen))
+		if int(ok) == 0 { // unlikely, sanity check
+			// TODO: log probable database corruption
+			rd = nil
+			break
+		} else {
+			if rd[i].Record.Unpack(nil, false) != nil { // same... would indicate a bad record in DB
+				// TODO: log probable database corruption
+				rd = nil
+				break
+			}
+		}
+	}
+
+	sort.Slice(rd, func(i, j int) bool {
+		if bytes.Equal(rd[i].Record.ID[:], rd[j].Record.ID[:]) {
+			return bytes.Compare(rd[i].Weight[:], rd[j].Weight[:]) > 0
+		}
+		return rd[i].Record.Timestamp > rd[j].Record.Timestamp
+	})
+
+	return
+}
+
+func (db *db) stats() (recordCount, dataSize uint64) {
+	C.ZTLF_DB_Stats((*C.struct_ZTLF_DB)(db), (*C.ulonglong)(unsafe.Pointer(&recordCount)), (*C.ulonglong)(unsafe.Pointer(&dataSize)))
+	return
+}
+
+func (db *db) crc64() uint64 {
+	return uint64(C.ZTLF_DB_CRC64((*C.struct_ZTLF_DB)(db)))
 }

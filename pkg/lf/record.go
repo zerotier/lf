@@ -31,11 +31,11 @@ const (
 	RecordSignatureAlgorithmEd25519 = byte(0)
 )
 
-// Record meta-data field types (range 0-15)
+// Record meta-data field types (range 0-15) and sizes
 const (
 	RecordMetaDataTypeNone        = byte(0)
 	RecordMetaDataTypeChangeOwner = byte(1)
-	RecordMetaDataTypeSelector    = byte(2)
+	RecordMetaDataTypeSelectorID  = byte(2)
 )
 
 // Record flag bits
@@ -43,70 +43,87 @@ const (
 	RecordFlagValueDeflated = uint64(0x1)
 )
 
-// RecordMaxLinkCount is the maximum number of links one record can have to previous records.
+// RecordMaxLinkCount is the maximum number of links one record can have to previous records (cannot be changed).
 const RecordMaxLinkCount = 31
 
-// RecordMaxValueSize is the maximum size of a value (protocol maximum: 2047)
+// RecordMaxValueSize is the maximum size of a value (cannot easily be changed, protocol maximum: 2047).
 const RecordMaxValueSize = 512
 
 // RecordWharrgarblMemory is the memory size that should be used for Wharrgarbl PoW.
-const RecordWharrgarblMemory = uint(1024 * 1024 * 512)
+// This is large enough to perform well up to relatively big record sizes. It'll still work for
+// really huge ones of course, but performance starts to drop a bit. It can be increased and could
+// be made configurable in the future if ever needed.
+const RecordWharrgarblMemory = uint(1024 * 1024 * 256) // 256mb
 
 // RecordMinSize is the minimum possible size of a serialized record (real records will always be bigger but never smaller).
-const RecordMinSize = 32 + // ID
-	32 + // owner
-	1 + // timestamp (min varint)
-	1 + // TTL (min varint)
-	1 + // flags (min varint)
-	1 + // bit-packed algorithms
-	2 + // bit-packed link count and value length
-	1 // bit-packed meta-data types
+const RecordMinSize = 71 // ID + owner + timestamp + TTL + flags + algorithms + link count and value length + meta-data types
 
-// RecordMetaData is an optional record field
-type RecordMetaData struct {
-	Type  byte
-	Value []byte
-}
+// RecordMaxSize is the maximum possible record size supported by LF (cannot be changed).
+const RecordMaxSize = 65535
 
 // Record is an entry in the LF key/value store. Many of its fields should be updated through methods, not directly.
+// The Data field contains raw record data. The other fields are filled in when records are created or by Unpack
+// and exist for more convenient access.
 type Record struct {
-	Data                      []byte            // Binary serialized Record data for storage and transport
-	Hash                      [32]byte          // Shandwich256(Packed), updated by Pack() or Unpack()
-	PlainTextKey              []byte            // Record's plain text key or nil/empty if not known
-	IDClaimPrivateKey         [64]byte          // Ed25519 private key derived from PlainTextKey (public is actually last 32 bytes)
-	ID                        [32]byte          // Public key (or hash thereof) derived from the record's plain text key
-	Owner                     [32]byte          // Public key (or hash thereof) of the record's owner
-	Timestamp                 uint64            // Timestamp in SECONDS since epoch, also doubles as revision ID
-	TTL                       uint64            // Time to live in SECONDS since epoch
-	Flags                     uint64            // Flags setting various record attributes
-	Value                     []byte            // Record data payload (encrypted if encryption algorithm is set)
-	Links                     []byte            // Hashes of older records (size is always a multiple of 32 bytes)
-	MetaData                  [2]RecordMetaData // Up to two optional fields
-	Work                      []byte            // Work created by work algorithm
-	IDClaimSignature          []byte            // Signature of record data by signing key derived from plain text record key
-	OwnerSignature            []byte            // Signature of record by owner
-	ValueEncryptionAlgorithm  byte              // Encryption algorithm for record data
-	WorkAlgorithm             byte              // Work algorithm used to "pay" for record
-	OwnerSignatureAlgorithm   byte              // Signature algorithm used to sign record by owner
-	IDClaimSignatureAlgorithm byte              // Signature algorithm used to prove knowledge of plain text key
+	// Hidden fields memo-izing private keys and such
+	plainTextKey      []byte    // Record's plain text key or nil/empty if not known
+	idClaimPrivateKey [64]byte  // Ed25519 private key derived from PlainTextKey (public is actually last 32 bytes)
+	selPrivateKeys    [2][]byte // Ed25519 private keys for selectors
+
+	// Exported fields for use by outside code or sending via the API.
+	Data                      []byte    `msgpack:"D"`                      // Binary serialized raw Record data for storage and transport
+	Hash                      [32]byte  `msgpack:"H"`                      // Shandwich256(Data)
+	ID                        [32]byte  `msgpack:"ID"`                     // Public key (or hash thereof) derived from the record's plain text key
+	Owner                     [32]byte  `msgpack:"O"`                      // Public key (or hash thereof) of the record's owner
+	SelectorIDs               [2][]byte `msgpack:"SIDs" json:",omitempty"` // Sel0 ID, Sel1 ID (if present)
+	Timestamp                 uint64    `msgpack:"T"`                      // Timestamp in SECONDS since epoch, also doubles as revision ID
+	TTL                       uint64    `msgpack:"TTL"`                    // Time to live in SECONDS since epoch
+	Flags                     uint64    `msgpack:"F"`                      // Flags setting various record attributes
+	Value                     []byte    `msgpack:"V"`                      // Record data payload (encrypted if encryption algorithm is non-zero)
+	Links                     []byte    `msgpack:"L" json:",omitempty"`    // Hashes of older records (size is always a multiple of 32 bytes)
+	ChangeOwner               []byte    `msgpack:"CO" json:",omitempty"`   // New owner to inherit previous owner's record set weights, if present
+	Work                      []byte    `msgpack:"W" json:",omitempty"`    // Work created by work algorithm
+	OwnerSignature            []byte    `msgpack:"OS"`                     // Signature of record by owner
+	IDClaimSignature          []byte    `msgpack:"IDCS"`                   // Signature of record data by signing key derived from plain text record key
+	SelectorSignatures        [2][]byte `msgpack:"SS" json:",omitempty"`   // Proof of knowledge signatures for selectors, if present
+	SigningHash               [64]byte  `msgpack:"SH"`                     // Signing hash to make signature verification easy
+	ValueEncryptionAlgorithm  byte      `msgpack:"VEA"`                    // Encryption algorithm for record data
+	WorkAlgorithm             byte      `msgpack:"WA"`                     // Work algorithm used to "pay" for record
+	OwnerSignatureAlgorithm   byte      `msgpack:"OSA"`                    // Signature algorithm used to sign record by owner
+	IDClaimSignatureAlgorithm byte      `msgpack:"IDCSA"`                  // Signature algorithm used to prove knowledge of plain text key (and selectors)
 }
 
 // RecordWharrgarblCost computes the cost in Wharrgarbl difficulty for a record whose total size is the supplied number of bytes.
 func RecordWharrgarblCost(bytes int) uint32 {
+	//
 	// This function was figured out by:
 	//
-	// (1) Sampling difficulty vs time.
-	// (2) Using Microsoft Excel to fit the curve, yielding: d =~ 1.739*b^1.5605
-	// (3) Figuring out an integer based equation that approximates this for our input range.
+	// (1) Empirically sampling difficulty vs time.
+	// (2) Using Microsoft Excel to fit the curve to a power function, yielding: d =~ 1.739 * b^1.5605
+	// (3) Figuring out an integer based function that approximates this power function relatively well for our plausible input range.
 	//
-	// It's an integer algorithm using a rounded integer square root to avoid FPU inconsistencies
-	// across different systems. Any FPU inconsistencies could make nodes disagree about costs.
+	// An integer only algorithm is used to avoid FPU inconsistencies across systems.
+	//
+	// This function provides a relatively linear relationship between average Wharrgarbl time
+	// and the number of bytes (total) in a record.
+	//
 	b := uint64(bytes * 2) // this adjusts the overall magnitude without affecting the curve's shape
-	c := (uint64(IntegerSqrtRounded(uint32(b))) * b * uint64(3)) - (b * 8)
+	c := (uint64(integerSqrtRounded(uint32(b))) * b * uint64(3)) - (b * 8)
 	if c > 0xffffffff { // sanity check, no record gets this big
 		return 0xffffffff
 	}
 	return uint32(c)
+}
+
+// RecordDeriveID derives a blinded public ID from a plain-text key.
+// This is done automatically when creating a record either step-by-step or with NewRecord().
+// This function can be used to get the ID of a record based on its plain text key for querying
+// or other purposes.
+func RecordDeriveID(key []byte) (id [32]byte, privateKey []byte) {
+	s512 := sha512.Sum512(key)
+	copy(id[0:32], s512[0:32])
+	privateKey = ed25519.NewKeyFromSeed(s512[0:32])
+	return
 }
 
 // packMainSection serializes into the supplied buffer up to the point where the record's contents are hashed for proof of work, signatures, etc.
@@ -114,6 +131,7 @@ func (r *Record) packMainSection(b *bytes.Buffer) error {
 	if len(r.Value) > RecordMaxValueSize {
 		return errors.New("record value too large")
 	}
+
 	b.Write(r.ID[:])
 	b.Write(r.Owner[:])
 	writeUVarint(b, r.Timestamp)
@@ -133,23 +151,45 @@ func (r *Record) packMainSection(b *bytes.Buffer) error {
 	linkCountAndValueSize := (linkCount << 11) | (len(r.Value) & 0x7ff)
 	b.WriteByte(byte(linkCountAndValueSize>>8) & 0xff)
 	b.WriteByte(byte(linkCountAndValueSize & 0xff))
-	b.WriteByte(((r.MetaData[0].Type & 0xf) << 4) | (r.MetaData[1].Type & 0xf))
+
 	b.Write(r.Value)
 	b.Write(r.Links)
-	for i := 0; i < 2; i++ {
-		if r.MetaData[i].Type != RecordMetaDataTypeNone {
-			if r.MetaData[i].Type == RecordMetaDataTypeChangeOwner || r.MetaData[i].Type == RecordMetaDataTypeSelector {
-				if len(r.MetaData[i].Value) == 32 {
-					b.WriteByte(32) // technically a varint but 32 can be written as a single byte
-					b.Write(r.MetaData[i].Value)
-				} else {
-					return errors.New("meta-data value length invalid for meta-data type")
-				}
-			} else {
-				return errors.New("unrecognized meta-data type")
+
+	var mdc uint
+	var mdt [2]byte
+	var md [2][]byte
+	if len(r.ChangeOwner) == 32 {
+		mdt[0] = RecordMetaDataTypeChangeOwner
+		md[0] = r.ChangeOwner
+		mdc++
+	}
+	for si := range r.SelectorIDs {
+		if len(r.SelectorIDs[si]) > 0 {
+			if mdc >= 2 {
+				return errors.New("only two meta-data slots are available, allowing two selectors or one change in owner and one selector")
 			}
+			if len(r.SelectorIDs[si]) != 32 {
+				return errors.New("invalid selector ID")
+			}
+			mdt[mdc] = RecordMetaDataTypeSelectorID
+			md[mdc] = r.SelectorIDs[si]
 		}
 	}
+
+	b.WriteByte((mdt[0] << 4) | mdt[1])
+	for i := 0; i < 2; i++ {
+		switch mdt[i] {
+		case RecordMetaDataTypeNone:
+		case RecordMetaDataTypeChangeOwner:
+			b.Write(md[i])
+		case RecordMetaDataTypeSelectorID:
+			b.Write(md[i])
+		default:
+			writeUVarint(b, uint64(len(md[i]))) // support future additions with size for flexibility
+			b.Write(md[i])
+		}
+	}
+
 	return nil
 }
 
@@ -158,22 +198,42 @@ func (r *Record) packMainSection(b *bytes.Buffer) error {
 // text key. It's used to sign records to prove knowledge of the (secret) plain text key to prevent
 // forgery pollution attacks.
 func (r *Record) SetPlainTextKey(key []byte) {
-	r.PlainTextKey = make([]byte, len(key))
-	copy(r.PlainTextKey, key)
+	r.plainTextKey = make([]byte, len(key))
+	copy(r.plainTextKey, key)
 	s512 := sha512.Sum512(key)
 	priv := ed25519.NewKeyFromSeed(s512[0:32])
-	copy(r.IDClaimPrivateKey[:], priv)
+	copy(r.idClaimPrivateKey[:], priv)
 	copy(r.ID[:], priv[32:64])
 	r.IDClaimSignatureAlgorithm = RecordSignatureAlgorithmEd25519
 }
 
+// AddSelector adds a selector to this record.
+// The first selector will be sel0, the second sel1, so order matters. Records with a change in ownership
+// can only have one selector due to there being only space for two meta-data items in a record.
+func (r *Record) AddSelector(sel []byte) error {
+	for si := range r.SelectorIDs {
+		if len(r.SelectorIDs[si]) != 32 {
+			if len(r.ChangeOwner) == 32 && si > 0 {
+				return errors.New("records with an ownership change can only have one selector")
+			}
+			var sid [32]byte
+			sid, r.selPrivateKeys[si] = RecordDeriveID(sel)
+			r.SelectorIDs[si] = sid[:]
+			return nil
+		}
+	}
+	return errors.New("no space for more selectors")
+}
+
 // SetValue sets this record's Value field to a copy of the supplied value.
-// If encrypt is true PlainTextKey must be set and will be used to perform identity-based encryption
+// If encrypt is true plainTextKey must be set and will be used to perform identity-based encryption
 // of the value. Value encryption is the default in LF and makes values secret unless their
 // corresponding plain text key is known. An attempt will be made to compress the value as well and
 // if this results in a size reduction the RecordFlagValueDeflated flag will be set and the value
 // will be compressed.
 func (r *Record) SetValue(value []byte, encrypt bool) error {
+	r.Flags &= ^RecordFlagValueDeflated
+
 	if len(value) == 0 {
 		r.Value = nil
 		return nil
@@ -200,13 +260,13 @@ func (r *Record) SetValue(value []byte, encrypt bool) error {
 
 	r.Value = make([]byte, len(v))
 	if encrypt {
-		if len(r.PlainTextKey) == 0 {
-			return errors.New("cannot encrypt value without plain text key")
+		if len(r.plainTextKey) == 0 {
+			return errors.New("cannot encrypt value without known plain text key")
 		}
 		var iv [16]byte
 		binary.BigEndian.PutUint64(iv[0:8], r.Timestamp)
 		copy(iv[8:16], r.Owner[0:8]) // every owner+timestamp combo is unique since timestamp is also revision, thus unique IV
-		s512 := sha512.Sum512(r.PlainTextKey)
+		s512 := sha512.Sum512(r.plainTextKey)
 		c, _ := aes.NewCipher(s512[32:64]) // first 32 bytes are used to derive ID, second 32 are used to encrypt value
 		cfb := cipher.NewCFBEncrypter(c, iv[:])
 		cfb.XORKeyStream(r.Value, v)
@@ -222,13 +282,23 @@ func (r *Record) SetValue(value []byte, encrypt bool) error {
 // ingredient needed from a node is enough links. The timestamp (ts) and TTL are in seconds, not
 // milliseconds. The owner private key must be a 64-byte ed25519 private key since this is currently
 // the only signature algorithm supported.
-func NewRecord(key, value, links []byte, ts, ttl uint64, encryptValue bool, ownerPrivateKey []byte) (*Record, error) {
+func NewRecord(key, value, links []byte, ts, ttl uint64, encryptValue bool, changeOwner []byte, selectors [][]byte, ownerPrivateKey []byte) (*Record, error) {
 	var r Record
 
 	if len(ownerPrivateKey) != 64 {
 		return nil, errors.New("invalid ed25519 owner private key")
 	}
+	if len(selectors) > 2 || (len(changeOwner) == 32 && len(selectors) > 1) {
+		return nil, errors.New("record supports two meta-data fields for either two selectors or one ownership change and one selector")
+	}
+
 	r.SetPlainTextKey(key)
+	for si := range selectors {
+		err := r.AddSelector(selectors[si])
+		if err != nil {
+			return nil, err
+		}
+	}
 	copy(r.Owner[:], ownerPrivateKey[32:64])
 	r.Timestamp = ts
 	r.TTL = ttl
@@ -254,17 +324,19 @@ func NewRecord(key, value, links []byte, ts, ttl uint64, encryptValue bool, owne
 	return &r, nil
 }
 
-// GetValue retrieves the plain text value from this record, decompressing and/or decrypting as needed.
+// GetValue retrieves the plain text value from this record, performing decompression and decryption as needed.
+// If plainTextKey is not supplied this will use the hidden plainTextKey field in the record, if non-nil and correct.
+// Note that neither is needed if this record's value is not encrypted.
 func (r *Record) GetValue(plainTextKey []byte) ([]byte, error) {
 	var dec []byte
 	if r.ValueEncryptionAlgorithm == RecordValueEncryptionAlgorithmNone {
 		dec = r.Value
 	} else if r.ValueEncryptionAlgorithm == RecordValueEncryptionAlgorithmAES256CFB {
-		ptk := r.PlainTextKey
+		ptk := r.plainTextKey
 		if len(plainTextKey) > 0 {
 			ptk = plainTextKey
 		} else {
-			if !bytes.Equal(r.IDClaimPrivateKey[32:64], r.ID[0:32]) {
+			if !bytes.Equal(r.idClaimPrivateKey[32:64], r.ID[0:32]) {
 				return nil, errors.New("no plain text key supplied or set in the record, cannot unmask value")
 			}
 		}
@@ -317,6 +389,7 @@ func (r *Record) Unpack(data []byte, validate bool) (err error) {
 	if len(r.Data) < RecordMinSize {
 		return errors.New("record too small")
 	}
+
 	copy(r.ID[:], data[0:32])
 	copy(r.Owner[:], data[32:64])
 	dr := bytes.NewReader(data[64:])
@@ -332,7 +405,6 @@ func (r *Record) Unpack(data []byte, validate bool) (err error) {
 	if err != nil {
 		return
 	}
-	//b.WriteByte((r.ValueEncryptionAlgorithm << 6) | (r.WorkAlgorithm << 4) | (r.IDClaimSignatureAlgorithm << 2) | r.OwnerSignatureAlgorithm)
 	tmp, err := dr.ReadByte()
 	if err != nil {
 		return
@@ -351,49 +423,68 @@ func (r *Record) Unpack(data []byte, validate bool) (err error) {
 		return
 	}
 	linkCountAndValueSize |= uint(tmp)
-	linkCount := (linkCountAndValueSize >> 11) & 31
+	linkCount := (linkCountAndValueSize >> 11) & 31 // 31 == RecordMaxLinkCount, so no extra checking needed
 	valueSize := linkCountAndValueSize & 0x7ff
 	if valueSize > RecordMaxValueSize {
 		return errors.New("record value too large")
 	}
-	tmp, err = dr.ReadByte()
-	if err != nil {
-		return
-	}
-	r.MetaData[0].Type = (tmp >> 4) & 0xf
-	r.MetaData[1].Type = tmp & 0xf
 
 	r.Value = make([]byte, valueSize)
 	_, err = io.ReadFull(dr, r.Value)
 	if err != nil {
 		return
 	}
+
 	r.Links = make([]byte, linkCount*32)
 	_, err = io.ReadFull(dr, r.Links)
 	if err != nil {
 		return
 	}
 
+	tmp, err = dr.ReadByte()
+	if err != nil {
+		return
+	}
+	var mdt [2]byte
+	mdt[0] = (tmp >> 4) & 0xf
+	mdt[1] = tmp & 0xf
+	var selCount uint
+	r.ChangeOwner = nil
+	r.SelectorIDs[0] = nil
+	r.SelectorIDs[1] = nil
 	for i := 0; i < 2; i++ {
-		if r.MetaData[i].Type != RecordMetaDataTypeNone {
-			var mdl uint64
-			mdl, err = binary.ReadUvarint(dr)
+		switch mdt[i] {
+		case RecordMetaDataTypeNone:
+		case RecordMetaDataTypeChangeOwner:
+			if len(r.ChangeOwner) == 0 {
+				r.ChangeOwner = make([]byte, 32)
+				io.ReadFull(dr, r.ChangeOwner)
+			}
+		case RecordMetaDataTypeSelectorID:
+			r.SelectorIDs[selCount] = make([]byte, 32)
+			io.ReadFull(dr, r.SelectorIDs[selCount])
+			if len(r.selPrivateKeys[selCount]) != 64 && !bytes.Equal(r.selPrivateKeys[selCount][32:64], r.SelectorIDs[selCount][0:32]) {
+				r.selPrivateKeys[selCount] = nil // nil out cached private keys if they don't match IDs
+			}
+			selCount++
+		default:
+			var skip uint64
+			skip, err = binary.ReadUvarint(dr)
 			if err != nil {
 				return
 			}
-			if (mdl > uint64(len(data))) || ((r.MetaData[i].Type == RecordMetaDataTypeChangeOwner || r.MetaData[i].Type == RecordMetaDataTypeSelector) && (mdl != 32)) {
-				return errors.New("meta-data size invalid")
-			}
-			r.MetaData[i].Value = make([]byte, uint(mdl))
-			_, err = io.ReadFull(dr, r.MetaData[i].Value)
+			err = readSkip(dr, int(skip))
 			if err != nil {
 				return
 			}
 		}
 	}
 
+	workHash := sha512.Sum512(data[0 : int(dr.Size())-dr.Len()])
+
 	switch r.WorkAlgorithm {
 	case RecordWorkAlgorithmNone:
+		r.Work = nil
 	case RecordWorkAlgorithmWharrgarbl:
 		r.Work = make([]byte, WharrgarblProofOfWorkSize)
 		_, err = io.ReadFull(dr, r.Work)
@@ -403,6 +494,8 @@ func (r *Record) Unpack(data []byte, validate bool) (err error) {
 	default:
 		return errors.New("unrecognized work type")
 	}
+
+	r.SigningHash = sha512.Sum512(append(workHash[:], r.Work...))
 
 	switch r.OwnerSignatureAlgorithm {
 	case RecordSignatureAlgorithmEd25519:
@@ -422,13 +515,20 @@ func (r *Record) Unpack(data []byte, validate bool) (err error) {
 		if err != nil {
 			return
 		}
+		// This also sets the type of any selector ID signatures...
+		for s := uint(0); s < selCount; s++ {
+			r.SelectorSignatures[s] = make([]byte, 32)
+			_, err = io.ReadFull(dr, r.SelectorSignatures[s])
+			if err != nil {
+				return
+			}
+		}
 	default:
 		return errors.New("unrecognized signature type")
 	}
 
-	// Check whether plain text key in Record (if present) matches record's ID and null out if not.
-	if !bytes.Equal(r.IDClaimPrivateKey[32:64], r.ID[0:32]) {
-		r.PlainTextKey = nil
+	if !bytes.Equal(r.idClaimPrivateKey[32:64], r.ID[0:32]) {
+		r.plainTextKey = nil // nil out cached plain text key if it doesn't match ID
 	}
 
 	return nil
@@ -445,14 +545,13 @@ func (r *Record) WorkHash() (h [64]byte, wharrgarblCost uint32, err error) {
 	return
 }
 
-// Seal completes a record by adding work, signing it with the ID claim key, and then signing it with the owner key.
-// It sets the Data and Hash fields to the result of final record serialization and signing. Note that the ID claim private
-// key must be set, so SetPlainTextKey must be called before this.
+// Seal completes a record by adding work and signing it by the owner and by keys that prove knowledge of blind IDs.
+// It sets the Data and Hash fields to the result of final record serialization and signing.
 func (r *Record) Seal(work []byte, ownerPrivateKey []byte) error {
 	if r.WorkAlgorithm == RecordWorkAlgorithmWharrgarbl && len(work) != WharrgarblProofOfWorkSize {
 		return errors.New("work size is not valid")
 	}
-	if !bytes.Equal(r.IDClaimPrivateKey[32:64], r.ID[0:32]) {
+	if !bytes.Equal(r.idClaimPrivateKey[32:64], r.ID[0:32]) {
 		return errors.New("ID claim private key is not initialized, call SetPlainTextKey before Seal")
 	}
 	if r.OwnerSignatureAlgorithm == RecordSignatureAlgorithmEd25519 && len(ownerPrivateKey) != 64 {
@@ -474,12 +573,23 @@ func (r *Record) Seal(work []byte, ownerPrivateKey []byte) error {
 	// and sign a record remotely. A remote only needs to know the work hash and it can do PoW, append
 	// it, hash again, then sign with the owner key.
 	sigHash := sha512.Sum512(append(workHash[:], work...))
+
+	// Sign by owner
 	r.OwnerSignature = ed25519.Sign(ownerPrivateKey, sigHash[:])
 	b.Write(r.OwnerSignature)
 
-	// Finally the record is signed by the ID claim key, proving that the plain text key is known.
-	r.IDClaimSignature = ed25519.Sign(r.IDClaimPrivateKey[:], b.Bytes())
+	// Sign with ID private key to prove knowledge of blind plain text key.
+	r.IDClaimSignature = ed25519.Sign(r.idClaimPrivateKey[:], sigHash[:])
 	b.Write(r.IDClaimSignature)
+
+	// Sign with private keys for selectors to prove knowledge of blind selector keys.
+	for i := range r.selPrivateKeys {
+		if i >= 2 || len(r.selPrivateKeys[i]) != 64 {
+			return errors.New("invalid selector private key(s)")
+		}
+		r.SelectorSignatures[i] = ed25519.Sign(r.selPrivateKeys[i], sigHash[:])
+		b.Write(r.SelectorSignatures[i])
+	}
 
 	r.Data = b.Bytes()
 	r.Hash = Shandwich256(r.Data)

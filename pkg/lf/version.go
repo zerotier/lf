@@ -7,5 +7,5 @@ const (
 	VersionRevision = 1
 	VersionBuild    = 0
 
-	SoftwareName = "ZeroTier LF"
+	SoftwareName = "ZeroTier LF (\"Project Azathoth\")"
 )

@@ -19,6 +19,7 @@ type Node struct {
 
 	db db
 
+	// P2P hosts to which we are connected.
 	hosts       []*Host
 	hostsByAddr map[packedAddress]*Host
 	hostsLock   sync.RWMutex
@@ -70,7 +71,7 @@ func NewNode(path string, port int) (*Node, error) {
 		}()
 	}
 
-	// HTTP server thread
+	// HTTP server thread (plain HTTP, TCP on same port as P2P UDP)
 	n.httpServer = &http.Server{
 		MaxHeaderBytes: 4096,
 		Handler:        gziphandler.GzipHandler(apiCreateHTTPServeMux(n)),
