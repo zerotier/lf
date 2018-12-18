@@ -1,9 +1,12 @@
 package lf
 
 import (
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/vmihailenco/msgpack"
@@ -57,7 +60,6 @@ type APIGet struct {
 	ID          []byte    `msgpack:"ID,omitempty" json:",omitempty"`   // ID (32 bytes) (ignored if Key is given)
 	Owner       []byte    `msgpack:"O,omitempty" json:",omitempty"`    // Owner (32 bytes)
 	SelectorIDs [2][]byte `msgpack:"SIDs,omitempty" json:",omitempty"` // Selector IDs (32 bytes each)
-	MaxResults  uint      `msgpack:"MR,omitempty" json:",omitempty"`   // Maximum total results or 0 for unlimited
 }
 
 // APIRecordDetail is sent (in an array) in response to APIGet.
@@ -174,12 +176,94 @@ func apiIsTrusted(n *Node, req *http.Request) bool {
 func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 	smux := http.NewServeMux()
 
-	// Get best value by record key. The key may be /k/<key>.ext or /k/_<base64url>.ext for a base64url encoded
+	// Get best value by record key. The key may be /k/<key>.ext or /k/~<base64url>.ext for a base64url encoded
 	// key. The extension determins what type is returned. A json or msgpack extension returns an APIRecord object.
 	// The following extensions return the value with the appropriate content type: html, js, png, gif, jpg, xml,
-	// css, and txt. Other extensions will return 404. No extension returns value with type application/octet-stream.
+	// css, and txt. No extension returns value with type application/octet-stream.
 	smux.HandleFunc("/k/", func(out http.ResponseWriter, req *http.Request) {
 		if req.Method == http.MethodGet || req.Method == http.MethodHead {
+			var key []byte
+			contentType := "application/octet-stream"
+			fullResults := false
+
+			keyStr := req.URL.Path[3:]
+			dotIdx := strings.LastIndexByte(keyStr, '.')
+			if dotIdx >= 0 {
+				switch keyStr[dotIdx+1:] {
+				case "json":
+					contentType = "application/json"
+					fullResults = true
+				case "msgpack":
+					contentType = "application/msgpack"
+					fullResults = true
+				case "html":
+					contentType = "text/html"
+				case "js":
+					contentType = "text/javascript"
+				case "png":
+					contentType = "image/png"
+				case "gif":
+					contentType = "image/gif"
+				case "jpg":
+					contentType = "image/jpeg"
+				case "xml":
+					contentType = "text/xml"
+				case "css":
+					contentType = "text/css"
+				case "txt":
+					contentType = "text/plain"
+				}
+				keyStr = keyStr[0:dotIdx]
+			}
+			if len(keyStr) > 0 && keyStr[0] == '~' {
+				key = make([]byte, base64.URLEncoding.DecodedLen(len(keyStr)))
+				n, err := base64.URLEncoding.Decode(key, []byte(keyStr[1:]))
+				if err != nil || n < 0 {
+					apiSendJSON(out, req, http.StatusNotFound, &APIError{Code: http.StatusNotFound, Message: "invalid base64 in ~<base64> key"})
+					return
+				}
+				key = key[0:n]
+			} else {
+				key = []byte(keyStr)
+			}
+
+			id, _ := RecordDeriveID(key)
+			recs := n.db.getMatching(id[:], nil, nil, nil)
+
+			if len(recs) == 0 {
+				apiSendJSON(out, req, http.StatusNotFound, &APIError{Code: http.StatusNotFound, Message: "no records found"})
+				return
+			}
+
+			if fullResults {
+				for i := range recs {
+					v, err := recs[i].Record.GetValue(key)
+					if err != nil {
+						apiSendJSON(out, req, http.StatusNotFound, &APIError{Code: http.StatusNotFound, Message: "record decryption or decompression failed"})
+						return
+					}
+					recs[i].Key = key
+					recs[i].Value = v
+				}
+				apiSendJSON(out, req, http.StatusOK, &recs)
+			} else {
+				out.Header().Set("Pragma", "no-cache")
+				out.Header().Set("Cache-Control", "no-cache")
+				out.Header().Set("Content-Type", contentType)
+				v, err := recs[0].Record.GetValue(key)
+				if err != nil {
+					apiSendJSON(out, req, http.StatusNotFound, &APIError{Code: http.StatusNotFound, Message: "record decryption or decompression failed"})
+					return
+				}
+				out.Header().Set("X-LF-Record-ID", hex.EncodeToString(recs[0].Record.ID[:]))
+				out.Header().Set("X-LF-Record-Owner", hex.EncodeToString(recs[0].Record.Owner[:]))
+				out.Header().Set("X-LF-Record-Hash", hex.EncodeToString(recs[0].Record.Hash[:]))
+				out.Header().Set("X-LF-Record-Timestamp", strconv.FormatUint(recs[0].Record.Timestamp, 10))
+				out.Header().Set("X-LF-Record-Weight", hex.EncodeToString(recs[0].Weight[:]))
+				out.Header().Set("Content-Length", strconv.Itoa(len(v)))
+				out.WriteHeader(200)
+				out.Write(v)
+			}
 		} else {
 			apiSendJSON(out, req, http.StatusMethodNotAllowed, &APIError{Code: http.StatusMethodNotAllowed, Message: req.Method + " not supported for this path"})
 		}
