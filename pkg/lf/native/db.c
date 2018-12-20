@@ -389,9 +389,9 @@ static void *_ZTLF_DB_graphThreadMain(void *arg)
 						uint16_t wH = ZTLF_getu16_le(gn->weightH);
 						const uint64_t wLorig = wL;
 						const uint16_t wHorig = wH;
-						wH += (uint32_t)((wL += score) < wLorig);
+						wH += (uint16_t)((wL += score) < wLorig);
 						ZTLF_setu64_le(gn->weightL,wL);
-						if (unlikely(wH != wHorig)) { ZTLF_setu16_le(gn->weightH,wH); }
+						if (wH != wHorig) { ZTLF_setu16_le(gn->weightH,wH); }
 
 						for(unsigned int i=0,j=gn->linkCount;i<j;++i) {
 							const int64_t nextGoff = ZTLF_get64_le(gn->linkedRecordGoff[i]);
@@ -754,7 +754,7 @@ void ZTLF_DB_GetMatching(struct ZTLF_DB *db,const void *id,const void *owner,con
 				void *const thisId = (void *)sqlite3_column_blob(s,5);
 				void *const thisNewOwner = (void *)sqlite3_column_blob(s,7);
 
-				if (f(sqlite3_column_int64(s,0),sqlite3_column_int64(s,1),(uint64_t)sqlite3_column_int64(s,3),(uint64_t)sqlite3_column_int64(s,4),thisId,(void *)sqlite3_column_blob(s,6),thisNewOwner,ZTLF_get64_le(gn->weightL),(uint64_t)ZTLF_get16_le(gn->weightH),arg)) {
+				if (f(sqlite3_column_int64(s,0),sqlite3_column_int64(s,1),(uint64_t)sqlite3_column_int64(s,3),(uint64_t)sqlite3_column_int64(s,4),thisId,(void *)sqlite3_column_blob(s,6),thisNewOwner,ZTLF_getu64_le(gn->weightL),(uint64_t)ZTLF_getu16_le(gn->weightH),arg)) {
 					while (follow) {
 						void *const tmp = (void *)follow;
 						follow = follow->next;

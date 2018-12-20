@@ -46,6 +46,7 @@ const (
 	ErrorInvalidPublicKey  Error = "invalid public key"
 	ErrorInvalidPrivateKey Error = "invalid private key"
 	ErrorInvalidParameter  Error = "invalid parameter"
+	ErrorOutOfRange        Error = "parameter out of range"
 	ErrorWharrgarblFailed  Error = "Wharrgarbl proof of work algorithm failed (out of memory?)"
 	ErrorIO                Error = "I/O error"
 	ErrorMessageIncomplete Error = "message incomplete"

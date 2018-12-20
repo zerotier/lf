@@ -16,7 +16,6 @@ package lf
 import "C"
 import (
 	"bytes"
-	"encoding/binary"
 	"runtime"
 	"sort"
 	"strconv"
@@ -28,7 +27,7 @@ type db C.struct_ZTLF_DB
 
 func (db *db) open(path string) error {
 	var errbuf [2048]byte
-	cerr := C.ZTLF_DB_Open((*C.struct_ZTLF_DB)(db), C.CString(path), (*C.char)(unsafe.Pointer(&(errbuf[0]))), 2047)
+	cerr := C.ZTLF_DB_Open((*C.struct_ZTLF_DB)(db), C.CString(path), (*C.char)(unsafe.Pointer(&errbuf[0])), 2047)
 	if cerr != 0 {
 		errstr := "unknown or I/O level error " + strconv.FormatInt(int64(cerr), 10)
 		if cerr > 0 {
@@ -98,6 +97,10 @@ func (db *db) putRecord(r *Record) error {
 	return nil
 }
 
+// getMatching returns a sorted list of records and their weights for a given set of constraints.
+// Records are sorted in descending order of weight within a given ID category (meaning different owners)
+// or otherwise are sorted in descending order of age. The Key and Value fields of APIRecordDetail are
+// not filled in here since this function doesn't know the plain text key.
 func (db *db) getMatching(id, owner, sel0, sel1 []byte) (rd []APIRecordDetail) {
 	var idP, ownerP, sel0P, sel1P unsafe.Pointer
 	var doffdlen []uintptr
@@ -127,9 +130,7 @@ func (db *db) getMatching(id, owner, sel0, sel1 []byte) (rd []APIRecordDetail) {
 	for _, info := range dbGetMatchingStateInstance.byIDOwner {
 		if info.exp > now {
 			rd = append(rd, APIRecordDetail{})
-			w := rd[len(rd)-1].Weight[:]
-			binary.BigEndian.PutUint64(w[0:8], info.weightH)
-			binary.BigEndian.PutUint64(w[8:16], info.weightL)
+			rd[len(rd)-1].Weight.Set(info.weightH, info.weightL)
 			doffdlen = append(doffdlen, uintptr(info.doff), uintptr(info.dlen))
 		}
 	}
@@ -143,7 +144,7 @@ func (db *db) getMatching(id, owner, sel0, sel1 []byte) (rd []APIRecordDetail) {
 		dlen := doffdlen[j]
 		j++
 		rd[i].Record.Data = make([]byte, uint(dlen))
-		ok := int(C.ZTLF_DB_GetRecordData((*C.struct_ZTLF_DB)(db), C.ulonglong(doff), unsafe.Pointer(&(rd[i].Record.Data[0])), C.uint(dlen)))
+		ok := int(C.ZTLF_DB_GetRecordData((*C.struct_ZTLF_DB)(db), C.ulonglong(doff), unsafe.Pointer(&rd[i].Record.Data[0]), C.uint(dlen)))
 		if ok == 0 { // unlikely, sanity check
 			// TODO: log probable database corruption
 			rd = nil
@@ -158,10 +159,12 @@ func (db *db) getMatching(id, owner, sel0, sel1 []byte) (rd []APIRecordDetail) {
 	}
 
 	sort.Slice(rd, func(i, j int) bool {
+		// If IDs are equal we have multiple owners for the same ID. In this case compare the weights.
 		if bytes.Equal(rd[i].Record.ID[:], rd[j].Record.ID[:]) {
-			return bytes.Compare(rd[i].Weight[:], rd[j].Weight[:]) > 0
+			return rd[j].Weight.Less(&rd[i].Weight)
 		}
-		return rd[i].Record.Timestamp > rd[j].Record.Timestamp
+		// Otherwise return newer records first.
+		return rd[j].Record.Timestamp < rd[i].Record.Timestamp
 	})
 
 	return

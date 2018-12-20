@@ -71,7 +71,7 @@ func ztlfDBInternalGetMatchingCCallback(doff, dlen C.longlong, ts, exp C.ulonglo
 
 	owl := b.weightL
 	b.weightL += uint64(weightL)
-	if owl < b.weightL {
+	if b.weightL < owl {
 		b.weightH++
 	}
 	b.weightH += uint64(weightH)

@@ -49,7 +49,7 @@ func TestWharrgarbl(out io.Writer) bool {
 		var iterations, ii uint64
 		startTime := TimeMs()
 		for k := 0; k < testWharrgarblSamples; k++ {
-			wout, ii = Wharrgarbl(&junk, diff, RecordWharrgarblMemory)
+			wout, ii = Wharrgarbl(junk[:], diff, RecordWharrgarblMemory)
 			iterations += ii
 		}
 		runTime := (TimeMs() - startTime) / uint64(testWharrgarblSamples)
@@ -106,6 +106,7 @@ func TestDatabase(testBasePath string, out io.Writer) bool {
 
 	fmt.Fprintf(out, "Generating %d random linked records... ", testDatabaseRecords)
 	var records [testDatabaseRecords]*Record
+	latestRecordsByID := make(map[[32]byte]*Record)
 	ts := TimeSec()
 	for ri := 0; ri < testDatabaseRecords; ri++ {
 		var linkTo []uint
@@ -126,14 +127,16 @@ func TestDatabase(testBasePath string, out io.Writer) bool {
 		}
 
 		ts++
-		kv := []byte("test record #" + strconv.FormatInt(int64(ri+1), 10))
-		records[ri], err = NewRecord(kv, kv, links, ts, 100000, ((ri & 1) == 0), nil, nil, ownerPriv[int(rand.Int31())%testDatabaseOwners], true)
+		k := []byte(strconv.FormatInt(int64(ri&7), 10)) // 7 possible keys
+		v := []byte(strconv.FormatUint(ts, 10))         // value is timestamp for easy verification
+		records[ri], err = NewRecord(k, v, links, ts, 100000, ((ri & 1) == 0), nil, nil, ownerPriv[int(rand.Int31())%testDatabaseOwners], true)
 		if err != nil {
 			fmt.Fprintf(out, "FAILED: %s\n", err.Error())
 			return false
 		}
+		latestRecordsByID[records[ri].ID] = records[ri]
 	}
-	fmt.Fprintf(out, "OK\n")
+	fmt.Fprintf(out, "OK (%d records %d IDs)\n", len(records), len(latestRecordsByID))
 
 	fmt.Fprintf(out, "Inserting records into all three databases...\n")
 	for dbi := 0; dbi < testDatabaseInstances; dbi++ {
@@ -154,7 +157,7 @@ func TestDatabase(testBasePath string, out io.Writer) bool {
 		fmt.Fprintf(out, "  #%d OK\n", dbi)
 	}
 
-	fmt.Fprintf(out, "Waiting for pending records to be processed...")
+	fmt.Fprintf(out, "Waiting for graph traversal and weight reconciliation...")
 	for dbi := 0; dbi < testDatabaseInstances; dbi++ {
 		for db[dbi].hasPending() {
 			time.Sleep(time.Second / 2)
@@ -174,6 +177,7 @@ func TestDatabase(testBasePath string, out io.Writer) bool {
 			return false
 		}
 	}
+	fmt.Fprintf(out, "All databases reached the same final state for hashes, weights, and links.\n")
 
 	return true
 }

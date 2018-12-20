@@ -19,6 +19,33 @@ import (
 	"github.com/vmihailenco/msgpack"
 )
 
+var hash256Base64Len = base64.StdEncoding.EncodedLen(32)
+var hash512Base64Len = base64.StdEncoding.EncodedLen(64)
+
+// Hash256 is a 32 byte hash with a JSON marshaler that uses base64 encoding.
+type Hash256 [32]byte
+
+// MarshalJSON base64 encodes this hash.
+func (b *Hash256) MarshalJSON() ([]byte, error) {
+	s := make([]byte, 2+hash256Base64Len)
+	s[0] = '"'
+	base64.StdEncoding.Encode(s[1:], (*b)[:])
+	s[hash256Base64Len-1] = '"'
+	return s, nil
+}
+
+// Hash512 is a 64 byte hash with a JSON marshaler that uses base64 encoding.
+type Hash512 [64]byte
+
+// MarshalJSON base64 encodes this hash.
+func (b *Hash512) MarshalJSON() ([]byte, error) {
+	s := make([]byte, 2+hash512Base64Len)
+	s[0] = '"'
+	base64.StdEncoding.Encode(s[1:], (*b)[:])
+	s[hash512Base64Len-1] = '"'
+	return s, nil
+}
+
 // APIVersion is the version of the current implementation
 const APIVersion = uint64(1)
 
@@ -53,12 +80,13 @@ type APIStatus struct {
 // this from other places. The Proxy accepts requests to localhosts, passed through queries,
 // but intercepts puts and builds records locally and then submits them in Data to a full node.
 type APIPut struct {
-	Data            []byte    `msgpack:"D,omitempty" json:",omitempty"`   // Fully encoded record data, overrides other fields if present
-	Key             []byte    `msgpack:"K,omitempty" json:",omitempty"`   // Plain text key
-	Value           []byte    `msgpack:"V,omitempty" json:",omitempty"`   // Plain text value
-	OwnerPrivateKey []byte    `msgpack:"OPK,omitempty" json:",omitempty"` // Owner private key to sign record
-	Selectors       [2][]byte `msgpack:"S,omitempty" json:",omitempty"`   // Selectors
-	PlainTextValue  bool      `msgpack:"PTV"`                             // If true, do not encrypt value in record
+	Data                    []byte    `msgpack:"D,omitempty" json:",omitempty"`   // Fully encoded record data, overrides other fields if present
+	Key                     []byte    `msgpack:"K,omitempty" json:",omitempty"`   // Plain text key
+	Value                   []byte    `msgpack:"V,omitempty" json:",omitempty"`   // Plain text value
+	Selectors               [2][]byte `msgpack:"S,omitempty" json:",omitempty"`   // Selectors
+	OwnerPrivateKey         []byte    `msgpack:"OPK,omitempty" json:",omitempty"` // Owner private key to sign record
+	OwnerSignatureAlgorithm byte      `msgpack:"OSA" json:",omitempty"`           // Signature algorithm for owner private key
+	PlainTextValue          bool      `msgpack:"PTV"`                             // If true, do not encrypt value in record
 }
 
 // APIGet (/g) gets records by search keys.
@@ -71,10 +99,10 @@ type APIGet struct {
 
 // APIRecordDetail is sent (in an array) in response to APIGet.
 type APIRecordDetail struct {
-	Record Record   `msgpack:"R"`                             // Fully unpacked record
-	Key    []byte   `msgpack:"K,omitempty" json:",omitempty"` // Plain-text key if supplied in query, otherwise omitted
-	Value  []byte   `msgpack:"V,omitempty" json:",omitempty"` // Plain-text value if plain-text key was supplied with query, otherwise omitted
-	Weight [16]byte `msgpack:"W,omitempty" json:",omitempty"` // Weight of record as a 128-bit big-endian number
+	Record Record  `msgpack:"R"`                             // Fully unpacked record
+	Key    []byte  `msgpack:"K,omitempty" json:",omitempty"` // Plain-text key if supplied in query, otherwise omitted
+	Value  []byte  `msgpack:"V,omitempty" json:",omitempty"` // Plain-text value if plain-text key was supplied with query, otherwise omitted
+	Weight Uint128 `msgpack:"W,omitempty" json:",omitempty"` // Weight of record as a 128-bit big-endian number
 }
 
 // APIRequestLinks is a request for links to include in a new record.
@@ -272,7 +300,7 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 				h.Set("X-LF-Record-Owner", hex.EncodeToString(recs[0].Record.Owner[:]))
 				h.Set("X-LF-Record-Hash", hex.EncodeToString(recs[0].Record.Hash[:]))
 				h.Set("X-LF-Record-Timestamp", strconv.FormatUint(recs[0].Record.Timestamp, 10))
-				h.Set("X-LF-Record-Weight", hex.EncodeToString(recs[0].Weight[:]))
+				h.Set("X-LF-Record-Weight", recs[0].Weight.Hex())
 				h.Set("Content-Length", strconv.Itoa(len(v)))
 				out.WriteHeader(200)
 				out.Write(v)
@@ -290,10 +318,14 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 			ct, haveCT := req.Header["Content-Type"]
 			if haveCT {
 				for i := range ct {
-					if strings.Contains(ct[i], "application/x-lf-record") {
+					if strings.Contains(ct[i], "application/x-lf-record") || strings.Contains(ct[i], "application/octet-stream") {
 						var rdata [RecordMaxSize]byte
-						n, _ := io.ReadFull(req.Body, rdata[:])
-						if n > RecordMinSize {
+						rsize, _ := io.ReadFull(req.Body, rdata[:])
+						if rsize > RecordMinSize {
+							err := n.AddRecord(rdata[0:uint(rsize)])
+							if err != nil {
+								apiSendJSON(out, req, http.StatusBadRequest, &APIError{Code: http.StatusBadRequest, Message: "invalid record: " + err.Error()})
+							}
 						} else {
 							apiSendJSON(out, req, http.StatusBadRequest, &APIError{Code: http.StatusBadRequest, Message: "invalid or malformed payload"})
 							return

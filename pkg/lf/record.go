@@ -15,6 +15,7 @@ import (
 	"crypto/sha512"
 	"encoding/binary"
 	"io"
+	"math/rand"
 
 	"golang.org/x/crypto/ed25519"
 )
@@ -79,26 +80,26 @@ type Record struct {
 	Data []byte `msgpack:"D"`
 
 	// Expanded record fields
-	Hash                      [32]byte                   `msgpack:"H"`                      // Shandwich256(Data)
-	ID                        [32]byte                   `msgpack:"ID"`                     // Public key (or hash thereof) derived from the record's plain text key
-	Owner                     [32]byte                   `msgpack:"O"`                      // Public key (or hash thereof) of the record's owner
-	Timestamp                 uint64                     `msgpack:"T"`                      // Timestamp in SECONDS since epoch, also doubles as revision ID
-	TTL                       uint64                     `msgpack:"TTL"`                    // Time to live in SECONDS since epoch
-	Flags                     uint64                     `msgpack:"F"`                      // Flags setting various record attributes
-	Value                     []byte                     `msgpack:"V"`                      // Record data payload (encrypted if encryption algorithm is non-zero)
-	ValueEncryptionAlgorithm  byte                       `msgpack:"VEA"`                    // Encryption algorithm for record data
-	WorkAlgorithm             byte                       `msgpack:"WA"`                     // Work algorithm used to "pay" for record
-	OwnerSignatureAlgorithm   byte                       `msgpack:"OSA"`                    // Signature algorithm used to sign record by owner
-	IDClaimSignatureAlgorithm byte                       `msgpack:"IDCSA"`                  // Signature algorithm used to prove knowledge of plain text key (and selectors)
-	Links                     []byte                     `msgpack:"L" json:",omitempty"`    // Hashes of older records (size is always a multiple of 32 bytes)
-	ChangeOwner               []byte                     `msgpack:"CO" json:",omitempty"`   // New owner to inherit previous owner's record set weights
-	SelectorIDs               [2][]byte                  `msgpack:"SIDs" json:",omitempty"` // Sel0 ID, Sel1 ID (if present)
-	WorkHash                  [64]byte                   `msgpack:"WH"`                     // Hash of everything up to proof of work on which PoW operates
-	Work                      [WharrgarblOutputSize]byte `msgpack:"W"`                      // Output of work algorithm
-	SigningHash               [64]byte                   `msgpack:"SH"`                     // Hash of record and work that is signed by owner and claim signatures
-	OwnerSignature            []byte                     `msgpack:"OS"`                     // Signature of record by owner
-	IDClaimSignature          []byte                     `msgpack:"IDCS"`                   // Signature of record data by signing key derived from plain text record key
-	SelectorSignatures        [2][]byte                  `msgpack:"SS" json:",omitempty"`   // Proof of knowledge signatures for selectors, if present
+	Hash                      Hash256   `msgpack:"H"`                      // Shandwich256(Data)
+	ID                        Hash256   `msgpack:"ID"`                     // Public key (or hash thereof) derived from the record's plain text key
+	Owner                     Hash256   `msgpack:"O"`                      // Public key (or hash thereof) of the record's owner
+	Timestamp                 uint64    `msgpack:"T"`                      // Timestamp in SECONDS since epoch, also doubles as revision ID
+	TTL                       uint64    `msgpack:"TTL"`                    // Time to live in SECONDS since epoch
+	Flags                     uint64    `msgpack:"F"`                      // Flags setting various record attributes
+	Value                     []byte    `msgpack:"V"`                      // Record data payload (encrypted if encryption algorithm is non-zero)
+	ValueEncryptionAlgorithm  byte      `msgpack:"VEA"`                    // Encryption algorithm for record data
+	WorkAlgorithm             byte      `msgpack:"WA"`                     // Work algorithm used to "pay" for record
+	OwnerSignatureAlgorithm   byte      `msgpack:"OSA"`                    // Signature algorithm used to sign record by owner
+	IDClaimSignatureAlgorithm byte      `msgpack:"IDCSA"`                  // Signature algorithm used to prove knowledge of plain text key (and selectors)
+	Links                     []byte    `msgpack:"L" json:",omitempty"`    // Hashes of older records (size is always a multiple of 32 bytes)
+	ChangeOwner               []byte    `msgpack:"CO" json:",omitempty"`   // New owner to inherit previous owner's record set weights
+	SelectorIDs               [2][]byte `msgpack:"SIDs" json:",omitempty"` // Sel0 ID, Sel1 ID (if present)
+	WorkHash                  Hash512   `msgpack:"WH"`                     // Hash of everything up to proof of work on which PoW operates
+	Work                      []byte    `msgpack:"W"`                      // Output of work algorithm
+	SigningHash               Hash512   `msgpack:"SH"`                     // Hash of record and work that is signed by owner and claim signatures
+	OwnerSignature            []byte    `msgpack:"OS"`                     // Signature of record by owner
+	IDClaimSignature          []byte    `msgpack:"IDCS"`                   // Signature of record data by signing key derived from plain text record key
+	SelectorSignatures        [2][]byte `msgpack:"SS" json:",omitempty"`   // Proof of knowledge signatures for selectors, if present
 }
 
 // RecordWharrgarblCost computes the cost in Wharrgarbl difficulty for a record whose total size is the supplied number of bytes.
@@ -296,12 +297,14 @@ func NewRecord(key, value, links []byte, ts, ttl uint64, encryptValue bool, chan
 	}
 
 	r.WorkHash = sha512.Sum512(b.Bytes())
-	if !skipWork {
-		var workIterations uint64
-		r.Work, workIterations = Wharrgarbl(&(r.WorkHash), RecordWharrgarblCost(b.Len()+WharrgarblOutputSize+(64*(2+len(selectors)))), RecordWharrgarblMemory)
+	if skipWork {
+		rand.Read(r.Work[:])
+	} else {
+		work, workIterations := Wharrgarbl(r.WorkHash[:], RecordWharrgarblCost(b.Len()+WharrgarblOutputSize+(64*(2+len(selectors)))), RecordWharrgarblMemory)
 		if workIterations == 0 {
 			return nil, ErrorWharrgarblFailed
 		}
+		r.Work = work[:]
 	}
 	b.Write(r.Work[:])
 
