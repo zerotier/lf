@@ -46,10 +46,44 @@ const ProtoHostTimeout = uint64(120000)
 
 // ProtoMessagePeer is the payload for a Peer message.
 type ProtoMessagePeer struct {
-	Protocol    byte   `msgpack:"Pr"` // currently always 0 for LF P2P UDP
-	AddressType byte   `msgpack:"AT"` // 6 or 4
-	IP          []byte `msgpack:"IP"`
-	Port        uint16 `msgpack:"Po"`
+	Protocol    byte     `msgpack:"Pr"` // currently always 0 for LF P2P UDP
+	AddressType byte     `msgpack:"AT"` // 6 or 4
+	IP          [16]byte `msgpack:"IP"` // for IPv4 only the first 4 bytes are used
+	Port        uint16   `msgpack:"Po"`
+}
+
+// SetIP sets the AddressType and IP fields of ProtoMessagePeer from a net.IP object.
+func (p *ProtoMessagePeer) SetIP(ip net.IP) {
+	v4 := ip.To4()
+	if len(v4) == 4 {
+		p.AddressType = 4
+		copy(p.IP[0:4], v4)
+		for i := 4; i < 16; i++ {
+			p.IP[i] = 0
+		}
+	} else {
+		v6 := ip.To16()
+		if len(v6) == 16 {
+			p.AddressType = 6
+			copy(p.IP[:], v6)
+		} else {
+			p.AddressType = 0
+			for i := range p.IP {
+				p.IP[i] = 0
+			}
+		}
+	}
+}
+
+// GetIP is a shortcut to return an IP from the raw IP bytes in ProtoMessagePeer.
+func (p *ProtoMessagePeer) GetIP() net.IP {
+	switch p.AddressType {
+	case 6:
+		return p.IP[0:16]
+	case 4:
+		return net.IPv4(p.IP[0], p.IP[1], p.IP[2], p.IP[3])
+	}
+	return nil
 }
 
 // packedAddress is an IP and port packed into a uint64 array to use as a key in a map
@@ -169,7 +203,7 @@ func (h *Host) handleIncomingPacket(n *Node, data []byte) (err error) {
 						// nodes for amplification attacks.
 						h.queuedLock.Lock()
 						for i := range h.queuedPeers {
-							n.Try(h.queuedPeers[i].IP, int(h.queuedPeers[i].Port))
+							n.Try(h.queuedPeers[i].GetIP(), int(h.queuedPeers[i].Port))
 						}
 						h.queuedPeers = nil
 						for i := range h.queuedRecordRequests {
@@ -188,7 +222,7 @@ func (h *Host) handleIncomingPacket(n *Node, data []byte) (err error) {
 				return err
 			}
 			if h.Connected() {
-				n.Try(peer.IP, int(peer.Port))
+				n.Try(peer.GetIP(), int(peer.Port))
 			} else {
 				h.queuedLock.Lock()
 				if len(h.queuedPeers) < 1024 { // sanity limit

@@ -55,6 +55,7 @@ struct ZTLF_DB
 	sqlite3 *dbc;
 	sqlite3_stmt *sSetConfig;
 	sqlite3_stmt *sGetConfig;
+	sqlite3_stmt *sAddRejected;
 	sqlite3_stmt *sAddRecord;
 	sqlite3_stmt *sGetRecordCount;
 	sqlite3_stmt *sGetDataSize;
@@ -100,6 +101,9 @@ struct ZTLF_DB
 	struct ZTLF_MappedFile df;
 	pthread_rwlock_t dfLock;
 
+	int rejectedFd;
+	pthread_mutex_t rejectedLock;
+
 	pthread_t graphThread;
 	volatile bool graphThreadStarted;
 	volatile bool running;
@@ -108,6 +112,16 @@ struct ZTLF_DB
 int ZTLF_DB_Open(struct ZTLF_DB *db,const char *path,char *errbuf,unsigned int errbufSize);
 
 void ZTLF_DB_Close(struct ZTLF_DB *db);
+
+int ZTLF_DB_PutRejected(
+	struct ZTLF_DB *db,
+	const void *rec,
+	const unsigned int rsize,
+	const void *id,
+	const void *owner,
+	const void *hash,
+	const uint64_t ts,
+	const int reason);
 
 int ZTLF_DB_PutRecord(
 	struct ZTLF_DB *db,

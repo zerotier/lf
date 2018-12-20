@@ -161,10 +161,12 @@ func (n *Node) GetHost(ip net.IP, port int, createIfMissing bool) *Host {
 }
 
 // Try makes an attempt to contact a peer if it's not already connected to us.
-func (n *Node) Try(ip []byte, port int) {
-	h := n.GetHost(ip, port, true)
-	if !h.Connected() {
-		h.Ping(n, false)
+func (n *Node) Try(ip net.IP, port int) {
+	if len(ip) == 4 || len(ip) == 16 {
+		h := n.GetHost(ip, port, true)
+		if !h.Connected() {
+			h.Ping(n, false)
+		}
 	}
 }
 
@@ -186,6 +188,7 @@ func (n *Node) AddRecord(recordData []byte) error {
 	}
 
 	if r.Timestamp > (TimeSec() + RecordMaxTimeDrift) {
+		n.db.putRejected(&r, dbRecordRejectionReasonRecordTimestampInTheFuture)
 		return ErrorRecordViolatesSpecialRelavitity
 	}
 

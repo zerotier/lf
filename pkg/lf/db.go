@@ -16,10 +16,15 @@ package lf
 import "C"
 import (
 	"bytes"
+	"encoding/binary"
 	"runtime"
 	"sort"
 	"strconv"
 	"unsafe"
+)
+
+const (
+	dbRecordRejectionReasonRecordTimestampInTheFuture = 1
 )
 
 // DB is an instance of the LF database that stores records and manages record weights and linkages.
@@ -91,9 +96,25 @@ func (db *db) putRecord(r *Record) error {
 		links,
 		C.uint(lc))
 	if cerr != 0 {
-		return ErrorDatabase{int(cerr), "record add failed"}
+		return ErrorDatabase{int(cerr), "record add failed (" + strconv.Itoa(int(cerr)) + ")"}
 	}
 
+	return nil
+}
+
+func (db *db) putRejected(r *Record, reason int) error {
+	cerr := C.ZTLF_DB_PutRejected(
+		(*C.struct_ZTLF_DB)(db),
+		unsafe.Pointer(&r.Data[0]),
+		C.uint(len(r.Data)),
+		unsafe.Pointer(&r.ID[0]),
+		unsafe.Pointer(&r.Owner[0]),
+		unsafe.Pointer(&r.Hash[0]),
+		C.ulonglong(r.Timestamp),
+		C.int(reason))
+	if cerr != 0 {
+		return ErrorDatabase{int(cerr), "record add failed (" + strconv.Itoa(int(cerr)) + ")"}
+	}
 	return nil
 }
 
@@ -118,25 +139,28 @@ func (db *db) getMatching(id, owner, sel0, sel1 []byte) (rd []APIRecordDetail) {
 		sel1P = unsafe.Pointer(&sel1[0])
 	}
 
-	// This stuff is defined in db-native-callbacks.go
+	// This stuff is defined in db-native-callbacks.go. See that file for the callback that
+	// handles results returned by GetMatching().
+	runtime.LockOSThread()
 	dbGetMatchingStateInstanceLock.Lock()
 	dbGetMatchingStateInstance.byIDOwner = make(map[[64]byte]*dbGetMatchingStateByIDOwner)
 
-	runtime.LockOSThread()
 	C.ZTLF_DB_GetMatching_fromGo((*C.struct_ZTLF_DB)(db), idP, ownerP, sel0P, sel1P, C.ulong(0))
-	runtime.UnlockOSThread()
 
 	now := TimeSec()
 	for _, info := range dbGetMatchingStateInstance.byIDOwner {
 		if info.exp > now {
 			rd = append(rd, APIRecordDetail{})
-			rd[len(rd)-1].Weight.Set(info.weightH, info.weightL)
+			wb := &rd[len(rd)-1].Weight
+			binary.BigEndian.PutUint64(wb[0:8], info.weightH)
+			binary.BigEndian.PutUint64(wb[8:16], info.weightL)
 			doffdlen = append(doffdlen, uintptr(info.doff), uintptr(info.dlen))
 		}
 	}
 
 	dbGetMatchingStateInstance.byIDOwner = nil
 	dbGetMatchingStateInstanceLock.Unlock()
+	runtime.UnlockOSThread()
 
 	for i, j := 0, 0; i < len(rd); i++ {
 		doff := doffdlen[j]
@@ -161,7 +185,7 @@ func (db *db) getMatching(id, owner, sel0, sel1 []byte) (rd []APIRecordDetail) {
 	sort.Slice(rd, func(i, j int) bool {
 		// If IDs are equal we have multiple owners for the same ID. In this case compare the weights.
 		if bytes.Equal(rd[i].Record.ID[:], rd[j].Record.ID[:]) {
-			return rd[j].Weight.Less(&rd[i].Weight)
+			return bytes.Compare(rd[j].Weight[:], rd[i].Weight[:]) < 0
 		}
 		// Otherwise return newer records first.
 		return rd[j].Record.Timestamp < rd[i].Record.Timestamp

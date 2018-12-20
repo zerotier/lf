@@ -19,38 +19,10 @@ import (
 	"github.com/vmihailenco/msgpack"
 )
 
-var hash256Base64Len = base64.StdEncoding.EncodedLen(32)
-var hash512Base64Len = base64.StdEncoding.EncodedLen(64)
-
-// Hash256 is a 32 byte hash with a JSON marshaler that uses base64 encoding.
-type Hash256 [32]byte
-
-// MarshalJSON base64 encodes this hash.
-func (b *Hash256) MarshalJSON() ([]byte, error) {
-	s := make([]byte, 2+hash256Base64Len)
-	s[0] = '"'
-	base64.StdEncoding.Encode(s[1:], (*b)[:])
-	s[hash256Base64Len-1] = '"'
-	return s, nil
-}
-
-// Hash512 is a 64 byte hash with a JSON marshaler that uses base64 encoding.
-type Hash512 [64]byte
-
-// MarshalJSON base64 encodes this hash.
-func (b *Hash512) MarshalJSON() ([]byte, error) {
-	s := make([]byte, 2+hash512Base64Len)
-	s[0] = '"'
-	base64.StdEncoding.Encode(s[1:], (*b)[:])
-	s[hash512Base64Len-1] = '"'
-	return s, nil
-}
-
 // APIVersion is the version of the current implementation
-const APIVersion = uint64(1)
+const APIVersion = 1
 
-// APIMaxResults is the global maximum number of results allowed in any query.
-const APIMaxResults = 128
+var apiVersionStr = strconv.FormatInt(int64(APIVersion), 10)
 
 // APIPeer contains information about a connected peer for APIStatus.
 type APIPeer struct {
@@ -64,8 +36,8 @@ type APIPeer struct {
 type APIStatus struct {
 	Software       string    `msgpack:"S"`    // Software implementation name
 	Version        [4]int    `msgpack:"V"`    // Version of software
-	MinAPIVersion  uint64    `msgpack:"MinA"` // Minimum API version supported
-	MaxAPIVersion  uint64    `msgpack:"MaxA"` // Maximum API version supported
+	MinAPIVersion  int       `msgpack:"MiA"`  // Minimum API version supported
+	MaxAPIVersion  int       `msgpack:"MaA"`  // Maximum API version supported
 	Uptime         uint64    `msgpack:"U"`    // Uptime in milliseconds since epoch
 	ConnectedPeers []APIPeer `msgpack:"CP"`   // Connected peer nodes (if revealed by node)
 	DBRecordCount  uint64    `msgpack:"DBRC"` // Number of records in database
@@ -99,10 +71,10 @@ type APIGet struct {
 
 // APIRecordDetail is sent (in an array) in response to APIGet.
 type APIRecordDetail struct {
-	Record Record  `msgpack:"R"`                             // Fully unpacked record
-	Key    []byte  `msgpack:"K,omitempty" json:",omitempty"` // Plain-text key if supplied in query, otherwise omitted
-	Value  []byte  `msgpack:"V,omitempty" json:",omitempty"` // Plain-text value if plain-text key was supplied with query, otherwise omitted
-	Weight Uint128 `msgpack:"W,omitempty" json:",omitempty"` // Weight of record as a 128-bit big-endian number
+	Record Record   `msgpack:"R"`                             // Fully unpacked record
+	Key    []byte   `msgpack:"K,omitempty" json:",omitempty"` // Plain-text key if supplied in query, otherwise omitted
+	Value  []byte   `msgpack:"V,omitempty" json:",omitempty"` // Plain-text value if plain-text key was supplied with query, otherwise omitted
+	Weight [16]byte `msgpack:"W,omitempty" json:",omitempty"` // Weight of this record as a 128-bit unsigned int in big-endian byte order
 }
 
 // APIRequestLinks is a request for links to include in a new record.
@@ -121,31 +93,22 @@ type APIError struct {
 	Message string `msgpack:"M"` // Message indicating the reason for the error
 }
 
-var apiVersionStr = strconv.FormatUint(APIVersion, 10)
-
 func apiMakePeerArray(n *Node) []APIPeer {
 	n.hostsLock.RLock()
 	defer n.hostsLock.RUnlock()
 	r := make([]APIPeer, 0, len(n.hosts))
 	for i := range n.hosts {
 		if n.hosts[i].Connected() {
-			var at byte
-			if len(n.hosts[i].RemoteAddress.IP) == 16 {
-				at = 6
-			} else {
-				at = 4
-			}
 			r = append(r, APIPeer{
 				ProtoMessagePeer: ProtoMessagePeer{
-					Protocol:    ProtoTypeLFRawUDP,
-					AddressType: at,
-					IP:          n.hosts[i].RemoteAddress.IP,
-					Port:        uint16(n.hosts[i].RemoteAddress.Port),
+					Protocol: ProtoTypeLFRawUDP,
+					Port:     uint16(n.hosts[i].RemoteAddress.Port),
 				},
 				TotalBytesSent:     n.hosts[i].TotalBytesSent,
 				TotalBytesReceived: n.hosts[i].TotalBytesReceived,
 				Latency:            n.hosts[i].Latency,
 			})
+			r[len(r)-1].SetIP(n.hosts[i].RemoteAddress.IP)
 		}
 	}
 	return r
@@ -300,7 +263,7 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 				h.Set("X-LF-Record-Owner", hex.EncodeToString(recs[0].Record.Owner[:]))
 				h.Set("X-LF-Record-Hash", hex.EncodeToString(recs[0].Record.Hash[:]))
 				h.Set("X-LF-Record-Timestamp", strconv.FormatUint(recs[0].Record.Timestamp, 10))
-				h.Set("X-LF-Record-Weight", recs[0].Weight.Hex())
+				h.Set("X-LF-Record-Weight", hex.EncodeToString(recs[0].Weight[:]))
 				h.Set("Content-Length", strconv.Itoa(len(v)))
 				out.WriteHeader(200)
 				out.Write(v)
@@ -403,6 +366,11 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 		apiSetStandardHeaders(out)
 		if req.Method == http.MethodPost || req.Method == http.MethodPut {
 			if apiIsTrusted(n, req) {
+				var peer APIPeer
+				if apiReadJSON(out, req, &peer) == nil {
+					n.Try(peer.GetIP(), int(peer.Port))
+					apiSendJSON(out, req, http.StatusOK, &peer)
+				}
 			} else {
 				apiSendJSON(out, req, http.StatusForbidden, &APIError{Code: http.StatusForbidden, Message: "peers may only be submitted by trusted hosts"})
 			}

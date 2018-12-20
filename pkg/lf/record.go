@@ -80,9 +80,9 @@ type Record struct {
 	Data []byte `msgpack:"D"`
 
 	// Expanded record fields
-	Hash                      Hash256   `msgpack:"H"`                      // Shandwich256(Data)
-	ID                        Hash256   `msgpack:"ID"`                     // Public key (or hash thereof) derived from the record's plain text key
-	Owner                     Hash256   `msgpack:"O"`                      // Public key (or hash thereof) of the record's owner
+	Hash                      [32]byte  `msgpack:"H"`                      // Shandwich256(Data)
+	ID                        [32]byte  `msgpack:"ID"`                     // Public key (or hash thereof) derived from the record's plain text key
+	Owner                     [32]byte  `msgpack:"O"`                      // Public key (or hash thereof) of the record's owner
 	Timestamp                 uint64    `msgpack:"T"`                      // Timestamp in SECONDS since epoch, also doubles as revision ID
 	TTL                       uint64    `msgpack:"TTL"`                    // Time to live in SECONDS since epoch
 	Flags                     uint64    `msgpack:"F"`                      // Flags setting various record attributes
@@ -94,9 +94,9 @@ type Record struct {
 	Links                     []byte    `msgpack:"L" json:",omitempty"`    // Hashes of older records (size is always a multiple of 32 bytes)
 	ChangeOwner               []byte    `msgpack:"CO" json:",omitempty"`   // New owner to inherit previous owner's record set weights
 	SelectorIDs               [2][]byte `msgpack:"SIDs" json:",omitempty"` // Sel0 ID, Sel1 ID (if present)
-	WorkHash                  Hash512   `msgpack:"WH"`                     // Hash of everything up to proof of work on which PoW operates
+	WorkHash                  [64]byte  `msgpack:"WH"`                     // Hash of everything up to proof of work on which PoW operates
 	Work                      []byte    `msgpack:"W"`                      // Output of work algorithm
-	SigningHash               Hash512   `msgpack:"SH"`                     // Hash of record and work that is signed by owner and claim signatures
+	SigningHash               [64]byte  `msgpack:"SH"`                     // Hash of record and work that is signed by owner and claim signatures
 	OwnerSignature            []byte    `msgpack:"OS"`                     // Signature of record by owner
 	IDClaimSignature          []byte    `msgpack:"IDCS"`                   // Signature of record data by signing key derived from plain text record key
 	SelectorSignatures        [2][]byte `msgpack:"SS" json:",omitempty"`   // Proof of knowledge signatures for selectors, if present
