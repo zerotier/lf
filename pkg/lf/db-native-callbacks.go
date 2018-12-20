@@ -1,4 +1,13 @@
+/*
+ * LF: Global Fully Replicated Key/Value Store
+ * Copyright (C) 2018  ZeroTier, Inc.  https://www.zerotier.com/
+ *
+ * Licensed under the terms of the MIT license (see LICENSE.txt).
+ */
+
 package lf
+
+// Callbacks called from C have to be in a separate file due to cgo linking weirdness.
 
 // #cgo CFLAGS: -O3
 // #cgo LDFLAGS: -lsqlite3
@@ -13,7 +22,7 @@ import (
 
 type dbGetMatchingStateByIDOwner struct {
 	doff, dlen       int64
-	ts, exp          uint64
+	exp              uint64
 	weightL, weightH uint64
 }
 
@@ -58,7 +67,6 @@ func ztlfDBInternalGetMatchingCCallback(doff, dlen C.longlong, ts, exp C.ulonglo
 	}
 	b.doff = int64(doff)
 	b.dlen = int64(dlen)
-	b.ts = uint64(ts)
 	b.exp = uint64(exp)
 
 	owl := b.weightL

@@ -1,11 +1,16 @@
+/*
+ * LF: Global Fully Replicated Key/Value Store
+ * Copyright (C) 2018  ZeroTier, Inc.  https://www.zerotier.com/
+ *
+ * Licensed under the terms of the MIT license (see LICENSE.txt).
+ */
+
 package lf
 
 import (
 	"bytes"
 	"crypto/sha512"
 	"encoding/binary"
-	"errors"
-	"fmt"
 	"math/rand"
 	"net"
 	"sync"
@@ -15,19 +20,19 @@ import (
 
 const (
 	// ProtoMessageTypePing indicates a ping message consisting of an 8-byte timestamp to be echoed back followed by arbitrary bytes.
-	ProtoMessageTypePing = 0
+	ProtoMessageTypePing = byte(0)
 
 	// ProtoMessageTypePong indicates a pong containing the echoed timestamp followed by a SHA384 of the original ping.
-	ProtoMessageTypePong = 1
+	ProtoMessageTypePong = byte(1)
 
 	// ProtoMessageTypePeer contains a msgpack-encoded Peer record.
-	ProtoMessageTypePeer = 2
+	ProtoMessageTypePeer = byte(2)
 
 	// ProtoMessageTypeRecord contains a raw packed record.
-	ProtoMessageTypeRecord = 3
+	ProtoMessageTypeRecord = byte(3)
 
 	// ProtoMessageTypeRequestByHash requests a record by its 32-byte Shandwich256 hash.
-	ProtoMessageTypeRequestByHash = 4
+	ProtoMessageTypeRequestByHash = byte(4)
 )
 
 // ProtoTypeLFRawUDP indicates the raw UDP peer-to-peer protocol.
@@ -86,7 +91,17 @@ type Host struct {
 	Latency            int
 }
 
-func (h *Host) doRecordRequest(recordHash []byte) (err error) {
+func (h *Host) doRecordRequest(n *Node, recordHash []byte) (err error) {
+	msg := make([]byte, 1)
+	_, msg, err = n.db.getDataByHash(msg, recordHash)
+	if err != nil {
+		return err
+	}
+	if len(msg) > 1 {
+		msg[0] = ProtoMessageTypeRecord // type, no size == rest of packet is record
+		_, err := n.udpSocket.WriteToUDP(msg[:], &h.RemoteAddress)
+		return err
+	}
 	return nil
 }
 
@@ -95,7 +110,7 @@ func (h *Host) handleIncomingPacket(n *Node, data []byte) (err error) {
 	defer func() {
 		e := recover()
 		if e != nil {
-			err = fmt.Errorf("trapped unexpected error: %s", e)
+			err = ErrorTrappedPanic{e}
 		}
 	}()
 
@@ -108,7 +123,7 @@ func (h *Host) handleIncomingPacket(n *Node, data []byte) (err error) {
 			return err
 		}
 		messageStart := len(data) - r.Len()
-		messageType := int(typeAndSize & 31)
+		messageType := byte(typeAndSize & 31)
 		messageSize := int(typeAndSize >> 5)
 		multipleMessages := true
 		if messageSize <= 0 { // if the very first size is zero, the packet contains only one message filling its remaining size
@@ -116,7 +131,7 @@ func (h *Host) handleIncomingPacket(n *Node, data []byte) (err error) {
 			multipleMessages = false
 		}
 		if messageStart+messageSize > len(data) {
-			return errors.New("message incomplete")
+			return ErrorMessageIncomplete
 		}
 
 		switch messageType {
@@ -127,7 +142,7 @@ func (h *Host) handleIncomingPacket(n *Node, data []byte) (err error) {
 				msg := data[messageStart : messageStart+messageSize]
 
 				var pong [57]byte
-				pong[0] = byte(ProtoMessageTypePong) // type, no size == one message per packet
+				pong[0] = ProtoMessageTypePong // type, no size == one message per packet
 				copy(pong[1:9], msg[0:8])
 				s384 := sha512.Sum384(msg)
 				copy(pong[9:57], s384[:])
@@ -158,7 +173,7 @@ func (h *Host) handleIncomingPacket(n *Node, data []byte) (err error) {
 						}
 						h.queuedPeers = nil
 						for i := range h.queuedRecordRequests {
-							h.doRecordRequest(h.queuedRecordRequests[i][:])
+							h.doRecordRequest(n, h.queuedRecordRequests[i][:])
 						}
 						h.queuedRecordRequests = nil
 						h.queuedLock.Unlock()
@@ -196,7 +211,7 @@ func (h *Host) handleIncomingPacket(n *Node, data []byte) (err error) {
 			if messageSize == 32 {
 				msg := data[messageStart : messageStart+messageSize]
 				if h.Connected() {
-					h.doRecordRequest(msg)
+					h.doRecordRequest(n, msg)
 				} else {
 					var rr [32]byte
 					copy(rr[:], msg)
@@ -232,7 +247,7 @@ func (h *Host) Ping(n *Node, force bool) error {
 	ts := TimeMs()
 	if force || (ts-h.LastSentPing) < ProtoMinPingResponseInterval {
 		var ping [13]byte
-		ping[0] = byte(ProtoMessageTypePing) // type, no size == one message per packet
+		ping[0] = ProtoMessageTypePing // type, no size == one message per packet
 		binary.BigEndian.PutUint64(ping[1:9], ts)
 		binary.BigEndian.PutUint32(ping[9:13], uint32(rand.Int31()))
 		h.lastPingHash = sha512.Sum384(ping[1:])

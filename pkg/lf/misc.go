@@ -1,3 +1,10 @@
+/*
+ * LF: Global Fully Replicated Key/Value Store
+ * Copyright (C) 2018  ZeroTier, Inc.  https://www.zerotier.com/
+ *
+ * Licensed under the terms of the MIT license (see LICENSE.txt).
+ */
+
 package lf
 
 import (
@@ -75,4 +82,22 @@ func readSkip(in io.Reader, skip int) error {
 		return err
 	}
 	return nil
+}
+
+func sliceContainsInt(s []int, e int) bool {
+	for _, a := range s {
+		if a == e {
+			return true
+		}
+	}
+	return false
+}
+
+func sliceContainsUInt(s []uint, e uint) bool {
+	for _, a := range s {
+		if a == e {
+			return true
+		}
+	}
+	return false
 }

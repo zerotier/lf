@@ -1,3 +1,10 @@
+/*
+ * LF: Global Fully Replicated Key/Value Store
+ * Copyright (C) 2018  ZeroTier, Inc.  https://www.zerotier.com/
+ *
+ * Licensed under the terms of the MIT license (see LICENSE.txt).
+ */
+
 package lf
 
 import (
@@ -163,5 +170,29 @@ func (n *Node) Try(ip []byte, port int) {
 
 // AddRecord attempts to add a record to this node's database.
 func (n *Node) AddRecord(recordData []byte) error {
+	var r Record
+	err := r.Unpack(recordData)
+	if err != nil {
+		return err
+	}
+
+	if n.db.hasRecord(r.Hash[:]) {
+		return nil
+	}
+
+	err = r.Verify()
+	if err != nil {
+		return err
+	}
+
+	if r.Timestamp > (TimeSec() + RecordMaxTimeDrift) {
+		return ErrorRecordViolatesSpecialRelavitity
+	}
+
+	err = n.db.putRecord(&r)
+	if err != nil {
+		return err
+	}
+
 	return nil
 }

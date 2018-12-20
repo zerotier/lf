@@ -1,3 +1,10 @@
+/*
+ * LF: Global Fully Replicated Key/Value Store
+ * Copyright (C) 2018  ZeroTier, Inc.  https://www.zerotier.com/
+ *
+ * Licensed under the terms of the MIT license (see LICENSE.txt).
+ */
+
 package lf
 
 import (
@@ -86,6 +93,8 @@ type APIError struct {
 	Message string `msgpack:"M"` // Message indicating the reason for the error
 }
 
+var apiVersionStr = strconv.FormatUint(APIVersion, 10)
+
 func apiMakePeerArray(n *Node) []APIPeer {
 	n.hostsLock.RLock()
 	defer n.hostsLock.RUnlock()
@@ -114,10 +123,15 @@ func apiMakePeerArray(n *Node) []APIPeer {
 	return r
 }
 
-func apiSendJSON(out http.ResponseWriter, req *http.Request, httpStatusCode int, obj interface{}) error {
-	out.Header().Set("Pragma", "no-cache")
-	out.Header().Set("Cache-Control", "no-cache")
+func apiSetStandardHeaders(out http.ResponseWriter) {
+	h := out.Header()
+	h.Set("Pragma", "no-cache")
+	h.Set("Cache-Control", "no-cache")
+	h.Set("X-LF-LocalTime", strconv.FormatUint(TimeMs(), 10))
+	h.Set("X-LF-APIVersion", apiVersionStr)
+}
 
+func apiSendJSON(out http.ResponseWriter, req *http.Request, httpStatusCode int, obj interface{}) error {
 	// If the client elects that it accepts msgpack, send that instead since it's faster and smaller.
 	accept, haveAccept := req.Header["Accept"]
 	if haveAccept {
@@ -138,7 +152,6 @@ func apiSendJSON(out http.ResponseWriter, req *http.Request, httpStatusCode int,
 			}
 		}
 	}
-
 	out.Header().Set("Content-Type", "application/json")
 	out.WriteHeader(httpStatusCode)
 	if req.Method == http.MethodHead {
@@ -169,8 +182,8 @@ func apiReadJSON(out http.ResponseWriter, req *http.Request, dest interface{}) (
 }
 
 func apiIsTrusted(n *Node, req *http.Request) bool {
-	// TODO: use HTTP auth or configurable host list
-	return strings.HasPrefix(req.RemoteAddr, "127.0.0.1") || strings.HasPrefix(req.RemoteAddr, "::1") || strings.HasPrefix(req.RemoteAddr, "[::1]")
+	// TODO
+	return true
 }
 
 func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
@@ -181,6 +194,7 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 	// The following extensions return the value with the appropriate content type: html, js, png, gif, jpg, xml,
 	// css, and txt. No extension returns value with type application/octet-stream.
 	smux.HandleFunc("/k/", func(out http.ResponseWriter, req *http.Request) {
+		apiSetStandardHeaders(out)
 		if req.Method == http.MethodGet || req.Method == http.MethodHead {
 			var key []byte
 			contentType := "application/octet-stream"
@@ -247,20 +261,19 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 				}
 				apiSendJSON(out, req, http.StatusOK, &recs)
 			} else {
-				out.Header().Set("Pragma", "no-cache")
-				out.Header().Set("Cache-Control", "no-cache")
-				out.Header().Set("Content-Type", contentType)
+				h := out.Header()
+				h.Set("Content-Type", contentType)
 				v, err := recs[0].Record.GetValue(key)
 				if err != nil {
 					apiSendJSON(out, req, http.StatusNotFound, &APIError{Code: http.StatusNotFound, Message: "record decryption or decompression failed"})
 					return
 				}
-				out.Header().Set("X-LF-Record-ID", hex.EncodeToString(recs[0].Record.ID[:]))
-				out.Header().Set("X-LF-Record-Owner", hex.EncodeToString(recs[0].Record.Owner[:]))
-				out.Header().Set("X-LF-Record-Hash", hex.EncodeToString(recs[0].Record.Hash[:]))
-				out.Header().Set("X-LF-Record-Timestamp", strconv.FormatUint(recs[0].Record.Timestamp, 10))
-				out.Header().Set("X-LF-Record-Weight", hex.EncodeToString(recs[0].Weight[:]))
-				out.Header().Set("Content-Length", strconv.Itoa(len(v)))
+				h.Set("X-LF-Record-ID", hex.EncodeToString(recs[0].Record.ID[:]))
+				h.Set("X-LF-Record-Owner", hex.EncodeToString(recs[0].Record.Owner[:]))
+				h.Set("X-LF-Record-Hash", hex.EncodeToString(recs[0].Record.Hash[:]))
+				h.Set("X-LF-Record-Timestamp", strconv.FormatUint(recs[0].Record.Timestamp, 10))
+				h.Set("X-LF-Record-Weight", hex.EncodeToString(recs[0].Weight[:]))
+				h.Set("Content-Length", strconv.Itoa(len(v)))
 				out.WriteHeader(200)
 				out.Write(v)
 			}
@@ -271,6 +284,7 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 
 	// Post a record, takes APIPut payload or just a raw record.
 	smux.HandleFunc("/p", func(out http.ResponseWriter, req *http.Request) {
+		apiSetStandardHeaders(out)
 		if req.Method == http.MethodPost || req.Method == http.MethodPut {
 			// Handle submission of raw records in raw record format with no enclosing object.
 			ct, haveCT := req.Header["Content-Type"]
@@ -303,6 +317,7 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 
 	// Get record, takes APIGet payload for parameters. (Ironically /g must be gotten with PUT or POST!)
 	smux.HandleFunc("/g", func(out http.ResponseWriter, req *http.Request) {
+		apiSetStandardHeaders(out)
 		if req.Method == http.MethodPost || req.Method == http.MethodPut {
 		} else {
 			apiSendJSON(out, req, http.StatusMethodNotAllowed, &APIError{Code: http.StatusMethodNotAllowed, Message: req.Method + " not supported for this path"})
@@ -314,13 +329,37 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 	// records in the order in which they are sent. Results are sent in binary raw form with
 	// each record prefixed by a 16-bit (big-endian) record size.
 	smux.HandleFunc("/r", func(out http.ResponseWriter, req *http.Request) {
+		apiSetStandardHeaders(out)
 		if req.Method == http.MethodPost || req.Method == http.MethodPut {
 		} else {
 			apiSendJSON(out, req, http.StatusMethodNotAllowed, &APIError{Code: http.StatusMethodNotAllowed, Message: req.Method + " not supported for this path"})
 		}
 	})
 
+	// Get links, returns up to 31 raw binary hashes. A ?count= parameter can be added to specify how many are desired.
+	smux.HandleFunc("/l", func(out http.ResponseWriter, req *http.Request) {
+		apiSetStandardHeaders(out)
+		if req.Method == http.MethodGet || req.Method == http.MethodHead {
+			desired := uint(RecordDesiredLinks)
+			desiredStr := req.URL.Query().Get("count")
+			if len(desiredStr) > 0 {
+				tmp, _ := strconv.ParseUint(desiredStr, 10, 64)
+				if tmp > 0 && tmp < uint64(RecordDesiredLinks) {
+					desired = uint(tmp)
+				}
+			}
+			_, links, _ := n.db.getLinks(desired)
+			out.Header().Set("Content-Type", "application/octet-stream")
+			out.Header().Set("Content-Length", strconv.FormatUint(uint64(len(links)), 10))
+			out.WriteHeader(http.StatusOK)
+			out.Write(links)
+		} else {
+			apiSendJSON(out, req, http.StatusMethodNotAllowed, &APIError{Code: http.StatusMethodNotAllowed, Message: req.Method + " not supported for this path"})
+		}
+	})
+
 	smux.HandleFunc("/peers", func(out http.ResponseWriter, req *http.Request) {
+		apiSetStandardHeaders(out)
 		if req.Method == http.MethodGet || req.Method == http.MethodHead {
 			apiSendJSON(out, req, http.StatusOK, apiMakePeerArray(n))
 		} else {
@@ -329,6 +368,7 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 	})
 
 	smux.HandleFunc("/connect", func(out http.ResponseWriter, req *http.Request) {
+		apiSetStandardHeaders(out)
 		if req.Method == http.MethodPost || req.Method == http.MethodPut {
 			if apiIsTrusted(n, req) {
 			} else {
@@ -340,6 +380,7 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 	})
 
 	smux.HandleFunc("/status", func(out http.ResponseWriter, req *http.Request) {
+		apiSetStandardHeaders(out)
 		rc, ds := n.db.stats()
 		var s APIStatus
 		s.Software = SoftwareName
@@ -357,6 +398,7 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 	})
 
 	smux.HandleFunc("/", func(out http.ResponseWriter, req *http.Request) {
+		apiSetStandardHeaders(out)
 		if req.Method == http.MethodGet || req.Method == http.MethodHead {
 			if req.URL.Path == "/" {
 			} else {

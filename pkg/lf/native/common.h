@@ -16,19 +16,6 @@
 #define _LARGEFILE_SOURCE 1
 #endif
 
-/* #define ZTLF_TRACE 1 */
-
-/* LF internal error return codes */
-/*
-#define ZTLF_ERR_NONE                         0
-#define ZTLF_ERR_OUT_OF_MEMORY                1
-#define ZTLF_ERR_ABORTED                      2
-#define ZTLF_ERR_OBJECT_TOO_LARGE             3
-#define ZTLF_ERR_OBJECT_INVALID               4
-#define ZTLF_ERR_ALGORITHM_NOT_SUPPORTED      5
-#define ZTLF_ERR_DATABASE_MAY_BE_CORRUPT      6
-*/
-
 #include <stdint.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -42,6 +29,7 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <math.h>
+#include <dirent.h>
 #include <sys/time.h>
 #include <sys/types.h>
 
@@ -115,8 +103,7 @@
 #endif
 #endif
 
-/* Assume little-endian byte order if not defined. Are there even any BE
- * systems large enough to run this still in production in 2018? */
+/* Assume little-endian byte order if not defined. */
 #ifndef __BYTE_ORDER__
 #ifndef __ORDER_LITTLE_ENDIAN__
 #define __ORDER_LITTLE_ENDIAN__ 4321
@@ -125,6 +112,10 @@
 #define __ORDER_BIG_ENDIAN__ 1234
 #endif
 #define __BYTE_ORDER__ __ORDER_LITTLE_ENDIAN__
+#endif
+
+#if __WORDSIZE == 64 || __SIZEOF_POINTER__ == 8 || defined(__LP64__) || defined(_M_AMD64) || defined(_M_X64) || defined(__amd64__) || defined(__x86_64__) || defined(__amd64) || defined(__x86_64)
+#define ZTLF_64BIT 1
 #endif
 
 /* Define a macro to byte swap 64-bit values if needed. */
@@ -190,7 +181,7 @@ static inline uint64_t ZTLF_htonll(const uint64_t n)
 #define ZTLF_get32_le(f) ((int32_t)(f))
 #define ZTLF_get64_le(f) ((int64_t)(f))
 
-#else /* many other CPUs don't like unaligned access, so assume we can't ---------------- */
+#else /* quite a few other CPUs don't like unaligned access, so assume we can't ---------------- */
 
 #define ZTLF_setu16(f,v) { \
 	const uint16_t _setu_v = (uint16_t)(v); \
@@ -401,9 +392,6 @@ static inline void ZTLF_L_func(int level,const char *srcf,int line,const char *f
 
 #define ZTLF_MALLOC_CHECK(m) if (unlikely(!((m)))) { ZTLF_L_fatal("malloc() failed!"); abort(); }
 
-#if 0
-#define ZTLF_timeSec() ((uint64_t)time(NULL))
-
 static inline uint64_t ZTLF_timeMs()
 {
 #ifdef __WINDOWS__
@@ -420,38 +408,6 @@ static inline uint64_t ZTLF_timeMs()
 	gettimeofday(&tv,(struct timezone *)0);
 	return ( (1000ULL * (uint64_t)tv.tv_sec) + (uint64_t)(tv.tv_usec / 1000) );
 #endif
-};
-
-/* https://stackoverflow.com/questions/1100090/looking-for-an-efficient-integer-square-root-algorithm-for-arm-thumb2 */
-static inline uint32_t ZTLF_isqrt(const uint32_t a_nInput)
-{
-	uint32_t op  = a_nInput;
-	uint32_t res = 0;
-	uint32_t one = 1 << 30;
-
-	while (one > op) one >>= 2;
-
-	while (one != 0) {
-		if (op >= res + one) {
-			op = op - (res + one);
-			res = res + 2 * one;
-		}
-		res >>= 1;
-		one >>= 2;
-	}
-
-	if (op > res) ++res;
-
-	return res;
 }
-
-/* C version of difficulty cost function for Wharrgarbl -- see record.go in Go code. */
-static inline uint32_t ZTLF_RecordWharrgarblCost(const unsigned int bytes)
-{
-	if (bytes <= 64)
-		return 1024;
-	return ((ZTLF_isqrt((uint32_t)bytes) * (uint32_t)bytes * 3) - ((uint32_t)bytes * 8));
-}
-#endif
 
 #endif

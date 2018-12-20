@@ -72,6 +72,8 @@ static inline void *ZTLF_MappedFile_Get(struct ZTLF_MappedFile *f,const uintptr_
 	if (likely((at + len) <= f->size)) {
 		return (void *)(((uint8_t *)f->ptr) + at);
 	}
+	if (!f->sizeIncrement)
+		return NULL;
 	const uintptr_t newSize = f->size + f->sizeIncrement;
 	munmap(f->ptr,(size_t)(f->size));
 	if (ftruncate(f->fd,(off_t)newSize) != 0) {

@@ -11,8 +11,8 @@ import (
 	"unsafe"
 )
 
-// WharrgarblProofOfWorkSize is the size of Wharrgarbl's result in bytes.
-const WharrgarblProofOfWorkSize = 20
+// WharrgarblOutputSize is the size of Wharrgarbl's result in bytes.
+const WharrgarblOutputSize = 20
 
 // A single memory arena is kept around for performance reasons. All CPU cores are used by Wharrgarbl,
 // so there is no point in parallelizing it.
@@ -20,9 +20,10 @@ var wharrgarblMemory unsafe.Pointer
 var wharrgarblMemorySize uint
 var wharrgarblMemoryLock sync.Mutex
 
-// SpeckHash computes a simple Davies-Meyer type hash.
-// This algorithm isn't for authentication or other security uses. It's only used in the Wharrgarbl
-// PoW collision search. It's exposed for testing/verification.
+// SpeckHash computes a simple Davies-Meyer type hash built from the Speck block cipher.
+// This shouldn't be considered secure for cryptograhic or authentication uses and isn't used for
+// that. It's used internally by Wharrgarbl as a fast short input hash in it's collision search
+// and is exposed here so it can be tested.
 func SpeckHash(in []byte) (out [2]uint64) {
 	if len(in) > 0 {
 		C.ZTLF_SpeckHash((*_Ctype_ulonglong)(unsafe.Pointer(&out)), unsafe.Pointer(&(in[0])), _Ctype_ulong(len(in)))
@@ -36,7 +37,7 @@ func SpeckHash(in []byte) (out [2]uint64) {
 // This can of course be extremely time consuming, sometimes taking minutes for very high difficulties on some systems.
 // The memory must be at least 12 bytes in size and need not be cleared between calls to Wharrgarbl(). Any failure results in
 // zero being returned for iterations and an undefined result in []out.
-func Wharrgarbl(in []byte, difficulty uint32, minMemorySize uint) (out [20]byte, iterations uint64) {
+func Wharrgarbl(in *[64]byte, difficulty uint32, minMemorySize uint) (out [20]byte, iterations uint64) {
 	if minMemorySize < 12 {
 		return
 	}
@@ -55,7 +56,9 @@ func Wharrgarbl(in []byte, difficulty uint32, minMemorySize uint) (out [20]byte,
 	}
 
 	runtime.LockOSThread()
-	iterations = uint64(C.ZTLF_Wharrgarbl(unsafe.Pointer(&out), unsafe.Pointer(&(in[0])), _Ctype_ulong(len(in)), _Ctype_uint(difficulty), wharrgarblMemory, _Ctype_ulong(wharrgarblMemorySize), _Ctype_uint(runtime.NumCPU())))
+	var in2 [64]byte
+	copy(in2[:], (*in)[:])
+	iterations = uint64(C.ZTLF_Wharrgarbl(unsafe.Pointer(&out), unsafe.Pointer(&in2), 64, _Ctype_uint(difficulty), wharrgarblMemory, _Ctype_ulong(wharrgarblMemorySize), _Ctype_uint(runtime.NumCPU())))
 	runtime.UnlockOSThread()
 
 	wharrgarblMemoryLock.Unlock()
@@ -65,7 +68,7 @@ func Wharrgarbl(in []byte, difficulty uint32, minMemorySize uint) (out [20]byte,
 
 // WharrgarblVerify checks whether work is valid for the provided input, returning the difficulty used or 0 if work is not valid.
 func WharrgarblVerify(work []byte, in []byte) uint32 {
-	if len(work) != WharrgarblProofOfWorkSize {
+	if len(work) != WharrgarblOutputSize {
 		return 0
 	}
 	return uint32(C.ZTLF_WharrgarblVerify(unsafe.Pointer(&(work[0])), unsafe.Pointer(&(in[0])), _Ctype_ulong(len(in))))
@@ -73,7 +76,7 @@ func WharrgarblVerify(work []byte, in []byte) uint32 {
 
 // WharrgarblGetDifficulty extracts the difficulty from a work result without performing any verification.
 func WharrgarblGetDifficulty(work []byte) uint32 {
-	if len(work) == WharrgarblProofOfWorkSize {
+	if len(work) == WharrgarblOutputSize {
 		return binary.BigEndian.Uint32(work[16:20]) // difficulty is appended as last 4 bytes
 	}
 	return 0

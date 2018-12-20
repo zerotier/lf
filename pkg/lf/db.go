@@ -1,3 +1,10 @@
+/*
+ * LF: Global Fully Replicated Key/Value Store
+ * Copyright (C) 2018  ZeroTier, Inc.  https://www.zerotier.com/
+ *
+ * Licensed under the terms of the MIT license (see LICENSE.txt).
+ */
+
 package lf
 
 // #cgo CFLAGS: -O3
@@ -10,10 +17,9 @@ import "C"
 import (
 	"bytes"
 	"encoding/binary"
-	"errors"
-	"fmt"
 	"runtime"
 	"sort"
+	"strconv"
 	"unsafe"
 )
 
@@ -21,9 +27,21 @@ import (
 type db C.struct_ZTLF_DB
 
 func (db *db) open(path string) error {
-	cerr := C.ZTLF_DB_Open((*C.struct_ZTLF_DB)(db), C.CString(path))
+	var errbuf [2048]byte
+	cerr := C.ZTLF_DB_Open((*C.struct_ZTLF_DB)(db), C.CString(path), (*C.char)(unsafe.Pointer(&(errbuf[0]))), 2047)
 	if cerr != 0 {
-		return fmt.Errorf("Database open failed: %d", cerr)
+		errstr := "unknown or I/O level error " + strconv.FormatInt(int64(cerr), 10)
+		if cerr > 0 {
+			var eos = 0
+			for eos < len(errbuf) {
+				if errbuf[eos] == 0 {
+					errstr = string(errbuf[0:eos])
+					break
+				}
+				eos++
+			}
+		}
+		return ErrorDatabase{int(cerr), "open failed (" + errstr + ")"}
 	}
 	return nil
 }
@@ -33,44 +51,38 @@ func (db *db) close() {
 }
 
 func (db *db) putRecord(r *Record) error {
-	if len(r.Data) < RecordMinSize {
-		return errors.New("record too short")
-	}
-
 	var changeOwner, sel0, sel1, links unsafe.Pointer
 	if len(r.ChangeOwner) == 32 {
-		changeOwner = unsafe.Pointer(&(r.ChangeOwner[0]))
+		changeOwner = unsafe.Pointer(&r.ChangeOwner[0])
 	}
 	for i := range r.SelectorIDs {
-		if uintptr(sel0) == 0 {
-			sel0 = unsafe.Pointer(&(r.SelectorIDs[i][0]))
-		} else {
-			sel1 = unsafe.Pointer(&(r.SelectorIDs[i][0]))
+		if len(r.SelectorIDs[i]) == 32 {
+			if uintptr(sel0) == 0 {
+				sel0 = unsafe.Pointer(&r.SelectorIDs[i][0])
+			} else {
+				sel1 = unsafe.Pointer(&r.SelectorIDs[i][0])
+			}
 		}
 	}
 	lc := len(r.Links) / 32
 	if lc > 0 {
-		links = unsafe.Pointer(&(r.Links[0]))
+		links = unsafe.Pointer(&r.Links[0])
 	}
 
 	var score uint32
-	if r.WorkAlgorithm == RecordMetaDataTypeChangeOwner {
-		if len(r.Work) == WharrgarblProofOfWorkSize {
-			score = WharrgarblGetDifficulty(r.Work)
-		} else {
-			return errors.New("invalid proof of work")
-		}
+	if r.WorkAlgorithm == RecordWorkAlgorithmWharrgarbl {
+		score = WharrgarblGetDifficulty(r.Work[:])
 	} else {
 		score = 1
 	}
 
 	cerr := C.ZTLF_DB_PutRecord(
 		(*C.struct_ZTLF_DB)(db),
-		unsafe.Pointer(&(r.Data[0])),
+		unsafe.Pointer(&r.Data[0]),
 		C.uint(len(r.Data)),
-		unsafe.Pointer(&(r.ID)),
-		unsafe.Pointer(&(r.Owner)),
-		unsafe.Pointer(&(r.Hash)),
+		unsafe.Pointer(&r.ID[0]),
+		unsafe.Pointer(&r.Owner[0]),
+		unsafe.Pointer(&r.Hash[0]),
 		C.ulonglong(r.Timestamp),
 		C.ulonglong(r.TTL),
 		C.uint(score),
@@ -80,7 +92,7 @@ func (db *db) putRecord(r *Record) error {
 		links,
 		C.uint(lc))
 	if cerr != 0 {
-		return fmt.Errorf("error %d", cerr)
+		return ErrorDatabase{int(cerr), "record add failed"}
 	}
 
 	return nil
@@ -91,16 +103,16 @@ func (db *db) getMatching(id, owner, sel0, sel1 []byte) (rd []APIRecordDetail) {
 	var doffdlen []uintptr
 
 	if len(id) == 32 {
-		idP = unsafe.Pointer(&(id[0]))
+		idP = unsafe.Pointer(&id[0])
 	}
 	if len(owner) == 32 {
-		ownerP = unsafe.Pointer(&(owner[0]))
+		ownerP = unsafe.Pointer(&owner[0])
 	}
 	if len(sel0) == 32 {
-		sel0P = unsafe.Pointer(&(sel0[0]))
+		sel0P = unsafe.Pointer(&sel0[0])
 	}
 	if len(sel1) == 32 {
-		sel1P = unsafe.Pointer(&(sel1[0]))
+		sel1P = unsafe.Pointer(&sel1[0])
 	}
 
 	// This stuff is defined in db-native-callbacks.go
@@ -131,13 +143,13 @@ func (db *db) getMatching(id, owner, sel0, sel1 []byte) (rd []APIRecordDetail) {
 		dlen := doffdlen[j]
 		j++
 		rd[i].Record.Data = make([]byte, uint(dlen))
-		ok := C.ZTLF_DB_GetRecordData((*C.struct_ZTLF_DB)(db), C.ulonglong(doff), unsafe.Pointer(&(rd[i].Record.Data[0])), C.uint(dlen))
-		if int(ok) == 0 { // unlikely, sanity check
+		ok := int(C.ZTLF_DB_GetRecordData((*C.struct_ZTLF_DB)(db), C.ulonglong(doff), unsafe.Pointer(&(rd[i].Record.Data[0])), C.uint(dlen)))
+		if ok == 0 { // unlikely, sanity check
 			// TODO: log probable database corruption
 			rd = nil
 			break
 		} else {
-			if rd[i].Record.Unpack(nil, false) != nil { // same... would indicate a bad record in DB
+			if rd[i].Record.Unpack(nil) != nil { // same... would indicate a bad record in DB
 				// TODO: log probable database corruption
 				rd = nil
 				break
@@ -155,6 +167,51 @@ func (db *db) getMatching(id, owner, sel0, sel1 []byte) (rd []APIRecordDetail) {
 	return
 }
 
+// getDataByHash gets record data by hash and appends it to 'buf', returning bytes appended and buffer.
+func (db *db) getDataByHash(h []byte, buf []byte) (int, []byte, error) {
+	if len(h) != 32 {
+		return 0, buf, ErrorInvalidParameter
+	}
+
+	var doff uint64
+	dlen := int(C.ZTLF_DB_GetByHash((*C.struct_ZTLF_DB)(db), unsafe.Pointer(&(h[0])), (*C.ulonglong)(unsafe.Pointer(&doff))))
+	if dlen == 0 {
+		return 0, buf, nil
+	}
+	if dlen < RecordMinSize || dlen > RecordMaxSize {
+		return 0, buf, ErrorDatabase{dlen, "invalid record size returned by DB_GetByHash(), database may be corrupt"}
+	}
+
+	startPos := len(buf)
+	buf = append(buf, make([]byte, dlen)...)
+	ok := int(C.ZTLF_DB_GetRecordData((*C.struct_ZTLF_DB)(db), C.ulonglong(doff), unsafe.Pointer(&(buf[startPos])), C.uint(dlen)))
+	if ok == 0 {
+		buf = buf[0:startPos]
+		return 0, buf, ErrorIO
+	}
+
+	return dlen, buf, nil
+}
+
+func (db *db) hasRecord(h []byte) bool {
+	if len(h) == 32 {
+		var doff uint64
+		dlen := int(C.ZTLF_DB_GetByHash((*C.struct_ZTLF_DB)(db), unsafe.Pointer(&(h[0])), (*C.ulonglong)(unsafe.Pointer(&doff))))
+		return (dlen > RecordMinSize)
+	}
+	return false
+}
+
+// getLinks gets up to count 32-bit hashes of linkable records, returning the number actually retrieved.
+func (db *db) getLinks(count uint) (uint, []byte, error) {
+	if count == 0 {
+		return 0, nil, nil
+	}
+	lbuf := make([]byte, 32*count)
+	lc := uint(C.ZTLF_DB_GetLinks((*C.struct_ZTLF_DB)(db), unsafe.Pointer(&(lbuf[0])), C.uint(count), C.uint(RecordDesiredLinks)))
+	return lc, lbuf[0 : 32*lc], nil
+}
+
 func (db *db) stats() (recordCount, dataSize uint64) {
 	C.ZTLF_DB_Stats((*C.struct_ZTLF_DB)(db), (*C.ulonglong)(unsafe.Pointer(&recordCount)), (*C.ulonglong)(unsafe.Pointer(&dataSize)))
 	return
@@ -162,4 +219,8 @@ func (db *db) stats() (recordCount, dataSize uint64) {
 
 func (db *db) crc64() uint64 {
 	return uint64(C.ZTLF_DB_CRC64((*C.struct_ZTLF_DB)(db)))
+}
+
+func (db *db) hasPending() bool {
+	return (C.ZTLF_DB_HasPending((*C.struct_ZTLF_DB)(db)) != 0)
 }

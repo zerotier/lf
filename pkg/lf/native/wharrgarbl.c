@@ -56,7 +56,7 @@ void ZTLF_SpeckHash(uint64_t out[2],const void *in,const unsigned long len)
 	uint64_t buf[2];
 	unsigned int p = 0;
 
-	/* Hash message block by block */
+	/* Hash message block by block (Davies-Meyer) */
 	out[0] = 0x7171717171717171ULL;
 	out[1] = 0x1717171717171717ULL; /* endian-neutral initial state constants */
 	for(unsigned long i=0;i<len;++i) {
@@ -70,14 +70,33 @@ void ZTLF_SpeckHash(uint64_t out[2],const void *in,const unsigned long len)
 	}
 
 	/* Append length of input */
-	for(int s=24;s>=0;s-=8) {
-		((uint8_t *)buf)[p++] = (uint8_t)(len >> s);
-		if (p == 16) {
-			p = 0;
-			_ZTLF_SpeckEncrypt(out,buf,out);
-			out[0] ^= buf[0];
-			out[1] ^= buf[1];
-		}
+	((uint8_t *)buf)[p++] = (uint8_t)(len >> 24);
+	if (p == 16) {
+		p = 0;
+		_ZTLF_SpeckEncrypt(out,buf,out);
+		out[0] ^= buf[0];
+		out[1] ^= buf[1];
+	}
+	((uint8_t *)buf)[p++] = (uint8_t)(len >> 16);
+	if (p == 16) {
+		p = 0;
+		_ZTLF_SpeckEncrypt(out,buf,out);
+		out[0] ^= buf[0];
+		out[1] ^= buf[1];
+	}
+	((uint8_t *)buf)[p++] = (uint8_t)(len >> 8);
+	if (p == 16) {
+		p = 0;
+		_ZTLF_SpeckEncrypt(out,buf,out);
+		out[0] ^= buf[0];
+		out[1] ^= buf[1];
+	}
+	((uint8_t *)buf)[p++] = (uint8_t)len;
+	if (p == 16) {
+		p = 0;
+		_ZTLF_SpeckEncrypt(out,buf,out);
+		out[0] ^= buf[0];
+		out[1] ^= buf[1];
 	}
 
 	/* Pad and hash final block */
@@ -197,7 +216,7 @@ uint64_t ZTLF_Wharrgarbl(void *pow,const void *in,const unsigned long inlen,cons
 	for(unsigned int t=1;t<threads;++t) {
 		pthread_t t;
 		if (pthread_create(&t,NULL,&_wharrgarbl,&ws) != 0) {
-			ZTLF_L_fatal("pthread_create() failed!");
+			fprintf(stderr,"pthread_create() failed!" ZTLF_EOL);
 			abort();
 		}
 		pthread_detach(t);
@@ -213,6 +232,7 @@ uint64_t ZTLF_Wharrgarbl(void *pow,const void *in,const unsigned long inlen,cons
 		pthread_cond_wait(&ws.doneCond,&ws.doneLock);
 	}
 
+exit_wharrgarbl:
 	pthread_cond_destroy(&ws.doneCond);
 	pthread_mutex_destroy(&ws.doneLock);
 
