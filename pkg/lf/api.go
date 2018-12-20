@@ -77,16 +77,6 @@ type APIRecordDetail struct {
 	Weight [16]byte `msgpack:"W,omitempty" json:",omitempty"` // Weight of this record as a 128-bit unsigned int in big-endian byte order
 }
 
-// APIRequestLinks is a request for links to include in a new record.
-type APIRequestLinks struct {
-	Count uint `msgpack:"C"` // Desired number of links
-}
-
-// APILinks is a set of links returned by APIRequestLinks
-type APILinks struct {
-	Links []byte `msgpack:"L"` // Array of links (size is always a multiple of 32 bytes, link count is size / 32)
-}
-
 // APIError indicates an error and is returned with non-200 responses.
 type APIError struct {
 	Code    int    `msgpack:"C"` // Positive error codes simply mirror HTTP response codes, while negative ones are LF-specific
