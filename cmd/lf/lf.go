@@ -140,34 +140,45 @@ func main() {
 	}
 
 	switch args[1] {
+
 	case "help":
 		if len(args) == 3 {
 			printHelp(args[2])
 		} else {
 			printHelp("")
 		}
+
 	case "version":
 		fmt.Println(lf.VersionStr)
+
 	case "node-start":
 		doNodeStart(*path, *jsonOutput, *verboseOutput, cmdArgs)
+
 	case "proxy-start":
 		doProxyStart(*path, *jsonOutput, *urlOverride, *verboseOutput, cmdArgs)
+
 	case "config":
 		doConfig(*path, *jsonOutput, cmdArgs)
+
 	case "set":
 		doSet(*path, *jsonOutput, *urlOverride, *verboseOutput, cmdArgs)
+
 	case "get":
 		doGet(*path, *jsonOutput, *urlOverride, *verboseOutput, cmdArgs)
+
 	case "find":
 		doFind(*path, *jsonOutput, *urlOverride, *verboseOutput, cmdArgs)
+
 	case "owner":
 		doOwner(*path, *jsonOutput, *verboseOutput, cmdArgs)
+
 	case "status":
 		doStatus(*path, *jsonOutput, *urlOverride, *verboseOutput, cmdArgs)
+
 	case "selftest":
 		test := ""
-		if len(args) == 3 {
-			test = args[2]
+		if len(cmdArgs) == 1 {
+			test = cmdArgs[0]
 		} else {
 			printHelp("")
 		}
@@ -186,7 +197,9 @@ func main() {
 		case "database":
 			lf.TestDatabase("./lf-db-test", os.Stdout)
 		}
+
 	default:
 		printHelp("")
+
 	}
 }
