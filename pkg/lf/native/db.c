@@ -196,6 +196,8 @@ static void *_ZTLF_DB_graphThreadMain(void *arg)
 	ZTLF_Vector_i64_Init(&recordQueue,1024);
 	ZTLF_Map128_Init(&holes,128,NULL);
 	bool checkCheckpoint = false;
+	LogOutputCallback logger = db->logger;
+	void *loggerArg = (void *)db->loggerArg;
 
 	while (db->running) {
 		/* Sleep briefly between each pending record query as these are somewhat expensive. */
@@ -490,18 +492,21 @@ end_graph_thread:
 #undef S
 #define S(v,s) if ((e = sqlite3_prepare_v3(db->dbc,(statement = (s)),-1,SQLITE_PREPARE_PERSISTENT,&(v),NULL)) != SQLITE_OK) goto exit_with_error
 
-int ZTLF_DB_Open(struct ZTLF_DB *db,const char *path,char *errbuf,unsigned int errbufSize)
+int ZTLF_DB_Open(struct ZTLF_DB *db,const char *path,char *errbuf,unsigned int errbufSize,LogOutputCallback logger,void *loggerArg)
 {
 	char tmp[PATH_MAX];
 	int e = 0;
 	const char *statement = NULL;
 
-	ZTLF_L_trace("opening database at %s",path);
-
 	if (strlen(path) >= (PATH_MAX - 16))
 		return ZTLF_NEG(ENAMETOOLONG);
 	memset(db,0,sizeof(struct ZTLF_DB));
 	strncpy(db->path,path,PATH_MAX-1);
+	db->logger = logger;
+	db->loggerArg = (uintptr_t)loggerArg;
+
+	ZTLF_L_trace("opening database at %s",path);
+
 	db->graphThreadStarted = false;
 	pthread_mutex_init(&db->dbLock,NULL);
 	for(int i=0;i<ZTLF_DB_GRAPH_NODE_LOCK_ARRAY_SIZE;++i)
@@ -688,6 +693,8 @@ exit_with_error:
 void ZTLF_DB_Close(struct ZTLF_DB *db)
 {
 	char tmp[PATH_MAX];
+	LogOutputCallback logger = db->logger;
+	void *loggerArg = (void *)db->loggerArg;
 
 	db->running = false;
 	if (db->graphThreadStarted)
@@ -772,6 +779,8 @@ void ZTLF_DB_GetMatching(struct ZTLF_DB *db,const void *id,const void *owner,con
 {
 	struct _ZTLF_DB_GetMatching_follow *follow = NULL,*lastFollow = NULL;
 	uint64_t idTmp[4],ownerTmp[4];
+	LogOutputCallback logger = db->logger;
+	void *loggerArg = (void *)db->loggerArg;
 
 	pthread_mutex_lock(&db->dbLock);
 
@@ -851,6 +860,7 @@ unsigned int ZTLF_DB_GetByHash(struct ZTLF_DB *db,const void *hash,uint64_t *dof
 
 unsigned int ZTLF_DB_GetLinks(struct ZTLF_DB *db,void *const lbuf,const unsigned int cnt,const unsigned int desiredLinks)
 {
+	LogOutputCallback logger = db->logger;
 	uint8_t *l = (uint8_t *)lbuf;
 	unsigned int lc = 0;
 	uint64_t rn = (((uint64_t)rand() << 32) ^ (uint64_t)rand());
@@ -908,6 +918,7 @@ int ZTLF_DB_PutRejected(
 	const uint64_t ts,
 	const int reason)
 {
+	LogOutputCallback logger = db->logger;
 	pthread_mutex_lock(&db->rejectedLock);
 
 	int64_t rdoff = lseek(db->rejectedFd,0,SEEK_END);
@@ -965,6 +976,8 @@ int ZTLF_DB_PutRecord(
 	const unsigned int linkCount)
 {
 	int e = 0,result = 0;
+	LogOutputCallback logger = db->logger;
+	void *loggerArg = (void *)db->loggerArg;
 
 	pthread_rwlock_rdlock(&db->gfLock);
 	pthread_mutex_lock(&db->dbLock);

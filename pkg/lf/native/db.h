@@ -51,6 +51,8 @@ ZTLF_PACKED_STRUCT(struct ZTLF_DB_GraphNode
 struct ZTLF_DB
 {
 	char path[PATH_MAX];
+	LogOutputCallback logger;
+	uintptr_t loggerArg;
 
 	sqlite3 *dbc;
 	sqlite3_stmt *sSetConfig;
@@ -109,7 +111,7 @@ struct ZTLF_DB
 	volatile bool running;
 };
 
-int ZTLF_DB_Open(struct ZTLF_DB *db,const char *path,char *errbuf,unsigned int errbufSize);
+int ZTLF_DB_Open(struct ZTLF_DB *db,const char *path,char *errbuf,unsigned int errbufSize,LogOutputCallback logger,void *loggerArg);
 
 void ZTLF_DB_Close(struct ZTLF_DB *db);
 

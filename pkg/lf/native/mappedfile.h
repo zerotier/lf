@@ -79,14 +79,14 @@ static inline void *ZTLF_MappedFile_Get(struct ZTLF_MappedFile *f,const uintptr_
 	if (ftruncate(f->fd,(off_t)newSize) != 0) {
 		f->ptr = mmap(NULL,(size_t)(f->size),PROT_READ|PROT_WRITE,MAP_FILE|MAP_SHARED,f->fd,0);
 		if (!f->ptr) {
-			ZTLF_L_fatal("cannot remap mapped file after failed grow attempt: %d (%s)",errno,strerror(errno));
+			//ZTLF_L_fatal("cannot remap mapped file after failed grow attempt: %d (%s)",errno,strerror(errno));
 			abort();
 		}
 		return NULL;
 	}
 	f->ptr = mmap(NULL,(size_t)(f->size),PROT_READ|PROT_WRITE,MAP_FILE|MAP_SHARED,f->fd,0);
 	if (!f->ptr) {
-		ZTLF_L_fatal("cannot remap mapped file after growing file size: %d (%s)",errno,strerror(errno));
+		//ZTLF_L_fatal("cannot remap mapped file after growing file size: %d (%s)",errno,strerror(errno));
 		abort();
 	}
 	f->size = newSize;

@@ -12,13 +12,20 @@ package lf
 // #cgo CFLAGS: -O3
 // #cgo LDFLAGS: -lsqlite3
 // #include "./native/db.h"
-// extern int ztlfDBInternalGetMatchingCCallback(int64_t,int64_t,uint64_t,uint64_t,void *,void *,void *,uint64_t,uint64_t,unsigned long);
 import "C"
 
 import (
+	"log"
 	"sync"
 	"unsafe"
 )
+
+// These must be the same as the log levels in native/common.h.
+const logLevelNormal = 0
+const logLevelWarning = -1
+const logLevelFatal = -2
+const logLevelVerbose = 1
+const logLevelTrace = 2
 
 type dbGetMatchingStateByIDOwner struct {
 	doff, dlen       int64
@@ -77,4 +84,48 @@ func ztlfDBInternalGetMatchingCCallback(doff, dlen C.longlong, ts, exp C.ulonglo
 	b.weightH += uint64(weightH)
 
 	return 0
+}
+
+// This callback handles logger output from the C parts of LF. Right now that's mostly just db.c, so this is here,
+// but it could in theory take log output from other code.
+//export ztlfLogOutputCCallback
+func ztlfLogOutputCCallback(level int, srcFile unsafe.Pointer, srcLine int, msg unsafe.Pointer, loggerArg unsafe.Pointer) {
+	srcFileStr := "<unknown file>"
+	if uintptr(srcFile) != 0 {
+		srcFileStr = C.GoString((*C.char)(srcFile))
+	}
+	msgStr := "(no message)"
+	msgStr = C.GoString((*C.char)(msg))
+
+	larg := uint(uintptr(loggerArg))
+	var logger, verboseLogger *log.Logger
+
+	globalLoggersLock.Lock()
+
+	if larg < uint(len(globalLoggers)) {
+		logger = globalLoggers[larg]
+		verboseLogger = globalVerboseLoggers[larg]
+	}
+	if logger == nil {
+		logger = globalDefaultLogger
+	}
+	if verboseLogger == nil {
+		verboseLogger = globalDefaultVerboseLogger
+	}
+
+	switch level {
+	//case logLevelNormal:
+	default:
+		logger.Println(msgStr)
+	case logLevelWarning:
+		logger.Printf("WARNING [%s:%d] %s\n", srcFileStr, srcLine, msgStr)
+	case logLevelFatal:
+		logger.Printf("FATAL [%s:%d] %s\n", srcFileStr, srcLine, msgStr)
+	case logLevelTrace:
+		verboseLogger.Printf("TRACE [%s:%d] %s\n", srcFileStr, srcLine, msgStr)
+	case logLevelVerbose:
+		verboseLogger.Println(msgStr)
+	}
+
+	globalLoggersLock.Unlock()
 }

@@ -109,6 +109,7 @@ func apiSetStandardHeaders(out http.ResponseWriter) {
 	h.Set("Pragma", "no-cache")
 	h.Set("Cache-Control", "no-cache")
 	h.Set("X-LF-LocalTime", strconv.FormatUint(TimeMs(), 10))
+	h.Set("X-LF-Version", VersionStr)
 	h.Set("X-LF-APIVersion", apiVersionStr)
 }
 

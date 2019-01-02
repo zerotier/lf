@@ -344,7 +344,16 @@ static inline uint64_t ZTLF_htonll(const uint64_t n)
 #define ZTLF_NEG(e) (((e) <= 0) ? (e) : -(e))
 #define ZTLF_POS(e) (((e) >= 0) ? (e) : -(e))
 
-static inline void ZTLF_L_func(int level,const char *srcf,int line,const char *fmt,...)
+#define ZTLF_LOG_LEVEL_NORMAL 0
+#define ZTLF_LOG_LEVEL_WARNING -1
+#define ZTLF_LOG_LEVEL_FATAL -2
+#define ZTLF_LOG_LEVEL_VERBOSE 1
+#define ZTLF_LOG_LEVEL_TRACE 2
+
+// Arguments are: level, source file, line, message, and an externally supplied logger argument.
+typedef void (*LogOutputCallback)(int,const char *,int,const char *,void *);
+
+static inline void ZTLF_L_func(LogOutputCallback logger,void *loggerArg,int level,const char *srcf,int line,const char *fmt,...)
 {
 	va_list ap;
 	char msg[4096];
@@ -353,44 +362,23 @@ static inline void ZTLF_L_func(int level,const char *srcf,int line,const char *f
 	va_end(ap);
 	msg[sizeof(msg)-1] = (char)0;
 
-	char ts[128];
-	time_t t = time(0);
-	ctime_r(&t,ts);
-	ts[sizeof(ts)-1] = (char)0;
-	char *tsp = ts;
-	while (*tsp) {
-		if ((*tsp == '\r')||(*tsp == '\n')) {
-			*tsp = (char)0;
-			break;
-		}
-		++tsp;
-	}
-
 	if (!srcf)
 		srcf = "<unknown>";
 
-	if (level < 0) {
-		fprintf(stderr,"%s (%s:%d) %s: %s" ZTLF_EOL,ts,(strrchr(srcf,ZTLF_PATH_SEPARATOR_C) != NULL) ? (strrchr(srcf,ZTLF_PATH_SEPARATOR_C) + 1) : srcf,line,((level == -1) ? "WARNING" : "FATAL"),msg);
-	} else {
-		if (level > 1) {
-			fprintf(stdout,"%s (%s:%d) TRACE %s" ZTLF_EOL,ts,(strrchr(srcf,ZTLF_PATH_SEPARATOR_C) != NULL) ? (strrchr(srcf,ZTLF_PATH_SEPARATOR_C) + 1) : srcf,line,msg);
-		} else {
-			fprintf(stdout,"%s %s" ZTLF_EOL,ts,msg);
-		}
-	}
+	logger(level,srcf,line,msg,loggerArg);
 }
 
-#define ZTLF_L(...) ZTLF_L_func(0,__FILE__,__LINE__,__VA_ARGS__)
-#define ZTLF_L_warning(...) ZTLF_L_func(-1,__FILE__,__LINE__,__VA_ARGS__)
-#define ZTLF_L_fatal(...) ZTLF_L_func(-2,__FILE__,__LINE__,__VA_ARGS__)
-#define ZTLF_L_verbose(...) ZTLF_L_func(1,__FILE__,__LINE__,__VA_ARGS__)
+#define ZTLF_L(...) ZTLF_L_func(logger,(void *)loggerArg,0,__FILE__,__LINE__,__VA_ARGS__)
+#define ZTLF_L_warning(...) ZTLF_L_func(logger,(void *)loggerArg,-1,__FILE__,__LINE__,__VA_ARGS__)
+#define ZTLF_L_fatal(...) ZTLF_L_func(logger,(void *)loggerArg,-2,__FILE__,__LINE__,__VA_ARGS__)
+#define ZTLF_L_verbose(...) ZTLF_L_func(logger,(void *)loggerArg,1,__FILE__,__LINE__,__VA_ARGS__)
 #ifdef ZTLF_TRACE
-#define ZTLF_L_trace(...) ZTLF_L_func(2,__FILE__,__LINE__,__VA_ARGS__)
+#define ZTLF_L_trace(...) ZTLF_L_func(logger,(void *)loggerArg,2,__FILE__,__LINE__,__VA_ARGS__)
 #else
 #define ZTLF_L_trace(...)
 #endif
 
-#define ZTLF_MALLOC_CHECK(m) if (unlikely(!((m)))) { ZTLF_L_fatal("malloc() failed!"); abort(); }
+#define ZTLF_MALLOC_CHECK(m) if (unlikely(!((m)))) { fprintf(stderr,"malloc() failed!" ZTLF_EOL); fflush(stderr); abort(); }
 
 static inline uint64_t ZTLF_timeMs()
 {

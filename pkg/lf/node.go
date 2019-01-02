@@ -8,6 +8,7 @@
 package lf
 
 import (
+	"log"
 	"net"
 	"net/http"
 	"runtime"
@@ -20,25 +21,25 @@ import (
 
 // Node is an instance of LF
 type Node struct {
+	logger             *log.Logger
+	verboseLogger      *log.Logger
 	udpSocket          *net.UDPConn
 	httpServer         *http.Server
 	backgroundThreadWG sync.WaitGroup
-
-	db db
-
-	// P2P hosts to which we are connected.
-	hosts       []*Host
-	hostsByAddr map[packedAddress]*Host
-	hostsLock   sync.RWMutex
-
-	startTime uint64
-	shutdown  uintptr
+	db                 db
+	hosts              []*Host
+	hostsByAddr        map[packedAddress]*Host
+	hostsLock          sync.RWMutex
+	startTime          uint64
+	shutdown           uintptr
 }
 
 // NewNode creates and starts a node.
-func NewNode(path string, port int) (*Node, error) {
+func NewNode(path string, port int, logger *log.Logger, verboseLogger *log.Logger) (*Node, error) {
 	var err error
 	n := new(Node)
+	n.logger = logger
+	n.verboseLogger = verboseLogger
 
 	var laddr net.UDPAddr
 	laddr.Port = int(port)
@@ -54,7 +55,7 @@ func NewNode(path string, port int) (*Node, error) {
 		return nil, err
 	}
 
-	err = n.db.open(path)
+	err = n.db.open(path, logger, verboseLogger)
 	if err != nil {
 		return nil, err
 	}
