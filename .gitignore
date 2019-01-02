@@ -5,5 +5,5 @@
 .DS_Store
 *.dSYM
 /lf
-lf-selftest-*
+/lf-db-test
 *~
