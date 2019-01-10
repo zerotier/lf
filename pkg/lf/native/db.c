@@ -28,21 +28,19 @@
  *   doff                     offset of record data in 'records' flat file (unique primary key)
  *   dlen                     length of record data
  *   goff                     offset of graph node in memory mapped graph file (unique key)
- *   ts                       record timestamp in seconds since epoch
- *   exp                      record expiration time in seconds since epoch
- *   score                    score of this record
+ *   score                    score of this record (alone, not with weight from links)
  *   link_count               number of links from this record (actual links are in graph node)
- *   id                       record ID (key)
- *   owner                    record owner
+ *   selector_count           number of selectors for this record
  *   hash                     shandwich256(record data) (unique key)
- *   new_owner                if non-NULL, the new owner that should inherit the past owner's weight
- *   sel0                     if non-NULL, arbitrary selection key 0 (key)
- *   sel1                     if non-NULL, arbitrary selection key 1 (key)
+ *   owner                    owner of this record or NULL if same as previous
+ *   previous                 hash of previous revision
+ * 
+ * selector
+ *   sel                      selector key (masked sortable ID)
+ *   doff                     offset of linked record
  * 
  * rejected
  *   hash                     hash of rejected record
- *   id                       ID of record
- *   owner                    owner of record
  *   ts                       record timestamp
  *   rdoff                    offset of rejected record in rejected record file
  *   rdlen                    length of rejected record
@@ -60,6 +58,9 @@
  * graph_pending
  *   record_goff              graph offset of record pending completion of weight application
  *   hole_count               most recent count of entries in hole that are blocking this node
+ * 
+ * verification_pending
+ *   record_goff              graph offset of record pending signature verification
  * 
  * wanted
  *   hash                     hash of wanted record
@@ -99,39 +100,35 @@
 "dlen INTEGER NOT NULL," \
 "goff INTEGER NOT NULL," \
 "ts INTEGER NOT NULL," \
-"exp INTEGER NOT NULL," \
 "score INTEGER NOT NULL," \
 "link_count INTEGER NOT NULL," \
-"id BLOB(32) NOT NULL," \
-"owner BLOB(32) NOT NULL," \
-"hash BLOB(32) NOT NULL," \
-"new_owner BLOB(32)," \
-"sel0 BLOB(32)," \
-"sel1 BLOB(32)" \
+"selector_count INTEGER NOT NULL," \
+"hash BLOB NOT NULL," \
+"owner BLOB," \
+"previous BLOB" \
+") WITHOUT ROWID;\n" \
+\
+"CREATE UNIQUE INDEX IF NOT EXISTS record_goff ON record(goff);\n" \
+"CREATE UNIQUE INDEX IF NOT EXISTS record_hash ON record(hash);\n" \
+"CREATE INDEX IF NOT EXISTS record_previous ON record(previous);\n" \
+"CREATE INDEX IF NOT EXISTS record_owner ON record(owner);\n" \
+\
+"CREATE TABLE IF NOT EXISTS selector (" \
+"sel BLOB NOT NULL," \
+"record_doff INTEGER NOT NULL," \
+"PRIMARY KEY(sel,doff)" \
 ") WITHOUT ROWID;\n" \
 \
 "CREATE TABLE IF NOT EXISTS rejected (" \
-"hash BLOB(32) PRIMARY KEY NOT NULL," \
-"id BLOB(32) NOT NULL," \
-"owner BLOB(32) NOT NULL," \
+"hash BLOB PRIMARY KEY NOT NULL," \
 "ts INTEGER NOT NULL," \
 "rdoff INTEGER NOT NULL," \
 "rdlen INTEGER NOT NULL," \
 "reason INTEGER NOT NULL" \
 ") WITHOUT ROWID;\n" \
 \
-"CREATE UNIQUE INDEX IF NOT EXISTS rejected_id_owner_ts ON rejected(id,owner,ts);\n" \
-\
-"CREATE UNIQUE INDEX IF NOT EXISTS record_goff ON record(goff);\n" \
-"CREATE UNIQUE INDEX IF NOT EXISTS record_hash ON record(hash);\n" \
-"CREATE UNIQUE INDEX IF NOT EXISTS record_id_owner_ts ON record(id,owner,ts);\n" \
-"CREATE INDEX IF NOT EXISTS record_owner_sel0_ts ON record(owner,sel0,ts);\n" \
-"CREATE INDEX IF NOT EXISTS record_sel0_sel1_ts ON record(sel0,sel1,ts);\n" \
-"CREATE INDEX IF NOT EXISTS record_sel1_ts ON record(sel1,ts);\n" \
-"CREATE INDEX IF NOT EXISTS record_ts ON record(ts);\n" \
-\
 "CREATE TABLE IF NOT EXISTS dangling_link (" \
-"hash BLOB(32) NOT NULL," \
+"hash BLOB NOT NULL," \
 "linking_record_goff INTEGER NOT NULL," \
 "linking_record_link_idx INTEGER NOT NULL," \
 "PRIMARY KEY(hash,linking_record_goff,linking_record_link_idx)" \
@@ -151,14 +148,23 @@
 "hole_count INTEGER NOT NULL" \
 ") WITHOUT ROWID;\n" \
 \
+"CREATE TABLE IF NOT EXISTS verification_pending (" \
+"record_goff INTEGER PRIMARY KEY NOT NULL" \
+") WITHOUT ROWID;\n" \
+\
 "CREATE TABLE IF NOT EXISTS wanted (" \
-"hash BLOB(32) PRIMARY KEY NOT NULL," \
+"hash BLOB PRIMARY KEY NOT NULL," \
 "retries INTEGER NOT NULL," \
 "last_retry_time INTEGER NOT NULL" \
 ") WITHOUT ROWID;\n" \
 \
-"CREATE INDEX IF NOT EXISTS wanted_retries_last_retry_time ON wanted(retries,last_retry_time);\n"
+"CREATE INDEX IF NOT EXISTS wanted_retries_last_retry_time ON wanted(retries,last_retry_time);\n" \
+\
+"ATTACH DATABASE ':memory:' AS tmp;\n" \
+\
+"CREATE TABLE IF NOT EXISTS tmp.rs (\"i\" INTEGER PRIMARY KEY NOT NULL) WITHOUT ROWID;\n"
 
+/* Convenience function to create a hex string for logging purposes. */
 static const char *ZTLF_hexstr(const void *d,const unsigned long l,const unsigned int bufno)
 {
 	static const char *const hexdigits = "0123456789abcdef";
@@ -546,9 +552,11 @@ int ZTLF_DB_Open(struct ZTLF_DB *db,const char *path,char *errbuf,unsigned int e
 	S(db->sGetConfig,
 	     "SELECT \"v\" FROM config WHERE \"k\" = ?");
 	S(db->sAddRejected,
-	     "INSERT INTO rejected (hash,id,owner,ts,rdoff,rdlen,reason) VALUES (?,?,?,?,?,?,?)");
+	     "INSERT OF REPLACE INTO rejected (hash,ts,rdoff,rdlen,reason) VALUES (?,?,?,?,?)");
 	S(db->sAddRecord,
-	     "INSERT INTO record (doff,dlen,goff,ts,exp,score,link_count,id,owner,hash,new_owner,sel0,sel1) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)");
+	     "INSERT INTO record (doff,dlen,goff,ts,score,link_count,selector_count,owner,hash,new_owner) VALUES (?,?,?,?,?,?,?,?,?,?)");
+	S(db->sAddSelector,
+	     "INSERT OR IGNORE INTO selector (sel,record_doff) VALUES (?,?)");
 	S(db->sGetRecordCount,
 	     "SELECT COUNT(1) FROM record");
 	S(db->sGetDataSize,
@@ -571,8 +579,6 @@ int ZTLF_DB_Open(struct ZTLF_DB *db,const char *path,char *errbuf,unsigned int e
 	     "SELECT goff FROM record WHERE hash = ?");
 	S(db->sGetRecordScoreByGoff,
 	     "SELECT score FROM record WHERE goff = ?");
-	S(db->sGetRecordInfoByGoff,
-	     "SELECT ts,id,owner,hash FROM record WHERE goff = ?");
 	S(db->sGetDanglingLinks,
 	     "SELECT linking_record_goff,linking_record_link_idx FROM dangling_link WHERE hash = ?");
 	S(db->sDeleteDanglingLinks,
@@ -599,25 +605,12 @@ int ZTLF_DB_Open(struct ZTLF_DB *db,const char *path,char *errbuf,unsigned int e
 	     "DELETE FROM graph_pending WHERE record_goff = ?");
 	S(db->sGetAnyPending,
 	     "SELECT gp.record_goff FROM graph_pending AS gp WHERE NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = gp.record_goff) LIMIT 1");
-
-	/* A bunch of variations on the statement that gets records matching one or more of four criteria. */
-	/* Indexed according to a four-bit bit field with bits signifying fields: id, owner, sel0, sel1 */
-	S(db->sGetMatching[0], "SELECT r.doff,r.dlen,r.goff,r.ts,r.exp,r.id,r.owner,r.new_owner FROM record AS r WHERE NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) ORDER BY r.ts ASC");
-	S(db->sGetMatching[1], "SELECT r.doff,r.dlen,r.goff,r.ts,r.exp,r.id,r.owner,r.new_owner FROM record AS r WHERE r.sel1 = ? AND NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) ORDER BY r.ts ASC");
-	S(db->sGetMatching[2], "SELECT r.doff,r.dlen,r.goff,r.ts,r.exp,r.id,r.owner,r.new_owner FROM record AS r WHERE r.sel0 = ? AND NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) ORDER BY r.ts ASC");
-	S(db->sGetMatching[3], "SELECT r.doff,r.dlen,r.goff,r.ts,r.exp,r.id,r.owner,r.new_owner FROM record AS r WHERE r.sel0 = ? AND r.sel1 = ? AND NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) ORDER BY r.ts ASC");
-	S(db->sGetMatching[4], "SELECT r.doff,r.dlen,r.goff,r.ts,r.exp,r.id,r.owner,r.new_owner FROM record AS r WHERE r.owner = ? AND NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) ORDER BY r.ts ASC");
-	S(db->sGetMatching[5], "SELECT r.doff,r.dlen,r.goff,r.ts,r.exp,r.id,r.owner,r.new_owner FROM record AS r WHERE r.owner = ? AND r.sel1 = ? AND NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) ORDER BY r.ts ASC");
-	S(db->sGetMatching[6], "SELECT r.doff,r.dlen,r.goff,r.ts,r.exp,r.id,r.owner,r.new_owner FROM record AS r WHERE r.owner = ? AND r.sel0 = ? AND NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) ORDER BY r.ts ASC");
-	S(db->sGetMatching[7], "SELECT r.doff,r.dlen,r.goff,r.ts,r.exp,r.id,r.owner,r.new_owner FROM record AS r WHERE r.owner = ? AND r.sel0 = ? AND r.sel1 = ? AND NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) ORDER BY r.ts ASC");
-	S(db->sGetMatching[8], "SELECT r.doff,r.dlen,r.goff,r.ts,r.exp,r.id,r.owner,r.new_owner FROM record AS r WHERE r.id = ? AND NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) ORDER BY r.ts ASC");
-	S(db->sGetMatching[9], "SELECT r.doff,r.dlen,r.goff,r.ts,r.exp,r.id,r.owner,r.new_owner FROM record AS r WHERE r.id = ? AND r.sel1 = ? AND NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) ORDER BY r.ts ASC");
-	S(db->sGetMatching[10],"SELECT r.doff,r.dlen,r.goff,r.ts,r.exp,r.id,r.owner,r.new_owner FROM record AS r WHERE r.id = ? AND r.sel0 = ? AND NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) ORDER BY r.ts ASC");
-	S(db->sGetMatching[11],"SELECT r.doff,r.dlen,r.goff,r.ts,r.exp,r.id,r.owner,r.new_owner FROM record AS r WHERE r.id = ? AND r.sel0 = ? AND r.sel1 = ? AND NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) ORDER BY r.ts ASC");
-	S(db->sGetMatching[12],"SELECT r.doff,r.dlen,r.goff,r.ts,r.exp,r.id,r.owner,r.new_owner FROM record AS r WHERE r.id = ? AND r.owner = ? AND NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) ORDER BY r.ts ASC");
-	S(db->sGetMatching[13],"SELECT r.doff,r.dlen,r.goff,r.ts,r.exp,r.id,r.owner,r.new_owner FROM record AS r WHERE r.id = ? AND r.owner = ? AND r.sel1 = ? AND NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) ORDER BY r.ts ASC");
-	S(db->sGetMatching[14],"SELECT r.doff,r.dlen,r.goff,r.ts,r.exp,r.id,r.owner,r.new_owner FROM record AS r WHERE r.id = ? AND r.owner = ? AND r.sel0 = ? AND NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) ORDER BY r.ts ASC");
-	S(db->sGetMatching[15],"SELECT r.doff,r.dlen,r.goff,r.ts,r.exp,r.id,r.owner,r.new_owner FROM record AS r WHERE r.id = ? AND r.owner = ? AND r.sel0 = ? AND r.sel1 = ? AND NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) ORDER BY r.ts ASC");
+	S(db->sQueryClearRecordSet,
+	     "DELETE FROM tmp.rs");
+	S(db->sQueryAddSelectorRage,
+	     "INSERT OR IGNORE INTO tmp.rs SELECT record_doff AS \"i\" FROM selector WHERE sel BETWEEN ? AND ?");
+	S(db->sQueryGetResults,
+	     "SELECT doff,dlen,goff,ts,owner,new_owner FROM record WHERE doff IN (SELECT \"i\" FROM tmp.rs) ORDER BY ts ASC");
 
 	/* Open and memory map graph and data files. */
 	snprintf(tmp,sizeof(tmp),"%s" ZTLF_PATH_SEPARATOR "graph.bin",path);
@@ -713,6 +706,7 @@ void ZTLF_DB_Close(struct ZTLF_DB *db)
 		if (db->sGetConfig)                           sqlite3_finalize(db->sGetConfig);
 		if (db->sAddRejected)                         sqlite3_finalize(db->sAddRejected);
 		if (db->sAddRecord)                           sqlite3_finalize(db->sAddRecord);
+		if (db->sAddSelector)                         sqlite3_finalize(db->sAddSelector);
 		if (db->sGetRecordCount)                      sqlite3_finalize(db->sGetRecordCount);
 		if (db->sGetDataSize)                         sqlite3_finalize(db->sGetDataSize);
 		if (db->sGetAllRecords)                       sqlite3_finalize(db->sGetAllRecords);
@@ -724,7 +718,6 @@ void ZTLF_DB_Close(struct ZTLF_DB *db)
 		if (db->sGetMaxRecordGoff)                    sqlite3_finalize(db->sGetMaxRecordGoff);
 		if (db->sGetRecordGoffByHash)                 sqlite3_finalize(db->sGetRecordGoffByHash);
 		if (db->sGetRecordScoreByGoff)                sqlite3_finalize(db->sGetRecordScoreByGoff);
-		if (db->sGetRecordInfoByGoff)                 sqlite3_finalize(db->sGetRecordInfoByGoff);
 		if (db->sGetDanglingLinks)                    sqlite3_finalize(db->sGetDanglingLinks);
 		if (db->sDeleteDanglingLinks)                 sqlite3_finalize(db->sDeleteDanglingLinks);
 		if (db->sDeleteWantedHash)                    sqlite3_finalize(db->sDeleteWantedHash);
@@ -738,9 +731,8 @@ void ZTLF_DB_Close(struct ZTLF_DB *db)
 		if (db->sUpdatePendingHoleCount)              sqlite3_finalize(db->sUpdatePendingHoleCount);
 		if (db->sDeleteCompletedPending)              sqlite3_finalize(db->sDeleteCompletedPending);
 		if (db->sGetAnyPending)                       sqlite3_finalize(db->sGetAnyPending);
-		for(int i=0;i<16;++i) {
-			if (db->sGetMatching[i])                    sqlite3_finalize(db->sGetMatching[i]);
-		}
+		if (db->sQueryClearRecordSet)                 sqlite3_finalize(db->sQueryClearRecordSet);
+		if (db->sQueryAddSelectorRage)                sqlite3_finalize(db->sQueryAddSelectorRage);
 		sqlite3_close_v2(db->dbc);
 	}
 
@@ -775,7 +767,8 @@ struct _ZTLF_DB_GetMatching_follow
 	struct _ZTLF_DB_GetMatching_follow *next;
 };
 
-void ZTLF_DB_GetMatching(struct ZTLF_DB *db,const void *id,const void *owner,const void *sel0,const void *sel1,int (*f)(int64_t,int64_t,uint64_t,uint64_t,void *,void *,void *,uint64_t,uint64_t,unsigned long),unsigned long arg)
+#if 0
+void ZTLF_DB_GetMatching(struct ZTLF_DB *db,const char *sql,int (*f)(int64_t,int64_t,uint64_t,uint64_t,void *,void *,void *,uint64_t,uint64_t,unsigned long),unsigned long arg)
 {
 	struct _ZTLF_DB_GetMatching_follow *follow = NULL,*lastFollow = NULL;
 	uint64_t idTmp[4],ownerTmp[4];
@@ -843,6 +836,7 @@ void ZTLF_DB_GetMatching(struct ZTLF_DB *db,const void *id,const void *owner,con
 
 	pthread_mutex_unlock(&db->dbLock);
 }
+#endif
 
 unsigned int ZTLF_DB_GetByHash(struct ZTLF_DB *db,const void *hash,uint64_t *doff)
 {
@@ -912,8 +906,6 @@ int ZTLF_DB_PutRejected(
 	struct ZTLF_DB *db,
 	const void *rec,
 	const unsigned int rsize,
-	const void *id,
-	const void *owner,
 	const void *hash,
 	const uint64_t ts,
 	const int reason)
@@ -941,12 +933,10 @@ int ZTLF_DB_PutRejected(
 	pthread_mutex_lock(&db->dbLock);
 	sqlite3_reset(db->sAddRejected);
 	sqlite3_bind_blob(db->sAddRejected,1,hash,32,SQLITE_STATIC);
-	sqlite3_bind_blob(db->sAddRejected,2,id,32,SQLITE_STATIC);
-	sqlite3_bind_blob(db->sAddRejected,3,owner,32,SQLITE_STATIC);
-	sqlite3_bind_int64(db->sAddRejected,4,(sqlite_int64)ts);
-	sqlite3_bind_int64(db->sAddRejected,5,rdoff + 2);
-	sqlite3_bind_int(db->sAddRejected,6,(int)rsize);
-	sqlite3_bind_int(db->sAddRejected,7,reason);
+	sqlite3_bind_int64(db->sAddRejected,2,(sqlite_int64)ts);
+	sqlite3_bind_int64(db->sAddRejected,3,rdoff + 2);
+	sqlite3_bind_int(db->sAddRejected,4,(int)rsize);
+	sqlite3_bind_int(db->sAddRejected,5,reason);
 	int e;
 	if ((e = sqlite3_step(db->sAddRejected)) != SQLITE_DONE) {
 		pthread_mutex_unlock(&db->dbLock);
@@ -963,15 +953,15 @@ int ZTLF_DB_PutRecord(
 	struct ZTLF_DB *db,
 	const void *rec,
 	const unsigned int rsize,
-	const void *id,
 	const void *owner,
 	const void *hash,
 	const uint64_t ts,
 	const uint64_t ttl,
 	const uint32_t score,
 	const void *changeOwner,
-	const void *sel0,
-	const void *sel1,
+	const void **sel,
+	const unsigned int *selSize,
+	const unsigned int selCount,
 	const void *links,
 	const unsigned int linkCount)
 {
@@ -1047,30 +1037,30 @@ int ZTLF_DB_PutRecord(
 	sqlite3_bind_int64(db->sAddRecord,2,(sqlite3_int64)rsize);
 	sqlite3_bind_int64(db->sAddRecord,3,goff);
 	sqlite3_bind_int64(db->sAddRecord,4,(sqlite3_int64)ts);
-	sqlite3_bind_int64(db->sAddRecord,5,(sqlite3_int64)(ts + ttl));
-	sqlite3_bind_int64(db->sAddRecord,6,(sqlite3_int64)score);
-	sqlite3_bind_int(db->sAddRecord,7,(int)linkCount);
-	sqlite3_bind_blob(db->sAddRecord,8,id,32,SQLITE_STATIC);
-	sqlite3_bind_blob(db->sAddRecord,9,owner,32,SQLITE_STATIC);
-	sqlite3_bind_blob(db->sAddRecord,10,hash,32,SQLITE_STATIC);
+	sqlite3_bind_int64(db->sAddRecord,5,(sqlite3_int64)score);
+	sqlite3_bind_int(db->sAddRecord,6,(int)linkCount);
+	sqlite3_bind_int(db->sAddRecord,7,(int)selCount);
+	sqlite3_bind_blob(db->sAddRecord,8,owner,32,SQLITE_STATIC);
+	sqlite3_bind_blob(db->sAddRecord,9,hash,32,SQLITE_STATIC);
 	if (changeOwner) {
-		sqlite3_bind_blob(db->sAddRecord,11,changeOwner,32,SQLITE_STATIC);
+		sqlite3_bind_blob(db->sAddRecord,10,changeOwner,32,SQLITE_STATIC);
 	} else {
-		sqlite3_bind_null(db->sAddRecord,11);
-	}
-	if (sel0) {
-		sqlite3_bind_blob(db->sAddRecord,12,sel0,32,SQLITE_STATIC);
-	} else {
-		sqlite3_bind_null(db->sAddRecord,12);
-	}
-	if (sel1) {
-		sqlite3_bind_blob(db->sAddRecord,13,sel1,32,SQLITE_STATIC);
-	} else {
-		sqlite3_bind_null(db->sAddRecord,13);
+		sqlite3_bind_null(db->sAddRecord,10);
 	}
 	if ((e = sqlite3_step(db->sAddRecord)) != SQLITE_DONE) {
 		result = ZTLF_POS(e);
 		goto exit_putRecord;
+	}
+
+	/* Add selectors for this record. */
+	for(unsigned int i=0;i<selCount;++i) {
+		sqlite3_reset(db->sAddSelector);
+		sqlite3_bind_blob(db->sAddSelector,1,sel[i],(int)selSize[i],SQLITE_STATIC);
+		sqlite3_bind_int64(db->sAddSelector,2,doff);
+		if (sqlite3_step(db->sAddSelector) != SQLITE_DONE) {
+			ZTLF_L_warning("database error adding selector, I/O error or database corrupt!");
+			break;
+		}
 	}
 
 	pthread_mutex_t *const graphNodeLock = &(db->graphNodeLocks[((uintptr_t)goff) % ZTLF_DB_GRAPH_NODE_LOCK_ARRAY_SIZE]);

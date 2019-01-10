@@ -14,7 +14,7 @@ package lf
 // extern int ztlfDBInternalGetMatchingCCallback(int64_t,int64_t,uint64_t,uint64_t,void *,void *,void *,uint64_t,uint64_t,unsigned long);
 // extern void ztlfLogOutputCCallback(int,const char *,int,const char *,void *);
 // static inline int ZTLF_DB_Open_fromGo(struct ZTLF_DB *db,const char *path,char *errbuf,unsigned int errbufSize,uintptr_t loggerArg) { return ZTLF_DB_Open(db,path,errbuf,errbufSize,&ztlfLogOutputCCallback,(void *)loggerArg); }
-// static inline void ZTLF_DB_GetMatching_fromGo(struct ZTLF_DB *db,const void *id,const void *owner,const void *sel0,const void *sel1,unsigned long arg) { ZTLF_DB_GetMatching(db,id,owner,sel0,sel1,&ztlfDBInternalGetMatchingCCallback,arg); }
+// /*static inline void ZTLF_DB_GetMatching_fromGo(struct ZTLF_DB *db,const void *id,const void *owner,const void *sel0,const void *sel1,unsigned long arg) { ZTLF_DB_GetMatching(db,id,owner,sel0,sel1,&ztlfDBInternalGetMatchingCCallback,arg); }*/
 import "C"
 import (
 	"bytes"
@@ -93,6 +93,7 @@ func (db *db) close() {
 	globalLoggersLock.Unlock()
 }
 
+/*
 func (db *db) putRecord(r *Record) error {
 	var changeOwner, sel0, sel1, links unsafe.Pointer
 	if len(r.ChangeOwner) == 32 {
@@ -156,6 +157,7 @@ func (db *db) putRejected(r *Record, reason int) error {
 	}
 	return nil
 }
+*/
 
 // getMatching returns a sorted list of records and their weights for a given set of constraints.
 // Records are sorted in descending order of weight within a given ID category (meaning different owners)
@@ -184,7 +186,7 @@ func (db *db) getMatching(id, owner, sel0, sel1 []byte) (rd []APIRecordDetail) {
 	dbGetMatchingStateInstanceLock.Lock()
 	dbGetMatchingStateInstance.byIDOwner = make(map[[64]byte]*dbGetMatchingStateByIDOwner)
 
-	C.ZTLF_DB_GetMatching_fromGo((*C.struct_ZTLF_DB)(&db.cdb), idP, ownerP, sel0P, sel1P, C.ulong(0))
+	//C.ZTLF_DB_GetMatching_fromGo((*C.struct_ZTLF_DB)(&db.cdb), idP, ownerP, sel0P, sel1P, C.ulong(0))
 
 	now := TimeSec()
 	for _, info := range dbGetMatchingStateInstance.byIDOwner {

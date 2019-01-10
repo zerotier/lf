@@ -59,6 +59,7 @@ struct ZTLF_DB
 	sqlite3_stmt *sGetConfig;
 	sqlite3_stmt *sAddRejected;
 	sqlite3_stmt *sAddRecord;
+	sqlite3_stmt *sAddSelector;
 	sqlite3_stmt *sGetRecordCount;
 	sqlite3_stmt *sGetDataSize;
 	sqlite3_stmt *sGetAllRecords;
@@ -70,7 +71,6 @@ struct ZTLF_DB
 	sqlite3_stmt *sGetMaxRecordGoff;
 	sqlite3_stmt *sGetRecordGoffByHash;
 	sqlite3_stmt *sGetRecordScoreByGoff;
-	sqlite3_stmt *sGetRecordInfoByGoff;
 	sqlite3_stmt *sGetDanglingLinks;
 	sqlite3_stmt *sDeleteDanglingLinks;
 	sqlite3_stmt *sDeleteWantedHash;
@@ -84,8 +84,9 @@ struct ZTLF_DB
 	sqlite3_stmt *sUpdatePendingHoleCount;
 	sqlite3_stmt *sDeleteCompletedPending;
 	sqlite3_stmt *sGetAnyPending;
-
-	sqlite3_stmt *sGetMatching[16];
+	sqlite3_stmt *sQueryClearRecordSet;
+	sqlite3_stmt *sQueryAddSelectorRage;
+	sqlite3_stmt *sQueryGetResults;
 
 	volatile uint64_t lastCheckpoint;
 
@@ -119,8 +120,6 @@ int ZTLF_DB_PutRejected(
 	struct ZTLF_DB *db,
 	const void *rec,
 	const unsigned int rsize,
-	const void *id,
-	const void *owner,
 	const void *hash,
 	const uint64_t ts,
 	const int reason);
@@ -129,20 +128,17 @@ int ZTLF_DB_PutRecord(
 	struct ZTLF_DB *db,
 	const void *rec,
 	const unsigned int rsize,
-	const void *id,
 	const void *owner,
 	const void *hash,
 	const uint64_t ts,
 	const uint64_t ttl,
 	const uint32_t score,
 	const void *changeOwner,
-	const void *sel0,
-	const void *sel1,
+	const void **sel,
+	const unsigned int *selSize,
+	const unsigned int selCount,
 	const void *links,
 	const unsigned int linkCount);
-
-/* Function arguments: doff, dlen, ts, exp, id, owner, new_owner, least significant 64 bits of weight, most significant 64 bits of weight, arg */
-void ZTLF_DB_GetMatching(struct ZTLF_DB *db,const void *id,const void *owner,const void *sel0,const void *sel1,int (*f)(int64_t,int64_t,uint64_t,uint64_t,void *,void *,void *,uint64_t,uint64_t,unsigned long),unsigned long arg);
 
 /* Gets the data offset and data length of a record by its hash (returns length, sets doff). */
 unsigned int ZTLF_DB_GetByHash(struct ZTLF_DB *db,const void *hash,uint64_t *doff);

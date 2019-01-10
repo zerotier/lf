@@ -233,12 +233,10 @@ func (h *Host) handleIncomingPacket(n *Node, data []byte) (err error) {
 			}
 
 		case ProtoMessageTypeRecord:
-			if messageSize >= RecordMinSize {
-				msg := data[messageStart : messageStart+messageSize]
-				n.AddRecord(msg)
-				if !h.Connected() {
-					h.Ping(n, false)
-				}
+			msg := data[messageStart : messageStart+messageSize]
+			n.AddRecord(msg)
+			if !h.Connected() {
+				h.Ping(n, false)
 			}
 
 		case ProtoMessageTypeRequestByHash:

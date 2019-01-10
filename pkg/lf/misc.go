@@ -23,6 +23,9 @@ func TimeSec() uint64 { return uint64(time.Now().UnixNano()) / uint64(1000000000
 // TimeMsToTime converts a time in milliseconds since epoch to a Go native time.Time structure.
 func TimeMsToTime(ms uint64) time.Time { return time.Unix(int64(ms/1000), int64((ms%1000)*1000000)) }
 
+// TimeSecToTime converts a time in seconds since epoch to a Go native time.Time structure.
+func TimeSecToTime(s uint64) time.Time { return time.Unix(int64(s), 0) }
+
 // byteAndArrayReader wraps io.Reader to also make it support io.ByteReader because you can't read a varint from a Reader because derpity derpy derp
 type byteAndArrayReader struct{ r io.Reader }
 
@@ -100,4 +103,14 @@ func sliceContainsUInt(s []uint, e uint) bool {
 		}
 	}
 	return false
+}
+
+// CountingWriter is an io.Writer that increments an integer for each byte "written" to it.
+type CountingWriter uint
+
+// Write implements io.Writer
+func (cr *CountingWriter) Write(b []byte) (n int, err error) {
+	n = len(b)
+	*cr = CountingWriter(uint(*cr) + uint(n))
+	return
 }

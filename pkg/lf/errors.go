@@ -46,6 +46,10 @@ const (
 	ErrorInvalidPublicKey  Error = "invalid public key"
 	ErrorInvalidPrivateKey Error = "invalid private key"
 	ErrorInvalidParameter  Error = "invalid parameter"
+	ErrorIsNil             Error = "invalid parameter (nil not allowed)"
+	ErrorIsNotStruct       Error = "invalid parameter (must be struct)"
+	ErrorUnsupportedType   Error = "unsupported type"
+	ErrorUnsupportedCurve  Error = "unsupported ECC curve (for this purpose)"
 	ErrorOutOfRange        Error = "parameter out of range"
 	ErrorWharrgarblFailed  Error = "Wharrgarbl proof of work algorithm failed (out of memory?)"
 	ErrorIO                Error = "I/O error"
@@ -54,17 +58,9 @@ const (
 
 // Errors indicating that a record is invalid
 const (
-	ErrorRecordTooLarge                  ErrorRecord = "record too large"
-	ErrorRecordTooSmall                  ErrorRecord = "record too small"
-	ErrorRecordLinksInvalid              ErrorRecord = "invalid links field (must be a multiple of 32 bytes, max 31 links)"
-	ErrorRecordValueTooLarge             ErrorRecord = "record value too large"
 	ErrorRecordViolatesSpecialRelavitity ErrorRecord = "record timestamp is in the future"
-	ErrorRecordAlgorithmTypeInvalid      ErrorRecord = "algorithm type invalid"
-	ErrorRecordWorkTypeInvalid           ErrorRecord = "work type invalid"
-	ErrorRecordSignatureTypeInvalid      ErrorRecord = "signature type invalid"
-	ErrorRecordOnlyTwoMetaDataSlots      ErrorRecord = "only two meta-data slots are available"
 	ErrorRecordInvalid                   ErrorRecord = "record data invalid"
 	ErrorRecordOwnerSignatureCheckFailed ErrorRecord = "owner signature check failed"
-	ErrorRecordClaimSignatureCheckFailed ErrorRecord = "claim signature check failed (key/ID or selector)"
+	ErrorRecordSelectorClaimCheckFailed  ErrorRecord = "claim signature check failed (key/ID or selector)"
 	ErrorRecordInsufficientWork          ErrorRecord = "insufficient work to pay for this record"
 )

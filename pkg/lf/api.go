@@ -223,7 +223,7 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 				key = []byte(keyStr)
 			}
 
-			id, _ := RecordDeriveID(key)
+			id, _ := RecordDeriveSelector(key)
 			recs := n.db.getMatching(id[:], nil, nil, nil)
 
 			if len(recs) == 0 {

@@ -173,30 +173,31 @@ func (n *Node) Try(ip net.IP, port int) {
 
 // AddRecord attempts to add a record to this node's database.
 func (n *Node) AddRecord(recordData []byte) error {
-	var r Record
-	err := r.Unpack(recordData)
-	if err != nil {
-		return err
-	}
+	/*
+		var r Record
+		err := r.Unpack(recordData)
+		if err != nil {
+			return err
+		}
 
-	if n.db.hasRecord(r.Hash[:]) {
-		return nil
-	}
+		if n.db.hasRecord(r.Hash[:]) {
+			return nil
+		}
 
-	err = r.Verify()
-	if err != nil {
-		return err
-	}
+		err = r.Verify()
+		if err != nil {
+			return err
+		}
 
-	if r.Timestamp > (TimeSec() + RecordMaxTimeDrift) {
-		n.db.putRejected(&r, dbRecordRejectionReasonRecordTimestampInTheFuture)
-		return ErrorRecordViolatesSpecialRelavitity
-	}
+		if r.Timestamp > (TimeSec() + RecordMaxTimeDrift) {
+			n.db.putRejected(&r, dbRecordRejectionReasonRecordTimestampInTheFuture)
+			return ErrorRecordViolatesSpecialRelavitity
+		}
 
-	err = n.db.putRecord(&r)
-	if err != nil {
-		return err
-	}
-
+		err = n.db.putRecord(&r)
+		if err != nil {
+			return err
+		}
+	*/
 	return nil
 }
