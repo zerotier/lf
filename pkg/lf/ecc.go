@@ -30,6 +30,9 @@ var (
 		return secp112r1
 	}()
 
+	// ECCCurveSecP112R1SignatureSize is the size of a byte packed (not ASN.1) signature from ECCCurveSecP112R1.
+	ECCCurveSecP112R1SignatureSize = ECDSASignatureSize(&ECCCurveSecP112R1)
+
 	bigInt3 = big.NewInt(3)
 )
 

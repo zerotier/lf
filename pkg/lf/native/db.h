@@ -38,6 +38,32 @@ ZTLF_PACKED_STRUCT(struct ZTLF_DB_GraphNode
 	volatile int64_t linkedRecordGoff[]; /* graph node offsets of linked records or -1 for holes (will be filled later) */
 });
 
+/* Big enough for the largest NIST ECC curve, can be increased if needed. */
+#define ZTLF_DB_QUERY_MAX_OWNER_SIZE 72
+
+/**
+ * Structure that holds a result of ZTLF_Query()
+ */
+struct ZTLF_QueryResult
+{
+	uint64_t ts;
+	uint64_t weightL,weightH;
+	int64_t previousLinkedGoff; /* graph node offset, used internally */
+	uint64_t doff;
+	unsigned int dlen;
+	unsigned int ownerSize;
+	uint8_t owner[ZTLF_DB_QUERY_MAX_OWNER_SIZE];
+};
+
+/**
+ * Structure that holds an array of query results.
+ */
+struct ZTLF_QueryResults
+{
+	long count;
+	struct ZTLF_QueryResult results[];
+};
+
 #define ZTLF_DB_MAX_GRAPH_NODE_SIZE (sizeof(struct ZTLF_DB_GraphNode) + (256 * sizeof(int64_t)))
 
 /**
@@ -85,7 +111,8 @@ struct ZTLF_DB
 	sqlite3_stmt *sDeleteCompletedPending;
 	sqlite3_stmt *sGetAnyPending;
 	sqlite3_stmt *sQueryClearRecordSet;
-	sqlite3_stmt *sQueryAddSelectorRage;
+	sqlite3_stmt *sQueryOrSelectorRange;
+	sqlite3_stmt *sQueryAndSelectorRange;
 	sqlite3_stmt *sQueryGetResults;
 
 	volatile uint64_t lastCheckpoint;
@@ -121,7 +148,6 @@ int ZTLF_DB_PutRejected(
 	const void *rec,
 	const unsigned int rsize,
 	const void *hash,
-	const uint64_t ts,
 	const int reason);
 
 int ZTLF_DB_PutRecord(
@@ -129,16 +155,24 @@ int ZTLF_DB_PutRecord(
 	const void *rec,
 	const unsigned int rsize,
 	const void *owner,
+	const unsigned int ownerSize,
 	const void *hash,
 	const uint64_t ts,
-	const uint64_t ttl,
 	const uint32_t score,
-	const void *changeOwner,
 	const void **sel,
 	const unsigned int *selSize,
 	const unsigned int selCount,
 	const void *links,
 	const unsigned int linkCount);
+
+/* The parameters sel[], selAndOr[], and selSize[] describe selectors being queried against. For each
+ * selector there are TWO entries in sel[] and selSize[] and one in selAndOr[]. The two entries in sel[]
+ * and selSize[] describe an inclusive range. To search for equality just make that range a single value
+ * repeated twice. This means that e.g. for 3 selectors the size of sel[] and selSize[] would be 6 and
+ * the size of selAndOr[] would be 3. The selAndOr[] flag array determines whether this selector is
+ * taken AND the or OR the previous. It is ignored for the first selector since there's nothing to AND
+ * or OR it with. */
+struct ZTLF_QueryResults *ZTLF_DB_Query(struct ZTLF_DB *db,const void **sel,const int *selAndOr,const unsigned int *selSize,const unsigned int selCount);
 
 /* Gets the data offset and data length of a record by its hash (returns length, sets doff). */
 unsigned int ZTLF_DB_GetByHash(struct ZTLF_DB *db,const void *hash,uint64_t *doff);

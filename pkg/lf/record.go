@@ -29,6 +29,8 @@ var (
 )
 
 // RecordMaxFieldSize is a sanity limit for record field sizes used in deserialization.
+// Real records never get this big, but this prevents a malformed record from causing an out
+// of memory error.
 const RecordMaxFieldSize = 65536
 
 // RecordHashSize is the number of bytes in a record hash (Shandwich256).
@@ -68,7 +70,6 @@ const RecordWharrgarblMemory = uint(1024 * 1024 * 256) // 256mb
 type RecordBody struct {
 	Value                    []byte // Value (may be encrypted and/or compressed, use Open() to get plain text value)
 	Owner                    []byte // Owner of this record
-	NewOwner                 []byte // Owner to which cumulative weight of this record should be transferred (optional)
 	Links                    []byte // Links to previous records' hashes (size is a multiple of 32 bytes, link count is size / 32)
 	Timestamp                uint64 // Timestamp (and revision ID) in SECONDS since Unix epoch
 	ValueEncryptionAlgorithm byte   // Encryption algorithm used to mask value
@@ -106,19 +107,6 @@ func (rb *RecordBody) ReadFrom(r io.Reader) error {
 	}
 	rb.Owner = make([]byte, uint(l))
 	_, err = io.ReadFull(&rr, rb.Owner)
-	if err != nil {
-		return err
-	}
-
-	l, err = binary.ReadUvarint(&rr)
-	if err != nil {
-		return err
-	}
-	if l > RecordMaxFieldSize {
-		return ErrorRecordInvalid
-	}
-	rb.NewOwner = make([]byte, uint(l))
-	_, err = io.ReadFull(&rr, rb.NewOwner)
 	if err != nil {
 		return err
 	}
@@ -166,13 +154,6 @@ func (rb *RecordBody) WriteTo(w io.Writer) error {
 		return err
 	}
 	if _, err := w.Write(rb.Owner); err != nil {
-		return err
-	}
-
-	if _, err := writeUVarint(w, uint64(len(rb.NewOwner))); err != nil {
-		return err
-	}
-	if _, err := w.Write(rb.NewOwner); err != nil {
 		return err
 	}
 
@@ -243,6 +224,25 @@ type RecordSelector struct {
 	Algorithm byte   // Algorithm used for claim signature
 }
 
+// ReadFrom reads this record selector from the provided reader.
+func (rs *RecordSelector) ReadFrom(r io.Reader) error {
+	var alg [1]byte
+	if _, err := io.ReadFull(r, alg[:]); err != nil {
+		return err
+	}
+	if alg[0] != RecordSelectorAlgorithmS112 {
+		return ErrorRecordUnsupportedAlgorithm
+	}
+	buf := make([]byte, 32+ECCCurveSecP112R1SignatureSize)
+	if _, err := io.ReadFull(r, buf); err != nil {
+		return err
+	}
+	rs.Selector = buf[0:32]
+	rs.Claim = buf[32:]
+	rs.Algorithm = RecordSelectorAlgorithmS112
+	return nil
+}
+
 // WriteTo writes this RecordSelector in serialized form to the supplied writer.
 func (rs *RecordSelector) WriteTo(w io.Writer) error {
 	if _, err := w.Write([]byte{rs.Algorithm}); err != nil { // algorithm implies size of selector and claim
@@ -290,6 +290,66 @@ type Record struct {
 	Signature     []byte           // Signature of sha256(sha256(Body Signing Hash | Selectors) | Work | WorkAlgorithm)
 }
 
+// ReadFrom deserializes this record from a reader.
+func (r *Record) ReadFrom(rdr io.Reader) error {
+	rr := byteAndArrayReader{rdr}
+
+	hdrb, err := rr.ReadByte()
+	if err != nil {
+		return err
+	}
+	if hdrb != 0 {
+		return ErrorRecordInvalid
+	}
+
+	if err = r.Body.ReadFrom(&rr); err != nil {
+		return err
+	}
+
+	selCount, err := binary.ReadUvarint(rr)
+	if err != nil {
+		return err
+	}
+	if selCount > (RecordMaxFieldSize / 64) {
+		return ErrorRecordInvalid
+	}
+	r.Selectors = make([]RecordSelector, uint(selCount))
+	for i := 0; i < len(r.Selectors); i++ {
+		err = r.Selectors[i].ReadFrom(rr)
+		if err != nil {
+			return err
+		}
+	}
+
+	walg, err := rr.ReadByte()
+	if err != nil {
+		return err
+	}
+	if walg != RecordWorkAlgorithmWharrgarbl {
+		return ErrorRecordUnsupportedAlgorithm
+	}
+	var work [WharrgarblOutputSize]byte
+	if _, err = io.ReadFull(&rr, work[:]); err != nil {
+		return err
+	}
+	r.Work = work[:]
+	r.WorkAlgorithm = walg
+
+	siglen, err := binary.ReadUvarint(&rr)
+	if err != nil {
+		return err
+	}
+	if siglen > RecordMaxFieldSize {
+		return ErrorRecordInvalid
+	}
+	r.Signature = make([]byte, uint(siglen))
+	if _, err = io.ReadFull(&rr, r.Signature); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 // WriteTo writes this record in serialized form to the supplied writer.
 func (r *Record) WriteTo(w io.Writer) error {
 	// Record begins with a reserved version/type byte, currently 0
@@ -318,6 +378,9 @@ func (r *Record) WriteTo(w io.Writer) error {
 		return err
 	}
 
+	if _, err := writeUVarint(w, uint64(len(r.Signature))); err != nil {
+		return err
+	}
 	if _, err := w.Write(r.Signature); err != nil {
 		return err
 	}

@@ -63,4 +63,5 @@ const (
 	ErrorRecordOwnerSignatureCheckFailed ErrorRecord = "owner signature check failed"
 	ErrorRecordSelectorClaimCheckFailed  ErrorRecord = "claim signature check failed (key/ID or selector)"
 	ErrorRecordInsufficientWork          ErrorRecord = "insufficient work to pay for this record"
+	ErrorRecordUnsupportedAlgorithm      ErrorRecord = "unsupported algorithm or type"
 )
