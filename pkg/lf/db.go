@@ -98,10 +98,10 @@ func (db *db) putRecord(r *Record, reputation int) error {
 		return ErrorRecordInvalid
 	}
 	rdata := r.Bytes()
-	rhash := r.Hash()
 	if len(rdata) == 0 {
 		return ErrorRecordInvalid
 	}
+	rhash := r.Hash()
 	rid := r.ID()
 
 	selectors := make([]unsafe.Pointer, 0, len(r.Selectors)*32)
@@ -131,8 +131,8 @@ func (db *db) putRecord(r *Record, reputation int) error {
 		C.uint(len(rdata)),
 		unsafe.Pointer(&r.Body.Owner[0]),
 		C.uint(len(r.Body.Owner)),
-		unsafe.Pointer(&rhash[0]),
-		unsafe.Pointer(&rid[0]),
+		unsafe.Pointer(rhash),
+		unsafe.Pointer(rid),
 		C.uint64_t(r.Body.Timestamp),
 		C.uint32_t(r.Score()),
 		sptr,
@@ -142,23 +142,6 @@ func (db *db) putRecord(r *Record, reputation int) error {
 		C.uint(r.Body.LinkCount()),
 		C.int(reputation))
 
-	if cerr != 0 {
-		return ErrorDatabase{int(cerr), "record add failed (" + strconv.Itoa(int(cerr)) + ")"}
-	}
-	return nil
-}
-
-// putRejected saves a record into the rejected records table and file.
-func (db *db) putRejected(rdata []byte, rhash []byte, reason int) error {
-	if len(rdata) == 0 || len(rhash) != 32 {
-		return ErrorInvalidParameter
-	}
-	cerr := C.ZTLF_DB_PutRejected(
-		(*C.struct_ZTLF_DB)(&db.cdb),
-		unsafe.Pointer(&rdata[0]),
-		C.uint(len(rdata)),
-		unsafe.Pointer(&rhash[0]),
-		C.int(reason))
 	if cerr != 0 {
 		return ErrorDatabase{int(cerr), "record add failed (" + strconv.Itoa(int(cerr)) + ")"}
 	}
@@ -222,15 +205,6 @@ func (db *db) crc64() uint64 {
 // hasPending returns true if this database is not waiting for any records to fill any graph gaps or satisfy any links.
 func (db *db) hasPending() bool {
 	return (C.ZTLF_DB_HasPending((*C.struct_ZTLF_DB)(&db.cdb)) != 0)
-}
-
-type dbQueryResult struct {
-	ts        uint64               // timestamp in SECONDS since epoch
-	weight    [2]uint64            // weight in big-endian quadword order
-	doff      uint64               // data offset
-	dlen      uint                 // data length
-	ownerSize uint                 // actual length of owner public key
-	owner     [dbMaxOwnerSize]byte // owner public key
 }
 
 // query executes a query against a number of selector ranges. The function is executed for each result, with

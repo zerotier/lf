@@ -40,12 +40,6 @@
  *   sel                      selector key (masked sortable ID)
  *   doff                     offset of linked record
  * 
- * rejected
- *   hash                     hash of rejected record
- *   ts                       record timestamp
- *   rdoff                    offset of rejected record in rejected record file
- *   rdlen                    length of rejected record
- * 
  * dangling_link
  *   hash                     hash of record we don't have
  *   linking_record_goff      graph node offset of record with dangling link
@@ -112,20 +106,13 @@
 \
 "CREATE UNIQUE INDEX IF NOT EXISTS record_goff ON record(goff);\n" \
 "CREATE UNIQUE INDEX IF NOT EXISTS record_hash ON record(hash);\n" \
-"CREATE INDEX IF NOT EXISTS record_doff_owner_ts ON record(doff,owner,ts);\n" \
+"CREATE INDEX IF NOT EXISTS record_doff_reputation_owner_ts ON record(doff,reputation,owner,ts);\n" \
 "CREATE INDEX IF NOT EXISTS record_ts ON record(ts);\n" \
 \
 "CREATE TABLE IF NOT EXISTS selector (" \
 "sel BLOB NOT NULL," \
 "record_doff INTEGER NOT NULL," \
-"PRIMARY KEY(sel,doff)" \
-") WITHOUT ROWID;\n" \
-\
-"CREATE TABLE IF NOT EXISTS rejected (" \
-"hash BLOB PRIMARY KEY NOT NULL," \
-"rdoff INTEGER NOT NULL," \
-"rdlen INTEGER NOT NULL," \
-"reason INTEGER NOT NULL" \
+"PRIMARY KEY(sel,record_doff)" \
 ") WITHOUT ROWID;\n" \
 \
 "CREATE TABLE IF NOT EXISTS dangling_link (" \
@@ -528,7 +515,6 @@ int ZTLF_DB_Open(struct ZTLF_DB *db,const char *path,char *errbuf,unsigned int e
 		pthread_mutex_init(&db->graphNodeLocks[i],NULL);
 	pthread_rwlock_init(&db->gfLock,NULL);
 	pthread_rwlock_init(&db->dfLock,NULL);
-	pthread_mutex_init(&db->rejectedLock,NULL);
 
 	mkdir(path,0755);
 
@@ -560,8 +546,6 @@ int ZTLF_DB_Open(struct ZTLF_DB *db,const char *path,char *errbuf,unsigned int e
 	     "INSERT OR REPLACE INTO config (\"k\",\"v\") VALUES (?,?)");
 	S(db->sGetConfig,
 	     "SELECT \"v\" FROM config WHERE \"k\" = ?");
-	S(db->sAddRejected,
-	     "INSERT OF REPLACE INTO rejected (hash,rdoff,rdlen,reason) VALUES (?,?,?,?,?)");
 	S(db->sAddRecord,
 	     "INSERT INTO record (doff,dlen,goff,ts,score,link_count,selector_count,reputation,hash,id,owner) VALUES (?,?,?,?,?,?,?,?,?,?,?)");
 	S(db->sAddSelector,
@@ -621,7 +605,7 @@ int ZTLF_DB_Open(struct ZTLF_DB *db,const char *path,char *errbuf,unsigned int e
 	S(db->sQueryAndSelectorRange,
 	     "DELETE FROM tmp.rs WHERE \"i\" NOT IN (SELECT record_doff FROM selector WHERE sel BETWEEN ? AND ?)");
 	S(db->sQueryGetResults,
-	     "SELECT r.doff,r.dlen,r.goff,r.ts,r.owner FROM record AS r WHERE r.doff IN (SELECT \"i\" FROM tmp.rs) AND NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) ORDER BY r.owner,r.ts");
+	     "SELECT r.doff,r.dlen,r.goff,r.ts,r.owner FROM record AS r WHERE r.doff IN (SELECT \"i\" FROM tmp.rs) AND r.reputation >= 0 AND NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) ORDER BY r.owner,r.ts");
 
 	/* Open and memory map graph and data files. */
 	snprintf(tmp,sizeof(tmp),"%s" ZTLF_PATH_SEPARATOR "graph.bin",path);
@@ -636,13 +620,6 @@ int ZTLF_DB_Open(struct ZTLF_DB *db,const char *path,char *errbuf,unsigned int e
 	if (e) {
 		errno = e;
 		e = 0;
-		goto exit_with_error;
-	}
-
-	/* Open rejected log */
-	snprintf(tmp,sizeof(tmp),"%s" ZTLF_PATH_SEPARATOR "rejected.bin",path);
-	db->rejectedFd = open(tmp,O_RDWR|O_CREAT,0644);
-	if (db->rejectedFd < 0) {
 		goto exit_with_error;
 	}
 
@@ -707,7 +684,6 @@ void ZTLF_DB_Close(struct ZTLF_DB *db)
 	for(int i=0;i<ZTLF_DB_GRAPH_NODE_LOCK_ARRAY_SIZE;++i)
 		pthread_mutex_lock(&db->graphNodeLocks[i]);
 	pthread_rwlock_wrlock(&db->gfLock);
-	pthread_mutex_lock(&db->rejectedLock);
 	pthread_mutex_lock(&db->dbLock);
 
 	ZTLF_L_trace("closing database at %s",db->path);
@@ -754,11 +730,8 @@ void ZTLF_DB_Close(struct ZTLF_DB *db)
 
 	ZTLF_MappedFile_Close(&db->gf);
 	ZTLF_MappedFile_Close(&db->df);
-	if (db->rejectedFd > 0)
-		close(db->rejectedFd);
 
 	pthread_mutex_unlock(&db->dbLock);
-	pthread_mutex_unlock(&db->rejectedLock);
 	pthread_rwlock_unlock(&db->gfLock);
 	for(int i=0;i<ZTLF_DB_GRAPH_NODE_LOCK_ARRAY_SIZE;++i)
 		pthread_mutex_unlock(&db->graphNodeLocks[i]);
@@ -768,7 +741,6 @@ void ZTLF_DB_Close(struct ZTLF_DB *db)
 		pthread_mutex_destroy(&db->graphNodeLocks[i]);
 	pthread_rwlock_destroy(&db->gfLock);
 	pthread_rwlock_destroy(&db->dfLock);
-	pthread_mutex_destroy(&db->rejectedLock);
 
 	ZTLF_L_trace("database shutdown successful!");
 }
@@ -842,51 +814,6 @@ unsigned int ZTLF_DB_GetLinks(struct ZTLF_DB *db,void *const lbuf,const unsigned
 	pthread_mutex_unlock(&db->dbLock);
 
 	return lc;
-}
-
-int ZTLF_DB_PutRejected(
-	struct ZTLF_DB *db,
-	const void *rec,
-	const unsigned int rsize,
-	const void *hash,
-	const int reason)
-{
-	LogOutputCallback logger = db->logger;
-	pthread_mutex_lock(&db->rejectedLock);
-
-	int64_t rdoff = lseek(db->rejectedFd,0,SEEK_END);
-	if (rdoff < 0) {
-		pthread_mutex_unlock(&db->rejectedLock);
-		return ZTLF_NEG(errno);
-	}
-	uint16_t size16 = htons((uint16_t)rsize);
-	if (write(db->rejectedFd,&size16,2) != 2) {
-		ftruncate(db->rejectedFd,(off_t)rdoff);
-		pthread_mutex_unlock(&db->rejectedLock);
-		return ZTLF_NEG(errno);
-	}
-	if (write(db->rejectedFd,rec,rsize) != (ssize_t)rsize) {
-		ftruncate(db->rejectedFd,(off_t)rdoff);
-		pthread_mutex_unlock(&db->rejectedLock);
-		return ZTLF_NEG(errno);
-	}
-
-	pthread_mutex_lock(&db->dbLock);
-	sqlite3_reset(db->sAddRejected);
-	sqlite3_bind_blob(db->sAddRejected,1,hash,32,SQLITE_STATIC);
-	sqlite3_bind_int64(db->sAddRejected,2,rdoff + 2);
-	sqlite3_bind_int(db->sAddRejected,3,(int)rsize);
-	sqlite3_bind_int(db->sAddRejected,4,reason);
-	int e;
-	if ((e = sqlite3_step(db->sAddRejected)) != SQLITE_DONE) {
-		pthread_mutex_unlock(&db->dbLock);
-		pthread_mutex_unlock(&db->rejectedLock);
-		return e;
-	}
-	pthread_mutex_unlock(&db->dbLock);
-
-	pthread_mutex_unlock(&db->rejectedLock);
-	return 0;
 }
 
 int ZTLF_DB_PutRecord(

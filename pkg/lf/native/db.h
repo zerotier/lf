@@ -130,9 +130,6 @@ struct ZTLF_DB
 	struct ZTLF_MappedFile df;
 	pthread_rwlock_t dfLock;
 
-	int rejectedFd;
-	pthread_mutex_t rejectedLock;
-
 	pthread_t graphThread;
 	volatile bool graphThreadStarted;
 	volatile bool running;
@@ -141,13 +138,6 @@ struct ZTLF_DB
 int ZTLF_DB_Open(struct ZTLF_DB *db,const char *path,char *errbuf,unsigned int errbufSize,LogOutputCallback logger,void *loggerArg);
 
 void ZTLF_DB_Close(struct ZTLF_DB *db);
-
-int ZTLF_DB_PutRejected(
-	struct ZTLF_DB *db,
-	const void *rec,
-	const unsigned int rsize,
-	const void *hash,
-	const int reason);
 
 int ZTLF_DB_PutRecord(
 	struct ZTLF_DB *db,

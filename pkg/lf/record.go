@@ -294,8 +294,9 @@ type Record struct {
 	WorkAlgorithm byte             // Proof of work algorithm
 	Signature     []byte           // Signature of sha256(sha256(Body Signing Hash | Selectors) | Work | WorkAlgorithm)
 
-	hash [32]byte // Cached hash, computed on first call to Hash()
-	data []byte   // Cached data, populated on first call to Bytes()
+	data []byte    // Cached data
+	hash *[32]byte // Cached hash
+	id   *[32]byte // Cached ID
 }
 
 // UnmarshalFrom deserializes this record from a reader.
@@ -404,15 +405,19 @@ func (r *Record) Bytes() []byte {
 		var buf bytes.Buffer
 		r.MarshalTo(&buf)
 		r.data = buf.Bytes()
-		r.hash = Shandwich256(r.data)
 	}
 	return r.data
 }
 
 // Hash returns Shandwich256(record Bytes()).
-func (r *Record) Hash() [32]byte {
-	if len(r.data) == 0 {
-		r.Bytes()
+func (r *Record) Hash() *[32]byte {
+	if r.hash == nil {
+		s512 := sha512.New()
+		r.MarshalTo(s512)
+		var h512buf [64]byte
+		h512 := s512.Sum(h512buf[:0])
+		h := Shandwich256FromSha512(h512[:])
+		r.hash = &h
 	}
 	return r.hash
 }
@@ -436,18 +441,22 @@ func (r *Record) Score() uint32 {
 }
 
 // ID returns a sha256 hash of all this record's selectors sorted in ascending order.
-func (r *Record) ID() (id [32]byte) {
-	var selectors [][]byte
-	for i := range r.Selectors {
-		selectors = append(selectors, r.Selectors[i].Selector)
+func (r *Record) ID() *[32]byte {
+	if r.id == nil {
+		var id [32]byte
+		var selectors [][]byte
+		for i := range r.Selectors {
+			selectors = append(selectors, r.Selectors[i].Selector)
+		}
+		sort.Slice(selectors, func(a, b int) bool { return bytes.Compare(selectors[a], selectors[b]) < 0 })
+		h := sha256.New()
+		for i := 0; i < len(selectors); i++ {
+			h.Write(selectors[i])
+		}
+		h.Sum(id[:0])
+		r.id = &id
 	}
-	sort.Slice(selectors, func(a, b int) bool { return bytes.Compare(selectors[a], selectors[b]) < 0 })
-	h := sha256.New()
-	for i := 0; i < len(selectors); i++ {
-		h.Write(selectors[i])
-	}
-	h.Sum(id[:0])
-	return
+	return r.id
 }
 
 // IsValueMasked returns true if the value is encrypted and thus a plain text key for the first selector is needed to Open() it.
