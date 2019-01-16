@@ -19,14 +19,20 @@ import (
 	"crypto/sha512"
 	"encoding/binary"
 	"io"
+	"sort"
 )
 
 var (
 	b1_0 = []byte{0x00}
 	b1_1 = []byte{0x01}
 
-	recordValueMaskKeyHashNonce = []byte("LFKeyForValueMaskingEncryption")
+	// This nonce is included in the hash used to derive a key for value masking encryption
+	// to make it different from other uses of that plain text key.
+	recordValueMaskKeyHashNonce = []byte("LFKeyForValueMasking")
 )
+
+// RecordMaxSize is a sanity limit for record sizes. Real records never get this big.
+const RecordMaxSize = 131072
 
 // RecordMaxFieldSize is a sanity limit for record field sizes used in deserialization.
 // Real records never get this big, but this prevents a malformed record from causing an out
@@ -44,6 +50,9 @@ const RecordValueEncryptionAlgorithmNone = byte(0)
 
 // RecordValueEncryptionAlgorithmAES256CFB indicates AES256-CFB masking encryption for value.
 const RecordValueEncryptionAlgorithmAES256CFB = byte(1)
+
+// RecordValuePrefixFlagDeflated indicates that the value is deflated.
+const RecordValuePrefixFlagDeflated = byte(0x01)
 
 // RecordSelectorAlgorithmS112 is the 64-bit suffix sortable selector algorithm with SecP112 claim signatures.
 const RecordSelectorAlgorithmS112 = byte(1)
@@ -68,16 +77,15 @@ const RecordWharrgarblMemory = uint(1024 * 1024 * 256) // 256mb
 
 // RecordBody represents the main body of a record including its value, owner public keys, etc.
 type RecordBody struct {
-	Value                    []byte // Value (may be encrypted and/or compressed, use Open() to get plain text value)
+	Value                    []byte // Value (prefixed by single flags byte, may be encrypted and/or compressed, use Open() to get plain text value)
 	Owner                    []byte // Owner of this record
 	Links                    []byte // Links to previous records' hashes (size is a multiple of 32 bytes, link count is size / 32)
 	Timestamp                uint64 // Timestamp (and revision ID) in SECONDS since Unix epoch
 	ValueEncryptionAlgorithm byte   // Encryption algorithm used to mask value
-	ValueCompression         bool   // If true, value is deflate compressed.
 }
 
-// ReadFrom deserializes this record body from a reader.
-func (rb *RecordBody) ReadFrom(r io.Reader) error {
+// UnmarshalFrom deserializes this record body from a reader.
+func (rb *RecordBody) UnmarshalFrom(r io.Reader) error {
 	rr := byteAndArrayReader{r}
 
 	hdrb, err := rr.ReadByte()
@@ -127,19 +135,14 @@ func (rb *RecordBody) ReadFrom(r io.Reader) error {
 		return err
 	}
 
-	rb.ValueEncryptionAlgorithm = hdrb & 0xf
-	rb.ValueCompression = (hdrb & 0x10) != 0
+	rb.ValueEncryptionAlgorithm = hdrb
 
 	return nil
 }
 
-// WriteTo writes this record body in serialized form to the given writer.
-func (rb *RecordBody) WriteTo(w io.Writer) error {
-	hdrb := rb.ValueEncryptionAlgorithm // 4-bit algorithm field
-	if rb.ValueCompression {
-		hdrb |= 0x10 // compression flag
-	}
-	if _, err := w.Write([]byte{hdrb}); err != nil {
+// MarshalTo writes this record body in serialized form to the given writer.
+func (rb *RecordBody) MarshalTo(w io.Writer) error {
+	if _, err := w.Write([]byte{rb.ValueEncryptionAlgorithm}); err != nil {
 		return err
 	}
 
@@ -175,17 +178,22 @@ func (rb *RecordBody) WriteTo(w io.Writer) error {
 	return err
 }
 
+// LinkCount returns the number of links, which is just short for len(Links)/32
+func (rb *RecordBody) LinkCount() int {
+	return (len(rb.Links) / 32)
+}
+
 // Bytes returns a compact byte array serialized RecordBody.
 func (rb *RecordBody) Bytes() []byte {
 	var buf bytes.Buffer
-	rb.WriteTo(&buf)
+	rb.MarshalTo(&buf)
 	return buf.Bytes()
 }
 
 // SizeBytes returns the size of the result of Bytes().
 func (rb *RecordBody) SizeBytes() uint {
 	var wc CountingWriter
-	rb.WriteTo(&wc)
+	rb.MarshalTo(&wc)
 	return uint(wc)
 }
 
@@ -206,11 +214,6 @@ func (rb *RecordBody) SigningHash() [32]byte {
 	binary.BigEndian.PutUint64(vh[0:8], rb.Timestamp) // this just re-uses vh[] as a temp buffer
 	h.Write(vh[0:8])
 	h.Write(b1_0)
-	if rb.ValueCompression {
-		h.Write(b1_1)
-	} else {
-		h.Write(b1_0)
-	}
 	h.Write([]byte{rb.ValueEncryptionAlgorithm})
 	h.Write(b1_0)
 	var s512buf [64]byte
@@ -224,8 +227,8 @@ type RecordSelector struct {
 	Algorithm byte   // Algorithm used for claim signature
 }
 
-// ReadFrom reads this record selector from the provided reader.
-func (rs *RecordSelector) ReadFrom(r io.Reader) error {
+// UnmarshalFrom reads this record selector from the provided reader.
+func (rs *RecordSelector) UnmarshalFrom(r io.Reader) error {
 	var alg [1]byte
 	if _, err := io.ReadFull(r, alg[:]); err != nil {
 		return err
@@ -243,8 +246,8 @@ func (rs *RecordSelector) ReadFrom(r io.Reader) error {
 	return nil
 }
 
-// WriteTo writes this RecordSelector in serialized form to the supplied writer.
-func (rs *RecordSelector) WriteTo(w io.Writer) error {
+// MarshalTo writes this RecordSelector in serialized form to the supplied writer.
+func (rs *RecordSelector) MarshalTo(w io.Writer) error {
 	if _, err := w.Write([]byte{rs.Algorithm}); err != nil { // algorithm implies size of selector and claim
 		return err
 	}
@@ -260,7 +263,7 @@ func (rs *RecordSelector) WriteTo(w io.Writer) error {
 // Bytes returns a byte serialized selector.
 func (rs *RecordSelector) Bytes() []byte {
 	var buf bytes.Buffer
-	rs.WriteTo(&buf)
+	rs.MarshalTo(&buf)
 	return buf.Bytes()
 }
 
@@ -282,16 +285,21 @@ func (rs *RecordSelector) VerifyHash(hash []byte) bool {
 }
 
 // Record contains all the elements of a complete (unmarshaled) record.
+// Note that records should be considered const structures. They shouldn't be modified
+// directly but instead should be generated by the NewRecord functions.
 type Record struct {
 	Body          RecordBody       // Main record body
 	Selectors     []RecordSelector // Record selectors with claim signatures computed against body's signing hash
 	Work          []byte           // Proof of work computed on sha256(Body Signing Hash | Selectors) with work cost based on size of body and selectors
 	WorkAlgorithm byte             // Proof of work algorithm
 	Signature     []byte           // Signature of sha256(sha256(Body Signing Hash | Selectors) | Work | WorkAlgorithm)
+
+	hash [32]byte // Cached hash, computed on first call to Hash()
+	data []byte   // Cached data, populated on first call to Bytes()
 }
 
-// ReadFrom deserializes this record from a reader.
-func (r *Record) ReadFrom(rdr io.Reader) error {
+// UnmarshalFrom deserializes this record from a reader.
+func (r *Record) UnmarshalFrom(rdr io.Reader) error {
 	rr := byteAndArrayReader{rdr}
 
 	hdrb, err := rr.ReadByte()
@@ -302,7 +310,7 @@ func (r *Record) ReadFrom(rdr io.Reader) error {
 		return ErrorRecordInvalid
 	}
 
-	if err = r.Body.ReadFrom(&rr); err != nil {
+	if err = r.Body.UnmarshalFrom(&rr); err != nil {
 		return err
 	}
 
@@ -315,7 +323,7 @@ func (r *Record) ReadFrom(rdr io.Reader) error {
 	}
 	r.Selectors = make([]RecordSelector, uint(selCount))
 	for i := 0; i < len(r.Selectors); i++ {
-		err = r.Selectors[i].ReadFrom(rr)
+		err = r.Selectors[i].UnmarshalFrom(rr)
 		if err != nil {
 			return err
 		}
@@ -350,14 +358,14 @@ func (r *Record) ReadFrom(rdr io.Reader) error {
 	return nil
 }
 
-// WriteTo writes this record in serialized form to the supplied writer.
-func (r *Record) WriteTo(w io.Writer) error {
+// MarshalTo writes this record in serialized form to the supplied writer.
+func (r *Record) MarshalTo(w io.Writer) error {
 	// Record begins with a reserved version/type byte, currently 0
 	if _, err := w.Write(b1_0); err != nil {
 		return err
 	}
 
-	if err := r.Body.WriteTo(w); err != nil {
+	if err := r.Body.MarshalTo(w); err != nil {
 		return err
 	}
 
@@ -365,7 +373,7 @@ func (r *Record) WriteTo(w io.Writer) error {
 		return err
 	}
 	for i := 0; i < len(r.Selectors); i++ {
-		if err := r.Selectors[i].WriteTo(w); err != nil {
+		if err := r.Selectors[i].MarshalTo(w); err != nil {
 			return err
 		}
 	}
@@ -389,17 +397,126 @@ func (r *Record) WriteTo(w io.Writer) error {
 }
 
 // Bytes returns a byte serialized record.
+// The returned slice should not be modified since it's cached internally in Record to
+// make multiple calls to Bytes() faster.
 func (r *Record) Bytes() []byte {
-	var buf bytes.Buffer
-	r.WriteTo(&buf)
-	return buf.Bytes()
+	if len(r.data) == 0 {
+		var buf bytes.Buffer
+		r.MarshalTo(&buf)
+		r.data = buf.Bytes()
+		r.hash = Shandwich256(r.data)
+	}
+	return r.data
+}
+
+// Hash returns Shandwich256(record Bytes()).
+func (r *Record) Hash() [32]byte {
+	if len(r.data) == 0 {
+		r.Bytes()
+	}
+	return r.hash
 }
 
 // SizeBytes returns the serialized size of this record.
 func (r *Record) SizeBytes() uint {
 	var cr CountingWriter
-	r.WriteTo(&cr)
+	r.MarshalTo(&cr)
 	return uint(cr)
+}
+
+// Score returns this record's work score, which is algorithm dependent.
+func (r *Record) Score() uint32 {
+	switch r.WorkAlgorithm {
+	case RecordWorkAlgorithmNone:
+		return 1
+	case RecordWorkAlgorithmWharrgarbl:
+		return WharrgarblGetDifficulty(r.Work)
+	}
+	return 0
+}
+
+// ID returns a sha256 hash of all this record's selectors sorted in ascending order.
+func (r *Record) ID() (id [32]byte) {
+	var selectors [][]byte
+	for i := range r.Selectors {
+		selectors = append(selectors, r.Selectors[i].Selector)
+	}
+	sort.Slice(selectors, func(a, b int) bool { return bytes.Compare(selectors[a], selectors[b]) < 0 })
+	h := sha256.New()
+	for i := 0; i < len(selectors); i++ {
+		h.Write(selectors[i])
+	}
+	h.Sum(id[:0])
+	return
+}
+
+// IsValueMasked returns true if the value is encrypted and thus a plain text key for the first selector is needed to Open() it.
+func (r *Record) IsValueMasked() bool {
+	return len(r.Body.Value) >= 1 && r.Body.ValueEncryptionAlgorithm == RecordValueEncryptionAlgorithmAES256CFB
+}
+
+// Open returns the plain text value of this record.
+// The plain text key for the first selector is only needed if the value is masked. If the value
+// is not encrypted no key is needed.
+func (r *Record) Open(firstSelectorPlainTextKey []byte) ([]byte, error) {
+	if len(r.Body.Value) == 0 {
+		return nil, nil
+	}
+
+	var v []byte
+	if r.Body.ValueEncryptionAlgorithm == RecordValueEncryptionAlgorithmNone {
+		v = r.Body.Value
+	} else if r.Body.ValueEncryptionAlgorithm == RecordValueEncryptionAlgorithmAES256CFB {
+		if len(r.Selectors) == 0 {
+			return nil, ErrorIncorrectKey
+		}
+		firstSelector, _ := RecordDeriveSelector(firstSelectorPlainTextKey)
+		if !bytes.Equal(firstSelector, r.Selectors[0].Selector) {
+			return nil, ErrorIncorrectKey
+		}
+
+		var kbuf [32]byte
+		kh := sha256.New()
+		kh.Write(recordValueMaskKeyHashNonce)
+		kh.Write(firstSelectorPlainTextKey)
+		key := kh.Sum(kbuf[:0])
+
+		var iv [16]byte
+		binary.BigEndian.PutUint64(iv[0:8], r.Body.Timestamp)
+		if len(r.Body.Owner) >= 8 {
+			copy(iv[8:16], r.Body.Owner[len(r.Body.Owner)-8:])
+		}
+
+		c, _ := aes.NewCipher(key[:])
+		cfb := cipher.NewCFBDecrypter(c, iv[:])
+		v = make([]byte, len(r.Body.Value))
+		cfb.XORKeyStream(v, r.Body.Value)
+	} else {
+		return nil, ErrorRecordUnsupportedAlgorithm
+	}
+
+	if (v[0] & RecordValuePrefixFlagDeflated) != 0 {
+		def := flate.NewReader(bytes.NewReader(v[1:]))
+		vdef := make([]byte, 0, len(v)+(len(v)>>1))
+		var tmp [16384]byte
+		for {
+			n, err := def.Read(tmp[:])
+			if n <= 0 || err == io.EOF {
+				break
+			}
+			if err != nil {
+				def.Close()
+				return nil, err
+			}
+			vdef = append(vdef, tmp[0:n]...)
+			if len(vdef) > RecordMaxFieldSize {
+				return nil, ErrorRecordInvalid
+			}
+		}
+		def.Close()
+		return vdef, nil
+	}
+	return v[1:], nil
 }
 
 // sha512csprng is a Reader that acts as a random source for generating ECDSA key pairs from repeated hashing of a seed.
@@ -486,10 +603,10 @@ func RecordWharrgarblCost(bytes uint) uint32 {
 	return uint32(c)
 }
 
-// NewRecordOwner creates a new record owner, returning its packed public key and fully expanded private key.
+// NewOwner creates a new record owner, returning its packed public key and fully expanded private key.
 // The packed public key is packed using ECCCompressPublicKeyWithID to embed an algorithm ID to support
 // different curves or entirely different algorithms in the future.
-func NewRecordOwner() ([]byte, *ecdsa.PrivateKey) {
+func NewOwner() ([]byte, *ecdsa.PrivateKey) {
 	priv, err := ecdsa.GenerateKey(elliptic.P384(), secrand.Reader)
 	if err != nil {
 		panic(err)
@@ -505,9 +622,17 @@ func NewRecordOwner() ([]byte, *ecdsa.PrivateKey) {
 // This can be used to do the first step of a three-phase record creation process with the next two phases being NewRecordAddWork
 // and NewRecordComplete. This is useful of record creation needs to be split among systems or participants.
 func NewRecordStart(value []byte, links [][]byte, plainTextSelectors [][]byte, maskValue bool, owner []byte, ts uint64) (r *Record, workHash [32]byte, workBillableBytes uint, err error) {
+	if len(value) > RecordMaxFieldSize {
+		err = ErrorInvalidParameter
+		return
+	}
+
 	r = new(Record)
 
 	if len(value) > 0 {
+		var valuePrefixByte byte
+
+		// Try to compress larger values, set compression flag and compress if it results in a value size reduction.
 		if len(value) > 128 {
 			var dbuf bytes.Buffer
 			def, err := flate.NewWriter(&dbuf, flate.BestCompression)
@@ -518,10 +643,12 @@ func NewRecordStart(value []byte, links [][]byte, plainTextSelectors [][]byte, m
 			def.Close()
 			if dbuf.Len() < len(value) {
 				value = dbuf.Bytes()
-				r.Body.ValueCompression = true
+				valuePrefixByte |= RecordValuePrefixFlagDeflated
 			}
 		}
 
+		// If we're masking the value, it's masked using the first selector's plain text
+		// key as the encryption key (after being hashed with a nonce).
 		if maskValue {
 			if len(plainTextSelectors) == 0 {
 				err = ErrorInvalidParameter
@@ -541,11 +668,14 @@ func NewRecordStart(value []byte, links [][]byte, plainTextSelectors [][]byte, m
 
 			c, _ := aes.NewCipher(key[:])
 			cfb := cipher.NewCFBEncrypter(c, iv[:])
-			r.Body.Value = make([]byte, len(value))
-			cfb.XORKeyStream(r.Body.Value, value)
+			r.Body.Value = make([]byte, len(value)+1)
+			cfb.XORKeyStream(r.Body.Value, []byte{valuePrefixByte})
+			cfb.XORKeyStream(r.Body.Value[1:], value)
 
 			r.Body.ValueEncryptionAlgorithm = RecordValueEncryptionAlgorithmAES256CFB
 		} else {
+			r.Body.Value = make([]byte, 1, len(value)+1)
+			r.Body.Value[0] = valuePrefixByte
 			r.Body.Value = append(r.Body.Value, value...)
 			r.Body.ValueEncryptionAlgorithm = RecordValueEncryptionAlgorithmNone
 		}

@@ -11,26 +11,24 @@ package lf
 // #cgo LDFLAGS: -lsqlite3
 // #include "./native/db.h"
 // #include "./native/db.c"
-// extern int ztlfDBInternalGetMatchingCCallback(int64_t,int64_t,uint64_t,uint64_t,void *,void *,void *,uint64_t,uint64_t,unsigned long);
 // extern void ztlfLogOutputCCallback(int,const char *,int,const char *,void *);
 // static inline int ZTLF_DB_Open_fromGo(struct ZTLF_DB *db,const char *path,char *errbuf,unsigned int errbufSize,uintptr_t loggerArg) { return ZTLF_DB_Open(db,path,errbuf,errbufSize,&ztlfLogOutputCCallback,(void *)loggerArg); }
-// /*static inline void ZTLF_DB_GetMatching_fromGo(struct ZTLF_DB *db,const void *id,const void *owner,const void *sel0,const void *sel1,unsigned long arg) { ZTLF_DB_GetMatching(db,id,owner,sel0,sel1,&ztlfDBInternalGetMatchingCCallback,arg); }*/
 import "C"
+
 import (
-	"bytes"
-	"encoding/binary"
 	"log"
 	"os"
-	"runtime"
-	"sort"
 	"strconv"
 	"sync"
 	"unsafe"
 )
 
+// Reasons a record may be rejected -- 'reason' column in rejected table.
 const (
 	dbRecordRejectionReasonRecordTimestampInTheFuture = 1
 )
+
+const dbMaxOwnerSize = C.ZTLF_DB_QUERY_MAX_OWNER_SIZE
 
 // DB is an instance of the LF database that stores records and manages record weights and linkages.
 type db struct {
@@ -40,6 +38,7 @@ type db struct {
 	cdb             C.struct_ZTLF_DB
 }
 
+// Global variables that store logger instances for use by the callback in db-log-callback.go.
 var (
 	globalLoggers              []*log.Logger
 	globalVerboseLoggers       []*log.Logger
@@ -93,146 +92,77 @@ func (db *db) close() {
 	globalLoggersLock.Unlock()
 }
 
-/*
-func (db *db) putRecord(r *Record) error {
-	var changeOwner, sel0, sel1, links unsafe.Pointer
-	if len(r.ChangeOwner) == 32 {
-		changeOwner = unsafe.Pointer(&r.ChangeOwner[0])
+// putRecord adds a valid record to the database.
+func (db *db) putRecord(r *Record, reputation int) error {
+	if len(r.Body.Owner) == 0 {
+		return ErrorRecordInvalid
 	}
-	for i := range r.SelectorIDs {
-		if len(r.SelectorIDs[i]) == 32 {
-			if uintptr(sel0) == 0 {
-				sel0 = unsafe.Pointer(&r.SelectorIDs[i][0])
-			} else {
-				sel1 = unsafe.Pointer(&r.SelectorIDs[i][0])
-			}
+	rdata := r.Bytes()
+	rhash := r.Hash()
+	if len(rdata) == 0 {
+		return ErrorRecordInvalid
+	}
+	rid := r.ID()
+
+	selectors := make([]unsafe.Pointer, 0, len(r.Selectors)*32)
+	selectorSizes := make([]C.uint, 0, len(r.Selectors))
+	for i := 0; i < len(r.Selectors); i++ {
+		if len(r.Selectors[i].Selector) == 0 {
+			return ErrorRecordInvalid
 		}
+		selectors = append(selectors, unsafe.Pointer(&r.Selectors[i].Selector[0]))
+		selectorSizes = append(selectorSizes, C.uint(len(r.Selectors[i].Selector)))
 	}
-	lc := len(r.Links) / 32
-	if lc > 0 {
-		links = unsafe.Pointer(&r.Links[0])
+	var sptr *unsafe.Pointer
+	var ssptr unsafe.Pointer
+	if len(selectors) > 0 {
+		sptr = &selectors[0]
+		ssptr = unsafe.Pointer(&selectorSizes[0])
 	}
 
-	var score uint32
-	if r.WorkAlgorithm == RecordWorkAlgorithmWharrgarbl {
-		score = WharrgarblGetDifficulty(r.Work[:])
-	} else {
-		score = 1
+	var lptr unsafe.Pointer
+	if len(r.Body.Links) > 0 {
+		lptr = unsafe.Pointer(&r.Body.Links[0])
 	}
 
 	cerr := C.ZTLF_DB_PutRecord(
 		(*C.struct_ZTLF_DB)(&db.cdb),
-		unsafe.Pointer(&r.Data[0]),
-		C.uint(len(r.Data)),
-		unsafe.Pointer(&r.ID[0]),
-		unsafe.Pointer(&r.Owner[0]),
-		unsafe.Pointer(&r.Hash[0]),
-		C.ulonglong(r.Timestamp),
-		C.ulonglong(r.TTL),
-		C.uint(score),
-		changeOwner,
-		sel0,
-		sel1,
-		links,
-		C.uint(lc))
+		unsafe.Pointer(&rdata[0]),
+		C.uint(len(rdata)),
+		unsafe.Pointer(&r.Body.Owner[0]),
+		C.uint(len(r.Body.Owner)),
+		unsafe.Pointer(&rhash[0]),
+		unsafe.Pointer(&rid[0]),
+		C.uint64_t(r.Body.Timestamp),
+		C.uint32_t(r.Score()),
+		sptr,
+		(*C.uint)(ssptr),
+		C.uint(len(selectors)),
+		lptr,
+		C.uint(r.Body.LinkCount()),
+		C.int(reputation))
+
 	if cerr != 0 {
 		return ErrorDatabase{int(cerr), "record add failed (" + strconv.Itoa(int(cerr)) + ")"}
 	}
-
 	return nil
 }
 
-func (db *db) putRejected(r *Record, reason int) error {
+// putRejected saves a record into the rejected records table and file.
+func (db *db) putRejected(rdata []byte, rhash []byte, reason int) error {
+	if len(rdata) == 0 || len(rhash) != 32 {
+		return ErrorInvalidParameter
+	}
 	cerr := C.ZTLF_DB_PutRejected(
 		(*C.struct_ZTLF_DB)(&db.cdb),
-		unsafe.Pointer(&r.Data[0]),
-		C.uint(len(r.Data)),
-		unsafe.Pointer(&r.ID[0]),
-		unsafe.Pointer(&r.Owner[0]),
-		unsafe.Pointer(&r.Hash[0]),
-		C.ulonglong(r.Timestamp),
+		unsafe.Pointer(&rdata[0]),
+		C.uint(len(rdata)),
+		unsafe.Pointer(&rhash[0]),
 		C.int(reason))
 	if cerr != 0 {
 		return ErrorDatabase{int(cerr), "record add failed (" + strconv.Itoa(int(cerr)) + ")"}
 	}
 	return nil
-}
-*/
-
-// getMatching returns a sorted list of records and their weights for a given set of constraints.
-// Records are sorted in descending order of weight within a given ID category (meaning different owners)
-// or otherwise are sorted in descending order of age. The Key and Value fields of APIRecordDetail are
-// not filled in here since this function doesn't know the plain text key.
-func (db *db) getMatching(id, owner, sel0, sel1 []byte) (rd []APIRecordDetail) {
-	var idP, ownerP, sel0P, sel1P unsafe.Pointer
-	var doffdlen []uintptr
-
-	if len(id) == 32 {
-		idP = unsafe.Pointer(&id[0])
-	}
-	if len(owner) == 32 {
-		ownerP = unsafe.Pointer(&owner[0])
-	}
-	if len(sel0) == 32 {
-		sel0P = unsafe.Pointer(&sel0[0])
-	}
-	if len(sel1) == 32 {
-		sel1P = unsafe.Pointer(&sel1[0])
-	}
-
-	// This stuff is defined in db-native-callbacks.go. See that file for the callback that
-	// handles results returned by GetMatching().
-	runtime.LockOSThread()
-	dbGetMatchingStateInstanceLock.Lock()
-	dbGetMatchingStateInstance.byIDOwner = make(map[[64]byte]*dbGetMatchingStateByIDOwner)
-
-	//C.ZTLF_DB_GetMatching_fromGo((*C.struct_ZTLF_DB)(&db.cdb), idP, ownerP, sel0P, sel1P, C.ulong(0))
-
-	now := TimeSec()
-	for _, info := range dbGetMatchingStateInstance.byIDOwner {
-		if info.exp > now {
-			rd = append(rd, APIRecordDetail{})
-			wb := &rd[len(rd)-1].Weight
-			binary.BigEndian.PutUint64(wb[0:8], info.weightH)
-			binary.BigEndian.PutUint64(wb[8:16], info.weightL)
-			doffdlen = append(doffdlen, uintptr(info.doff), uintptr(info.dlen))
-		}
-	}
-
-	dbGetMatchingStateInstance.byIDOwner = nil
-	dbGetMatchingStateInstanceLock.Unlock()
-	runtime.UnlockOSThread()
-
-	for i, j := 0, 0; i < len(rd); i++ {
-		doff := doffdlen[j]
-		j++
-		dlen := doffdlen[j]
-		j++
-		rd[i].Record.Data = make([]byte, uint(dlen))
-		ok := int(C.ZTLF_DB_GetRecordData((*C.struct_ZTLF_DB)(&db.cdb), C.ulonglong(doff), unsafe.Pointer(&rd[i].Record.Data[0]), C.uint(dlen)))
-		if ok == 0 { // unlikely, sanity check
-			// TODO: log probable database corruption
-			rd = nil
-			break
-		} else {
-			if rd[i].Record.Unpack(nil) != nil { // same... would indicate a bad record in DB
-				// TODO: log probable database corruption
-				rd = nil
-				break
-			}
-		}
-	}
-
-	sort.Slice(rd, func(i, j int) bool {
-		// If IDs are equal we have multiple owners for the same ID. In this case compare the weights.
-		if bytes.Equal(rd[i].Record.ID[:], rd[j].Record.ID[:]) {
-			return bytes.Compare(rd[j].Weight[:], rd[i].Weight[:]) < 0
-		}
-		// Otherwise return newer records first.
-		return rd[j].Record.Timestamp < rd[i].Record.Timestamp
-	})
-
-	return
 }
 
 // getDataByHash gets record data by hash and appends it to 'buf', returning bytes appended and buffer.
@@ -246,9 +176,6 @@ func (db *db) getDataByHash(h []byte, buf []byte) (int, []byte, error) {
 	if dlen == 0 {
 		return 0, buf, nil
 	}
-	if dlen < RecordMinSize || dlen > RecordMaxSize {
-		return 0, buf, ErrorDatabase{dlen, "invalid record size returned by DB_GetByHash(), database may be corrupt"}
-	}
 
 	startPos := len(buf)
 	buf = append(buf, make([]byte, dlen)...)
@@ -261,11 +188,12 @@ func (db *db) getDataByHash(h []byte, buf []byte) (int, []byte, error) {
 	return dlen, buf, nil
 }
 
+// hasRecord returns true if the record with the given hash exists (rejected table is not checked)
 func (db *db) hasRecord(h []byte) bool {
 	if len(h) == 32 {
 		var doff uint64
 		dlen := int(C.ZTLF_DB_GetByHash((*C.struct_ZTLF_DB)(&db.cdb), unsafe.Pointer(&(h[0])), (*C.ulonglong)(unsafe.Pointer(&doff))))
-		return (dlen > RecordMinSize)
+		return dlen > 0
 	}
 	return false
 }
@@ -280,15 +208,74 @@ func (db *db) getLinks(count uint) (uint, []byte, error) {
 	return lc, lbuf[0 : 32*lc], nil
 }
 
+// stats returns some basic statistics about this database.
 func (db *db) stats() (recordCount, dataSize uint64) {
 	C.ZTLF_DB_Stats((*C.struct_ZTLF_DB)(&db.cdb), (*C.ulonglong)(unsafe.Pointer(&recordCount)), (*C.ulonglong)(unsafe.Pointer(&dataSize)))
 	return
 }
 
+// crc64 returns a CRC64 of this database's important state information including hashes, graph weights, etc.
 func (db *db) crc64() uint64 {
 	return uint64(C.ZTLF_DB_CRC64((*C.struct_ZTLF_DB)(&db.cdb)))
 }
 
+// hasPending returns true if this database is not waiting for any records to fill any graph gaps or satisfy any links.
 func (db *db) hasPending() bool {
 	return (C.ZTLF_DB_HasPending((*C.struct_ZTLF_DB)(&db.cdb)) != 0)
+}
+
+type dbQueryResult struct {
+	ts        uint64               // timestamp in SECONDS since epoch
+	weight    [2]uint64            // weight in big-endian quadword order
+	doff      uint64               // data offset
+	dlen      uint                 // data length
+	ownerSize uint                 // actual length of owner public key
+	owner     [dbMaxOwnerSize]byte // owner public key
+}
+
+// query executes a query against a number of selector ranges. The function is executed for each result, with
+// results not sorted. The loop is broken if the function returns false. The owner is passed as a pointer to
+// an array that is reused, so a copy must be made if you want to keep it.
+func (db *db) query(selectorRanges [][2][]byte, andOr []bool, f func(uint64, [2]uint64, uint64, uint, *[dbMaxOwnerSize]byte, uint) bool) error {
+	if len(selectorRanges) == 0 || len(andOr) != len(selectorRanges) {
+		return nil
+	}
+
+	sel := make([]unsafe.Pointer, len(selectorRanges)*2)
+	selSizes := make([]C.uint, len(selectorRanges)*2)
+	selAndOr := make([]C.int, len(selectorRanges))
+	for i := 0; i < len(selectorRanges); i++ {
+		if len(selectorRanges[i][0]) == 0 || len(selectorRanges[i][1]) == 0 {
+			return ErrorInvalidParameter
+		}
+		if andOr[i] {
+			selAndOr[i] = 1
+		}
+		ii := i * 2
+		sel[ii] = unsafe.Pointer(&selectorRanges[i][0][0])
+		selSizes[ii] = C.uint(len(selectorRanges[i][0]))
+		ii++
+		sel[ii] = unsafe.Pointer(&selectorRanges[i][1][0])
+		selSizes[ii] = C.uint(len(selectorRanges[i][1]))
+	}
+
+	cresults := C.ZTLF_DB_Query((*C.struct_ZTLF_DB)(&db.cdb), &sel[0], (*C.int)(unsafe.Pointer(&selAndOr[0])), (*C.uint)(unsafe.Pointer(&selSizes[0])), C.uint(len(selectorRanges)))
+	if uintptr(unsafe.Pointer(cresults)) != 0 {
+		var owner [dbMaxOwnerSize]byte
+		for i := C.long(0); i < cresults.count; i++ {
+			cr := cresults.results[i]
+			ownerSize := uint(cr.ownerSize)
+			if ownerSize > 0 && ownerSize <= dbMaxOwnerSize && cr.dlen > 0 {
+				for j := uint(0); j < ownerSize; j++ {
+					owner[j] = byte(cr.owner[j])
+				}
+				if !f(uint64(cr.ts), [2]uint64{uint64(cr.weightH), uint64(cr.weightL)}, uint64(cr.doff), uint(cr.dlen), &owner, ownerSize) {
+					break
+				}
+			}
+		}
+		C.free(unsafe.Pointer(cresults))
+	}
+
+	return nil
 }

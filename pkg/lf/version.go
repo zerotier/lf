@@ -12,5 +12,8 @@ const (
 	SoftwareName = "ZeroTier LF (\"Project Azathoth\")"
 )
 
+// Version is the version in array form.
+var Version = [4]int{VersionMajor, VersionMinor, VersionRevision, VersionBuild}
+
 // VersionStr is the version in string form.
 var VersionStr = fmt.Sprintf("%d.%d.%d.%d", VersionMajor, VersionMinor, VersionRevision, VersionBuild)

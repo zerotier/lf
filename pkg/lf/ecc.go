@@ -19,7 +19,7 @@ var (
 	// This is not used for security critical things like owner signatures, just to make dumb key collision DOS attacks hard
 	// by allowing selectors to prove knowledge of their masked plain text keys.
 	ECCCurveSecP112R1 = func() elliptic.CurveParams {
-		secp112r1 = &elliptic.CurveParams{}
+		var secp112r1 elliptic.CurveParams
 		secp112r1.Name = "secp112r1"
 		secp112r1.P, _ = new(big.Int).SetString("00db7c2abf62e35e668076bead208b", 16) // Prime
 		secp112r1.N, _ = new(big.Int).SetString("00db7c2abf62e35e7628dfac6561c5", 16) // Order

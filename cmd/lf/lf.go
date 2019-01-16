@@ -196,6 +196,8 @@ func main() {
 			lf.TestWharrgarbl(os.Stdout)
 		case "database":
 			lf.TestDatabase("./lf-db-test", os.Stdout)
+		default:
+			printHelp("")
 		}
 
 	default:

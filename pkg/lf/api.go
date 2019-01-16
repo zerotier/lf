@@ -8,10 +8,7 @@
 package lf
 
 import (
-	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
-	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -34,47 +31,27 @@ type APIPeer struct {
 
 // APIStatus contains status information about this node and the network it belongs to.
 type APIStatus struct {
-	Software       string    `msgpack:"S"`    // Software implementation name
-	Version        [4]int    `msgpack:"V"`    // Version of software
-	MinAPIVersion  int       `msgpack:"MiA"`  // Minimum API version supported
-	MaxAPIVersion  int       `msgpack:"MaA"`  // Maximum API version supported
-	Uptime         uint64    `msgpack:"U"`    // Uptime in milliseconds since epoch
-	ConnectedPeers []APIPeer `msgpack:"CP"`   // Connected peer nodes (if revealed by node)
-	DBRecordCount  uint64    `msgpack:"DBRC"` // Number of records in database
-	DBSize         uint64    `msgpack:"DBS"`  // Total size of records in database in bytes
+	Software      string    `msgpack:"S"`    // Software implementation name
+	Version       [4]int    `msgpack:"V"`    // Version of software
+	MinAPIVersion int       `msgpack:"MiA"`  // Minimum API version supported
+	MaxAPIVersion int       `msgpack:"MaA"`  // Maximum API version supported
+	Uptime        uint64    `msgpack:"U"`    // Uptime in milliseconds since epoch
+	Peers         []APIPeer `msgpack:"P"`    // Connected peer nodes (if revealed by node)
+	DBRecordCount uint64    `msgpack:"DBRC"` // Number of records in database
+	DBSize        uint64    `msgpack:"DBS"`  // Total size of records in database in bytes
 }
 
-// APIPut (/p) is used to submit a new record revision to the global LF key/value store.
-// If Data is non-nil/empty it must contain a valid and fully signed and paid for record. If
-// this is present all other fields are ignored. If Data is not present the other fields contain
-// the values that are required for the node to locally build and sign the record. Nodes only
-// allow this (for both security and DOS reasons) from authorized clients. Use the Proxy to do
-// this from other places. The Proxy accepts requests to localhosts, passed through queries,
-// but intercepts puts and builds records locally and then submits them in Data to a full node.
-type APIPut struct {
-	Data                    []byte    `msgpack:"D,omitempty" json:",omitempty"`   // Fully encoded record data, overrides other fields if present
-	Key                     []byte    `msgpack:"K,omitempty" json:",omitempty"`   // Plain text key
-	Value                   []byte    `msgpack:"V,omitempty" json:",omitempty"`   // Plain text value
-	Selectors               [2][]byte `msgpack:"S,omitempty" json:",omitempty"`   // Selectors
-	OwnerPrivateKey         []byte    `msgpack:"OPK,omitempty" json:",omitempty"` // Owner private key to sign record
-	OwnerSignatureAlgorithm byte      `msgpack:"OSA" json:",omitempty"`           // Signature algorithm for owner private key
-	PlainTextValue          bool      `msgpack:"PTV"`                             // If true, do not encrypt value in record
+// APIQuerySelector specifies a selector range.
+type APIQuerySelector struct {
+	Selector []byte   `msgpack:"S,omitempty" json:",omitempty"` // Single selector (functionally the same as range {Selector,Selector})
+	Range    [][]byte `msgpack:"R,omitempty" json:",omitempty"` // Selector range (must be either nil/empty or size [2])
+	Or       bool     `msgpack:"O"`                             // OR previous selector? AND if false. (ignored for first selector)
 }
 
-// APIGet (/g) gets records by search keys.
-type APIGet struct {
-	Key         []byte    `msgpack:"K,omitempty" json:",omitempty"`    // Plain text key (overrides ID)
-	ID          []byte    `msgpack:"ID,omitempty" json:",omitempty"`   // ID (32 bytes) (ignored if Key is given)
-	Owner       []byte    `msgpack:"O,omitempty" json:",omitempty"`    // Owner (32 bytes)
-	SelectorIDs [2][]byte `msgpack:"SIDs,omitempty" json:",omitempty"` // Selector IDs (32 bytes each)
-}
-
-// APIRecordDetail is sent (in an array) in response to APIGet.
-type APIRecordDetail struct {
-	Record Record   `msgpack:"R"`                             // Fully unpacked record
-	Key    []byte   `msgpack:"K,omitempty" json:",omitempty"` // Plain-text key if supplied in query, otherwise omitted
-	Value  []byte   `msgpack:"V,omitempty" json:",omitempty"` // Plain-text value if plain-text key was supplied with query, otherwise omitted
-	Weight [16]byte `msgpack:"W,omitempty" json:",omitempty"` // Weight of this record as a 128-bit unsigned int in big-endian byte order
+// APIQuery describes a query for records.
+type APIQuery struct {
+	Selectors    []APIQuerySelector `msgpack:"S"`                               // Selectors or selector range(s)
+	PlainTextKey []byte             `msgpack:"PTK,omitempty" json:",omitempty"` // Plain-text key for first selector to have server decrypt value automatically
 }
 
 // APIError indicates an error and is returned with non-200 responses.
@@ -113,7 +90,7 @@ func apiSetStandardHeaders(out http.ResponseWriter) {
 	h.Set("X-LF-APIVersion", apiVersionStr)
 }
 
-func apiSendJSON(out http.ResponseWriter, req *http.Request, httpStatusCode int, obj interface{}) error {
+func apiSendObj(out http.ResponseWriter, req *http.Request, httpStatusCode int, obj interface{}) error {
 	// If the client elects that it accepts msgpack, send that instead since it's faster and smaller.
 	accept, haveAccept := req.Header["Accept"]
 	if haveAccept {
@@ -142,7 +119,7 @@ func apiSendJSON(out http.ResponseWriter, req *http.Request, httpStatusCode int,
 	return json.NewEncoder(out).Encode(obj)
 }
 
-func apiReadJSON(out http.ResponseWriter, req *http.Request, dest interface{}) (err error) {
+func apiReadObj(out http.ResponseWriter, req *http.Request, dest interface{}) (err error) {
 	// The same msgpack support is present for incoming requests and messages if set by content-type. Otherwise assume JSON.
 	decodedMsgpack := false
 	ct, haveCT := req.Header["Content-Type"]
@@ -158,7 +135,7 @@ func apiReadJSON(out http.ResponseWriter, req *http.Request, dest interface{}) (
 		err = json.NewDecoder(req.Body).Decode(&dest)
 	}
 	if err != nil {
-		apiSendJSON(out, req, http.StatusBadRequest, &APIError{Code: http.StatusBadRequest, Message: "invalid or malformed payload"})
+		apiSendObj(out, req, http.StatusBadRequest, &APIError{Code: http.StatusBadRequest, Message: "invalid or malformed payload"})
 	}
 	return err
 }
@@ -171,158 +148,25 @@ func apiIsTrusted(n *Node, req *http.Request) bool {
 func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 	smux := http.NewServeMux()
 
-	// Get best value by record key. The key may be /k/<key>.ext or /k/~<base64url>.ext for a base64url encoded
-	// key. The extension determins what type is returned. A json or msgpack extension returns an APIRecord object.
-	// The following extensions return the value with the appropriate content type: html, js, png, gif, jpg, xml,
-	// css, and txt. No extension returns value with type application/octet-stream.
-	smux.HandleFunc("/k/", func(out http.ResponseWriter, req *http.Request) {
+	// Query for records matching one or more selectors or ranges of selectors.
+	smux.HandleFunc("/q", func(out http.ResponseWriter, req *http.Request) {
 		apiSetStandardHeaders(out)
-		if req.Method == http.MethodGet || req.Method == http.MethodHead {
-			var key []byte
-			contentType := "application/octet-stream"
-			fullResults := false
-
-			keyStr := req.URL.Path[3:]
-			dotIdx := strings.LastIndexByte(keyStr, '.')
-			if dotIdx >= 0 {
-				switch keyStr[dotIdx+1:] {
-				case "json":
-					contentType = "application/json"
-					fullResults = true
-				case "msgpack":
-					contentType = "application/msgpack"
-					fullResults = true
-				case "html":
-					contentType = "text/html"
-				case "js":
-					contentType = "text/javascript"
-				case "png":
-					contentType = "image/png"
-				case "gif":
-					contentType = "image/gif"
-				case "jpg":
-					contentType = "image/jpeg"
-				case "xml":
-					contentType = "text/xml"
-				case "css":
-					contentType = "text/css"
-				case "txt":
-					contentType = "text/plain"
-				}
-				keyStr = keyStr[0:dotIdx]
-			}
-			if len(keyStr) > 0 && keyStr[0] == '~' {
-				key = make([]byte, base64.URLEncoding.DecodedLen(len(keyStr)))
-				n, err := base64.URLEncoding.Decode(key, []byte(keyStr[1:]))
-				if err != nil || n < 0 {
-					apiSendJSON(out, req, http.StatusNotFound, &APIError{Code: http.StatusNotFound, Message: "invalid base64 in ~<base64> key"})
-					return
-				}
-				key = key[0:n]
-			} else {
-				key = []byte(keyStr)
-			}
-
-			id, _ := RecordDeriveSelector(key)
-			recs := n.db.getMatching(id[:], nil, nil, nil)
-
-			if len(recs) == 0 {
-				apiSendJSON(out, req, http.StatusNotFound, &APIError{Code: http.StatusNotFound, Message: "no records found"})
-				return
-			}
-
-			if fullResults {
-				for i := range recs {
-					v, err := recs[i].Record.GetValue(key)
-					if err != nil {
-						apiSendJSON(out, req, http.StatusNotFound, &APIError{Code: http.StatusNotFound, Message: "record decryption or decompression failed"})
-						return
-					}
-					recs[i].Key = key
-					recs[i].Value = v
-				}
-				apiSendJSON(out, req, http.StatusOK, &recs)
-			} else {
-				h := out.Header()
-				h.Set("Content-Type", contentType)
-				v, err := recs[0].Record.GetValue(key)
-				if err != nil {
-					apiSendJSON(out, req, http.StatusNotFound, &APIError{Code: http.StatusNotFound, Message: "record decryption or decompression failed"})
-					return
-				}
-				h.Set("X-LF-Record-ID", hex.EncodeToString(recs[0].Record.ID[:]))
-				h.Set("X-LF-Record-Owner", hex.EncodeToString(recs[0].Record.Owner[:]))
-				h.Set("X-LF-Record-Hash", hex.EncodeToString(recs[0].Record.Hash[:]))
-				h.Set("X-LF-Record-Timestamp", strconv.FormatUint(recs[0].Record.Timestamp, 10))
-				h.Set("X-LF-Record-Weight", hex.EncodeToString(recs[0].Weight[:]))
-				h.Set("Content-Length", strconv.Itoa(len(v)))
-				out.WriteHeader(200)
-				out.Write(v)
-			}
+		if req.Method == http.MethodPost || req.Method == http.MethodPut {
 		} else {
-			apiSendJSON(out, req, http.StatusMethodNotAllowed, &APIError{Code: http.StatusMethodNotAllowed, Message: req.Method + " not supported for this path"})
+			apiSendObj(out, req, http.StatusMethodNotAllowed, &APIError{Code: http.StatusMethodNotAllowed, Message: req.Method + " not supported for this path"})
 		}
 	})
 
-	// Post a record, takes APIPut payload or just a raw record.
+	// Post a record, takes APIPut payload or just a raw record in binary form.
 	smux.HandleFunc("/p", func(out http.ResponseWriter, req *http.Request) {
 		apiSetStandardHeaders(out)
 		if req.Method == http.MethodPost || req.Method == http.MethodPut {
-			// Handle submission of raw records in raw record format with no enclosing object.
-			ct, haveCT := req.Header["Content-Type"]
-			if haveCT {
-				for i := range ct {
-					if strings.Contains(ct[i], "application/x-lf-record") || strings.Contains(ct[i], "application/octet-stream") {
-						var rdata [RecordMaxSize]byte
-						rsize, _ := io.ReadFull(req.Body, rdata[:])
-						if rsize > RecordMinSize {
-							err := n.AddRecord(rdata[0:uint(rsize)])
-							if err != nil {
-								apiSendJSON(out, req, http.StatusBadRequest, &APIError{Code: http.StatusBadRequest, Message: "invalid record: " + err.Error()})
-							}
-						} else {
-							apiSendJSON(out, req, http.StatusBadRequest, &APIError{Code: http.StatusBadRequest, Message: "invalid or malformed payload"})
-							return
-						}
-					}
-				}
-			}
-
-			var put APIPut
-			if apiReadJSON(out, req, &put) == nil {
-				if len(put.Data) > 0 {
-				} else if apiIsTrusted(n, req) {
-				} else {
-					apiSendJSON(out, req, http.StatusForbidden, &APIError{Code: http.StatusForbidden, Message: "node will only build records locally if submitted from authorized hosts"})
-				}
-			}
 		} else {
-			apiSendJSON(out, req, http.StatusMethodNotAllowed, &APIError{Code: http.StatusMethodNotAllowed, Message: req.Method + " not supported for this path"})
+			apiSendObj(out, req, http.StatusMethodNotAllowed, &APIError{Code: http.StatusMethodNotAllowed, Message: req.Method + " not supported for this path"})
 		}
 	})
 
-	// Get record, takes APIGet payload for parameters. (Ironically /g must be gotten with PUT or POST!)
-	smux.HandleFunc("/g", func(out http.ResponseWriter, req *http.Request) {
-		apiSetStandardHeaders(out)
-		if req.Method == http.MethodPost || req.Method == http.MethodPut {
-		} else {
-			apiSendJSON(out, req, http.StatusMethodNotAllowed, &APIError{Code: http.StatusMethodNotAllowed, Message: req.Method + " not supported for this path"})
-		}
-	})
-
-	// Raw record request, payload is raw binary 32-byte hashes rather than a JSON message.
-	// The node is free to send other records in response as well, and the receiver should import
-	// records in the order in which they are sent. Results are sent in binary raw form with
-	// each record prefixed by a 16-bit (big-endian) record size.
-	smux.HandleFunc("/r", func(out http.ResponseWriter, req *http.Request) {
-		apiSetStandardHeaders(out)
-		if req.Method == http.MethodPost || req.Method == http.MethodPut {
-		} else {
-			apiSendJSON(out, req, http.StatusMethodNotAllowed, &APIError{Code: http.StatusMethodNotAllowed, Message: req.Method + " not supported for this path"})
-		}
-	})
-
-	// Get links, returns up to 31 raw binary hashes. A ?count= parameter can be added to specify how many are desired.
+	// Get links for incorporation into a new record, returns up to 31 raw binary hashes. A ?count= parameter can be added to specify how many are desired.
 	smux.HandleFunc("/l", func(out http.ResponseWriter, req *http.Request) {
 		apiSetStandardHeaders(out)
 		if req.Method == http.MethodGet || req.Method == http.MethodHead {
@@ -340,16 +184,16 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 			out.WriteHeader(http.StatusOK)
 			out.Write(links)
 		} else {
-			apiSendJSON(out, req, http.StatusMethodNotAllowed, &APIError{Code: http.StatusMethodNotAllowed, Message: req.Method + " not supported for this path"})
+			apiSendObj(out, req, http.StatusMethodNotAllowed, &APIError{Code: http.StatusMethodNotAllowed, Message: req.Method + " not supported for this path"})
 		}
 	})
 
 	smux.HandleFunc("/peers", func(out http.ResponseWriter, req *http.Request) {
 		apiSetStandardHeaders(out)
 		if req.Method == http.MethodGet || req.Method == http.MethodHead {
-			apiSendJSON(out, req, http.StatusOK, apiMakePeerArray(n))
+			apiSendObj(out, req, http.StatusOK, apiMakePeerArray(n))
 		} else {
-			apiSendJSON(out, req, http.StatusMethodNotAllowed, &APIError{Code: http.StatusMethodNotAllowed, Message: req.Method + " not supported for this path"})
+			apiSendObj(out, req, http.StatusMethodNotAllowed, &APIError{Code: http.StatusMethodNotAllowed, Message: req.Method + " not supported for this path"})
 		}
 	})
 
@@ -358,34 +202,31 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 		if req.Method == http.MethodPost || req.Method == http.MethodPut {
 			if apiIsTrusted(n, req) {
 				var peer APIPeer
-				if apiReadJSON(out, req, &peer) == nil {
+				if apiReadObj(out, req, &peer) == nil {
 					n.Try(peer.GetIP(), int(peer.Port))
-					apiSendJSON(out, req, http.StatusOK, &peer)
+					apiSendObj(out, req, http.StatusOK, &peer)
 				}
 			} else {
-				apiSendJSON(out, req, http.StatusForbidden, &APIError{Code: http.StatusForbidden, Message: "peers may only be submitted by trusted hosts"})
+				apiSendObj(out, req, http.StatusForbidden, &APIError{Code: http.StatusForbidden, Message: "peers may only be submitted by trusted hosts"})
 			}
 		} else {
-			apiSendJSON(out, req, http.StatusMethodNotAllowed, &APIError{Code: http.StatusMethodNotAllowed, Message: req.Method + " not supported for this path"})
+			apiSendObj(out, req, http.StatusMethodNotAllowed, &APIError{Code: http.StatusMethodNotAllowed, Message: req.Method + " not supported for this path"})
 		}
 	})
 
 	smux.HandleFunc("/status", func(out http.ResponseWriter, req *http.Request) {
 		apiSetStandardHeaders(out)
 		rc, ds := n.db.stats()
-		var s APIStatus
-		s.Software = SoftwareName
-		s.Version[0] = VersionMajor
-		s.Version[1] = VersionMinor
-		s.Version[2] = VersionRevision
-		s.Version[3] = VersionBuild
-		s.MinAPIVersion = APIVersion
-		s.MaxAPIVersion = APIVersion
-		s.Uptime = n.startTime
-		s.ConnectedPeers = apiMakePeerArray(n)
-		s.DBRecordCount = rc
-		s.DBSize = ds
-		apiSendJSON(out, req, http.StatusOK, &s)
+		apiSendObj(out, req, http.StatusOK, &APIStatus{
+			Software:      SoftwareName,
+			Version:       Version,
+			MinAPIVersion: APIVersion,
+			MaxAPIVersion: APIVersion,
+			Uptime:        n.startTime,
+			Peers:         apiMakePeerArray(n),
+			DBRecordCount: rc,
+			DBSize:        ds,
+		})
 	})
 
 	smux.HandleFunc("/", func(out http.ResponseWriter, req *http.Request) {
@@ -393,10 +234,10 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 		if req.Method == http.MethodGet || req.Method == http.MethodHead {
 			if req.URL.Path == "/" {
 			} else {
-				apiSendJSON(out, req, http.StatusNotFound, &APIError{Code: http.StatusNotFound, Message: req.URL.Path + " is not a valid path"})
+				apiSendObj(out, req, http.StatusNotFound, &APIError{Code: http.StatusNotFound, Message: req.URL.Path + " is not a valid path"})
 			}
 		} else {
-			apiSendJSON(out, req, http.StatusMethodNotAllowed, &APIError{Code: http.StatusMethodNotAllowed, Message: req.Method + " not supported for this path"})
+			apiSendObj(out, req, http.StatusMethodNotAllowed, &APIError{Code: http.StatusMethodNotAllowed, Message: req.Method + " not supported for this path"})
 		}
 	})
 

@@ -8,6 +8,9 @@
 package lf
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	secrand "crypto/rand"
 	"fmt"
 	"io"
 )
@@ -27,13 +30,61 @@ func TestCore(out io.Writer) bool {
 	}
 	fmt.Fprintf(out, "OK\n")
 
+	curves := []elliptic.Curve{elliptic.P384(), &ECCCurveSecP112R1}
+	for ci := range curves {
+		curve := curves[ci]
+		fmt.Fprintf(out, "Testing %s ECDSA...\n", curve.Params().Name)
+		priv, err := ecdsa.GenerateKey(curve, secrand.Reader)
+		if err != nil {
+			fmt.Fprintf(out, "  FAILED (generate): %s\n", err.Error())
+			return false
+		}
+		pub, err := ECCCompressPublicKey(&priv.PublicKey)
+		if err != nil {
+			fmt.Fprintf(out, "  FAILED (compress): %s\n", err.Error())
+			return false
+		}
+		fmt.Fprintf(out, "  Public Key: [%d] %x\n", len(pub), pub)
+		pub2, err := ECCDecompressPublicKey(curve, pub)
+		if err != nil {
+			fmt.Fprintf(out, "  FAILED (decompress): %s\n", err.Error())
+			return false
+		}
+		if pub2.X.Cmp(priv.PublicKey.X) != 0 || pub2.Y.Cmp(priv.PublicKey.Y) != 0 {
+			fmt.Fprintf(out, "  FAILED (decompress): results are not the same!\n")
+			return false
+		}
+		var junk [32]byte
+		secrand.Read(junk[:])
+		sig, err := ECDSASign(priv, junk[:])
+		if err != nil {
+			fmt.Fprintf(out, "  FAILED (sign): %s\n", err.Error())
+			return false
+		}
+		fmt.Fprintf(out, "  Signature: [%d] %x\n", len(sig), sig)
+		if !ECDSAVerify(&priv.PublicKey, junk[:], sig) {
+			fmt.Fprintf(out, "  FAILED (verify): verify failed for correct message\n")
+			return false
+		}
+		junk[1]++
+		if ECDSAVerify(&priv.PublicKey, junk[:], sig) {
+			fmt.Fprintf(out, "  FAILED (verify): verify succeeded for incorrect message\n")
+			return false
+		}
+		junk[1]--
+		sig[2]++
+		if ECDSAVerify(&priv.PublicKey, junk[:], sig) {
+			fmt.Fprintf(out, "  FAILED (verify): verify succeeded for incorrect signature (but correct message)\n")
+			return false
+		}
+	}
+
 	return true
 }
 
-const testWharrgarblSamples = 25
-
 // TestWharrgarbl tests and runs benchmarks on the Wharrgarbl proof of work.
 func TestWharrgarbl(out io.Writer) bool {
+	testWharrgarblSamples := 25
 	var junk [64]byte
 	var wout [20]byte
 	fmt.Fprintf(out, "Testing and benchmarking Wharrgarbl proof of work algorithm...\n")

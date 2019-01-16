@@ -54,6 +54,7 @@ const (
 	ErrorWharrgarblFailed  Error = "Wharrgarbl proof of work algorithm failed (out of memory?)"
 	ErrorIO                Error = "I/O error"
 	ErrorMessageIncomplete Error = "message incomplete"
+	ErrorIncorrectKey      Error = "incorrect key"
 )
 
 // Errors indicating that a record is invalid

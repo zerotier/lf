@@ -48,7 +48,6 @@ struct ZTLF_QueryResult
 {
 	uint64_t ts;
 	uint64_t weightL,weightH;
-	int64_t previousLinkedGoff; /* graph node offset, used internally */
 	uint64_t doff;
 	unsigned int dlen;
 	unsigned int ownerSize;
@@ -61,7 +60,7 @@ struct ZTLF_QueryResult
 struct ZTLF_QueryResults
 {
 	long count;
-	struct ZTLF_QueryResult results[];
+	struct ZTLF_QueryResult results[1]; /* this is actually variable size, but Go doesn't support [] so compensate in C code by allocating capacity minus one */
 };
 
 #define ZTLF_DB_MAX_GRAPH_NODE_SIZE (sizeof(struct ZTLF_DB_GraphNode) + (256 * sizeof(int64_t)))
@@ -157,13 +156,15 @@ int ZTLF_DB_PutRecord(
 	const void *owner,
 	const unsigned int ownerSize,
 	const void *hash,
+	const void *id,
 	const uint64_t ts,
 	const uint32_t score,
 	const void **sel,
 	const unsigned int *selSize,
 	const unsigned int selCount,
 	const void *links,
-	const unsigned int linkCount);
+	const unsigned int linkCount,
+	const int reputation);
 
 /* The parameters sel[], selAndOr[], and selSize[] describe selectors being queried against. For each
  * selector there are TWO entries in sel[] and selSize[] and one in selAndOr[]. The two entries in sel[]
