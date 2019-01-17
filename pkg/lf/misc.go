@@ -114,3 +114,10 @@ func (cr *CountingWriter) Write(b []byte) (n int, err error) {
 	*cr = CountingWriter(uint(*cr) + uint(n))
 	return
 }
+
+func putBE24(b []byte, i uint) {
+	_ = b[2]
+	b[0] = byte(i >> 16)
+	b[1] = byte(i >> 8)
+	b[2] = byte(i)
+}

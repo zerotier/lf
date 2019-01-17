@@ -18,6 +18,7 @@ import (
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/binary"
+	"fmt"
 	"io"
 	"sort"
 )
@@ -46,34 +47,34 @@ const RecordHashSize = 32
 // far more than we ought to ever need.
 
 // RecordValueEncryptionAlgorithmNone indicates that the value is not masked.
-const RecordValueEncryptionAlgorithmNone = byte(0)
+const RecordValueEncryptionAlgorithmNone byte = 0
 
 // RecordValueEncryptionAlgorithmAES256CFB indicates AES256-CFB masking encryption for value.
-const RecordValueEncryptionAlgorithmAES256CFB = byte(1)
+const RecordValueEncryptionAlgorithmAES256CFB byte = 1
 
 // RecordValuePrefixFlagDeflated indicates that the value is deflated.
-const RecordValuePrefixFlagDeflated = byte(0x01)
+const RecordValuePrefixFlagDeflated byte = 0x01
 
 // RecordSelectorAlgorithmS112 is the 64-bit suffix sortable selector algorithm with SecP112 claim signatures.
-const RecordSelectorAlgorithmS112 = byte(1)
+const RecordSelectorAlgorithmS112 byte = 1
 
 // RecordWorkAlgorithmNone indicates no work algorithm (not allowed on main network).
-const RecordWorkAlgorithmNone = byte(0)
+const RecordWorkAlgorithmNone byte = 0
 
 // RecordWorkAlgorithmWharrgarbl indicates the Wharrgarbl momentum-like proof of work algorithm.
-const RecordWorkAlgorithmWharrgarbl = byte(1)
+const RecordWorkAlgorithmWharrgarbl byte = 1
 
 // RecordDesiredLinks is the number of links records should have.
 const RecordDesiredLinks = 3
 
 // RecordOwnerTypeP384 is a NIST P-384 point compressed public key.
-const RecordOwnerTypeP384 = byte(1)
+const RecordOwnerTypeP384 byte = 1
 
 // RecordWharrgarblMemory is the memory size that should be used for Wharrgarbl PoW.
 // This is large enough to perform well up to relatively big record sizes. It'll still work for
 // really huge ones of course, but performance starts to drop a bit. It can be increased and could
 // be made configurable in the future if ever needed.
-const RecordWharrgarblMemory = uint(1024 * 1024 * 256) // 256mb
+const RecordWharrgarblMemory uint = 1024 * 1024 * 256 // 256mb
 
 // RecordBody represents the main body of a record including its value, owner public keys, etc.
 type RecordBody struct {
@@ -220,7 +221,10 @@ func (rb *RecordBody) SigningHash() [32]byte {
 	return Shandwich256FromSha512(h.Sum(s512buf[:]))
 }
 
-// RecordSelector is a hashed plain text key that doubles as a public key and an associated proof of knowledge signature.
+// RecordSelector is a hashed plain text key that also contains a public key that is used to
+// verify knowledge of this plain text key without revealing it. Selectors are also ordinally
+// comparable with regard to the last 8 bytes in a plain text key if the key is at least 16
+// bytes in length.
 type RecordSelector struct {
 	Selector  []byte // Public masked identifier derived from plain text key
 	Claim     []byte // Signature of message with public key embedded in selector or other proof of knowledge of plain text key
@@ -274,7 +278,7 @@ func (rs *RecordSelector) SizeBytes() uint {
 
 // VerifyHash verifies a hash with this selector's public key component to prove the creator's knowledge of the plain text key.
 func (rs *RecordSelector) VerifyHash(hash []byte) bool {
-	if len(rs.Selector) != 32 {
+	if rs.Algorithm != RecordSelectorAlgorithmS112 || len(rs.Selector) != 32 {
 		return false
 	}
 	pk, err := ECCDecompressPublicKey(&ECCCurveSecP112R1, rs.Selector[17:])
@@ -479,7 +483,7 @@ func (r *Record) Open(firstSelectorPlainTextKey []byte) ([]byte, error) {
 		if len(r.Selectors) == 0 {
 			return nil, ErrorIncorrectKey
 		}
-		firstSelector, _ := RecordDeriveSelector(firstSelectorPlainTextKey)
+		firstSelector, _ := DeriveRecordSelector(firstSelectorPlainTextKey)
 		if !bytes.Equal(firstSelector, r.Selectors[0].Selector) {
 			return nil, ErrorIncorrectKey
 		}
@@ -528,6 +532,56 @@ func (r *Record) Open(firstSelectorPlainTextKey []byte) ([]byte, error) {
 	return v[1:], nil
 }
 
+// Validate checks this record's signatures and other attributes and returns an error or nil if there is no problem.
+func (r *Record) Validate() (err error) {
+	defer func() {
+		e := recover()
+		if e != nil {
+			err = fmt.Errorf("caught panic validating record: %v", e)
+		}
+	}()
+
+	if len(r.Body.Owner) == 0 {
+		return ErrorRecordOwnerSignatureCheckFailed
+	}
+
+	bodySigningHash := r.Body.SigningHash()
+	workHashBytes := make([]byte, 0, 32+(len(r.Selectors)*128))
+	workHashBytes = append(workHashBytes, bodySigningHash[:]...)
+	workBillableBytes := r.Body.SizeBytes()
+	for i := 0; i < len(r.Selectors); i++ {
+		sb := r.Selectors[i].Bytes()
+		workHashBytes = append(workHashBytes, sb...)
+		workBillableBytes += uint(len(sb))
+		if !r.Selectors[i].VerifyHash(bodySigningHash[:]) {
+			return ErrorRecordSelectorClaimCheckFailed
+		}
+	}
+	workHash := sha256.Sum256(workHashBytes)
+
+	if r.WorkAlgorithm != RecordWorkAlgorithmWharrgarbl {
+		return ErrorRecordInsufficientWork
+	}
+	if WharrgarblVerify(r.Work, workHash[:]) < RecordWharrgarblCost(workBillableBytes) {
+		return ErrorRecordInsufficientWork
+	}
+
+	pubKey, err := ECCDecompressPublicKey(elliptic.P384(), r.Body.Owner) // the curve type is in the least significant bits of owner but right now there's only one allowed
+	if err != nil {
+		return ErrorRecordOwnerSignatureCheckFailed
+	}
+	finalHash := sha256.New()
+	finalHash.Write(workHash[:])
+	finalHash.Write(r.Work)
+	finalHash.Write([]byte{r.WorkAlgorithm})
+	var hb [32]byte
+	if !ECDSAVerify(pubKey, finalHash.Sum(hb[:0]), r.Signature) {
+		return ErrorRecordOwnerSignatureCheckFailed
+	}
+
+	return nil
+}
+
 // sha512csprng is a Reader that acts as a random source for generating ECDSA key pairs from repeated hashing of a seed.
 type sha512csprng struct {
 	s512 [64]byte
@@ -546,35 +600,44 @@ func (prng sha512csprng) Read(b []byte) (int, error) {
 	return len(b), nil
 }
 
-// RecordDeriveSelector deterministically generates a selector from a plain text selector key.
-// The current algorithm creates a 32 byte selector from a sha256 hash of the first (len-8) bytes of
-// the plain text key, adds the last 8 bytes as a big-endian 64-bit integer to the first 9 bytes of
-// the hash to make it range queryable by plain text key, and then overwrites the last 15 bytes of the hash
-// with a small 112-bit prime field elliptic curve public key derived from a sha512 hash of the plain
-// text key. This small key can then be used to generate small claim signatures to defend against the
-// naive key collision attack. The sortability part of the algorithm is skipped for plain text keys
-// shorter than 16 bytes. Those are just sha256 hashed and then combined with a public key.
-func RecordDeriveSelector(plainTextKey []byte) (selector []byte, privateKey *ecdsa.PrivateKey) {
+// DeriveRecordSelector deterministically generates a selector from a plain text selector key.
+func DeriveRecordSelector(plainText []byte) ([]byte, *ecdsa.PrivateKey) {
 	var sel [32]byte
-	if len(plainTextKey) >= 16 {
-		sel = sha256.Sum256(plainTextKey[0 : len(plainTextKey)-8])
+	if len(plainText) >= 16 {
+		// For keys at least 16 bytes in length, make them sortable by the last 8 bytes
+		// by adding those bytes to the most significant 9 bytes of the hash. This does
+		// reveal a little bit of information about the key, but keys are not critical
+		// security credentials. They're masked just to protect privacy and to make certain
+		// types of attacks against applications that use LF harder.
+		sel = sha256.Sum256(plainText[0 : len(plainText)-8])
 		if sel[0] == 0xff {
 			sel[0] = 0 // preserve proper sort order if 64-bit addition wraps and we have to carry into the lowest byte
 		}
 		orderingPrefix := binary.BigEndian.Uint64(sel[1:9])
 		originalOrderingPrefix := orderingPrefix
-		orderingPrefix += binary.BigEndian.Uint64(plainTextKey[len(plainTextKey)-8:])
+		orderingPrefix += binary.BigEndian.Uint64(plainText[len(plainText)-8:])
 		if orderingPrefix < originalOrderingPrefix {
 			sel[0]++
 		}
 		binary.BigEndian.PutUint64(sel[1:9], orderingPrefix)
 	} else {
-		sel = sha256.Sum256(plainTextKey)
+		// Keys shorter than 16 bytes are not ordinally comparable, so they just get
+		// hashed and then the last 15 bytes get overwritten by a small public key.
+		sel = sha256.Sum256(plainText)
 	}
 
-	var err error
-	rng := sha512csprng{s512: sha512.Sum512(plainTextKey), n: 0}
-	privateKey, err = ecdsa.GenerateKey(&ECCCurveSecP112R1, &rng)
+	// NOTE: if ecdsa.GenerateKey changes with regard to how it utilizes the random source
+	// we will need to fork it. As it stands it complies with [NSA] A.2.1 recommendations
+	// meaning this trick is somewhat standard and should continue to work.
+
+	// The last 113 bits (112 bit compressed key plus 1 even/odd bit) of the selector are
+	// a tiny ECC public key. This tiny curve is not considered secure enough for "serious"
+	// cryptographic use, but it should be good enough for this. The only purpose of the
+	// claim signature is to protect the system against a type of DOS or pollution attack
+	// in which an attacker creates bogus records for an unknown plain text selector.
+
+	rng := sha512csprng{s512: sha512.Sum512(plainText), n: 0}
+	privateKey, err := ecdsa.GenerateKey(&ECCCurveSecP112R1, &rng)
 	if err != nil {
 		panic(err)
 	}
@@ -586,8 +649,7 @@ func RecordDeriveSelector(plainTextKey []byte) (selector []byte, privateKey *ecd
 	sel[17] |= (cpub[0] - 2) // use only one bit for compressed public key even/odd parity
 	copy(sel[18:], cpub[1:15])
 
-	selector = sel[:]
-	return
+	return sel[:], privateKey
 }
 
 // RecordWharrgarblCost computes the cost in Wharrgarbl difficulty for a record of a given number of "billable" bytes.
@@ -596,15 +658,15 @@ func RecordWharrgarblCost(bytes uint) uint32 {
 	// This function was figured out by:
 	//
 	// (1) Empirically sampling difficulty vs time.
-	// (2) Using Microsoft Excel to fit the curve to a power function, yielding: d =~ 1.739 * b^1.5605
-	// (3) Figuring out an integer based function that approximates this power function relatively well for our plausible input range.
+	// (2) Using Microsoft Excel to fit the curve to a power function.
+	// (3) Figuring out an integer based function that approximates this power function.
 	//
 	// An integer only algorithm is used to avoid FPU inconsistencies across systems.
 	//
 	// This function provides a relatively linear relationship between average Wharrgarbl time
 	// and the number of bytes (total) in a record.
 	//
-	b := uint64(bytes * 2) // this adjusts the overall magnitude without affecting the curve's shape
+	b := uint64(bytes * 4)
 	c := (uint64(integerSqrtRounded(uint32(b))) * b * uint64(3)) - (b * 8)
 	if c > 0xffffffff { // sanity check, no record gets this big
 		return 0xffffffff
@@ -612,10 +674,11 @@ func RecordWharrgarblCost(bytes uint) uint32 {
 	return uint32(c)
 }
 
-// NewOwner creates a new record owner, returning its packed public key and fully expanded private key.
+// GenerateOwner creates a new record owner, returning its packed public key and fully expanded private key.
 // The packed public key is packed using ECCCompressPublicKeyWithID to embed an algorithm ID to support
-// different curves or entirely different algorithms in the future.
-func NewOwner() ([]byte, *ecdsa.PrivateKey) {
+// different curves or entirely different algorithms in the future. This public key should be used directly
+// as the owner field in records. The private key is required to sign records.
+func GenerateOwner() ([]byte, *ecdsa.PrivateKey) {
 	priv, err := ecdsa.GenerateKey(elliptic.P384(), secrand.Reader)
 	if err != nil {
 		panic(err)
@@ -701,17 +764,17 @@ func NewRecordStart(value []byte, links [][]byte, plainTextSelectors [][]byte, m
 
 	r.Body.Timestamp = ts
 
-	signingHash := r.Body.SigningHash()
+	bodySigningHash := r.Body.SigningHash()
 	workBillableBytes = r.Body.SizeBytes()
-	workHashBytes := make([]byte, 0, 1024)
-	workHashBytes = append(workHashBytes, signingHash[:]...)
+	workHashBytes := make([]byte, 0, 32+(len(plainTextSelectors)*128))
+	workHashBytes = append(workHashBytes, bodySigningHash[:]...)
 
 	if len(plainTextSelectors) > 0 {
 		r.Selectors = make([]RecordSelector, len(plainTextSelectors))
 		for i := 0; i < len(plainTextSelectors); i++ {
 			var pk *ecdsa.PrivateKey
-			r.Selectors[i].Selector, pk = RecordDeriveSelector(plainTextSelectors[i])
-			r.Selectors[i].Claim, err = ECDSASign(pk, signingHash[:])
+			r.Selectors[i].Selector, pk = DeriveRecordSelector(plainTextSelectors[i])
+			r.Selectors[i].Claim, err = ECDSASign(pk, bodySigningHash[:])
 			if err != nil {
 				panic(err)
 			}
@@ -729,14 +792,19 @@ func NewRecordStart(value []byte, links [][]byte, plainTextSelectors [][]byte, m
 
 // NewRecordDoWork is a convenience method for doing the work to add to a record.
 // This can obviously be a time and memory intensive function.
-func NewRecordDoWork(workHash []byte, workBillableBytes uint) (work []byte, workAlgorithm byte, err error) {
-	w, iter := Wharrgarbl(workHash, RecordWharrgarblCost(workBillableBytes), RecordWharrgarblMemory)
-	if iter == 0 {
-		err = ErrorWharrgarblFailed
-		return
+func NewRecordDoWork(workHash []byte, workBillableBytes uint, workAlgorithm byte) (work []byte, err error) {
+	if workAlgorithm != RecordWorkAlgorithmNone {
+		if workAlgorithm == RecordWorkAlgorithmWharrgarbl {
+			w, iter := Wharrgarbl(workHash, RecordWharrgarblCost(workBillableBytes), RecordWharrgarblMemory)
+			if iter == 0 {
+				err = ErrorWharrgarblFailed
+				return
+			}
+			work = w[:]
+		} else {
+			err = ErrorInvalidParameter
+		}
 	}
-	work = w[:]
-	workAlgorithm = RecordWorkAlgorithmWharrgarbl
 	return
 }
 
@@ -762,21 +830,28 @@ func NewRecordComplete(incompleteRecord *Record, signingHash []byte, ownerPrivat
 
 // NewRecord is a shortcut to running all incremental record creation functions.
 // Obviously this is time and memory intensive due to proof of work required to "pay" for this record.
-func NewRecord(value []byte, links [][]byte, plainTextSelectors [][]byte, maskValue bool, owner []byte, ts uint64, ownerPrivate *ecdsa.PrivateKey) (r *Record, err error) {
+func NewRecord(value []byte, links [][]byte, plainTextSelectors [][]byte, maskValue bool, owner []byte, ts uint64, workAlgorithm byte, ownerPrivate *ecdsa.PrivateKey) (r *Record, err error) {
 	var wh, sh [32]byte
 	var wb uint
 	r, wh, wb, err = NewRecordStart(value, links, plainTextSelectors, maskValue, owner, ts)
 	if err != nil {
 		return
 	}
-	w, wa, err := NewRecordDoWork(wh[:], wb)
+	w, err := NewRecordDoWork(wh[:], wb, workAlgorithm)
 	if err != nil {
 		return
 	}
-	r, sh, err = NewRecordAddWork(r, wh[:], w, wa)
+	r, sh, err = NewRecordAddWork(r, wh[:], w, workAlgorithm)
 	if err != nil {
 		return
 	}
 	r, err = NewRecordComplete(r, sh[:], ownerPrivate)
+	return
+}
+
+// NewRecordFromBytes deserializes a record from a byte array.
+func NewRecordFromBytes(b []byte) (r *Record, err error) {
+	r = new(Record)
+	err = r.UnmarshalFrom(bytes.NewReader(b))
 	return
 }

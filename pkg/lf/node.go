@@ -8,6 +8,8 @@
 package lf
 
 import (
+	"bytes"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -19,67 +21,80 @@ import (
 	"github.com/NYTimes/gziphandler"
 )
 
+const (
+	// p2pProtoMaxMessageSize is a sanity check maximum message size for the P2P TCP protocol.
+	// It prevents a huge message from causing a huge memory allocation. It can be increased.
+	p2pProtoMaxMessageSize = 262144
+
+	p2pProtoMessageTypeRecord               = byte(1)
+	p2pProtoMesaggeTypeRequestRecordsByHash = byte(2)
+	p2pProtoMessageTypeHaveRecords          = byte(3)
+)
+
+type peer struct {
+	c              *net.TCPConn
+	hasRecords     map[[32]byte]uint64
+	hasRecordsLock sync.Mutex
+	inbound        bool
+}
+
 // Node is an instance of LF
 type Node struct {
 	logger             *log.Logger
 	verboseLogger      *log.Logger
-	udpSocket          *net.UDPConn
+	peers              map[string]*peer
+	peersLock          sync.RWMutex
+	tcpListener        *net.TCPListener
+	db                 db
 	httpServer         *http.Server
 	backgroundThreadWG sync.WaitGroup
-	db                 db
-	hosts              []*Host
-	hostsByAddr        map[packedAddress]*Host
-	hostsLock          sync.RWMutex
 	startTime          uint64
 	shutdown           uintptr
 }
 
 // NewNode creates and starts a node.
-func NewNode(path string, port int, logger *log.Logger, verboseLogger *log.Logger) (*Node, error) {
+func NewNode(path string, p2pPort int, httpPort int, logger *log.Logger, verboseLogger *log.Logger) (*Node, error) {
 	var err error
 	n := new(Node)
+
 	n.logger = logger
 	n.verboseLogger = verboseLogger
-
-	var laddr net.UDPAddr
-	laddr.Port = int(port)
-	n.udpSocket, err = net.ListenUDP("udp", &laddr)
-	if err != nil {
-		return nil, err
-	}
+	n.peers = make(map[string]*peer)
 
 	var ta net.TCPAddr
-	ta.Port = int(port)
+	ta.Port = httpPort
 	httpTCPListener, err := net.ListenTCP("tcp", &ta)
 	if err != nil {
 		return nil, err
 	}
 
-	err = n.db.open(path, logger, verboseLogger)
+	ta.Port = p2pPort
+	n.tcpListener, err = net.ListenTCP("tcp", &ta)
 	if err != nil {
+		httpTCPListener.Close()
 		return nil, err
 	}
 
-	n.hosts = make([]*Host, 0, 1024)
-	n.hostsByAddr = make(map[packedAddress]*Host)
-	n.startTime = TimeMs()
-
-	// UDP receiver threads
-	n.backgroundThreadWG.Add(runtime.NumCPU())
-	for tc := 0; tc < runtime.NumCPU(); tc++ {
-		go func() {
-			var buf [16384]byte
-			for atomic.LoadUintptr(&n.shutdown) == 0 {
-				bytes, addr, err := n.udpSocket.ReadFromUDP(buf[:])
-				if bytes > 0 && err == nil && len(addr.Zone) == 0 {
-					n.GetHost(addr.IP, addr.Port, true).handleIncomingPacket(n, buf[0:bytes])
-				}
-			}
-			n.backgroundThreadWG.Done()
-		}()
+	err = n.db.open(path, logger, verboseLogger)
+	if err != nil {
+		httpTCPListener.Close()
+		n.tcpListener.Close()
+		return nil, err
 	}
 
-	// HTTP server thread (plain HTTP, TCP on same port as P2P UDP)
+	// Start P2P connection listener
+	n.backgroundThreadWG.Add(1)
+	go func() {
+		for atomic.LoadUintptr(&n.shutdown) == 0 {
+			c, _ := n.tcpListener.AcceptTCP()
+			if c != nil {
+				n.backgroundThreadWG.Add(1)
+				go p2pConnectionHandler(n, c, true)
+			}
+		}
+	}()
+
+	// Start HTTP server
 	n.httpServer = &http.Server{
 		MaxHeaderBytes: 4096,
 		Handler:        gziphandler.GzipHandler(apiCreateHTTPServeMux(n)),
@@ -94,29 +109,30 @@ func NewNode(path string, port int, logger *log.Logger, verboseLogger *log.Logge
 		n.backgroundThreadWG.Done()
 	}()
 
-	// Peer connection cleanup and ping thread
+	// Start housekeeper
 	n.backgroundThreadWG.Add(1)
 	go func() {
+		var lastCleanedPeerHasRecords uint64
 		for atomic.LoadUintptr(&n.shutdown) == 0 {
-			time.Sleep(time.Second)
-			n.hostsLock.Lock()
-			hostCount := 0
+			time.Sleep(time.Millisecond * 250)
 			now := TimeMs()
-			for i := 0; i < len(n.hosts); i++ {
-				if (now-n.hosts[i].LastReceive) > ProtoHostTimeout && (now-n.hosts[i].CreationTime) > ProtoHostTimeout {
-					delete(n.hostsByAddr, n.hosts[i].packedAddress)
-				} else {
-					if (now - n.hosts[i].LastSend) > (ProtoHostTimeout / 3) {
-						n.hosts[i].Ping(n, false)
+
+			// Clean peer "has record" map entries older than 5 minutes. Scan every minute.
+			if (now - lastCleanedPeerHasRecords) > 60000 {
+				lastCleanedPeerHasRecords = now
+				n.peersLock.RLock()
+				for _, p := range n.peers {
+					p.hasRecordsLock.Lock()
+					for h, ts := range p.hasRecords {
+						if (now - ts) > 300000 {
+							delete(p.hasRecords, h)
+						}
 					}
-					n.hosts[hostCount] = n.hosts[i]
-					hostCount++
+					p.hasRecordsLock.Unlock()
 				}
+				n.peersLock.RUnlock()
 			}
-			n.hosts = n.hosts[0:hostCount]
-			n.hostsLock.Unlock()
 		}
-		n.backgroundThreadWG.Done()
 	}()
 
 	return n, nil
@@ -125,79 +141,236 @@ func NewNode(path string, port int, logger *log.Logger, verboseLogger *log.Logge
 // Stop terminates the running node. No methods should be called after this.
 func (n *Node) Stop() {
 	atomic.StoreUintptr(&n.shutdown, 1)
-	n.udpSocket.Close()
 	n.httpServer.Close()
+	n.tcpListener.Close()
+	n.peersLock.RLock()
+	for _, p := range n.peers {
+		p.c.Close()
+	}
+	n.peersLock.RUnlock()
 	n.backgroundThreadWG.Wait()
-
 	n.db.close()
-
 	WharrgarblFreeGlobalMemory()
 }
 
-// GetHost gets the Host object for a given address.
-// If createIfMissing is true a new object is initialized if there is not one currently. Otherwise nil
-// is returned if no host is known.
-func (n *Node) GetHost(ip net.IP, port int, createIfMissing bool) *Host {
-	var mapKey packedAddress
-	mapKey.set(ip, port)
-	n.hostsLock.RLock()
-	h := n.hostsByAddr[mapKey]
-	n.hostsLock.RUnlock()
-	if h == nil {
-		if createIfMissing {
-			h = &Host{
-				packedAddress: mapKey,
-				CreationTime:  TimeMs(),
-				RemoteAddress: net.UDPAddr{IP: ip, Port: port},
-				Latency:       -1}
-			n.hostsLock.Lock()
-			n.hosts = append(n.hosts, h)
-			n.hostsByAddr[mapKey] = h
-			n.hostsLock.Unlock()
-		} else {
-			return nil
+// Connect attempts to establish a peer-to-peer connection to a remote node.
+// If the status callback is non-nil it gets called when the connection either succeeds
+// (with a nil error) or fails (with an error). ErrorAlreadyConnected is returned if
+// a connection already exists to this endpoint.
+func (n *Node) Connect(ip net.IP, port int, statusCallback func(error)) {
+	n.backgroundThreadWG.Add(1)
+	go func() {
+		defer n.backgroundThreadWG.Done()
+
+		var ta net.TCPAddr
+		ta.IP = ip
+		ta.Port = port
+
+		n.peersLock.RLock()
+		if n.peers[ta.String()] != nil {
+			n.peersLock.RUnlock()
+			if statusCallback != nil {
+				statusCallback(ErrorAlreadyConnected)
+			}
+			return
 		}
-	}
-	return h
+		n.peersLock.RUnlock()
+
+		c, err := net.DialTCP("tcp", nil, &ta)
+		if atomic.LoadUintptr(&n.shutdown) == 0 {
+			if err == nil {
+				n.backgroundThreadWG.Add(1)
+				go p2pConnectionHandler(n, c, false)
+				if statusCallback != nil {
+					statusCallback(nil)
+				}
+			} else {
+				if statusCallback != nil {
+					statusCallback(err)
+				}
+			}
+		} else if err != nil {
+			c.Close()
+		}
+	}()
 }
 
-// Try makes an attempt to contact a peer if it's not already connected to us.
-func (n *Node) Try(ip net.IP, port int) {
-	if len(ip) == 4 || len(ip) == 16 {
-		h := n.GetHost(ip, port, true)
-		if !h.Connected() {
-			h.Ping(n, false)
-		}
+// AddRecord adds a record to the database if it's valid and we do not already have it.
+// If the record is new we announce that we have it to connected peers. This happens asynchronously.
+func (n *Node) AddRecord(r *Record) error {
+	if r == nil {
+		return ErrorInvalidParameter
 	}
-}
 
-// AddRecord attempts to add a record to this node's database.
-func (n *Node) AddRecord(recordData []byte) error {
-	/*
-		var r Record
-		err := r.Unpack(recordData)
-		if err != nil {
-			return err
-		}
+	rhash := *r.Hash()
 
-		if n.db.hasRecord(r.Hash[:]) {
-			return nil
-		}
+	// Check to see if this is a redundant record.
+	if n.db.hasRecord(rhash[:]) {
+		return ErrorDuplicateRecord
+	}
 
-		err = r.Verify()
-		if err != nil {
-			return err
-		}
+	// Validate record's internal structure and check signatures and work.
+	err := r.Validate()
+	if err != nil {
+		return err
+	}
 
-		if r.Timestamp > (TimeSec() + RecordMaxTimeDrift) {
-			n.db.putRejected(&r, dbRecordRejectionReasonRecordTimestampInTheFuture)
-			return ErrorRecordViolatesSpecialRelavitity
-		}
+	// Add record to database, aborting if this generates some kind of error.
+	err = n.db.putRecord(r, 0)
+	if err != nil {
+		return err
+	}
 
-		err = n.db.putRecord(&r)
-		if err != nil {
-			return err
+	// Announce that we have this record to connected peers that haven't informed us that
+	// they have it or sent it to us. If they don't have it they will request it.
+	n.backgroundThreadWG.Add(1)
+	go func() {
+		defer func() {
+			n.backgroundThreadWG.Done()
+		}()
+
+		msg := make([]byte, 36)
+		msg[0] = p2pProtoMessageTypeHaveRecords
+		msg[3] = 32 // msg[1:4] is a big-endian 24-bit length
+		copy(msg[4:], rhash[:])
+
+		n.peersLock.RLock()
+		for _, p := range n.peers {
+			p.hasRecordsLock.Lock()
+			_, hasRecord := p.hasRecords[rhash]
+			p.hasRecordsLock.Unlock()
+			if !hasRecord {
+				if _, err := p.c.Write(msg); err != nil {
+					p.c.Close()
+				}
+			}
 		}
-	*/
+		n.peersLock.RUnlock()
+	}()
+
 	return nil
+}
+
+// Peers returns an array of peer description objects.
+func (n *Node) Peers() (peers []APIStatusPeer) {
+	n.peersLock.RLock()
+	for a, p := range n.peers {
+		peers = append(peers, APIStatusPeer{
+			RemoteAddress: a,
+			Inbound:       p.inbound,
+		})
+	}
+	n.peersLock.RUnlock()
+	return
+}
+
+func p2pConnectionHandler(n *Node, c *net.TCPConn, inbound bool) {
+	peerAddressStr := c.RemoteAddr().String()
+
+	defer func() {
+		e := recover()
+		if e != nil {
+			n.logger.Printf("P2P connection to %s closed: caught panic: %v", peerAddressStr, e)
+		}
+
+		n.peersLock.Lock()
+		delete(n.peers, peerAddressStr)
+		n.peersLock.Unlock()
+
+		n.backgroundThreadWG.Done()
+	}()
+
+	p := peer{c: c, hasRecords: make(map[[32]byte]uint64), inbound: inbound}
+	n.peersLock.Lock()
+	n.peers[peerAddressStr] = &p
+	n.peersLock.Unlock()
+
+	c.SetKeepAlivePeriod(time.Second * 30)
+	c.SetKeepAlive(true)
+	c.SetLinger(0)
+	c.SetNoDelay(false)
+
+	var hdr [4]byte
+	var hdrPtr int
+	for atomic.LoadUintptr(&n.shutdown) == 0 {
+		rn, err := c.Read(hdr[hdrPtr:])
+		if err != nil || rn <= 0 {
+			if err == nil {
+				n.logger.Printf("P2P connection to %s closed: %s", peerAddressStr, err.Error())
+			} else {
+				n.logger.Printf("P2P connection to %s closed: read zero bytes", peerAddressStr)
+			}
+			break
+		}
+		hdrPtr += rn
+
+		if hdrPtr >= len(hdr) {
+			hdrPtr = 0
+
+			incomingMessageType := hdr[0]
+			incomingMessageSize := (uint(hdr[1]) << 16) | (uint(hdr[2]) << 8) | uint(hdr[3])
+			if incomingMessageSize > p2pProtoMaxMessageSize {
+				n.logger.Printf("P2P connection to %s closed: message too large (%d > %d)", peerAddressStr, incomingMessageSize, p2pProtoMaxMessageSize)
+				break
+			}
+
+			msg := make([]byte, incomingMessageSize)
+			_, err = io.ReadFull(c, msg)
+			if err != nil {
+				n.logger.Printf("P2P connection to %s closed: %s", peerAddressStr, err.Error())
+				break
+			}
+			if atomic.LoadUintptr(&n.shutdown) != 0 {
+				break
+			}
+
+			switch incomingMessageType {
+			case p2pProtoMessageTypeRecord:
+				// This is the same as NewRecordFromBytes() but avoid an extra memory copy
+				// and an extra unmarshal by attaching msg as the record's internally cached
+				// data. This makes the stuff in AddRecord() a bit faster.
+				rec := new(Record)
+				err := rec.UnmarshalFrom(bytes.NewReader(msg))
+				if err == nil {
+					rec.data = msg
+
+					p.hasRecordsLock.Lock()
+					p.hasRecords[*rec.Hash()] = TimeMs()
+					p.hasRecordsLock.Unlock()
+
+					n.AddRecord(rec)
+				}
+			case p2pProtoMesaggeTypeRequestRecordsByHash:
+				for len(msg) >= 32 {
+					_, rdata, err := n.db.getDataByHash(msg, nil)
+					if err == nil && len(rdata) > 0 {
+						hdr[0] = p2pProtoMessageTypeRecord
+						putBE24(hdr[1:], uint(len(rdata)))
+						_, err = c.Write(hdr[:])
+						if err != nil {
+							n.logger.Printf("P2P connection to %s closed: %s", peerAddressStr, err.Error())
+							break
+						}
+						_, err = c.Write(rdata)
+						if err != nil {
+							n.logger.Printf("P2P connection to %s closed: %s", peerAddressStr, err.Error())
+							break
+						}
+					}
+					msg = msg[32:]
+				}
+			case p2pProtoMessageTypeHaveRecords:
+				var h [32]byte
+				for len(msg) >= 32 {
+					copy(h[:], msg[0:32])
+					p.hasRecordsLock.Lock()
+					p.hasRecords[h] = TimeMs()
+					p.hasRecordsLock.Unlock()
+					msg = msg[32:]
+				}
+			}
+		}
+
+		runtime.Gosched()
+	}
 }

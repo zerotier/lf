@@ -32,6 +32,7 @@
  *   score                    score of this record (alone, not with weight from links)
  *   link_count               number of links from this record (actual links are in graph node)
  *   selector_count           number of selectors for this record
+ *   reputation               flagging value that can be used to exclude records from use or linking
  *   hash                     shandwich256(record data) (unique key)
  *   id                       sha256(selectors)
  *   owner                    owner of this record or NULL if same as previous
@@ -53,9 +54,6 @@
  * graph_pending
  *   record_goff              graph offset of record pending completion of weight application
  *   hole_count               most recent count of entries in hole that are blocking this node
- * 
- * verification_pending
- *   record_goff              graph offset of record pending signature verification
  * 
  * wanted
  *   hash                     hash of wanted record
@@ -88,7 +86,7 @@
 "PRAGMA threads = 0;\n" \
 "PRAGMA mmap_size = " ZTLF_DB_SQLITE_MMAP_SIZE ";\n" \
 \
-"CREATE TABLE IF NOT EXISTS config (\"k\" TEXT PRIMARY KEY NOT NULL,\"v\" BLOB NOT NULL) WITHOUT ROWID;\n" \
+"CREATE TABLE IF NOT EXISTS config (\"k\" VARCHAR(256) PRIMARY KEY NOT NULL,\"v\" BLOB NOT NULL) WITHOUT ROWID;\n" \
 \
 "CREATE TABLE IF NOT EXISTS record (" \
 "doff INTEGER PRIMARY KEY NOT NULL," \
@@ -106,6 +104,7 @@
 \
 "CREATE UNIQUE INDEX IF NOT EXISTS record_goff ON record(goff);\n" \
 "CREATE UNIQUE INDEX IF NOT EXISTS record_hash ON record(hash);\n" \
+"CREATE UNIQUE INDEX IF NOT EXISTS owner_ts_id ON record(owner,ts,id);\n" \
 "CREATE INDEX IF NOT EXISTS record_doff_reputation_owner_ts ON record(doff,reputation,owner,ts);\n" \
 "CREATE INDEX IF NOT EXISTS record_ts ON record(ts);\n" \
 \
@@ -134,10 +133,6 @@
 "CREATE TABLE IF NOT EXISTS graph_pending (" \
 "record_goff INTEGER PRIMARY KEY NOT NULL," \
 "hole_count INTEGER NOT NULL" \
-") WITHOUT ROWID;\n" \
-\
-"CREATE TABLE IF NOT EXISTS verification_pending (" \
-"record_goff INTEGER PRIMARY KEY NOT NULL" \
 ") WITHOUT ROWID;\n" \
 \
 "CREATE TABLE IF NOT EXISTS wanted (" \

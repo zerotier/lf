@@ -55,14 +55,15 @@ const (
 	ErrorIO                Error = "I/O error"
 	ErrorMessageIncomplete Error = "message incomplete"
 	ErrorIncorrectKey      Error = "incorrect key"
+	ErrorAlreadyConnected  Error = "already connected"
+	ErrorDuplicateRecord   Error = "duplicate record"
 )
 
 // Errors indicating that a record is invalid
 const (
-	ErrorRecordViolatesSpecialRelavitity ErrorRecord = "record timestamp is in the future"
-	ErrorRecordInvalid                   ErrorRecord = "record data invalid"
+	ErrorRecordInvalid                   ErrorRecord = "record invalid"
 	ErrorRecordOwnerSignatureCheckFailed ErrorRecord = "owner signature check failed"
-	ErrorRecordSelectorClaimCheckFailed  ErrorRecord = "claim signature check failed (key/ID or selector)"
+	ErrorRecordSelectorClaimCheckFailed  ErrorRecord = "selector claim check failed"
 	ErrorRecordInsufficientWork          ErrorRecord = "insufficient work to pay for this record"
 	ErrorRecordUnsupportedAlgorithm      ErrorRecord = "unsupported algorithm or type"
 )

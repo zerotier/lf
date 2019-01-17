@@ -104,38 +104,38 @@ func (db *db) putRecord(r *Record, reputation int) error {
 	rhash := r.Hash()
 	rid := r.ID()
 
-	selectors := make([]unsafe.Pointer, 0, len(r.Selectors)*32)
+	selectors := make([]uintptr, 0, len(r.Selectors)*32)
 	selectorSizes := make([]C.uint, 0, len(r.Selectors))
 	for i := 0; i < len(r.Selectors); i++ {
 		if len(r.Selectors[i].Selector) == 0 {
 			return ErrorRecordInvalid
 		}
-		selectors = append(selectors, unsafe.Pointer(&r.Selectors[i].Selector[0]))
+		selectors = append(selectors, uintptr(unsafe.Pointer(&r.Selectors[i].Selector[0])))
 		selectorSizes = append(selectorSizes, C.uint(len(r.Selectors[i].Selector)))
 	}
-	var sptr *unsafe.Pointer
+	var sptr unsafe.Pointer
 	var ssptr unsafe.Pointer
 	if len(selectors) > 0 {
-		sptr = &selectors[0]
+		sptr = unsafe.Pointer(&selectors[0])
 		ssptr = unsafe.Pointer(&selectorSizes[0])
 	}
-
 	var lptr unsafe.Pointer
 	if len(r.Body.Links) > 0 {
 		lptr = unsafe.Pointer(&r.Body.Links[0])
 	}
+	owner := r.Body.Owner
 
 	cerr := C.ZTLF_DB_PutRecord(
 		(*C.struct_ZTLF_DB)(&db.cdb),
 		unsafe.Pointer(&rdata[0]),
 		C.uint(len(rdata)),
-		unsafe.Pointer(&r.Body.Owner[0]),
-		C.uint(len(r.Body.Owner)),
+		unsafe.Pointer(&owner[0]),
+		C.uint(len(owner)),
 		unsafe.Pointer(rhash),
 		unsafe.Pointer(rid),
 		C.uint64_t(r.Body.Timestamp),
 		C.uint32_t(r.Score()),
-		sptr,
+		(*unsafe.Pointer)(sptr),
 		(*C.uint)(ssptr),
 		C.uint(len(selectors)),
 		lptr,
