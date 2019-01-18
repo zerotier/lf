@@ -192,7 +192,6 @@ static void *_ZTLF_DB_graphThreadMain(void *arg)
 	ZTLF_Vector_i64_Init(&graphTraversalQueue,2097152);
 	ZTLF_Vector_i64_Init(&recordQueue,1024);
 	ZTLF_Map128_Init(&holes,128,NULL);
-	bool checkCheckpoint = false;
 	LogOutputCallback logger = db->logger;
 	void *loggerArg = (void *)db->loggerArg;
 
@@ -201,43 +200,6 @@ static void *_ZTLF_DB_graphThreadMain(void *arg)
 		for(int i=0;i<3;++i) {
 			usleep(100000);
 			if (!db->running) goto end_graph_thread;
-		}
-
-		/* Periodically check to see if graph is in a completed state, and if so write a
-		 * checkpoint file containing a sorted list of hashes at this point. */
-		if ((checkCheckpoint)&&((ZTLF_timeMs() - db->lastCheckpoint) > ZTLF_DB_MIN_CHECKPOINT_INTERVAL)) {
-			pthread_mutex_lock(&db->dbLock);
-
-			bool hasPending = false;
-			sqlite3_reset(db->sGetAnyPending);
-			if (sqlite3_step(db->sGetAnyPending) == SQLITE_ROW)
-				hasPending = (sqlite3_column_int64(db->sGetAnyPending,0) >= 0);
-
-			if (!hasPending) {
-				sqlite3_reset(db->sGetCompletedRecordCount);
-				if (sqlite3_step(db->sGetCompletedRecordCount) == SQLITE_ROW) {
-					const uint64_t cnt = (uint64_t)sqlite3_column_int64(db->sGetCompletedRecordCount,0);
-					if (cnt > 0) {
-						const uint64_t ts = ZTLF_timeMs();
-						char cpp[PATH_MAX];
-						snprintf(cpp,sizeof(cpp),"%s" ZTLF_PATH_SEPARATOR "checkpoint-%.16llx.bin",db->path,(unsigned long long)ts);
-						struct ZTLF_MappedFile cp;
-						if (!ZTLF_MappedFile_Open(&cp,cpp,(uintptr_t)(cnt * 32),0)) {
-							uint8_t *ptr = (uint8_t *)cp.ptr;
-							sqlite3_reset(db->sGetCompletedRecordHashes);
-							while (sqlite3_step(db->sGetCompletedRecordHashes) == SQLITE_ROW) {
-								memcpy(ptr,sqlite3_column_blob(db->sGetCompletedRecordHashes,0),32);
-								ptr += 32;
-							}
-							ZTLF_MappedFile_Close(&cp);
-							db->lastCheckpoint = ts;
-							checkCheckpoint = false;
-						}
-					}
-				}
-			}
-
-			pthread_mutex_unlock(&db->dbLock);
 		}
 
 		/* Get new pending records or pending records with now-filled holes. */
@@ -468,8 +430,6 @@ static void *_ZTLF_DB_graphThreadMain(void *arg)
 
 			pthread_rwlock_unlock(&db->gfLock);
 		}
-
-		checkCheckpoint = true;
 	}
 
 end_graph_thread:
@@ -616,31 +576,6 @@ int ZTLF_DB_Open(struct ZTLF_DB *db,const char *path,char *errbuf,unsigned int e
 		errno = e;
 		e = 0;
 		goto exit_with_error;
-	}
-
-	/* Figure out when our last checkpoint was by scanning checkpoint filenames. */
-	db->lastCheckpoint = 0;
-	DIR *d = opendir(path);
-	if (d) {
-		struct dirent dtmp;
-		for(;;) {
-			struct dirent *de = NULL;
-			if ((readdir_r(d,&dtmp,&de) == 0)&&(de)) {
-				/* checkpoint-XXXXXXXXXXXXXXXX.bin */
-				if ((strlen(de->d_name) == 31)&&(strncmp(de->d_name,"checkpoint-",11) == 0)) {
-					const char tmp = de->d_name[27];
-					de->d_name[27] = (char)0;
-					const uint64_t t = (uint64_t)strtoull(de->d_name + 11,(char **)0,16);
-					de->d_name[27] = tmp; /* not sure if this is needed but who knows how readdir_r is implemented */
-					if ((t != 0)&&(t > db->lastCheckpoint))
-						db->lastCheckpoint = t;
-				}
-			} else break;
-		}
-		closedir(d);
-	} else {
-		ZTLF_L_fatal("I/O error: opendir(%s) failed!",path);
-		abort();
 	}
 
 	db->running = true;

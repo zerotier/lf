@@ -114,8 +114,6 @@ struct ZTLF_DB
 	sqlite3_stmt *sQueryAndSelectorRange;
 	sqlite3_stmt *sQueryGetResults;
 
-	volatile uint64_t lastCheckpoint;
-
 	pthread_mutex_t dbLock;
 	pthread_mutex_t graphNodeLocks[ZTLF_DB_GRAPH_NODE_LOCK_ARRAY_SIZE]; /* used to lock graph nodes by locking node lock goff % NODE_LOCK_ARRAY_SIZE */
 
