@@ -16,6 +16,7 @@ package lf
 import "C"
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"strconv"
@@ -23,12 +24,10 @@ import (
 	"unsafe"
 )
 
-// Reasons a record may be rejected -- 'reason' column in rejected table.
 const (
-	dbRecordRejectionReasonRecordTimestampInTheFuture = 1
+	dbMaxOwnerSize       uint = C.ZTLF_DB_QUERY_MAX_OWNER_SIZE
+	dbMaxConfigValueSize int  = 131072
 )
-
-const dbMaxOwnerSize = C.ZTLF_DB_QUERY_MAX_OWNER_SIZE
 
 // DB is an instance of the LF database that stores records and manages record weights and linkages.
 type db struct {
@@ -40,20 +39,16 @@ type db struct {
 
 // Global variables that store logger instances for use by the callback in db-log-callback.go.
 var (
-	globalLoggers              []*log.Logger
-	globalVerboseLoggers       []*log.Logger
-	globalDefaultLogger        = log.New(os.Stdout, "", log.LstdFlags)
-	globalDefaultVerboseLogger = log.New(os.Stderr, "", log.LstdFlags)
-	globalLoggersLock          sync.Mutex
+	globalLoggers       []*log.Logger
+	globalDefaultLogger = log.New(os.Stdout, "", log.LstdFlags)
+	globalLoggersLock   sync.Mutex
 )
 
-func (db *db) open(path string, logger *log.Logger, verboseLogger *log.Logger) error {
+func (db *db) open(path string, logger *log.Logger) error {
 	db.logger = logger
-	db.verboseLogger = verboseLogger
 
 	globalLoggersLock.Lock()
 	globalLoggers = append(globalLoggers, logger)
-	globalVerboseLoggers = append(globalVerboseLoggers, verboseLogger)
 	db.globalLoggerIdx = uint(len(globalLoggers) - 1)
 	globalLoggersLock.Unlock()
 
@@ -74,7 +69,6 @@ func (db *db) open(path string, logger *log.Logger, verboseLogger *log.Logger) e
 
 		globalLoggersLock.Lock()
 		globalLoggers[db.globalLoggerIdx] = nil
-		globalVerboseLoggers[db.globalLoggerIdx] = nil
 		globalLoggersLock.Unlock()
 
 		return ErrorDatabase{int(cerr), "open failed (" + errstr + ")"}
@@ -85,10 +79,8 @@ func (db *db) open(path string, logger *log.Logger, verboseLogger *log.Logger) e
 
 func (db *db) close() {
 	C.ZTLF_DB_Close((*C.struct_ZTLF_DB)(&db.cdb))
-
 	globalLoggersLock.Lock()
 	globalLoggers[db.globalLoggerIdx] = nil
-	globalVerboseLoggers[db.globalLoggerIdx] = nil
 	globalLoggersLock.Unlock()
 }
 
@@ -203,8 +195,10 @@ func (db *db) crc64() uint64 {
 }
 
 // hasPending returns true if this database is not waiting for any records to fill any graph gaps or satisfy any links.
+// This can also be used to check whether synchronization is complete since it returns true only if there are records
+// and all links for them are satisfied.
 func (db *db) hasPending() bool {
-	return (C.ZTLF_DB_HasPending((*C.struct_ZTLF_DB)(&db.cdb)) != 0)
+	return (C.ZTLF_DB_HasPending((*C.struct_ZTLF_DB)(&db.cdb)) > 0)
 }
 
 // query executes a query against a number of selector ranges. The function is executed for each result, with
@@ -251,5 +245,29 @@ func (db *db) query(selectorRanges [][2][]byte, andOr []bool, f func(uint64, [2]
 		C.free(unsafe.Pointer(cresults))
 	}
 
+	return nil
+}
+
+func (db *db) getConfig(key string) []byte {
+	var tmp [dbMaxConfigValueSize]byte
+	l := C.ZTLF_DB_GetConfig((*C.struct_ZTLF_DB)(&db.cdb), C.CString(key), unsafe.Pointer(&tmp[0]), C.uint(dbMaxConfigValueSize))
+	if l > 0 {
+		r := make([]byte, uint(l))
+		copy(r, tmp[0:uint(l)])
+		return r
+	}
+	return nil
+}
+
+func (db *db) setConfig(key string, value []byte) error {
+	if len(value) > 0 {
+		if len(value) > dbMaxConfigValueSize {
+			return ErrorInvalidParameter
+		}
+		e := C.ZTLF_DB_SetConfig((*C.struct_ZTLF_DB)(&db.cdb), C.CString(key), unsafe.Pointer(&value[0]), C.uint(len(value)))
+		if e != 0 {
+			return fmt.Errorf("database error %d", int(e))
+		}
+	}
 	return nil
 }

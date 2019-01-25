@@ -44,13 +44,13 @@ func TestCore(out io.Writer) bool {
 			fmt.Fprintf(out, "  FAILED (generate): %s\n", err.Error())
 			return false
 		}
-		pub, err := ECCCompressPublicKey(&priv.PublicKey)
+		pub, err := ECDSACompressPublicKey(&priv.PublicKey)
 		if err != nil {
 			fmt.Fprintf(out, "  FAILED (compress): %s\n", err.Error())
 			return false
 		}
 		fmt.Fprintf(out, "  Public Key: [%d] %x\n", len(pub), pub)
-		pub2, err := ECCDecompressPublicKey(curve, pub)
+		pub2, err := ECDSADecompressPublicKey(curve, pub)
 		if err != nil {
 			fmt.Fprintf(out, "  FAILED (decompress): %s\n", err.Error())
 			return false
@@ -127,7 +127,7 @@ func TestDatabase(testBasePath string, out io.Writer) bool {
 	for i := range db {
 		p := path.Join(testBasePath, strconv.FormatInt(int64(i), 10))
 		os.MkdirAll(p, 0755)
-		err = db[i].open(p, nil, nil)
+		err = db[i].open(p, nil)
 		if err != nil {
 			fmt.Fprintf(out, "FAILED: %s\n", err.Error())
 			return false

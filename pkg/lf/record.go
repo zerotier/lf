@@ -281,7 +281,7 @@ func (rs *RecordSelector) VerifyHash(hash []byte) bool {
 	if rs.Algorithm != RecordSelectorAlgorithmS112 || len(rs.Selector) != 32 {
 		return false
 	}
-	pk, err := ECCDecompressPublicKey(&ECCCurveSecP112R1, rs.Selector[17:])
+	pk, err := ECDSADecompressPublicKey(&ECCCurveSecP112R1, rs.Selector[17:])
 	if pk == nil || err != nil {
 		return false
 	}
@@ -566,7 +566,7 @@ func (r *Record) Validate() (err error) {
 		return ErrorRecordInsufficientWork
 	}
 
-	pubKey, err := ECCDecompressPublicKey(elliptic.P384(), r.Body.Owner) // the curve type is in the least significant bits of owner but right now there's only one allowed
+	pubKey, err := ECDSADecompressPublicKey(elliptic.P384(), r.Body.Owner) // the curve type is in the least significant bits of owner but right now there's only one allowed
 	if err != nil {
 		return ErrorRecordOwnerSignatureCheckFailed
 	}
@@ -641,7 +641,7 @@ func DeriveRecordSelector(plainText []byte) ([]byte, *ecdsa.PrivateKey) {
 	if err != nil {
 		panic(err)
 	}
-	cpub, err := ECCCompressPublicKey(&(privateKey.PublicKey))
+	cpub, err := ECDSACompressPublicKey(&(privateKey.PublicKey))
 	if err != nil {
 		panic(err)
 	}
@@ -683,11 +683,19 @@ func GenerateOwner() ([]byte, *ecdsa.PrivateKey) {
 	if err != nil {
 		panic(err)
 	}
-	pub, err := ECCCompressPublicKeyWithID(&priv.PublicKey, RecordOwnerTypeP384)
+	pub, err := ECDSACompressPublicKeyWithID(&priv.PublicKey, RecordOwnerTypeP384)
 	if err != nil {
 		panic(err)
 	}
 	return pub, priv
+}
+
+// GetOwnerPublicKey gets a comrpessed and properly ID-embedded owner public key from a private key that includes its public portion.
+func GetOwnerPublicKey(k *ecdsa.PrivateKey) ([]byte, error) {
+	if k == nil || k.Params().Name != "P-384" {
+		return nil, ErrorUnsupportedCurve
+	}
+	return ECDSACompressPublicKeyWithID(&k.PublicKey, RecordOwnerTypeP384)
 }
 
 // NewRecordStart creates an incomplete record with its body and selectors filled out but no work or final signature.

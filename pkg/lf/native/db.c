@@ -19,6 +19,9 @@
 #define ZTLF_DB_SQLITE_MMAP_SIZE "0"
 #endif
 
+/* A sanity limit on the number of records returned by a selector range query (as string because it's concatenated into a static SQL statement). */
+#define ZTLF_DB_SELECTOR_QUERY_RESULT_LIMIT "16777216"
+
 /*
  * config
  *   k                        arbitrary config key
@@ -105,7 +108,7 @@
 "CREATE UNIQUE INDEX IF NOT EXISTS record_goff ON record(goff);\n" \
 "CREATE UNIQUE INDEX IF NOT EXISTS record_hash ON record(hash);\n" \
 "CREATE UNIQUE INDEX IF NOT EXISTS owner_ts_id ON record(owner,ts,id);\n" \
-"CREATE INDEX IF NOT EXISTS record_doff_reputation_owner_ts ON record(doff,reputation,owner,ts);\n" \
+"CREATE INDEX IF NOT EXISTS record_doff_owner_ts ON record(doff,owner,ts);\n" \
 "CREATE INDEX IF NOT EXISTS record_ts ON record(ts);\n" \
 \
 "CREATE TABLE IF NOT EXISTS selector (" \
@@ -556,11 +559,11 @@ int ZTLF_DB_Open(struct ZTLF_DB *db,const char *path,char *errbuf,unsigned int e
 	S(db->sQueryClearRecordSet,
 	     "DELETE FROM tmp.rs");
 	S(db->sQueryOrSelectorRange,
-	     "INSERT OR IGNORE INTO tmp.rs SELECT record_doff AS \"i\" FROM selector WHERE sel BETWEEN ? AND ?");
+	     "INSERT OR IGNORE INTO tmp.rs SELECT record_doff AS \"i\" FROM selector WHERE sel BETWEEN ? AND ? LIMIT " ZTLF_DB_SELECTOR_QUERY_RESULT_LIMIT);
 	S(db->sQueryAndSelectorRange,
 	     "DELETE FROM tmp.rs WHERE \"i\" NOT IN (SELECT record_doff FROM selector WHERE sel BETWEEN ? AND ?)");
 	S(db->sQueryGetResults,
-	     "SELECT r.doff,r.dlen,r.goff,r.ts,r.owner FROM record AS r WHERE r.doff IN (SELECT \"i\" FROM tmp.rs) AND r.reputation >= 0 AND NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) ORDER BY r.owner,r.ts");
+	     "SELECT r.doff,r.dlen,r.goff,r.ts,r.owner FROM record AS r WHERE r.doff IN (SELECT \"i\" FROM tmp.rs) AND NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) ORDER BY r.owner,r.ts");
 
 	/* Open and memory map graph and data files. */
 	snprintf(tmp,sizeof(tmp),"%s" ZTLF_PATH_SEPARATOR "graph.bin",path);
@@ -1112,6 +1115,43 @@ int ZTLF_DB_HasPending(struct ZTLF_DB *db)
 	sqlite3_reset(db->sGetAnyPending);
 	if (sqlite3_step(db->sGetAnyPending) == SQLITE_ROW)
 		has = (sqlite3_column_int64(db->sGetAnyPending,0) >= 0) ? 1 : 0;
+	if (has == 0) {
+		int64_t count = 0;
+		sqlite3_reset(db->sGetRecordCount);
+		if (sqlite3_step(db->sGetRecordCount) == SQLITE_ROW)
+			count = sqlite3_column_int64(db->sGetRecordCount,0);
+		if (count == 0)
+			has = -1;
+	}
 	pthread_mutex_unlock(&db->dbLock);
 	return has;
+}
+
+int ZTLF_DB_SetConfig(struct ZTLF_DB *db,const char *key,const void *value,const unsigned int vlen)
+{
+	pthread_mutex_lock(&db->dbLock);
+	sqlite3_reset(db->sSetConfig);
+	sqlite3_bind_text(db->sSetConfig,1,key,-1,SQLITE_STATIC);
+	sqlite3_bind_blob(db->sSetConfig,2,value,(int)vlen,SQLITE_STATIC);
+	int ok = sqlite3_step(db->sSetConfig);
+	pthread_mutex_unlock(&db->dbLock);
+	return (ok == SQLITE_DONE) ? 0 : ZTLF_POS(ok);
+}
+
+unsigned int ZTLF_DB_GetConfig(struct ZTLF_DB *db,const char *key,void *value,const unsigned int valueMaxLen)
+{
+	unsigned int len = 0;
+	pthread_mutex_lock(&db->dbLock);
+	sqlite3_reset(db->sGetConfig);
+	sqlite3_bind_text(db->sGetConfig,1,key,-1,SQLITE_STATIC);
+	if (sqlite3_step(db->sGetConfig) == SQLITE_ROW) {
+		int l = sqlite3_column_bytes(db->sGetConfig,0);
+		const void *v = sqlite3_column_blob(db->sGetConfig,0);
+		if ((v)&&(l > 0)&&((unsigned int)l <= valueMaxLen)) {
+			len = (unsigned int)l;
+			memcpy(value,v,l);
+		}
+	}
+	pthread_mutex_unlock(&db->dbLock);
+	return len;
 }

@@ -175,8 +175,11 @@ void ZTLF_DB_Stats(struct ZTLF_DB *db,uint64_t *recordCount,uint64_t *dataSize);
 /* Compute a CRC64 of all record hashes and their weights in deterministic order (for testing and consistency checking) */
 uint64_t ZTLF_DB_CRC64(struct ZTLF_DB *db);
 
-/* Returns nonzero if there are pending records (excluding those with dangling links). */
+/* -1: no records at all, 0: no pending, 1: pending records */
 int ZTLF_DB_HasPending(struct ZTLF_DB *db);
+
+int ZTLF_DB_SetConfig(struct ZTLF_DB *db,const char *key,const void *value,const unsigned int vlen);
+unsigned int ZTLF_DB_GetConfig(struct ZTLF_DB *db,const char *key,void *value,const unsigned int valueMaxLen);
 
 static inline const char *ZTLF_DB_LastSqliteErrorMessage(struct ZTLF_DB *db) { return sqlite3_errmsg(db->dbc); }
 

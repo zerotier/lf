@@ -20,11 +20,22 @@ import (
 )
 
 // These must be the same as the log levels in native/common.h.
-const logLevelNormal = 0
-const logLevelWarning = -1
-const logLevelFatal = -2
-const logLevelVerbose = 1
-const logLevelTrace = 2
+const (
+	// LogLevelNormal indicates normal log messages that most users would want to see or record.
+	LogLevelNormal int = 0
+
+	// LogLevelWarning messages indicate a non-fatal but potentailly serious problem such as a database that may have corruption.
+	LogLevelWarning int = -1
+
+	// LogLevelFatal messages precede fatal error shutdowns and indicate serious problems like I/O errors or bugs.
+	LogLevelFatal int = -2
+
+	// LogLevelVerbose tracks details that some users might not care about.
+	LogLevelVerbose int = 1
+
+	// LogLevelTrace only works if tracing is enabled at compile time and outputs a ton of detail useful only to developers.
+	LogLevelTrace int = 2
+)
 
 // This callback handles logger output from the C parts of LF. Right now that's mostly just db.c, so this is here,
 // but it could in theory take log output from other code.
@@ -38,33 +49,29 @@ func ztlfLogOutputCCallback(level int, srcFile unsafe.Pointer, srcLine int, msg 
 	msgStr = C.GoString((*C.char)(msg))
 
 	larg := uint(uintptr(loggerArg))
-	var logger, verboseLogger *log.Logger
+	var logger *log.Logger
 
 	globalLoggersLock.Lock()
 
 	if larg < uint(len(globalLoggers)) {
 		logger = globalLoggers[larg]
-		verboseLogger = globalVerboseLoggers[larg]
 	}
 	if logger == nil {
 		logger = globalDefaultLogger
-	}
-	if verboseLogger == nil {
-		verboseLogger = globalDefaultVerboseLogger
 	}
 
 	switch level {
 	//case logLevelNormal:
 	default:
 		logger.Println(msgStr)
-	case logLevelWarning:
+	case LogLevelWarning:
 		logger.Printf("WARNING [%s:%d] %s\n", srcFileStr, srcLine, msgStr)
-	case logLevelFatal:
+	case LogLevelFatal:
 		logger.Printf("FATAL [%s:%d] %s\n", srcFileStr, srcLine, msgStr)
-	case logLevelTrace:
-		verboseLogger.Printf("TRACE [%s:%d] %s\n", srcFileStr, srcLine, msgStr)
-	case logLevelVerbose:
-		verboseLogger.Println(msgStr)
+	case LogLevelTrace:
+		logger.Printf("TRACE [%s:%d] %s\n", srcFileStr, srcLine, msgStr)
+	case LogLevelVerbose:
+		logger.Println(msgStr)
 	}
 
 	globalLoggersLock.Unlock()
