@@ -33,12 +33,10 @@ var (
 )
 
 // RecordMaxSize is a sanity limit for record sizes. Real records never get this big.
-const RecordMaxSize = 131072
+const RecordMaxSize = 65536
 
-// RecordMaxFieldSize is a sanity limit for record field sizes used in deserialization.
-// Real records never get this big, but this prevents a malformed record from causing an out
-// of memory error.
-const RecordMaxFieldSize = 65536
+// recordMaxFieldSize is a sanity limit for record field sizes used in deserialization.
+const recordMaxFieldSize = 65536
 
 // RecordHashSize is the number of bytes in a record hash (Shandwich256).
 const RecordHashSize = 32
@@ -98,7 +96,7 @@ func (rb *RecordBody) UnmarshalFrom(r io.Reader) error {
 	if err != nil {
 		return err
 	}
-	if l > RecordMaxFieldSize {
+	if l > recordMaxFieldSize {
 		return ErrorRecordInvalid
 	}
 	rb.Value = make([]byte, uint(l))
@@ -111,7 +109,7 @@ func (rb *RecordBody) UnmarshalFrom(r io.Reader) error {
 	if err != nil {
 		return err
 	}
-	if l > RecordMaxFieldSize {
+	if l > recordMaxFieldSize {
 		return ErrorRecordInvalid
 	}
 	rb.Owner = make([]byte, uint(l))
@@ -125,7 +123,7 @@ func (rb *RecordBody) UnmarshalFrom(r io.Reader) error {
 		return err
 	}
 	l *= 32
-	if l > RecordMaxFieldSize {
+	if l > recordMaxFieldSize {
 		return ErrorRecordInvalid
 	}
 	rb.Links = make([]byte, uint(l))
@@ -323,7 +321,7 @@ func (r *Record) UnmarshalFrom(rdr io.Reader) error {
 	if err != nil {
 		return err
 	}
-	if selCount > (RecordMaxFieldSize / 64) {
+	if selCount > (recordMaxFieldSize / 64) {
 		return ErrorRecordInvalid
 	}
 	r.Selectors = make([]RecordSelector, uint(selCount))
@@ -352,7 +350,7 @@ func (r *Record) UnmarshalFrom(rdr io.Reader) error {
 	if err != nil {
 		return err
 	}
-	if siglen > RecordMaxFieldSize {
+	if siglen > recordMaxFieldSize {
 		return ErrorRecordInvalid
 	}
 	r.Signature = make([]byte, uint(siglen))
@@ -522,7 +520,7 @@ func (r *Record) Open(firstSelectorPlainTextKey []byte) ([]byte, error) {
 				return nil, err
 			}
 			vdef = append(vdef, tmp[0:n]...)
-			if len(vdef) > RecordMaxFieldSize {
+			if len(vdef) > recordMaxFieldSize {
 				return nil, ErrorRecordInvalid
 			}
 		}
@@ -702,7 +700,7 @@ func GetOwnerPublicKey(k *ecdsa.PrivateKey) ([]byte, error) {
 // This can be used to do the first step of a three-phase record creation process with the next two phases being NewRecordAddWork
 // and NewRecordComplete. This is useful of record creation needs to be split among systems or participants.
 func NewRecordStart(value []byte, links [][]byte, plainTextSelectors [][]byte, maskValue bool, owner []byte, ts uint64) (r *Record, workHash [32]byte, workBillableBytes uint, err error) {
-	if len(value) > RecordMaxFieldSize {
+	if len(value) > recordMaxFieldSize {
 		err = ErrorInvalidParameter
 		return
 	}

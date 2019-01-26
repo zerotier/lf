@@ -151,8 +151,7 @@ int ZTLF_DB_PutRecord(
 	const unsigned int *selSize,
 	const unsigned int selCount,
 	const void *links,
-	const unsigned int linkCount,
-	const int reputation);
+	const unsigned int linkCount);
 
 /* The parameters sel[], selAndOr[], and selSize[] describe selectors being queried against. For each
  * selector there are TWO entries in sel[] and selSize[] and one in selAndOr[]. The two entries in sel[]

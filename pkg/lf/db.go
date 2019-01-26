@@ -85,7 +85,7 @@ func (db *db) close() {
 }
 
 // putRecord adds a valid record to the database.
-func (db *db) putRecord(r *Record, reputation int) error {
+func (db *db) putRecord(r *Record) error {
 	if len(r.Body.Owner) == 0 {
 		return ErrorRecordInvalid
 	}
@@ -131,8 +131,7 @@ func (db *db) putRecord(r *Record, reputation int) error {
 		(*C.uint)(ssptr),
 		C.uint(len(selectors)),
 		lptr,
-		C.uint(r.Body.LinkCount()),
-		C.int(reputation))
+		C.uint(r.Body.LinkCount()))
 
 	if cerr != 0 {
 		return ErrorDatabase{int(cerr), "record add failed (" + strconv.Itoa(int(cerr)) + ")"}

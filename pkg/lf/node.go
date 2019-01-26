@@ -14,9 +14,7 @@ import (
 	"crypto/cipher"
 	"crypto/elliptic"
 	secrand "crypto/rand"
-	"crypto/sha256"
 	"encoding/binary"
-	"hash/crc32"
 	"io"
 	"io/ioutil"
 	"log"
@@ -35,20 +33,21 @@ const (
 	// It prevents a huge message from causing a huge memory allocation. It can be increased.
 	p2pProtoMaxMessageSize = 262144
 
-	// p2pProtoModeAES256CFBECCP384 indicates our simple ECC P-384 AES-256-CFB encrypted binary
-	// wire protocol between nodes. Other IDs could be used in the future to select new ones.
-	p2pProtoModeAES256CFBECCP384 byte = 1
+	// p2pProtoModeAES256GCMECCP384 indicates our simple AES-256 GCM encrypted stream protocol.
+	p2pProtoModeAES256GCMECCP384 byte = 1
 
 	p2pProtoMessageTypeRecord               byte = 1 // binary marshaled Record
 	p2pProtoMesaggeTypeRequestRecordsByHash byte = 2 // one or more 32-byte hashes we want
 	p2pProtoMessageTypeHaveRecords          byte = 3 // one or more 32-byte hashes we have
 	p2pProtoMessageTypePeer                 byte = 4 // <[uint16] port><[byte] type><[4-16] IP>[<public key>]
+
+	// p2pDesiredConnectionCount is how many TCP connections we want to have open (will stop connecting to announced peers after this)
+	p2pDesiredConnectionCount = 32
 )
 
 type peer struct {
 	c               *net.TCPConn        // TCP connection to this peer
-	w               cipher.StreamWriter // Encryptor for outgoing bytes
-	r               cipher.StreamReader // Decryptor for incoming bytes
+	cryptor         cipher.AEAD         // AES-GCM instance
 	hasRecords      map[[32]byte]uint64 // Record this peer has recently reported that it has or has sent
 	hasRecordsLock  sync.Mutex          //
 	inbound         bool                // True if this is an incoming connection
@@ -62,6 +61,7 @@ type Node struct {
 	linkKeyPubX          *big.Int
 	linkKeyPubY          *big.Int
 	linkKeyPub           []byte
+	networkKey           []byte
 	peers                map[string]*peer
 	peersLock            sync.RWMutex
 	httpTCPListener      *net.TCPListener
@@ -264,7 +264,7 @@ func (n *Node) AddRecord(r *Record) error {
 	}
 
 	// Add record to database, aborting if this generates some kind of error.
-	err = n.db.putRecord(r, 0)
+	err = n.db.putRecord(r)
 	if err != nil {
 		return err
 	}
@@ -277,11 +277,9 @@ func (n *Node) AddRecord(r *Record) error {
 			n.backgroundThreadWG.Done()
 		}()
 
-		msg := make([]byte, 40)
+		msg := make([]byte, 1, 33)
 		msg[0] = p2pProtoMessageTypeHaveRecords
-		msg[3] = 32 // msg[1:4] is a big-endian 24-bit length
-		binary.BigEndian.PutUint32(msg[4:8], crc32.ChecksumIEEE(rhash[:]))
-		copy(msg[4:], rhash[:])
+		msg = append(msg, rhash[:]...)
 
 		n.peersLock.RLock()
 		for _, p := range n.peers {
@@ -289,9 +287,7 @@ func (n *Node) AddRecord(r *Record) error {
 			_, hasRecord := p.hasRecords[rhash]
 			p.hasRecordsLock.Unlock()
 			if !hasRecord {
-				if _, err := p.w.Write(msg); err != nil {
-					p.c.Close()
-				}
+				p.send(msg)
 			}
 		}
 		n.peersLock.RUnlock()
@@ -313,6 +309,24 @@ func (n *Node) Peers() (peers []APIStatusPeer) {
 	return
 }
 
+// send sends a message to a peer (message must be prefixed by type byte)
+func (p *peer) send(msg []byte) error {
+	// format: <12-byte IV><varint size of msg><msg + 16 byte tag>
+	buf := make([]byte, 22, len(msg)+64)
+	_, err := secrand.Read(buf[0:12])
+	if err != nil {
+		panic(err)
+	}
+	buf = buf[0 : 12+binary.PutUvarint(buf[12:], uint64(len(msg)))]
+	buf = p.cryptor.Seal(buf, buf[0:12], msg, nil)
+	_, err = p.c.Write(buf)
+	if err != nil {
+		p.c.Close()
+		return err
+	}
+	return nil
+}
+
 func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inbound bool) {
 	peerAddressStr := c.RemoteAddr().String()
 
@@ -330,41 +344,38 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inb
 	}()
 
 	tcpAddr := c.RemoteAddr().(*net.TCPAddr)
+	if tcpAddr == nil { // sanity check against core library code changes
+		panic("nil TCP RemoteAddr")
+	}
 
 	c.SetKeepAlivePeriod(time.Second * 30)
 	c.SetKeepAlive(true)
 	c.SetLinger(0)
 	c.SetNoDelay(false)
+	reader := bufio.NewReaderSize(c, 16384) // reduce system calls to read from socket, also simplifies some read code
 
-	helloMessage := make([]byte, len(n.linkKeyPub)+18)
-	_, err := secrand.Read(helloMessage[0:16])
-	if err != nil {
-		n.logger.Printf("P2P connection to %s closed: unable to read from secure random source", peerAddressStr)
-		return
-	}
-	helloMessage[16] = p2pProtoModeAES256CFBECCP384
-	helloMessage[17] = byte(len(n.linkKeyPub))
-	copy(helloMessage[18:], n.linkKeyPub)
-	_, err = c.Write(helloMessage)
+	helloMessage := make([]byte, len(n.linkKeyPub)+2)
+	helloMessage[0] = p2pProtoModeAES256GCMECCP384
+	helloMessage[1] = byte(len(n.linkKeyPub))
+	copy(helloMessage[2:], n.linkKeyPub)
+	_, err := c.Write(helloMessage)
 	if err != nil {
 		n.logger.Printf("P2P connection to %s closed: unable to write hello message", peerAddressStr)
 		return
 	}
 
-	p := peer{c: c, hasRecords: make(map[[32]byte]uint64), inbound: inbound}
-
-	var remoteHelloHdr [18]byte
-	_, err = io.ReadFull(c, remoteHelloHdr[0:18])
+	_, err = io.ReadFull(reader, helloMessage[0:2])
 	if err != nil {
 		n.logger.Printf("P2P connection to %s closed: %s", peerAddressStr, err.Error())
 		return
 	}
-	if remoteHelloHdr[16] != p2pProtoModeAES256CFBECCP384 || remoteHelloHdr[17] == 0 {
-		n.logger.Printf("P2P connection to %s closed: protocol mode not supported (%d with key length %d)", peerAddressStr, uint(remoteHelloHdr[16]), uint(remoteHelloHdr[17]))
+	if helloMessage[0] != p2pProtoModeAES256GCMECCP384 || helloMessage[0] == 0 {
+		n.logger.Printf("P2P connection to %s closed: protocol mode not supported or invalid key length", peerAddressStr)
 		return
 	}
-	rpk := make([]byte, uint(remoteHelloHdr[17]))
-	_, err = io.ReadFull(c, rpk)
+
+	rpk := make([]byte, uint(helloMessage[1]))
+	_, err = io.ReadFull(reader, rpk)
 	if err != nil {
 		n.logger.Printf("P2P connection to %s closed: %s", peerAddressStr, err.Error())
 		return
@@ -378,9 +389,10 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inb
 		return
 	}
 
+	p := peer{c: c, hasRecords: make(map[[32]byte]uint64), inbound: inbound, remotePublicKey: rpk}
 	n.peersLock.Lock()
 	for _, p2 := range n.peers {
-		if len(p2.remotePublicKey) > 0 && bytes.Equal(p2.remotePublicKey, p.remotePublicKey) {
+		if bytes.Equal(p2.remotePublicKey, rpk) {
 			n.logger.Printf("P2P connection to %s closed: redundant connection to already linked peer", peerAddressStr)
 			n.peersLock.Unlock()
 			return
@@ -391,84 +403,76 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inb
 
 	remotePubX, remotePubY, err := ECCDecompressPublicKey(elliptic.P384(), p.remotePublicKey)
 	if err != nil {
-		n.logger.Printf("P2P connection to %s closed: %s", peerAddressStr, err.Error())
+		n.logger.Printf("P2P connection to %s closed: invalid public key: %s", peerAddressStr, err.Error())
 		return
 	}
 	remoteShared, err := ECCAgree(elliptic.P384(), remotePubX, remotePubY, n.linkKeyPriv)
 	if err != nil {
-		n.logger.Printf("P2P connection to %s closed: %s", peerAddressStr, err.Error())
+		n.logger.Printf("P2P connection to %s closed: key agreement failed: %s", peerAddressStr, err.Error())
 		return
+	}
+	if len(n.networkKey) == 32 {
+		for i := 0; i < 32; i++ {
+			remoteShared[i] ^= n.networkKey[i]
+		}
 	}
 
 	aesCipher, _ := aes.NewCipher(remoteShared[:])
-	p.r.S = cipher.NewCFBDecrypter(aesCipher, remoteHelloHdr[0:16])
-	p.r.R = bufio.NewReaderSize(c, 131072)
-	p.w.S = cipher.NewCFBEncrypter(aesCipher, helloMessage[0:16])
-	p.w.W = c
+	p.cryptor, _ = cipher.NewGCM(aesCipher)
 
-	var verificationMessage [64]byte
-	_, err = secrand.Read(verificationMessage[0:32])
-	if err != nil {
-		n.logger.Printf("P2P connection to %s closed: %s", peerAddressStr, err.Error())
-		return
-	}
-	vmtmp := sha256.Sum256(verificationMessage[0:32])
-	copy(verificationMessage[32:64], vmtmp[:])
-	_, err = p.w.Write(verificationMessage[:])
-	if err != nil {
-		n.logger.Printf("P2P connection to %s closed: %s", peerAddressStr, err.Error())
-		return
-	}
-	_, err = io.ReadFull(p.r, verificationMessage[:])
-	if err != nil {
-		n.logger.Printf("P2P connection to %s closed: %s", peerAddressStr, err.Error())
-		return
-	}
-	vmtmp = sha256.Sum256(verificationMessage[0:32])
-	if !bytes.Equal(verificationMessage[32:64], vmtmp[:]) {
-		n.logger.Printf("P2P connection to %s closed: encryption key is incorrect", peerAddressStr)
-		return
-	}
-
-	// Once we verify the link we enter a read loop where we read an 8-byte
-	// message header followed by a message.
-	var hdr [8]byte
+	var msgIv [12]byte
 	var msgbuf []byte
 	announced := false
 	for atomic.LoadUintptr(&n.shutdown) == 0 {
-		_, err = io.ReadFull(p.r, hdr[:])
+		// Read 12-byte GCM IV
+		_, err = io.ReadFull(reader, msgIv[:])
 		if err != nil {
 			n.logger.Printf("P2P connection to %s closed: %s", peerAddressStr, err.Error())
 			break
 		}
 
-		incomingMessageType := hdr[0]
-		incomingMessageSize := (uint(hdr[1]) << 16) | (uint(hdr[2]) << 8) | uint(hdr[3])
-		if incomingMessageSize > p2pProtoMaxMessageSize {
-			n.logger.Printf("P2P connection to %s closed: message too large (%d > %d)", peerAddressStr, incomingMessageSize, p2pProtoMaxMessageSize)
-			break
-		}
-
-		if incomingMessageSize > uint(len(msgbuf)) {
-			mbs := incomingMessageSize
-			mbs /= 4096
-			mbs++
-			mbs *= 4096
-			msgbuf = make([]byte, mbs)
-		}
-		msg := msgbuf[0:incomingMessageSize]
-		_, err = io.ReadFull(p.r, msg)
+		// Read size of message (varint)
+		msgSize, err := binary.ReadUvarint(reader)
 		if err != nil {
 			n.logger.Printf("P2P connection to %s closed: %s", peerAddressStr, err.Error())
 			break
 		}
+		if msgSize == 0 || msgSize > p2pProtoMaxMessageSize {
+			n.logger.Printf("P2P connection to %s closed: invalid message size", peerAddressStr)
+			break
+		}
+
+		// Read message and 16-byte GCM tag
+		if len(msgbuf) < int(msgSize)+16 {
+			bs := uint(msgSize)
+			bs /= 4096
+			bs += 2
+			bs *= 4096
+			msgbuf = make([]byte, bs)
+		}
+		msg := msgbuf[0 : uint(msgSize)+16]
+		_, err = io.ReadFull(reader, msg)
+		if err != nil {
+			n.logger.Printf("P2P connection to %s closed: %s", peerAddressStr, err.Error())
+			break
+		}
+
 		if atomic.LoadUintptr(&n.shutdown) != 0 {
 			break
 		}
-		if crc32.ChecksumIEEE(msg) != binary.BigEndian.Uint32(hdr[4:8]) {
-			n.logger.Printf("P2P connection to %s closed: CRC32 check failed", peerAddressStr)
+
+		// Decrypt and authenticate message
+		msg, err = p.cryptor.Open(msg[:0], msgIv[:], msg, nil)
+		if err != nil {
+			n.logger.Printf("P2P connection to %s closed: %s", peerAddressStr, err.Error())
 			break
 		}
+		if len(msg) < 1 {
+			n.logger.Printf("P2P connection to %s closed: invalid message size", peerAddressStr)
+			break
+		}
+		incomingMessageType := msg[0]
+		msg = msg[1:]
 
 		switch incomingMessageType {
 
@@ -483,50 +487,63 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inb
 
 		case p2pProtoMesaggeTypeRequestRecordsByHash:
 			for len(msg) >= 32 {
-				_, rdata, err := n.db.getDataByHash(msg, nil)
-				if err == nil && len(rdata) > 0 {
-					hdr[0] = p2pProtoMessageTypeRecord
-					putBE24(hdr[1:], uint(len(rdata)))
-					binary.BigEndian.PutUint32(hdr[4:8], crc32.ChecksumIEEE(rdata))
-					_, err = p.w.Write(hdr[:])
-					if err != nil {
-						n.logger.Printf("P2P connection to %s closed: %s", peerAddressStr, err.Error())
-						break
-					}
-					_, err = p.w.Write(rdata)
-					if err != nil {
-						n.logger.Printf("P2P connection to %s closed: %s", peerAddressStr, err.Error())
-						break
-					}
+				rdata := make([]byte, 1, 4096)
+				rdata[0] = p2pProtoMessageTypeRecord
+				_, rdata, err = n.db.getDataByHash(msg[0:32], rdata)
+				if err == nil && len(rdata) > 1 {
+					p.send(rdata)
 				}
 				msg = msg[32:]
 			}
 
 		case p2pProtoMessageTypeHaveRecords:
 			var h [32]byte
+			req := make([]byte, 1, 256)
+			req[0] = p2pProtoMesaggeTypeRequestRecordsByHash
 			for len(msg) >= 32 {
 				copy(h[:], msg[0:32])
+
 				p.hasRecordsLock.Lock()
 				p.hasRecords[h] = TimeMs()
 				p.hasRecordsLock.Unlock()
+
+				if !n.db.hasRecord(h[:]) {
+					req = append(req, h[:]...)
+					if len(req) >= (p2pProtoMaxMessageSize - 64) {
+						p.send(req)
+						req = req[0:1]
+					}
+				}
+
 				msg = msg[32:]
+			}
+			if len(req) > 1 {
+				p.send(req)
 			}
 
 		case p2pProtoMessageTypePeer:
-			if len(msg) > 3 {
+			n.peersLock.RLock()
+			peerCount := len(n.peers)
+			n.peersLock.RUnlock()
+			if peerCount < p2pDesiredConnectionCount && len(msg) > 3 {
 				port := binary.BigEndian.Uint16(msg[0:2])
+				var ip net.IP
+				var publicKey []byte
 				if msg[2] == 4 && len(msg) >= 7 {
-					var publicKey []byte
+					ip = msg[3:7]
 					if len(msg) > 7 {
 						publicKey = msg[7:]
 					}
-					n.Connect((net.IP)(msg[3:7]), int(port), publicKey, nil)
 				} else if msg[2] == 6 && len(msg) >= 19 {
-					var publicKey []byte
+					ip = msg[3:19]
 					if len(msg) > 19 {
 						publicKey = msg[19:]
 					}
-					n.Connect((net.IP)(msg[3:19]), int(port), publicKey, nil)
+				}
+				if len(ip) > 0 {
+					n.Connect((net.IP)(msg[3:7]), int(port), publicKey, func(err error) {
+						n.logger.Printf("connected to peer %s:%d (learned from peer %s)", ip.String(), port, peerAddressStr)
+					})
 				}
 			}
 		}
@@ -535,36 +552,31 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inb
 	if inbound && !announced {
 		announced = true
 
-		var pabuf [27]byte
-		var pa []byte
-		pabuf[0] = p2pProtoMessageTypePeer
+		pa := make([]byte, 1, 256)
+		pa[0] = p2pProtoMessageTypePeer
 		ipv4 := tcpAddr.IP.To4()
 		if len(ipv4) == 4 {
-			pabuf[3] = 7 // size of IPv4 peer announcement message
-			binary.BigEndian.PutUint16(pabuf[8:10], uint16(tcpAddr.Port))
-			pabuf[10] = 4
-			copy(pabuf[11:15], ipv4)
-			binary.BigEndian.PutUint32(pabuf[4:8], crc32.ChecksumIEEE(pabuf[8:]))
-			pa = pabuf[0:15]
+			pa = append(pa, byte((tcpAddr.Port>>8)&0xff))
+			pa = append(pa, byte(tcpAddr.Port&0xff))
+			pa = append(pa, 4)
+			pa = append(pa, ipv4...)
+			pa = append(pa, p.remotePublicKey...)
 		} else {
 			ipv6 := tcpAddr.IP.To16()
 			if len(ipv6) == 16 {
-				pabuf[3] = 19
-				binary.BigEndian.PutUint16(pabuf[8:10], uint16(tcpAddr.Port))
-				pabuf[10] = 6
-				copy(pabuf[11:27], ipv6)
-				binary.BigEndian.PutUint32(pabuf[4:8], crc32.ChecksumIEEE(pabuf[8:]))
-				pa = pabuf[0:27]
+				pa = append(pa, byte((tcpAddr.Port>>8)&0xff))
+				pa = append(pa, byte(tcpAddr.Port&0xff))
+				pa = append(pa, 6)
+				pa = append(pa, ipv6...)
+				pa = append(pa, p.remotePublicKey...)
 			}
 		}
 
-		if len(pa) > 0 {
+		if len(pa) > 1 {
 			n.peersLock.RLock()
 			for _, p2 := range n.peers {
 				if p2 != &p {
-					if _, err := p2.w.Write(pa); err != nil {
-						p.c.Close()
-					}
+					p2.send(pa)
 				}
 			}
 			n.peersLock.RUnlock()

@@ -195,7 +195,7 @@ func TestDatabase(testBasePath string, out io.Writer) bool {
 			}
 		}
 		for ri := 0; ri < testDatabaseRecords; ri++ {
-			err = db[dbi].putRecord(records[ri], 0)
+			err = db[dbi].putRecord(records[ri])
 			if err != nil {
 				fmt.Fprintf(out, "  #%d FAILED: %s\n", dbi, err.Error())
 				return false
