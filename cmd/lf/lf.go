@@ -19,10 +19,10 @@ MIT License
 Usage: lf [-global options] <command> [-command options] [...]
 
 Global options:
-	-path <path>                       Override default home directory
-	-use <url>                         Override configured full node URL(s)
-	-verbose                           Generate verbose output to stderr
-	-json                              Output raw JSON for API query commands
+	-path <path>                             Override default home directory
+	-use <url>                               Override default node/proxy URL(s)
+	-verbose                                 Generate verbose output to stderr
+	-json                                    Output raw JSON for API queries
 `)
 }
 
@@ -30,43 +30,40 @@ func printHelp(cmd string) {
 	printHelpHdr()
 
 	switch cmd {
+
 	case "version":
 		fmt.Print("\nThe 'version' command has no options.\n")
 		return
+
 	case "selftest":
 		fmt.Print(`
 The 'selftest' command runs all tests if no test is specified. The following
 tests are available:
-	core                               Test core functions and data types
-	wharrgarbl                         Test and benchmark work function (slow)
-	database                           Test database and graph algorithms
+	core                                     Test core functions and data types
+	wharrgarbl                               Test and benchmark work function
+	database                                 Test database and graph algorithms
 
 `)
-	case "node-start":
-	case "proxy-start":
-	case "config":
-	case "set":
-	case "get":
-	case "find":
-	case "owner":
-	case "status":
-		fmt.Print("\nThe 'status' command has no options.\n")
 		return
+
+	case "node-start":
+		return
+
+	case "proxy-start":
+		return
+
 	}
 
 	fmt.Print(`
 Commands:
-	help [<command>]                   Display help on a specific command
-	version                            Display version information
-	selftest [test]                    Perform internal self-test and exit
-	node-start                         Start a full node
-	proxy-start                        Start a local record creation proxy
-	config [variable] [value]          Display, get, and set config variables
-	set <[~]key> <[~]value>            Set a key in the global key/value store
-	get <[~]key>                       Get the value of a key
-	find [-options]                    Find one or more keys by selector, etc.
-	owner <subcommand> [<name>]        List, create, or remove an owner key pair
-	status                             Query a full node and display its status
+	help [<command>]                         Display help about a command
+	version                                  Display version information
+	selftest [test]                          Perform internal self-test and exit
+	node-start                               Start a full node
+	proxy-start                              Start a local record creation proxy
+	use <url>                                Add a node URL for client/proxy
+	drop <url>                               Remove a node URL for client/proxy
+	set [-owner <name>] [<key> ...] <value>  Set a new entry
 
 Many commands have options, so use 'help <command>' for details.
 
@@ -151,30 +148,6 @@ func main() {
 	case "version":
 		fmt.Println(lf.VersionStr)
 
-	case "node-start":
-		doNodeStart(*path, *jsonOutput, *verboseOutput, cmdArgs)
-
-	case "proxy-start":
-		doProxyStart(*path, *jsonOutput, *urlOverride, *verboseOutput, cmdArgs)
-
-	case "config":
-		doConfig(*path, *jsonOutput, cmdArgs)
-
-	case "set":
-		doSet(*path, *jsonOutput, *urlOverride, *verboseOutput, cmdArgs)
-
-	case "get":
-		doGet(*path, *jsonOutput, *urlOverride, *verboseOutput, cmdArgs)
-
-	case "find":
-		doFind(*path, *jsonOutput, *urlOverride, *verboseOutput, cmdArgs)
-
-	case "owner":
-		doOwner(*path, *jsonOutput, *verboseOutput, cmdArgs)
-
-	case "status":
-		doStatus(*path, *jsonOutput, *urlOverride, *verboseOutput, cmdArgs)
-
 	case "selftest":
 		test := ""
 		if len(cmdArgs) == 1 {
@@ -199,6 +172,18 @@ func main() {
 		default:
 			printHelp("")
 		}
+
+	case "node-start":
+		doNodeStart(*path, *jsonOutput, *verboseOutput, cmdArgs)
+
+	case "proxy-start":
+		doProxyStart(*path, *jsonOutput, *urlOverride, *verboseOutput, cmdArgs)
+
+	case "use":
+
+	case "drop":
+
+	case "set":
 
 	default:
 		printHelp("")
