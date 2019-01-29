@@ -830,6 +830,9 @@ func NewRecordAddWork(incompleteRecord *Record, workHash []byte, work []byte, wo
 // NewRecordComplete completes a record created with NewRecordStart after work is added with NewRecordAddWork by signing it with the owner's private key.
 func NewRecordComplete(incompleteRecord *Record, signingHash []byte, ownerPrivate *ecdsa.PrivateKey) (r *Record, err error) {
 	r = incompleteRecord
+	if ownerPrivate.Curve.Params().Name != "P-384" {
+		return nil, ErrorUnsupportedCurve
+	}
 	r.Signature, err = ECDSASign(ownerPrivate, signingHash)
 	return
 }
