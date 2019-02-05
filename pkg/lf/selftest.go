@@ -8,9 +8,11 @@
 package lf
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	secrand "crypto/rand"
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"math/rand"
@@ -34,6 +36,19 @@ func TestCore(out io.Writer) bool {
 		return false
 	}
 	fmt.Fprintf(out, "OK\n")
+
+	fmt.Fprintf(out, "Testing hash slice filling behavior... ")
+	ref := sha256.Sum256([]byte("My hovercraft is full of eels."))
+	th := sha256.New()
+	th.Write([]byte("My hovercraft is full of eels."))
+	var thout [32]byte
+	th.Sum(thout[:0]) // test that Sum() fills thout[] here as expected
+	if bytes.Equal(thout[:], ref[:]) {
+		fmt.Fprintf(out, "OK\n")
+	} else {
+		fmt.Fprintf(out, "FAILED\n")
+		return false
+	}
 
 	curves := []elliptic.Curve{elliptic.P384(), &ECCCurveSecP112R1}
 	for ci := range curves {
@@ -158,7 +173,7 @@ func TestDatabase(testBasePath string, out io.Writer) bool {
 	ts := TimeSec()
 	for ri := 0; ri < testDatabaseRecords; ri++ {
 		var linkTo []uint
-		for i := 0; i < RecordDesiredLinks && i < ri; i++ {
+		for i := 0; i < 3 && i < ri; i++ {
 			lt := uint(rand.Int31()) % uint(ri)
 			for j := 0; j < (ri * 2); j++ {
 				if sliceContainsUInt(linkTo, lt) {
@@ -177,7 +192,7 @@ func TestDatabase(testBasePath string, out io.Writer) bool {
 		ts++
 		sel := []byte("test-owner-number-" + strconv.FormatInt(int64(ri%testDatabaseOwners), 10))
 		value := []byte(strconv.FormatUint(ts, 10))
-		records[ri], err = NewRecord(value, links, [][]byte{sel}, true, ownerPub[ri%testDatabaseOwners], ts, RecordWorkAlgorithmNone, ownerPriv[ri%testDatabaseOwners])
+		records[ri], err = NewRecord(value, links, [][]byte{sel}, ownerPub[ri%testDatabaseOwners], ts, RecordWorkAlgorithmNone, ownerPriv[ri%testDatabaseOwners])
 		if err != nil {
 			fmt.Fprintf(out, "FAILED: %s\n", err.Error())
 			return false

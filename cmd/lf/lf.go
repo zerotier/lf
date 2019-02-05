@@ -56,14 +56,14 @@ func (c *Config) load(path string) error {
 	c.dirty = false
 
 	// If the file didn't exist, init config with defaults.
-	if err == os.ErrNotExist {
+	if err != nil && os.IsNotExist(err) {
 		c.Urls = defaultNodeUrls
 		pub, pk := lf.GenerateOwner()
 		xb, _ := x509.MarshalECPrivateKey(pk)
 		dflName := "default"
 		u, _ := user.Current()
-		if u != nil && len(u.Name) > 0 {
-			dflName = u.Name
+		if u != nil && len(u.Username) > 0 {
+			dflName = u.Username
 		}
 		c.Owners[dflName] = &ConfigOwner{
 			Owner:   lf.Base58EncodeWithCRC(pub),
@@ -223,7 +223,12 @@ func doOwner(cfg *Config, basePath string, jsonOutput bool, urlOverride string, 
 			}
 			sort.Strings(names)
 			for _, n := range names {
-				fmt.Printf("%-24s %s\n", n, cfg.Owners[n].Owner)
+				o := cfg.Owners[n]
+				dfl := " "
+				if o.Default {
+					dfl = "*"
+				}
+				fmt.Printf("%-24s %s %s\n", n, dfl, o.Owner)
 			}
 		}
 
@@ -251,6 +256,16 @@ func doOwner(cfg *Config, basePath string, jsonOutput bool, urlOverride string, 
 			printHelp("")
 			return
 		}
+		name := strings.TrimSpace(args[1])
+		if _, have := cfg.Owners[name]; !have {
+			fmt.Println("ERROR: an owner named '" + args[1] + "' does not exist.")
+			return
+		}
+		for n, o := range cfg.Owners {
+			o.Default = (n == name)
+		}
+		cfg.dirty = true
+		fmt.Printf("%-24s %s\n", name, cfg.Owners[name].Owner)
 
 	case "delete":
 		if len(args) < 2 {
@@ -291,6 +306,8 @@ func main() {
 	if len(args) >= 3 {
 		cmdArgs = args[2:]
 	}
+
+	os.MkdirAll(*basePath, 0755)
 
 	cfgPath := path.Join(*basePath, clientConfigFile)
 	var cfg Config

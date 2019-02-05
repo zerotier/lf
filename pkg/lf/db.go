@@ -178,7 +178,7 @@ func (db *db) getLinks(count uint) (uint, []byte, error) {
 		return 0, nil, nil
 	}
 	lbuf := make([]byte, 32*count)
-	lc := uint(C.ZTLF_DB_GetLinks((*C.struct_ZTLF_DB)(&db.cdb), unsafe.Pointer(&(lbuf[0])), C.uint(count), C.uint(RecordDesiredLinks)))
+	lc := uint(C.ZTLF_DB_GetLinks((*C.struct_ZTLF_DB)(&db.cdb), unsafe.Pointer(&(lbuf[0])), C.uint(count)))
 	return lc, lbuf[0 : 32*lc], nil
 }
 
@@ -202,8 +202,9 @@ func (db *db) hasPending() bool {
 
 // query executes a query against a number of selector ranges. The function is executed for each result, with
 // results not sorted. The loop is broken if the function returns false. The owner is passed as a pointer to
-// an array that is reused, so a copy must be made if you want to keep it.
-func (db *db) query(selectorRanges [][2][]byte, andOr []bool, f func(uint64, [2]uint64, uint64, uint, *[dbMaxOwnerSize]byte, uint) bool) error {
+// an array that is reused, so a copy must be made if you want to keep it. The arguments to the function are:
+// timestamp, weight (low), weight (high), data offset, data length, id, owner, owner size (bytes).
+func (db *db) query(selectorRanges [][2][]byte, andOr []bool, f func(uint64, uint64, uint64, uint64, uint64, *[32]byte, []byte) bool) error {
 	if len(selectorRanges) == 0 || len(andOr) != len(selectorRanges) {
 		return nil
 	}
@@ -229,14 +230,18 @@ func (db *db) query(selectorRanges [][2][]byte, andOr []bool, f func(uint64, [2]
 	cresults := C.ZTLF_DB_Query((*C.struct_ZTLF_DB)(&db.cdb), &sel[0], (*C.int)(unsafe.Pointer(&selAndOr[0])), (*C.uint)(unsafe.Pointer(&selSizes[0])), C.uint(len(selectorRanges)))
 	if uintptr(unsafe.Pointer(cresults)) != 0 {
 		var owner [dbMaxOwnerSize]byte
+		var id [32]byte
 		for i := C.long(0); i < cresults.count; i++ {
 			cr := cresults.results[i]
 			ownerSize := uint(cr.ownerSize)
 			if ownerSize > 0 && ownerSize <= dbMaxOwnerSize && cr.dlen > 0 {
+				for j := 0; j < 32; j++ {
+					id[j] = byte(cr.id[j])
+				}
 				for j := uint(0); j < ownerSize; j++ {
 					owner[j] = byte(cr.owner[j])
 				}
-				if !f(uint64(cr.ts), [2]uint64{uint64(cr.weightH), uint64(cr.weightL)}, uint64(cr.doff), uint(cr.dlen), &owner, ownerSize) {
+				if !f(uint64(cr.ts), uint64(cr.weightL), uint64(cr.weightH), uint64(cr.doff), uint64(cr.dlen), &id, owner[0:ownerSize]) {
 					break
 				}
 			}

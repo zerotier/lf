@@ -51,6 +51,7 @@ struct ZTLF_QueryResult
 	uint64_t doff;
 	unsigned int dlen;
 	unsigned int ownerSize;
+	uint8_t id[32];
 	uint8_t owner[ZTLF_DB_QUERY_MAX_OWNER_SIZE];
 };
 
@@ -166,7 +167,7 @@ struct ZTLF_QueryResults *ZTLF_DB_Query(struct ZTLF_DB *db,const void **sel,cons
 unsigned int ZTLF_DB_GetByHash(struct ZTLF_DB *db,const void *hash,uint64_t *doff);
 
 /* Gets up to cnt hashes of records to which a new record should link, returning actual number of links written to lbuf. */
-unsigned int ZTLF_DB_GetLinks(struct ZTLF_DB *db,void *const lbuf,const unsigned int cnt,const unsigned int desiredLinks);
+unsigned int ZTLF_DB_GetLinks(struct ZTLF_DB *db,void *const lbuf,const unsigned int cnt);
 
 /* Fill result pointer arguments with statistics about this database. */
 void ZTLF_DB_Stats(struct ZTLF_DB *db,uint64_t *recordCount,uint64_t *dataSize);

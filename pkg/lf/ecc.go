@@ -20,7 +20,8 @@ import (
 var (
 	// ECCCurveSecP112R1 is a tiny elliptic curve for use in claim signatures.
 	// This is not used for security critical things like owner signatures, just to make dumb key collision DOS attacks hard
-	// by allowing selectors to prove knowledge of their masked plain text keys.
+	// by allowing selectors to prove knowledge of their masked plain text keys. Forgery is possible but would take more
+	// CPU time and effort than such an attack would be worth (provided an app using LF is well designed and robust).
 	ECCCurveSecP112R1 = func() elliptic.CurveParams {
 		var secp112r1 elliptic.CurveParams
 		secp112r1.Name = "secp112r1"
@@ -33,14 +34,12 @@ var (
 		return secp112r1
 	}()
 
-	// ECCCurveSecP112R1SignatureSize is the size of a byte packed (not ASN.1) signature from ECCCurveSecP112R1.
-	ECCCurveSecP112R1SignatureSize = ECDSASignatureSize(&ECCCurveSecP112R1)
-
 	bigInt3 = big.NewInt(3)
 )
 
 // Size of compressed public keys for different ECDSA curves.
 const (
+	ECCCurveSecP112R1SignatureSize      = 28 // (112/8)*2
 	ECCSecP112R1CompressedPublicKeySize = 15
 	ECCP224CompressedPublicKeySize      = 29
 	ECCP256CompressedPublicKeySize      = 33

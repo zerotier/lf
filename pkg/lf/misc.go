@@ -116,12 +116,12 @@ func sliceContainsUInt(s []uint, e uint) bool {
 	return false
 }
 
-// CountingWriter is an io.Writer that increments an integer for each byte "written" to it.
-type CountingWriter uint
+// countingWriter is an io.Writer that increments an integer for each byte "written" to it.
+type countingWriter uint
 
 // Write implements io.Writer
-func (cr *CountingWriter) Write(b []byte) (n int, err error) {
+func (cr *countingWriter) Write(b []byte) (n int, err error) {
 	n = len(b)
-	*cr = CountingWriter(uint(*cr) + uint(n))
+	*cr = countingWriter(uint(*cr) + uint(n))
 	return
 }

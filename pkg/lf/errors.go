@@ -66,4 +66,5 @@ const (
 	ErrorRecordSelectorClaimCheckFailed  ErrorRecord = "selector claim check failed"
 	ErrorRecordInsufficientWork          ErrorRecord = "insufficient work to pay for this record"
 	ErrorRecordUnsupportedAlgorithm      ErrorRecord = "unsupported algorithm or type"
+	ErrorRecordTooLarge                  ErrorRecord = "record too large"
 )

@@ -58,27 +58,23 @@ type APIStatus struct {
 
 // APIQuerySelector specifies a selector or selector range.
 type APIQuerySelector struct {
-	S         []byte ``                  // First selector in selector range (or single value for equality)
-	E         []byte `json:",omitempty"` // Second selector in selector range or empty/nil for simple equality instead of range query
-	Or        *bool  `json:",omitempty"` // OR previous selector? AND if false. (ignored for first selector)
-	PlainText *bool  `json:",omitempty"` // If true these are plain text selectors and need to be converted to masked selectors before query
+	S  []byte ``                  // First selector in selector range (or single value for equality)
+	E  []byte `json:",omitempty"` // Second selector in selector range or empty/nil for simple equality instead of range query
+	Or *bool  `json:",omitempty"` // OR previous selector? AND if false. (ignored for first selector)
+	PT *bool  `json:",omitempty"` // If true these are plain text selector keys, not masked selectors
 }
 
 // APIQuery describes a query for records.
 // It results in an array of APIQueryResult objects sorted in descending order of weight.
 type APIQuery struct {
-	Selectors             []APIQuerySelector ``                  // Selectors or selector range(s)
-	Owners                [][]byte           `json:",omitempty"` // Owners to match in query
-	PlainTextKey          []byte             `json:",omitempty"` // Plain-text key for first selector to have server or proxy decrypt masked value automatically
-	IncludeSuspectRecords *bool              `json:",omitempty"` // If true, ignore reputation and trusted commentary and include suspicious records
+	Selectors []APIQuerySelector `` // Selectors or selector range(s)
 }
 
 // APIQueryResult is a single query result.
 type APIQueryResult struct {
-	Record  Record // Record itself.
-	Weight  string // Record weight as a 128-bit hex value.
-	Value   []byte // Record value if record is unmasked or if PlainTextKey was included in query for automatic unmasking.
-	Suspect bool   // If true, this result is for some reason suspicious (e.g. low local reputation)
+	Record Record // Record itself.
+	Weight string // Record weight as a 128-bit hex value.
+	Value  []byte // Record value if record could be unmasked.
 }
 
 // APINew instructs this server (or proxy) to create a new record locally and submit it.
@@ -89,7 +85,6 @@ type APINew struct {
 	OwnerPrivateKey    []byte   ``                  // X.509 encoded private key with included public key
 	Links              [][]byte ``                  // Links to other records in the DAG (each link must be 32 bytes in size)
 	Value              []byte   ``                  // Plain text value for this record
-	MaskValue          *bool    `json:",omitempty"` // If true, encrypt value using plain text key of first selector (privacy mask value)
 	Timestamp          *uint64  `json:",omitempty"` // Record timestamp (server time is used if zero or omitted)
 }
 
@@ -142,6 +137,57 @@ func (m *APIQuery) Run(url string) (*APIQueryResult, error) {
 	return &qr, nil
 }
 
+func (m *APIQuery) execute(n *Node) (qr []APIQueryResult, err error) {
+	var selectorRanges [][2][]byte
+	var andOr []bool
+
+	for i := 0; i < len(m.Selectors); i++ {
+		if m.Selectors[i].PT != nil && *m.Selectors[i].PT {
+			ss, _ := DeriveRecordSelector(m.Selectors[i].S)
+			ee := ss
+			if len(m.Selectors[i].E) > 0 && !bytes.Equal(m.Selectors[i].S, m.Selectors[i].E) {
+				ee, _ = DeriveRecordSelector(m.Selectors[i].E)
+			}
+			selectorRanges = append(selectorRanges, [2][]byte{ss, ee})
+		} else {
+			if len(m.Selectors[i].E) > 0 {
+				selectorRanges = append(selectorRanges, [2][]byte{m.Selectors[i].S, m.Selectors[i].E})
+			} else {
+				selectorRanges = append(selectorRanges, [2][]byte{m.Selectors[i].S, m.Selectors[i].S})
+			}
+		}
+		andOr = append(andOr, m.Selectors[i].Or != nil && *m.Selectors[i].Or)
+	}
+
+	bestByID := make(map[[32]byte]*[5]uint64)
+	n.db.query(selectorRanges, andOr, func(ts, weightL, weightH, doff, dlen uint64, id *[32]byte, owner []byte) bool {
+		rptr := bestByID[*id]
+		if rptr == nil {
+			bestByID[*id] = &([5]uint64{weightH, weightL, ts, doff, dlen})
+		} else {
+			if rptr[0] < weightH {
+				return true
+			} else if rptr[0] == weightH {
+				if rptr[1] < weightL {
+					return true
+				} else if rptr[1] == weightL {
+					if rptr[2] <= ts {
+						return true
+					}
+				}
+			}
+			rptr[0] = weightH
+			rptr[1] = weightL
+			rptr[2] = ts
+			rptr[3] = doff
+			rptr[4] = dlen
+		}
+		return true
+	})
+
+	return
+}
+
 // Run executes this API query against a remote LF node or proxy
 func (m *APINew) Run(url string) (*Record, error) {
 	body, err := apiRun(url, m)
@@ -173,7 +219,7 @@ func (m *APINew) CreateRecord() (*Record, error) {
 	} else {
 		ts = *m.Timestamp
 	}
-	return NewRecord(m.Value, m.Links, m.PlainTextSelectors, ((m.MaskValue != nil) && (*m.MaskValue == true)), kpub, ts, RecordWorkAlgorithmWharrgarbl, k)
+	return NewRecord(m.Value, m.Links, m.PlainTextSelectors, kpub, ts, RecordWorkAlgorithmWharrgarbl, k)
 }
 
 func apiSetStandardHeaders(out http.ResponseWriter) {
@@ -192,12 +238,6 @@ func apiSendObj(out http.ResponseWriter, req *http.Request, httpStatusCode int, 
 	h := out.Header()
 	h.Set("Content-Type", "application/json")
 	if req.Method == http.MethodHead {
-		var cr CountingWriter
-		err := json.NewEncoder(&cr).Encode(obj)
-		if err != nil {
-			return err
-		}
-		h.Set("Content-Length", strconv.FormatUint(uint64(cr), 10))
 		out.WriteHeader(httpStatusCode)
 		return nil
 	}
@@ -295,11 +335,11 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 	smux.HandleFunc("/links", func(out http.ResponseWriter, req *http.Request) {
 		apiSetStandardHeaders(out)
 		if req.Method == http.MethodGet || req.Method == http.MethodHead {
-			desired := uint(RecordDesiredLinks)
+			desired := uint(3)
 			desiredStr := req.URL.Query().Get("count")
 			if len(desiredStr) > 0 {
 				tmp, _ := strconv.ParseUint(desiredStr, 10, 64)
-				if tmp > 0 && tmp < uint64(RecordDesiredLinks) {
+				if tmp > 0 {
 					desired = uint(tmp)
 				}
 			}
