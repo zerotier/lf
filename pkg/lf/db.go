@@ -1,6 +1,6 @@
 /*
  * LF: Global Fully Replicated Key/Value Store
- * Copyright (C) 2018  ZeroTier, Inc.  https://www.zerotier.com/
+ * Copyright (C) 2018-2019  ZeroTier, Inc.  https://www.zerotier.com/
  *
  * Licensed under the terms of the MIT license (see LICENSE.txt).
  */
@@ -96,14 +96,13 @@ func (db *db) putRecord(r *Record) error {
 	rhash := r.Hash()
 	rid := r.ID()
 
-	selectors := make([]uintptr, 0, len(r.Selectors)*32)
-	selectorSizes := make([]C.uint, 0, len(r.Selectors))
+	selectorKeys := make([][32]byte, len(r.Selectors))
+	selectors := make([]uintptr, len(r.Selectors))
+	selectorSizes := make([]C.uint, len(r.Selectors))
 	for i := 0; i < len(r.Selectors); i++ {
-		if len(r.Selectors[i].Selector) == 0 {
-			return ErrorRecordInvalid
-		}
-		selectors = append(selectors, uintptr(unsafe.Pointer(&r.Selectors[i].Selector[0])))
-		selectorSizes = append(selectorSizes, C.uint(len(r.Selectors[i].Selector)))
+		selectorKeys[i] = r.Selectors[i].Key()
+		selectors[i] = uintptr(unsafe.Pointer(&selectorKeys[i]))
+		selectorSizes[i] = C.uint(len(selectorKeys[i]))
 	}
 	var sptr unsafe.Pointer
 	var ssptr unsafe.Pointer

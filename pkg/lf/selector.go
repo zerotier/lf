@@ -1,6 +1,14 @@
+/*
+ * LF: Global Fully Replicated Key/Value Store
+ * Copyright (C) 2018-2019  ZeroTier, Inc.  https://www.zerotier.com/
+ *
+ * Licensed under the terms of the MIT license (see LICENSE.txt).
+ */
+
 package lf
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/sha512"
 	"encoding/binary"
@@ -37,37 +45,44 @@ type Selector struct {
 }
 
 // SelectorKey generates a masked selector database key from a plain text name.
-func SelectorKey(plainTextName []byte, ord uint64) []byte {
-	var k [32]byte
+func SelectorKey(plainTextName []byte, ord uint64) (k [32]byte) {
 	s384 := sha512.Sum384(plainTextName)
 	for i := 0; i < 24; i++ {
 		s384[i] ^= s384[i+24]
 	}
 	copy(k[0:24], s384[0:24])
 	binary.BigEndian.PutUint64(k[24:32], ord)
-	return k[:]
+	return
 }
 
-// DatabaseKey returns the sortable opaque key used to store this selector in a database.
-func (s *Selector) DatabaseKey() []byte {
-	var k [32]byte
+// Key returns the sortable opaque key used to store this selector in a database.
+// This combines the name hash and the range query ordinal.
+func (s *Selector) Key() (k [32]byte) {
 	copy(k[0:24], s.Name[:])
 	binary.BigEndian.PutUint64(k[24:32], s.Ordinal)
-	return k[:]
+	return
 }
 
 // MarshalTo outputs this selector to a writer.
 func (s *Selector) MarshalTo(out io.Writer) error {
 	writeUVarint(out, s.Ordinal)
-	if err := out.Write(s.ClaimKey[:]); err != nil {
+	if _, err := out.Write(s.ClaimKey[:]); err != nil {
 		return err
 	}
-	if err := out.Write(s.ClaimSignature[:]); err != nil {
+	if _, err := out.Write(s.ClaimSignature[:]); err != nil {
 		return err
 	}
-	if err := out.Write(s.Name[:]); err != nil {
+	if _, err := out.Write(s.Name[:]); err != nil {
 		return err
 	}
+	return nil
+}
+
+// Bytes returns this selector marshaled to a byte array.
+func (s *Selector) Bytes() []byte {
+	var b bytes.Buffer
+	s.MarshalTo(&b)
+	return b.Bytes()
 }
 
 // UnmarshalFrom reads a selector from this input stream.
@@ -78,7 +93,7 @@ func (s *Selector) UnmarshalFrom(in io.Reader) error {
 		return err
 	}
 	s.Ordinal = ord
-	s.ClaimKey[0], err = br.ReadByte
+	s.ClaimKey[0], err = br.ReadByte()
 	if err != nil {
 		return err
 	}
@@ -118,4 +133,13 @@ func (s *Selector) Set(plainTextName []byte, ord uint64, hash []byte) *ecdsa.Pri
 	copy(s.ClaimSignature[:], sig)
 
 	return pk
+}
+
+// VerifyHash verifies a hash signed in Set().
+func (s *Selector) VerifyHash(hash []byte) bool {
+	pub, err := ECDSADecompressPublicKey(&ECCCurveSecP112R1, s.ClaimKey[:])
+	if err != nil {
+		return false
+	}
+	return ECDSAVerify(pub, hash, s.ClaimSignature[:])
 }

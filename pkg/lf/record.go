@@ -1,6 +1,6 @@
 /*
  * LF: Global Fully Replicated Key/Value Store
- * Copyright (C) 2018  ZeroTier, Inc.  https://www.zerotier.com/
+ * Copyright (C) 2018-2019  ZeroTier, Inc.  https://www.zerotier.com/
  *
  * Licensed under the terms of the MIT license (see LICENSE.txt).
  */
@@ -333,13 +333,15 @@ func (r *Record) Score() uint32 {
 	return 0
 }
 
-// ID returns a sha256 hash of all this record's selectors in their specified order.
+// ID returns a sha256 hash of all this record's selector database keys (selector hashed name and ordinal) in their specified order.
 func (r *Record) ID() *[32]byte {
 	if r.id == nil {
 		var id [32]byte
+		var sk [32]byte
 		h := sha256.New()
 		for i := 0; i < len(r.Selectors); i++ {
-			h.Write(r.Selectors[i].Selector)
+			sk = r.Selectors[i].Key()
+			h.Write(sk[:])
 		}
 		h.Sum(id[:0])
 		r.id = &id
@@ -446,7 +448,7 @@ func GetOwnerPublicKey(k *ecdsa.PrivateKey) ([]byte, error) {
 // NewRecordStart creates an incomplete record with its body and selectors filled out but no work or final signature.
 // This can be used to do the first step of a three-phase record creation process with the next two phases being NewRecordAddWork
 // and NewRecordComplete. This is useful of record creation needs to be split among systems or participants.
-func NewRecordStart(value []byte, links [][]byte, plainTextSelectors [][]byte, owner []byte, ts uint64) (r *Record, workHash [32]byte, workBillableBytes uint, err error) {
+func NewRecordStart(value []byte, links [][]byte, plainTextSelectorNames [][]byte, selectorOrdinals []uint64, owner []byte, ts uint64) (r *Record, workHash [32]byte, workBillableBytes uint, err error) {
 	if len(value) > RecordMaxSize {
 		err = ErrorInvalidParameter
 		return
@@ -473,16 +475,10 @@ func NewRecordStart(value []byte, links [][]byte, plainTextSelectors [][]byte, o
 	workHasher := sha256.New()
 	workHasher.Write(bodySigningHash[:])
 
-	if len(plainTextSelectors) > 0 {
-		r.Selectors = make([]RecordSelector, len(plainTextSelectors))
-		for i := 0; i < len(plainTextSelectors); i++ {
-			var pk *ecdsa.PrivateKey
-			r.Selectors[i].Selector, pk = DeriveRecordSelector(plainTextSelectors[i])
-			r.Selectors[i].Claim, err = ECDSASign(pk, bodySigningHash[:])
-			if err != nil {
-				panic(err)
-			}
-			r.Selectors[i].Algorithm = RecordSelectorAlgorithmS112
+	if len(plainTextSelectorNames) > 0 {
+		r.Selectors = make([]Selector, len(plainTextSelectorNames))
+		for i := 0; i < len(plainTextSelectorNames); i++ {
+			r.Selectors[i].Set(plainTextSelectorNames[i], selectorOrdinals[i], bodySigningHash[:])
 			sb := r.Selectors[i].Bytes()
 			workBillableBytes += uint(len(sb))
 			workHasher.Write(sb)
@@ -540,10 +536,10 @@ func NewRecordComplete(incompleteRecord *Record, signingHash []byte, ownerPrivat
 
 // NewRecord is a shortcut to running all incremental record creation functions.
 // Obviously this is time and memory intensive due to proof of work required to "pay" for this record.
-func NewRecord(value []byte, links [][]byte, plainTextSelectors [][]byte, owner []byte, ts uint64, workAlgorithm byte, ownerPrivate *ecdsa.PrivateKey) (r *Record, err error) {
+func NewRecord(value []byte, links [][]byte, plainTextSelectorNames [][]byte, selectorOrdinals []uint64, owner []byte, ts uint64, workAlgorithm byte, ownerPrivate *ecdsa.PrivateKey) (r *Record, err error) {
 	var wh, sh [32]byte
 	var wb uint
-	r, wh, wb, err = NewRecordStart(value, links, plainTextSelectors, owner, ts)
+	r, wh, wb, err = NewRecordStart(value, links, plainTextSelectorNames, selectorOrdinals, owner, ts)
 	if err != nil {
 		return
 	}

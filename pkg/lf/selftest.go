@@ -1,6 +1,6 @@
 /*
  * LF: Global Fully Replicated Key/Value Store
- * Copyright (C) 2018  ZeroTier, Inc.  https://www.zerotier.com/
+ * Copyright (C) 2018-2019  ZeroTier, Inc.  https://www.zerotier.com/
  *
  * Licensed under the terms of the MIT license (see LICENSE.txt).
  */
@@ -192,7 +192,7 @@ func TestDatabase(testBasePath string, out io.Writer) bool {
 		ts++
 		sel := []byte("test-owner-number-" + strconv.FormatInt(int64(ri%testDatabaseOwners), 10))
 		value := []byte(strconv.FormatUint(ts, 10))
-		records[ri], err = NewRecord(value, links, [][]byte{sel}, ownerPub[ri%testDatabaseOwners], ts, RecordWorkAlgorithmNone, ownerPriv[ri%testDatabaseOwners])
+		records[ri], err = NewRecord(value, links, [][]byte{sel}, []uint64{0}, ownerPub[ri%testDatabaseOwners], ts, RecordWorkAlgorithmNone, ownerPriv[ri%testDatabaseOwners])
 		if err != nil {
 			fmt.Fprintf(out, "FAILED: %s\n", err.Error())
 			return false

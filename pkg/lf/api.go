@@ -1,6 +1,6 @@
 /*
  * LF: Global Fully Replicated Key/Value Store
- * Copyright (C) 2018  ZeroTier, Inc.  https://www.zerotier.com/
+ * Copyright (C) 2018-2019  ZeroTier, Inc.  https://www.zerotier.com/
  *
  * Licensed under the terms of the MIT license (see LICENSE.txt).
  */
@@ -58,10 +58,9 @@ type APIStatus struct {
 
 // APIQuerySelector specifies a selector or selector range.
 type APIQuerySelector struct {
-	S  []byte ``                  // First selector in selector range (or single value for equality)
-	E  []byte `json:",omitempty"` // Second selector in selector range or empty/nil for simple equality instead of range query
-	Or *bool  `json:",omitempty"` // OR previous selector? AND if false. (ignored for first selector)
-	PT *bool  `json:",omitempty"` // If true these are plain text selector keys, not masked selectors
+	Name  []byte   `json:",omitempty"` // Name of selector (plain text)
+	Range []uint64 `json:",omitempty"` // Ordinal value if [1] or range if [2] in size (assumed to be 0 if empty)
+	Or    *bool    `json:",omitempty"` // Or previous selector? AND if false. (ignored for first selector)
 }
 
 // APIQuery describes a query for records.
@@ -77,15 +76,21 @@ type APIQueryResult struct {
 	Value  []byte // Record value if record could be unmasked.
 }
 
+// APINewSelector is a selector plain text name and an ordinal value (use zero if you don't care).
+type APINewSelector struct {
+	Name    []byte
+	Ordinal uint64
+}
+
 // APINew instructs this server (or proxy) to create a new record locally and submit it.
 // Full nodes will only do this if it's requested by authorized IPs. Normally this is done via a proxy
 // and also because typically you don't want to share your owner private key with some random node.
 type APINew struct {
-	PlainTextSelectors [][]byte ``                  // Array of plain text selector keys
-	OwnerPrivateKey    []byte   ``                  // X.509 encoded private key with included public key
-	Links              [][]byte ``                  // Links to other records in the DAG (each link must be 32 bytes in size)
-	Value              []byte   ``                  // Plain text value for this record
-	Timestamp          *uint64  `json:",omitempty"` // Record timestamp (server time is used if zero or omitted)
+	Selectors       []APINewSelector ``                  // Plain text selector names and ordinals
+	OwnerPrivateKey []byte           ``                  // X.509 encoded private key with included public key
+	Links           [][]byte         ``                  // Links to other records in the DAG (each link must be 32 bytes in size)
+	Value           []byte           ``                  // Plain text value for this record
+	Timestamp       *uint64          `json:",omitempty"` // Record timestamp (server time is used if zero or omitted)
 }
 
 // APIError indicates an error and is returned with non-200 responses.
@@ -142,19 +147,16 @@ func (m *APIQuery) execute(n *Node) (qr []APIQueryResult, err error) {
 	var andOr []bool
 
 	for i := 0; i < len(m.Selectors); i++ {
-		if m.Selectors[i].PT != nil && *m.Selectors[i].PT {
-			ss, _ := DeriveRecordSelector(m.Selectors[i].S)
-			ee := ss
-			if len(m.Selectors[i].E) > 0 && !bytes.Equal(m.Selectors[i].S, m.Selectors[i].E) {
-				ee, _ = DeriveRecordSelector(m.Selectors[i].E)
-			}
-			selectorRanges = append(selectorRanges, [2][]byte{ss, ee})
+		if len(m.Selectors[i].Range) == 0 {
+			ss := SelectorKey(m.Selectors[i].Name, 0)
+			selectorRanges = append(selectorRanges, [2][]byte{ss[:], ss[:]})
+		} else if len(m.Selectors[i].Range) == 1 {
+			ss := SelectorKey(m.Selectors[i].Name, m.Selectors[i].Range[0])
+			selectorRanges = append(selectorRanges, [2][]byte{ss[:], ss[:]})
 		} else {
-			if len(m.Selectors[i].E) > 0 {
-				selectorRanges = append(selectorRanges, [2][]byte{m.Selectors[i].S, m.Selectors[i].E})
-			} else {
-				selectorRanges = append(selectorRanges, [2][]byte{m.Selectors[i].S, m.Selectors[i].S})
-			}
+			ss := SelectorKey(m.Selectors[i].Name, m.Selectors[i].Range[0])
+			ee := SelectorKey(m.Selectors[i].Name, m.Selectors[i].Range[1])
+			selectorRanges = append(selectorRanges, [2][]byte{ss[:], ee[:]})
 		}
 		andOr = append(andOr, m.Selectors[i].Or != nil && *m.Selectors[i].Or)
 	}
@@ -219,7 +221,13 @@ func (m *APINew) CreateRecord() (*Record, error) {
 	} else {
 		ts = *m.Timestamp
 	}
-	return NewRecord(m.Value, m.Links, m.PlainTextSelectors, kpub, ts, RecordWorkAlgorithmWharrgarbl, k)
+	sel := make([][]byte, len(m.Selectors))
+	selord := make([]uint64, len(m.Selectors))
+	for i := range m.Selectors {
+		sel[i] = m.Selectors[i].Name
+		selord[i] = m.Selectors[i].Ordinal
+	}
+	return NewRecord(m.Value, m.Links, sel, selord, kpub, ts, RecordWorkAlgorithmWharrgarbl, k)
 }
 
 func apiSetStandardHeaders(out http.ResponseWriter) {
