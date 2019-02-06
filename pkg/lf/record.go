@@ -333,15 +333,13 @@ func (r *Record) Score() uint32 {
 	return 0
 }
 
-// ID returns a sha256 hash of all this record's selector database keys (selector hashed name and ordinal) in their specified order.
+// ID returns a sha256 hash of all this record's selector database keys in their specified order.
 func (r *Record) ID() *[32]byte {
 	if r.id == nil {
 		var id [32]byte
-		var sk [32]byte
 		h := sha256.New()
 		for i := 0; i < len(r.Selectors); i++ {
-			sk = r.Selectors[i].Key()
-			h.Write(sk[:])
+			h.Write(r.Selectors[i].Key())
 		}
 		h.Sum(id[:0])
 		r.id = &id
@@ -370,7 +368,7 @@ func (r *Record) Validate() (err error) {
 		sb := r.Selectors[i].Bytes()
 		workHashBytes = append(workHashBytes, sb...)
 		workBillableBytes += uint(len(sb))
-		if !r.Selectors[i].VerifyHash(bodySigningHash[:]) {
+		if !r.Selectors[i].VerifyClaim(bodySigningHash[:]) {
 			return ErrorRecordSelectorClaimCheckFailed
 		}
 	}
@@ -478,7 +476,7 @@ func NewRecordStart(value []byte, links [][]byte, plainTextSelectorNames [][]byt
 	if len(plainTextSelectorNames) > 0 {
 		r.Selectors = make([]Selector, len(plainTextSelectorNames))
 		for i := 0; i < len(plainTextSelectorNames); i++ {
-			r.Selectors[i].Set(plainTextSelectorNames[i], selectorOrdinals[i], bodySigningHash[:])
+			r.Selectors[i].Claim(plainTextSelectorNames[i], selectorOrdinals[i], bodySigningHash[:])
 			sb := r.Selectors[i].Bytes()
 			workBillableBytes += uint(len(sb))
 			workHasher.Write(sb)

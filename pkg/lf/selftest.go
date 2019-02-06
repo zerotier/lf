@@ -50,7 +50,7 @@ func TestCore(out io.Writer) bool {
 		return false
 	}
 
-	curves := []elliptic.Curve{elliptic.P384(), &ECCCurveSecP112R1}
+	curves := []elliptic.Curve{elliptic.P521(), elliptic.P384(), &ECCCurveBrainpoolP160T1}
 	for ci := range curves {
 		curve := curves[ci]
 		fmt.Fprintf(out, "Testing %s ECDSA...\n", curve.Params().Name)

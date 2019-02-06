@@ -10,6 +10,7 @@ package lf
 import (
 	"bytes"
 	"crypto/ecdsa"
+	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/binary"
 	"io"
@@ -33,33 +34,46 @@ func (prng sha512csprng) Read(b []byte) (int, error) {
 	return len(b), nil
 }
 
-// SelectorTypeH192C112 indicates a selector with a 192-bit name hash (truncated SHA256) and a 112-bit claim key.
-const SelectorTypeH192C112 byte = 0
+// SelectorTypeBP160 indicates a selector built from the brainpoolP160t1 elliptic curve.
+const SelectorTypeBP160 byte = 0
 
 // Selector is a non-forgeable range queryable identifier for records, also rewinds wicked tracks at the behest of the DJ.
+// A selector consists of a public key from a key pair deterministically generated from the selector's plain text name,
+// a 64-bit ordinal that can be used for range queries, and a signature. The signature signs the record to which this
+// selector is attached, its key, and its ordinal. The purpose of this signature system is to prove knowledge of the
+// selector's plain text name without actually revealing it, making selector names private unless explicitly revealed.
+// This makes it easier to build secure apps that rely on private identifiers and also protects the network against a
+// class of denial of service or application data corrupting attacks where an attacker naively creates bogus records with
+// overlapping keys without actually knowing what the keys really are. The curve used for selector claim sigantures is
+// small, making that a really determined attacker may be able to forge one, but it's big enough that the cost of such
+// an attack would outweigh its modest result (assuming LF based apps are well designed). Much larger ECC curves are
+// used for more important security roles in the LF system.
 type Selector struct {
 	Ordinal        uint64   // An ordinal value that can be used to perform range queries against selectors
-	Name           [24]byte // 192-bit hash of name (made by XORing first and second 192 bits in SHA384)
-	ClaimKey       [15]byte // Deterministically created claim key
-	ClaimSignature [28]byte // 28 == secp112r1 signature size when signed with ECDSASign()
+	ClaimKey       [21]byte // 21-byte brainpoolP160t1 public key
+	ClaimSignature [40]byte // 40-byte brainpoolP160t1 signature
 }
 
-// SelectorKey generates a masked selector database key from a plain text name.
-func SelectorKey(plainTextName []byte, ord uint64) (k [32]byte) {
-	s384 := sha512.Sum384(plainTextName)
-	for i := 0; i < 24; i++ {
-		s384[i] ^= s384[i+24]
+// MakeSelectorKey generates a masked selector database key from a plain text name.
+// If this name is not used with range queries use zero for the ordinal. This function exists
+// to allow selector database keys to be created separate from record creation if needed.
+func MakeSelectorKey(plainTextName []byte, ord uint64) []byte {
+	priv, err := ecdsa.GenerateKey(&ECCCurveBrainpoolP160T1, &sha512csprng{s512: sha512.Sum512(plainTextName), n: 0})
+	if err != nil {
+		panic(err)
 	}
-	copy(k[0:24], s384[0:24])
-	binary.BigEndian.PutUint64(k[24:32], ord)
-	return
+	ck, _ := ECDSACompressPublicKeyWithID(&priv.PublicKey, SelectorTypeBP160)
+	var o [8]byte
+	binary.BigEndian.PutUint64(o[:], ord)
+	return append(ck, o[:]...)
 }
 
 // Key returns the sortable opaque key used to store this selector in a database.
-// This combines the name hash and the range query ordinal.
-func (s *Selector) Key() (k [32]byte) {
-	copy(k[0:24], s.Name[:])
-	binary.BigEndian.PutUint64(k[24:32], s.Ordinal)
+// It consists of the claim key followed by the ordinal as a big-endian 64-bit integer.
+func (s *Selector) Key() (k []byte) {
+	k = make([]byte, 29)
+	copy(k[0:21], s.ClaimKey[:])
+	binary.BigEndian.PutUint64(k[21:29], s.Ordinal)
 	return
 }
 
@@ -72,15 +86,13 @@ func (s *Selector) MarshalTo(out io.Writer) error {
 	if _, err := out.Write(s.ClaimSignature[:]); err != nil {
 		return err
 	}
-	if _, err := out.Write(s.Name[:]); err != nil {
-		return err
-	}
 	return nil
 }
 
 // Bytes returns this selector marshaled to a byte array.
 func (s *Selector) Bytes() []byte {
 	var b bytes.Buffer
+	b.Grow(40 + 21 + 8)
 	s.MarshalTo(&b)
 	return b.Bytes()
 }
@@ -97,7 +109,7 @@ func (s *Selector) UnmarshalFrom(in io.Reader) error {
 	if err != nil {
 		return err
 	}
-	if (s.ClaimKey[0] >> 1) != SelectorTypeH192C112 {
+	if (s.ClaimKey[0] >> 1) != SelectorTypeBP160 {
 		return ErrorUnsupportedType
 	}
 	_, err = br.Read(s.ClaimKey[1:])
@@ -105,41 +117,54 @@ func (s *Selector) UnmarshalFrom(in io.Reader) error {
 		return err
 	}
 	_, err = br.Read(s.ClaimSignature[:])
-	if err != nil {
-		return err
-	}
-	_, err = br.Read(s.Name[:])
 	return err
 }
 
-// Set initializes and signs this selector.
-func (s *Selector) Set(plainTextName []byte, ord uint64, hash []byte) *ecdsa.PrivateKey {
+// Claim initializes and signs this selector for a given record.
+// The hash supplied is the record's body hash. If this selector is not intended for range
+// queries use zero for its ordinal.
+func (s *Selector) Claim(plainTextName []byte, ord uint64, hash []byte) {
 	s.Ordinal = ord
 
-	s384 := sha512.Sum384(plainTextName)
-	for i := 0; i < 24; i++ {
-		s384[i] ^= s384[i+24]
+	priv, err := ecdsa.GenerateKey(&ECCCurveBrainpoolP160T1, &sha512csprng{s512: sha512.Sum512(plainTextName), n: 0})
+	if err != nil {
+		panic(err)
 	}
-	copy(s.Name[:], s384[0:24])
+	ck, _ := ECDSACompressPublicKeyWithID(&priv.PublicKey, SelectorTypeBP160)
+	if len(ck) != len(s.ClaimKey) {
+		panic("claim key compression failed")
+	}
+	copy(s.ClaimKey[:], ck)
 
-	ordAndName := make([]byte, len(plainTextName)+8)
-	binary.BigEndian.PutUint64(ordAndName[0:8], ord)
-	copy(ordAndName[8:], plainTextName)
-	pk, _ := ecdsa.GenerateKey(&ECCCurveSecP112R1, &sha512csprng{s512: sha512.Sum512(ordAndName), n: 0})
-	pcomp, _ := ECDSACompressPublicKeyWithID(&pk.PublicKey, SelectorTypeH192C112) // the type is embedded here, and only one type is supported
-	copy(s.ClaimKey[:], pcomp)
-
-	sig, _ := ECDSASign(pk, hash)
-	copy(s.ClaimSignature[:], sig)
-
-	return pk
+	sigHash := sha256.New()
+	sigHash.Write(hash)
+	sigHash.Write(ck)
+	var obytes [8]byte
+	binary.BigEndian.PutUint64(obytes[:], ord)
+	sigHash.Write(obytes[:])
+	var sigHashBuf [32]byte
+	cs, err := ECDSASign(priv, sigHash.Sum(sigHashBuf[:0]))
+	if err != nil {
+		panic(err)
+	}
+	if len(cs) != len(s.ClaimSignature) {
+		panic("claim signature size is not correct")
+	}
+	copy(s.ClaimSignature[:], cs)
 }
 
-// VerifyHash verifies a hash signed in Set().
-func (s *Selector) VerifyHash(hash []byte) bool {
-	pub, err := ECDSADecompressPublicKey(&ECCCurveSecP112R1, s.ClaimKey[:])
+// VerifyClaim verifies that the creator of this selector knew its plain text name when it was attached to its record.
+func (s *Selector) VerifyClaim(hash []byte) bool {
+	pub, err := ECDSADecompressPublicKey(&ECCCurveBrainpoolP160T1, s.ClaimKey[:])
 	if err != nil {
 		return false
 	}
-	return ECDSAVerify(pub, hash, s.ClaimSignature[:])
+	sigHash := sha256.New()
+	sigHash.Write(hash)
+	sigHash.Write(s.ClaimKey[:])
+	var obytes [8]byte
+	binary.BigEndian.PutUint64(obytes[:], s.Ordinal)
+	sigHash.Write(obytes[:])
+	var sigHashBuf [32]byte
+	return ECDSAVerify(pub, sigHash.Sum(sigHashBuf[:0]), s.ClaimSignature[:])
 }

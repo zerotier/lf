@@ -56,18 +56,17 @@ type APIStatus struct {
 	ProxyStatus   *APIProxyStatus `json:",omitempty"` // Proxies can add this to describe their own config and status while still reporting that of the server
 }
 
-// APIQuerySelector specifies a selector or selector range.
-type APIQuerySelector struct {
-	Name  []byte   `json:",omitempty"` // Name of selector (plain text)
-	Range []uint64 `json:",omitempty"` // Ordinal value if [1] or range if [2] in size (assumed to be 0 if empty)
-	Or    *bool    `json:",omitempty"` // Or previous selector? AND if false. (ignored for first selector)
+// APIQueryRange specifies a selector or selector range.
+type APIQueryRange struct {
+	Name     []byte   `json:",omitempty"` // Name of selector (plain text)
+	Range    []uint64 `json:",omitempty"` // Ordinal value if [1] or range if [2] in size (assumed to be 0 if empty)
+	KeyRange [][]byte `json:",omitempty"` // Selector key or key range, overrides Name and Range if present (allows queries without revealing name)
+	Or       *bool    `json:",omitempty"` // Or previous selector? AND if false. (ignored for first selector)
 }
 
 // APIQuery describes a query for records.
 // It results in an array of APIQueryResult objects sorted in descending order of weight.
-type APIQuery struct {
-	Selectors []APIQuerySelector `` // Selectors or selector range(s)
-}
+type APIQuery []APIQueryRange
 
 // APIQueryResult is a single query result.
 type APIQueryResult struct {
@@ -131,7 +130,7 @@ func apiRun(url string, m interface{}) ([]byte, error) {
 
 // Run executes this API query against a remote LF node or proxy
 func (m *APIQuery) Run(url string) (*APIQueryResult, error) {
-	body, err := apiRun(url, m)
+	body, err := apiRun(url, ([]APIQueryRange)(*m))
 	if err != nil {
 		return nil, err
 	}
@@ -146,19 +145,28 @@ func (m *APIQuery) execute(n *Node) (qr []APIQueryResult, err error) {
 	var selectorRanges [][2][]byte
 	var andOr []bool
 
-	for i := 0; i < len(m.Selectors); i++ {
-		if len(m.Selectors[i].Range) == 0 {
-			ss := SelectorKey(m.Selectors[i].Name, 0)
-			selectorRanges = append(selectorRanges, [2][]byte{ss[:], ss[:]})
-		} else if len(m.Selectors[i].Range) == 1 {
-			ss := SelectorKey(m.Selectors[i].Name, m.Selectors[i].Range[0])
-			selectorRanges = append(selectorRanges, [2][]byte{ss[:], ss[:]})
+	mm := ([]APIQueryRange)(*m)
+	for i := 0; i < len(mm); i++ {
+		if len(mm[i].KeyRange) == 0 {
+			if len(mm[i].Range) == 0 {
+				ss := MakeSelectorKey(mm[i].Name, 0)
+				selectorRanges = append(selectorRanges, [2][]byte{ss[:], ss[:]})
+			} else if len(mm[i].Range) == 1 {
+				ss := MakeSelectorKey(mm[i].Name, mm[i].Range[0])
+				selectorRanges = append(selectorRanges, [2][]byte{ss[:], ss[:]})
+			} else {
+				ss := MakeSelectorKey(mm[i].Name, mm[i].Range[0])
+				ee := MakeSelectorKey(mm[i].Name, mm[i].Range[1])
+				selectorRanges = append(selectorRanges, [2][]byte{ss[:], ee[:]})
+			}
 		} else {
-			ss := SelectorKey(m.Selectors[i].Name, m.Selectors[i].Range[0])
-			ee := SelectorKey(m.Selectors[i].Name, m.Selectors[i].Range[1])
-			selectorRanges = append(selectorRanges, [2][]byte{ss[:], ee[:]})
+			if len(mm[i].KeyRange) == 1 {
+				selectorRanges = append(selectorRanges, [2][]byte{mm[i].KeyRange[0], mm[i].KeyRange[0]})
+			} else {
+				selectorRanges = append(selectorRanges, [2][]byte{mm[i].KeyRange[0], mm[i].KeyRange[1]})
+			}
 		}
-		andOr = append(andOr, m.Selectors[i].Or != nil && *m.Selectors[i].Or)
+		andOr = append(andOr, mm[i].Or != nil && *mm[i].Or)
 	}
 
 	bestByID := make(map[[32]byte]*[5]uint64)

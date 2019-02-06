@@ -1,6 +1,6 @@
 /*
  * LF: Global Fully Replicated Key/Value Store
- * Copyright (C) 2018  ZeroTier, Inc.  https://www.zerotier.com/
+ * Copyright (C) 2018-2019  ZeroTier, Inc.  https://www.zerotier.com/
  *
  * Licensed under the terms of the MIT license (see LICENSE.txt).
  */
@@ -18,33 +18,22 @@ import (
 )
 
 var (
-	// ECCCurveSecP112R1 is a tiny elliptic curve for use in claim signatures.
-	// This is not used for security critical things like owner signatures, just to make dumb key collision DOS attacks hard
-	// by allowing selectors to prove knowledge of their masked plain text keys. Forgery is possible but would take more
-	// CPU time and effort than such an attack would be worth (provided an app using LF is well designed and robust).
-	ECCCurveSecP112R1 = func() elliptic.CurveParams {
-		var secp112r1 elliptic.CurveParams
-		secp112r1.Name = "secp112r1"
-		secp112r1.P, _ = new(big.Int).SetString("00db7c2abf62e35e668076bead208b", 16) // Prime
-		secp112r1.N, _ = new(big.Int).SetString("00db7c2abf62e35e7628dfac6561c5", 16) // Order
-		secp112r1.B, _ = new(big.Int).SetString("659ef8ba043916eede8911702b22", 16)   // B
-		secp112r1.Gx, _ = new(big.Int).SetString("09487239995a5ee76b55f9c2f098", 16)  // Generator X
-		secp112r1.Gy, _ = new(big.Int).SetString("a89ce5af8724c0a23e0e0ff77500", 16)  // Generator Y
-		secp112r1.BitSize = 112
-		return secp112r1
+	// ECCCurveBrainpoolP160T1 is a 160-bit elliptic curve used for selectors and their claim signatures.
+	// This curve is used for selector claim signatures to prevent a form of denial of service attack. It's
+	// not used in really security-critical areas like owner and CA signatures or transport security.
+	ECCCurveBrainpoolP160T1 = func() elliptic.CurveParams {
+		var c elliptic.CurveParams
+		c.Name = "brainpoolP160t1"
+		c.P, _ = new(big.Int).SetString("E95E4A5F737059DC60DFC7AD95B3D8139515620F", 16)
+		c.N, _ = new(big.Int).SetString("E95E4A5F737059DC60DF5991D45029409E60FC09", 16)
+		c.B, _ = new(big.Int).SetString("7A556B6DAE535B7B51ED2C4D7DAA7A0B5C55F380", 16)
+		c.Gx, _ = new(big.Int).SetString("B199B13B9B34EFC1397E64BAEB05ACC265FF2378", 16)
+		c.Gy, _ = new(big.Int).SetString("ADD6718B7C7C1961F0991B842443772152C9E0AD", 16)
+		c.BitSize = 160
+		return c
 	}()
 
 	bigInt3 = big.NewInt(3)
-)
-
-// Size of compressed public keys for different ECDSA curves.
-const (
-	ECCCurveSecP112R1SignatureSize      = 28 // (112/8)*2
-	ECCSecP112R1CompressedPublicKeySize = 15
-	ECCP224CompressedPublicKeySize      = 29
-	ECCP256CompressedPublicKeySize      = 33
-	ECCP384CompressedPublicKeySize      = 49
-	ECCP521CompressedPublicKeySize      = 67
 )
 
 // ECCCompressPublicKey compresses a naked elliptic curve public key denoted by X and Y components.
@@ -152,8 +141,8 @@ func ECDSASign(key *ecdsa.PrivateKey, hash []byte) ([]byte, error) {
 	}
 	sig := make([]byte, orderSize*2)
 
-	copy(sig, rb)
-	copy(sig[orderSize:], sb)
+	copy(sig[orderSize-len(rb):], rb)
+	copy(sig[orderSize+(orderSize-len(sb)):], sb)
 
 	return sig, nil
 }

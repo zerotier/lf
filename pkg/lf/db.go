@@ -96,7 +96,7 @@ func (db *db) putRecord(r *Record) error {
 	rhash := r.Hash()
 	rid := r.ID()
 
-	selectorKeys := make([][32]byte, len(r.Selectors))
+	selectorKeys := make([][]byte, len(r.Selectors))
 	selectors := make([]uintptr, len(r.Selectors))
 	selectorSizes := make([]C.uint, len(r.Selectors))
 	for i := 0; i < len(r.Selectors); i++ {
