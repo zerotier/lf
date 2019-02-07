@@ -54,7 +54,7 @@ type peer struct {
 	remotePublicKey []byte              // Remote public key
 }
 
-// Node is an instance of LF
+// Node is an instance of a full LF node.
 type Node struct {
 	logger               *log.Logger
 	linkKeyPriv          []byte

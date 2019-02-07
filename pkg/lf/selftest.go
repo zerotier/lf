@@ -39,7 +39,7 @@ func TestCore(out io.Writer) bool {
 	}
 	fmt.Fprintf(out, "OK\n")
 
-	fmt.Fprintf(out, "Testing hash slice filling behavior... ")
+	fmt.Fprintf(out, "Testing hash slice filling behavior (API behavior check)... ")
 	ref := sha256.Sum256([]byte("My hovercraft is full of eels."))
 	th := sha256.New()
 	th.Write([]byte("My hovercraft is full of eels."))
@@ -52,7 +52,7 @@ func TestCore(out io.Writer) bool {
 		return false
 	}
 
-	curves := []elliptic.Curve{elliptic.P521(), elliptic.P384(), &ECCCurveBrainpoolP160T1}
+	curves := []elliptic.Curve{elliptic.P384(), &ECCCurveBrainpoolP160T1}
 	for ci := range curves {
 		curve := curves[ci]
 		fmt.Fprintf(out, "Testing %s ECDSA...\n", curve.Params().Name)
@@ -100,6 +100,61 @@ func TestCore(out io.Writer) bool {
 			return false
 		}
 	}
+
+	fmt.Fprintf(out, "Testing Selector... ")
+	var testSelectors [128]Selector
+	var testSelectorClaimHash [32]byte
+	secrand.Read(testSelectorClaimHash[:])
+	for k := range testSelectors {
+		testSelectors[k].Claim(testSelectorClaimHash[:], uint64(k), testSelectorClaimHash[:])
+		if !testSelectors[k].VerifyClaim(testSelectorClaimHash[:]) {
+			fmt.Fprintf(out, "FAILED (verify #%d)\n", k)
+			return false
+		}
+	}
+	for k := 1; k < len(testSelectors); k++ {
+		if bytes.Compare(testSelectors[k-1].Key(), testSelectors[k].Key()) >= 0 {
+			fmt.Fprintf(out, "FAILED (compare %d not < %d)\n", k-1, k)
+			return false
+		}
+	}
+	fmt.Fprintf(out, "OK\n")
+
+	fmt.Fprintf(out, "Testing Record marshal/unmarshal... ")
+	for k := 0; k < 32; k++ {
+		var testLinks [][]byte
+		for i := 0; i < 3; i++ {
+			var tmp [32]byte
+			secrand.Read(tmp[:])
+			testLinks = append(testLinks, tmp[:])
+		}
+		var testValue [32]byte
+		secrand.Read(testValue[:])
+		owner, ownerPriv := GenerateOwner()
+		rec, err := NewRecord(testValue[:], testLinks, [][]byte{[]byte("test0")}, []uint64{0}, owner, uint64(k), RecordWorkAlgorithmNone, ownerPriv)
+		if err != nil {
+			fmt.Fprintf(out, "FAILED (create record): %s\n", err.Error())
+			return false
+		}
+		var testBuf0 bytes.Buffer
+		err = rec.MarshalTo(&testBuf0)
+		if err != nil {
+			fmt.Fprintf(out, "FAILED (marshal record): %s\n", err.Error())
+			return false
+		}
+		var rec2 Record
+		err = rec2.UnmarshalFrom(&testBuf0)
+		if err != nil {
+			fmt.Fprintf(out, "FAILED (unmarshal record): %s\n", err.Error())
+			return false
+		}
+		h0, h1 := rec.Hash(), rec2.Hash()
+		if !bytes.Equal(h0[:], h1[:]) {
+			fmt.Fprintf(out, "FAILED (hashes are not equal)\n")
+			return false
+		}
+	}
+	fmt.Fprintf(out, "OK\n")
 
 	return true
 }

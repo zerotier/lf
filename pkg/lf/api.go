@@ -31,7 +31,7 @@ var apiVersionStr = strconv.FormatInt(int64(APIVersion), 10)
 // APIStatusPeer contains information about a connected peer.
 type APIStatusPeer struct {
 	RemoteAddress string // IP and port
-	PublicKey     string // base58-encoded public key (encoded with embedded CRC16)
+	PublicKey     string // public key in base58 format
 	Inbound       bool   // true if this is an inbound connection
 }
 

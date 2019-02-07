@@ -20,7 +20,8 @@ import (
 var (
 	// ECCCurveBrainpoolP160T1 is a 160-bit elliptic curve used for selectors and their claim signatures.
 	// This curve is used for selector claim signatures to prevent a form of denial of service attack. It's
-	// not used in really security-critical areas like owner and CA signatures or transport security.
+	// not used in really security-critical areas like owner and CA signatures or transport security. The
+	// much larger NIST P-384 curve is used there.
 	ECCCurveBrainpoolP160T1 = func() elliptic.CurveParams {
 		var c elliptic.CurveParams
 		c.Name = "brainpoolP160t1"

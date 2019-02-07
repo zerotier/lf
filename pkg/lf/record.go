@@ -50,8 +50,7 @@ type RecordBody struct {
 	Timestamp uint64 // Timestamp (and revision ID) in SECONDS since Unix epoch
 }
 
-// UnmarshalFrom deserializes this record body from a reader.
-func (rb *RecordBody) UnmarshalFrom(r io.Reader) error {
+func (rb *RecordBody) unmarshalFrom(r io.Reader) error {
 	rr := byteAndArrayReader{r}
 
 	l, err := binary.ReadUvarint(&rr)
@@ -99,8 +98,7 @@ func (rb *RecordBody) UnmarshalFrom(r io.Reader) error {
 	return nil
 }
 
-// MarshalTo writes this record body in serialized form to the given writer.
-func (rb *RecordBody) MarshalTo(w io.Writer) error {
+func (rb *RecordBody) marshalTo(w io.Writer) error {
 	if _, err := writeUVarint(w, uint64(len(rb.Value))); err != nil {
 		return err
 	}
@@ -134,30 +132,26 @@ func (rb *RecordBody) MarshalTo(w io.Writer) error {
 }
 
 // LinkCount returns the number of links, which is just short for len(Links)/32
-func (rb *RecordBody) LinkCount() int {
-	return (len(rb.Links) / 32)
-}
+func (rb *RecordBody) LinkCount() int { return (len(rb.Links) / 32) }
 
-// Bytes returns a compact byte array serialized RecordBody.
-func (rb *RecordBody) Bytes() []byte {
+func (rb *RecordBody) bytes() []byte {
 	var buf bytes.Buffer
-	rb.MarshalTo(&buf)
+	rb.marshalTo(&buf)
 	return buf.Bytes()
 }
 
-// SizeBytes returns the size of the result of Bytes().
-func (rb *RecordBody) SizeBytes() uint {
+func (rb *RecordBody) sizeBytes() uint {
 	var wc countingWriter
-	rb.MarshalTo(&wc)
+	rb.marshalTo(&wc)
 	return uint(wc)
 }
 
-// SigningHash computes a hash for use in record signing.
+// signingHash computes a hash for use in record signing.
 // This doesn't just hash Bytes(). It uses a different encoding and hashes the value
 // separately. This is done to make it possible in the future to store only value hashes
 // but still be able to authenticate records, which could allow the size of the data store
 // to get trimmed down a bit by discarding actual values for very old records.
-func (rb *RecordBody) SigningHash() [32]byte {
+func (rb *RecordBody) signingHash() [32]byte {
 	h := sha512.New()
 	vh := Shandwich256(rb.Value)
 	h.Write(vh[:])
@@ -176,7 +170,8 @@ func (rb *RecordBody) SigningHash() [32]byte {
 // Record combines the record body with one or more selectors, work, and a signature.
 // A record should not be modified once created. It should be treated as a read-only value.
 type Record struct {
-	Body          RecordBody // Main record body with value and other tasty stuff
+	RecordBody
+
 	Selectors     []Selector // Things that can be used to find the record
 	Work          []byte     // Proof of work computed on sha256(Body Signing Hash | Selectors) with work cost based on size of body and selectors
 	WorkAlgorithm byte       // Proof of work algorithm
@@ -199,7 +194,7 @@ func (r *Record) UnmarshalFrom(rdr io.Reader) error {
 		return ErrorRecordInvalid
 	}
 
-	if err = r.Body.UnmarshalFrom(&rr); err != nil {
+	if err = r.RecordBody.unmarshalFrom(&rr); err != nil {
 		return err
 	}
 
@@ -222,14 +217,15 @@ func (r *Record) UnmarshalFrom(rdr io.Reader) error {
 	if err != nil {
 		return err
 	}
-	if walg != RecordWorkAlgorithmWharrgarbl {
+	if walg == RecordWorkAlgorithmWharrgarbl {
+		var work [WharrgarblOutputSize]byte
+		if _, err = io.ReadFull(&rr, work[:]); err != nil {
+			return err
+		}
+		r.Work = work[:]
+	} else if walg != RecordWorkAlgorithmNone {
 		return ErrorRecordUnsupportedAlgorithm
 	}
-	var work [WharrgarblOutputSize]byte
-	if _, err = io.ReadFull(&rr, work[:]); err != nil {
-		return err
-	}
-	r.Work = work[:]
 	r.WorkAlgorithm = walg
 
 	siglen, err := binary.ReadUvarint(&rr)
@@ -263,7 +259,7 @@ func (r *Record) MarshalTo(w io.Writer) error {
 		return err
 	}
 
-	if err := r.Body.MarshalTo(w); err != nil {
+	if err := r.RecordBody.marshalTo(w); err != nil {
 		return err
 	}
 
@@ -306,6 +302,13 @@ func (r *Record) Bytes() []byte {
 	return r.data
 }
 
+// SizeBytes returns the serialized size of this record.
+func (r *Record) SizeBytes() uint {
+	var cr countingWriter
+	r.MarshalTo(&cr)
+	return uint(cr)
+}
+
 // Hash returns Shandwich256(record Bytes()).
 // This is the main record hash used for record linking.
 func (r *Record) Hash() *[32]byte {
@@ -318,13 +321,6 @@ func (r *Record) Hash() *[32]byte {
 		r.hash = &h
 	}
 	return r.hash
-}
-
-// SizeBytes returns the serialized size of this record.
-func (r *Record) SizeBytes() uint {
-	var cr countingWriter
-	r.MarshalTo(&cr)
-	return uint(cr)
 }
 
 // Score returns this record's work score, which is algorithm dependent.
@@ -367,14 +363,14 @@ func (r *Record) Validate() (err error) {
 		}
 	}()
 
-	if len(r.Body.Owner) == 0 {
+	if len(r.RecordBody.Owner) == 0 {
 		return ErrorRecordOwnerSignatureCheckFailed
 	}
 
-	selectorClaimSigningHash := r.Body.SigningHash()
+	selectorClaimSigningHash := r.RecordBody.signingHash()
 	workHashBytes := make([]byte, 0, 32+(len(r.Selectors)*128))
 	workHashBytes = append(workHashBytes, selectorClaimSigningHash[:]...)
-	workBillableBytes := r.Body.SizeBytes()
+	workBillableBytes := r.RecordBody.sizeBytes()
 	for i := 0; i < len(r.Selectors); i++ {
 		sb := r.Selectors[i].Bytes()
 		workHashBytes = append(workHashBytes, sb...)
@@ -396,7 +392,7 @@ func (r *Record) Validate() (err error) {
 		return ErrorRecordInsufficientWork
 	}
 
-	pubKey, err := ECDSADecompressPublicKey(elliptic.P384(), r.Body.Owner) // the curve type is in the least significant bits of owner but right now there's only one allowed
+	pubKey, err := ECDSADecompressPublicKey(elliptic.P384(), r.RecordBody.Owner) // the curve type is in the least significant bits of owner but right now there's only one allowed
 	if err != nil {
 		return ErrorRecordOwnerSignatureCheckFailed
 	}
@@ -492,21 +488,21 @@ func NewRecordStart(value []byte, links [][]byte, plainTextSelectorNames [][]byt
 	r = new(Record)
 
 	if len(value) > 0 {
-		r.Body.Value = append(r.Body.Value, value...)
+		r.RecordBody.Value = append(r.RecordBody.Value, value...)
 	}
-	r.Body.Owner = append(r.Body.Owner, owner...)
+	r.RecordBody.Owner = append(r.RecordBody.Owner, owner...)
 	if len(links) > 0 {
-		r.Body.Links = make([]byte, 0, 32*len(links))
+		r.RecordBody.Links = make([]byte, 0, 32*len(links))
 		for i := 0; i < len(links); i++ {
-			r.Body.Links = append(r.Body.Links, links[i]...)
+			r.RecordBody.Links = append(r.RecordBody.Links, links[i]...)
 		}
 	}
-	r.Body.Timestamp = ts
+	r.RecordBody.Timestamp = ts
 
-	workBillableBytes = r.Body.SizeBytes()
+	workBillableBytes = r.RecordBody.sizeBytes()
 
 	workHasher := sha256.New()
-	selectorClaimSigningHash := r.Body.SigningHash()
+	selectorClaimSigningHash := r.RecordBody.signingHash()
 	workHasher.Write(selectorClaimSigningHash[:])
 	if len(plainTextSelectorNames) > 0 {
 		r.Selectors = make([]Selector, len(plainTextSelectorNames))
