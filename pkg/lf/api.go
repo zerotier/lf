@@ -15,7 +15,9 @@ import (
 	"io"
 	"io/ioutil"
 	"net/http"
+	"sort"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -70,9 +72,8 @@ type APIQuery []APIQueryRange
 
 // APIQueryResult is a single query result.
 type APIQueryResult struct {
-	Record Record // Record itself.
-	Weight string // Record weight as a 128-bit hex value.
-	Value  []byte // Record value if record could be unmasked.
+	Record *Record // Record itself.
+	Weight string  // Record weight as a 128-bit hex value.
 }
 
 // APINewSelector is a selector plain text name and an ordinal value (use zero if you don't care).
@@ -98,16 +99,18 @@ type APIError struct {
 	Message string // Message indicating the reason for the error
 }
 
-// Error implements the error interface.
+// Error implements the error interface, making APIError an 'error'.
 func (e APIError) Error() string {
 	return fmt.Sprintf("%d (%s)", e.Code, e.Message)
 }
 
+// apiRun contains common code for the Run() methods of API request objects.
 func apiRun(url string, m interface{}) ([]byte, error) {
 	aq, err := json.Marshal(m)
 	if err != nil {
 		return nil, err
 	}
+
 	resp, err := http.Post(url, "application/json", bytes.NewReader(aq))
 	if err != nil {
 		return nil, err
@@ -195,6 +198,25 @@ func (m *APIQuery) execute(n *Node) (qr []APIQueryResult, err error) {
 		return true
 	})
 
+	for _, rptr := range bestByID {
+		rdata, err := n.db.getDataByOffset(rptr[3], uint(rptr[4]), nil)
+		if err != nil {
+			return nil, APIError{http.StatusInternalServerError, "error retrieving record data: " + err.Error()}
+		}
+		rec, err := NewRecordFromBytes(rdata)
+		if err != nil {
+			return nil, APIError{http.StatusInternalServerError, "error retrieving record data: " + err.Error()}
+		}
+		qr = append(qr, APIQueryResult{
+			Record: rec,
+			Weight: fmt.Sprintf("%.16x%.16x", rptr[0], rptr[1]),
+		})
+	}
+
+	sort.Slice(qr, func(a, b int) bool {
+		return strings.Compare(qr[b].Weight, qr[a].Weight) < 0
+	})
+
 	return
 }
 
@@ -211,10 +233,7 @@ func (m *APINew) Run(url string) (*Record, error) {
 	return &rec, nil
 }
 
-// CreateRecord creates a record using the parameters in this APINew message object.
-// This can be very time and memory intensive due to proof of work requirements. This is used inside
-// the node and proxy HTTP handlers but is exposed in case there is a reason to use it locally.
-func (m *APINew) CreateRecord() (*Record, error) {
+func (m *APINew) execute() (*Record, error) {
 	k, err := x509.ParseECPrivateKey(m.OwnerPrivateKey)
 	if err != nil {
 		return nil, err
@@ -304,7 +323,7 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 			if apiIsTrusted(n, req) {
 				var m APINew
 				if apiReadObj(out, req, &m) == nil {
-					rec, err := m.CreateRecord()
+					rec, err := m.execute()
 					if err != nil {
 						apiSendObj(out, req, http.StatusBadRequest, &APIError{Code: http.StatusForbidden, Message: "record creation failed: " + err.Error()})
 					} else {

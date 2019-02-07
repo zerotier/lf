@@ -11,6 +11,7 @@
 #include "common.h"
 #include "vector.h"
 #include "mappedfile.h"
+#include "suint96.h"
 
 #ifdef ZTLF_SQLITE_INCLUDE
 #include ZTLF_SQLITE_INCLUDE
@@ -31,8 +32,7 @@
  */
 ZTLF_PACKED_STRUCT(struct ZTLF_DB_GraphNode
 {
-	volatile uint64_t weightL;           /* least significant 64 bits of 80-bit weight */
-	volatile uint16_t weightH;           /* most significant 16 bits of 80-bit weight */
+	uint64_t weightsFileOffset;          /* offset of weight in weights "file" */
 	volatile uint64_t linkedCount;       /* number of nodes linking TO this one */
 	uint8_t linkCount;                   /* size of linkedRecordGoff[] */
 	volatile int64_t linkedRecordGoff[]; /* graph node offsets of linked records or -1 for holes (will be filled later) */
@@ -128,6 +128,9 @@ struct ZTLF_DB
 	pthread_rwlock_t gfLock;
 	struct ZTLF_MappedFile df;
 	pthread_rwlock_t dfLock;
+
+	/* The striped weights file has its own built-in lock. */
+	struct ZTLF_SUInt96 wf;
 
 	pthread_t graphThread;
 	volatile bool graphThreadStarted;

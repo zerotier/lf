@@ -367,14 +367,9 @@ static void *_ZTLF_DB_graphThreadMain(void *arg)
 					struct ZTLF_DB_GraphNode *const gn = (struct ZTLF_DB_GraphNode *)ZTLF_MappedFile_TryGet(&db->gf,(uintptr_t)goff,ZTLF_DB_MAX_GRAPH_NODE_SIZE);
 					if (gn) {
 						/* Add score to graph node weight. */
-						uint64_t wL = ZTLF_getu64_le(gn->weightL);
-						uint16_t wH = ZTLF_getu16_le(gn->weightH);
-						const uint64_t wLorig = wL;
-						const uint16_t wHorig = wH;
-						wH += (uint16_t)((wL += score) < wLorig);
-						ZTLF_setu64_le(gn->weightL,wL);
-						if (wH != wHorig) { ZTLF_setu16_le(gn->weightH,wH); }
+						ZTLF_SUint96_Add(&db->wf,(uintptr_t)gn->weightsFileOffset,score,0,0);
 
+						/* Append linked nodes to to-do queue. */
 						for(unsigned int i=0,j=gn->linkCount;i<j;++i) {
 							const int64_t nextGoff = ZTLF_get64_le(gn->linkedRecordGoff[i]);
 							if (nextGoff >= 0) {
@@ -574,6 +569,14 @@ int ZTLF_DB_Open(struct ZTLF_DB *db,const char *path,char *errbuf,unsigned int e
 	snprintf(tmp,sizeof(tmp),"%s" ZTLF_PATH_SEPARATOR "records.bin",path);
 	e = ZTLF_MappedFile_Open(&db->df,tmp,ZTLF_GRAPH_FILE_CAPACITY_INCREMENT,ZTLF_GRAPH_FILE_CAPACITY_INCREMENT);
 	if (e) {
+		ZTLF_MappedFile_Close(&db->gf);
+		errno = e;
+		e = 0;
+		goto exit_with_error;
+	}
+	snprintf(tmp,sizeof(tmp),"%s" ZTLF_PATH_SEPARATOR "weights",path);
+	e = ZTLF_SUint96_Open(&db->wf,tmp);
+	if (e) {
 		errno = e;
 		e = 0;
 		goto exit_with_error;
@@ -661,6 +664,7 @@ void ZTLF_DB_Close(struct ZTLF_DB *db)
 
 	ZTLF_MappedFile_Close(&db->gf);
 	ZTLF_MappedFile_Close(&db->df);
+	ZTLF_SUint96_Close(&db->wf);
 
 	pthread_mutex_unlock(&db->dbLock);
 	pthread_rwlock_unlock(&db->gfLock);
@@ -758,19 +762,22 @@ int ZTLF_DB_PutRecord(
 	 * graph and data files if needed. */
 	int64_t goff = 0;
 	int64_t doff = 0;
+	uintptr_t woff = 0;
 	struct ZTLF_DB_GraphNode *graphNode = NULL;
 	for(;;) {
-		/* Place our graph node at the previous highest graph node's offset plus its size. */
+		/* Place our graph node at the previous highest graph node's offset plus its size. Also
+		 * figure out what our offset is in the striped weights file. */
 		sqlite3_reset(db->sGetMaxRecordGoff);
 		if (sqlite3_step(db->sGetMaxRecordGoff) == SQLITE_ROW) {
 			const int64_t highestExistingGoff = sqlite3_column_int64(db->sGetMaxRecordGoff,0);
 			graphNode = ZTLF_MappedFile_TryGet(&db->gf,(uintptr_t)highestExistingGoff,ZTLF_DB_MAX_GRAPH_NODE_SIZE);
-			if (!graphNode) { /* sanity check, unlikely to impossible */
+			if (!graphNode) {
 				ZTLF_L_warning("cannot seek to known graph file offset %lld, database may be corrupt",(long long)highestExistingGoff);
 				result = ZTLF_NEG(EIO);
 				goto exit_putRecord;
 			} else {
 				goff = highestExistingGoff + sizeof(struct ZTLF_DB_GraphNode) + (sizeof(int64_t) * (int64_t)graphNode->linkCount);
+				woff = (uintptr_t)(graphNode->weightsFileOffset + 1);
 			}
 		}
 
@@ -846,8 +853,8 @@ int ZTLF_DB_PutRecord(
 	pthread_mutex_lock(graphNodeLock);
 
 	/* Initialize this record's graph node with its initial weight and links. */
-	ZTLF_setu64_le(graphNode->weightL,score);
-	ZTLF_setu16_le(graphNode->weightH,0);
+	ZTLF_SUint96_Set(&db->wf,woff,score,0,0);
+	ZTLF_setu64_le(graphNode->weightsFileOffset,woff);
 	ZTLF_setu64_le(graphNode->linkedCount,0);
 	graphNode->linkCount = (uint8_t)linkCount;
 	for(unsigned int i=0,j=linkCount;i<j;++i) {
@@ -1043,10 +1050,12 @@ struct ZTLF_QueryResults *ZTLF_DB_Query(struct ZTLF_DB *db,const void **sel,cons
 		const struct ZTLF_DB_GraphNode *const gn = (struct ZTLF_DB_GraphNode *)ZTLF_MappedFile_TryGet(&db->gf,(uintptr_t)sqlite3_column_int64(db->sQueryGetResults,2),ZTLF_DB_MAX_GRAPH_NODE_SIZE);
 		if (gn) { /* sanity check, should be impossible to be NULL */
 			qr->ts = (uint64_t)sqlite3_column_int64(db->sQueryGetResults,3);
-			const uint64_t oldwl = qr->weightL;
-			if ((qr->weightL += ZTLF_getu64_le(gn->weightL)) < oldwl)
-				++qr->weightH;
-			qr->weightH += (uint64_t)ZTLF_getu16_le(gn->weightH);
+			uint32_t w96l,w96m,w96h;
+			ZTLF_SUint96_Get(&db->wf,(uintptr_t)gn->weightsFileOffset,&w96l,&w96m,&w96h);
+			uint64_t oldwl = qr->weightL;
+			qr->weightH += (uint64_t)((qr->weightL += w96l) < oldwl);
+			oldwl = qr->weightL;
+			qr->weightH += (uint64_t)((qr->weightL += ((uint64_t)w96m) << 32) < oldwl) + (uint64_t)w96h;
 			qr->doff = (uint64_t)sqlite3_column_int64(db->sQueryGetResults,0);
 			qr->dlen = (unsigned int)sqlite3_column_int(db->sQueryGetResults,1);
 		}
@@ -1096,7 +1105,10 @@ uint64_t ZTLF_DB_CRC64(struct ZTLF_DB *db)
 	while (sqlite3_step(db->sGetAllRecords) == SQLITE_ROW) {
 		const struct ZTLF_DB_GraphNode *const gn = (struct ZTLF_DB_GraphNode *)ZTLF_MappedFile_TryGet(&db->gf,(uintptr_t)sqlite3_column_int64(db->sGetAllRecords,0),ZTLF_DB_MAX_GRAPH_NODE_SIZE);
 		if (gn) {
-			crc = _ZTLF_CRC64(crc,(const uint8_t *)gn,sizeof(struct ZTLF_DB_GraphNode)); /* CRC everything in graph node but linked offsets, which aren't part of base struct */
+			uint32_t w[3];
+			ZTLF_SUint96_Get(&db->wf,(uintptr_t)gn->weightsFileOffset,w,w + 1,w + 2);
+			_ZTLF_CRC64(crc,(const uint8_t *)w,sizeof(w));
+			_ZTLF_CRC64(crc,(const uint8_t *)&(gn->linkCount),sizeof(gn->linkedCount));
 			crc = _ZTLF_CRC64(crc,(const uint8_t *)sqlite3_column_blob(db->sGetAllRecords,1),32);
 		}
 	}

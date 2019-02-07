@@ -161,6 +161,18 @@ func (db *db) getDataByHash(h []byte, buf []byte) (int, []byte, error) {
 	return dlen, buf, nil
 }
 
+// getDataByOffset gets record data by its doff and dlen (offset and length in record data flat file).
+func (db *db) getDataByOffset(doff uint64, dlen uint, buf []byte) ([]byte, error) {
+	startPos := len(buf)
+	buf = append(buf, make([]byte, dlen)...)
+	ok := int(C.ZTLF_DB_GetRecordData((*C.struct_ZTLF_DB)(&db.cdb), C.ulonglong(doff), unsafe.Pointer(&(buf[startPos])), C.uint(dlen)))
+	if ok == 0 {
+		buf = buf[0:startPos]
+		return buf, ErrorIO
+	}
+	return buf, nil
+}
+
 // hasRecord returns true if the record with the given hash exists (rejected table is not checked)
 func (db *db) hasRecord(h []byte) bool {
 	if len(h) == 32 {
