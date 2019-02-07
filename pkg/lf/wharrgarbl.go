@@ -28,14 +28,15 @@ var wharrgarblMemorySize uint
 var wharrgarblMemoryLock sync.Mutex
 
 // SpeckHash computes a simple Davies-Meyer type hash built from the Speck block cipher.
-// This shouldn't be considered secure for cryptograhic or authentication uses and isn't used for
-// that. It's used internally by Wharrgarbl as a fast short input hash in it's collision search
-// and is exposed here so it can be tested.
+// This is not used for serious security roles in the system and shouldn't be considered secure for
+// that. It's used as a fast hash for Wharrgarbl proof of work and should be strong enough for that,
+// as even a minor break would likely not save any time vs. just running PoW. It's exposed to allow
+// it to be tested in unit tests.
 func SpeckHash(in []byte) (out [2]uint64) {
 	if len(in) > 0 {
 		C.ZTLF_SpeckHash((*_Ctype_ulonglong)(unsafe.Pointer(&out)), unsafe.Pointer(&in[0]), _Ctype_ulong(len(in)))
 	} else {
-		C.ZTLF_SpeckHash((*_Ctype_ulonglong)(unsafe.Pointer(&out)), nil, _Ctype_ulong(0))
+		C.ZTLF_SpeckHash((*_Ctype_ulonglong)(unsafe.Pointer(&out)), unsafe.Pointer(&out), _Ctype_ulong(0))
 	}
 	return
 }

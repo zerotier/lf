@@ -23,18 +23,18 @@ static inline int ZTLF_SUint96_Open(struct ZTLF_SUInt96 *sui,const char *path)
 {
 	char ptmp[PATH_MAX];
 	snprintf(ptmp,sizeof(ptmp),"%s.b00",path);
-	int r = ZTLF_MappedFile_Open(&sui->l,ptmp,524288,524288);
+	int r = ZTLF_MappedFile_Open(&sui->l,ptmp,1048576,1048576);
 	if (r) {
 		return r;
 	}
 	snprintf(ptmp,sizeof(ptmp),"%s.b32",path);
-	r = ZTLF_MappedFile_Open(&sui->m,ptmp,524288,524288);
+	r = ZTLF_MappedFile_Open(&sui->m,ptmp,1048576,1048576);
 	if (r) {
 		ZTLF_MappedFile_Close(&sui->l);
 		return r;
 	}
 	snprintf(ptmp,sizeof(ptmp),"%s.b64",path);
-	r = ZTLF_MappedFile_Open(&sui->h,ptmp,524288,524288);
+	r = ZTLF_MappedFile_Open(&sui->h,ptmp,1048576,1048576);
 	if (r) {
 		ZTLF_MappedFile_Close(&sui->l);
 		ZTLF_MappedFile_Close(&sui->m);

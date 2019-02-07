@@ -157,14 +157,7 @@ int ZTLF_DB_PutRecord(
 	const void *links,
 	const unsigned int linkCount);
 
-/* The parameters sel[], selAndOr[], and selSize[] describe selectors being queried against. For each
- * selector there are TWO entries in sel[] and selSize[] and one in selAndOr[]. The two entries in sel[]
- * and selSize[] describe an inclusive range. To search for equality just make that range a single value
- * repeated twice. This means that e.g. for 3 selectors the size of sel[] and selSize[] would be 6 and
- * the size of selAndOr[] would be 3. The selAndOr[] flag array determines whether this selector is
- * taken AND the or OR the previous. It is ignored for the first selector since there's nothing to AND
- * or OR it with. */
-struct ZTLF_QueryResults *ZTLF_DB_Query(struct ZTLF_DB *db,const void **sel,const int *selAndOr,const unsigned int *selSize,const unsigned int selCount);
+struct ZTLF_QueryResults *ZTLF_DB_Query(struct ZTLF_DB *db,const void **sel,const unsigned int *selSize,const unsigned int selCount);
 
 /* Gets the data offset and data length of a record by its hash (returns length, sets doff). */
 unsigned int ZTLF_DB_GetByHash(struct ZTLF_DB *db,const void *hash,uint64_t *doff);

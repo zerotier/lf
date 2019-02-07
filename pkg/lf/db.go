@@ -215,20 +215,16 @@ func (db *db) hasPending() bool {
 // results not sorted. The loop is broken if the function returns false. The owner is passed as a pointer to
 // an array that is reused, so a copy must be made if you want to keep it. The arguments to the function are:
 // timestamp, weight (low), weight (high), data offset, data length, id, owner, owner size (bytes).
-func (db *db) query(selectorRanges [][2][]byte, andOr []bool, f func(uint64, uint64, uint64, uint64, uint64, *[32]byte, []byte) bool) error {
-	if len(selectorRanges) == 0 || len(andOr) != len(selectorRanges) {
+func (db *db) query(selectorRanges [][2][]byte, f func(uint64, uint64, uint64, uint64, uint64, *[32]byte, []byte) bool) error {
+	if len(selectorRanges) == 0 {
 		return nil
 	}
 
 	sel := make([]unsafe.Pointer, len(selectorRanges)*2)
 	selSizes := make([]C.uint, len(selectorRanges)*2)
-	selAndOr := make([]C.int, len(selectorRanges))
 	for i := 0; i < len(selectorRanges); i++ {
 		if len(selectorRanges[i][0]) == 0 || len(selectorRanges[i][1]) == 0 {
 			return ErrorInvalidParameter
-		}
-		if andOr[i] {
-			selAndOr[i] = 1
 		}
 		ii := i * 2
 		sel[ii] = unsafe.Pointer(&selectorRanges[i][0][0])
@@ -238,7 +234,7 @@ func (db *db) query(selectorRanges [][2][]byte, andOr []bool, f func(uint64, uin
 		selSizes[ii] = C.uint(len(selectorRanges[i][1]))
 	}
 
-	cresults := C.ZTLF_DB_Query((*C.struct_ZTLF_DB)(&db.cdb), &sel[0], (*C.int)(unsafe.Pointer(&selAndOr[0])), (*C.uint)(unsafe.Pointer(&selSizes[0])), C.uint(len(selectorRanges)))
+	cresults := C.ZTLF_DB_Query((*C.struct_ZTLF_DB)(&db.cdb), &sel[0], (*C.uint)(unsafe.Pointer(&selSizes[0])), C.uint(len(selectorRanges)))
 	if uintptr(unsafe.Pointer(cresults)) != 0 {
 		var owner [dbMaxOwnerSize]byte
 		var id [32]byte

@@ -16,7 +16,7 @@ const (
 	VersionRevision = 1
 	VersionBuild    = 0
 
-	SoftwareName = "ZeroTier LF (\"Project Azathoth\")"
+	SoftwareName = "ZeroTier LF"
 )
 
 // Version is the version in array form.

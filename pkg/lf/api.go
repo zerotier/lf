@@ -17,7 +17,6 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
-	"strings"
 	"time"
 )
 
@@ -31,11 +30,12 @@ var apiVersionStr = strconv.FormatInt(int64(APIVersion), 10)
 
 // APIStatusPeer contains information about a connected peer.
 type APIStatusPeer struct {
-	RemoteAddress string
-	Inbound       bool
+	RemoteAddress string // IP and port
+	PublicKey     string // base58-encoded public key (encoded with embedded CRC16)
+	Inbound       bool   // true if this is an inbound connection
 }
 
-// APIProxyStatus contains info about the proxy through which this server was reached.
+// APIProxyStatus contains info about the proxy through which this server was reached (if an LF proxy is present).
 type APIProxyStatus struct {
 	Server        string // URL of server being accessed through the proxy
 	Software      string // Software implementation name of proxy
@@ -46,28 +46,32 @@ type APIProxyStatus struct {
 
 // APIStatus contains status information about this node and the network it belongs to.
 type APIStatus struct {
-	Software      string          ``                  // Software implementation name
-	Version       [4]int          ``                  // Version of software
-	MinAPIVersion int             ``                  // Minimum API version supported
-	MaxAPIVersion int             ``                  // Maximum API version supported
-	Uptime        uint64          ``                  // Node uptime in milliseconds since epoch
-	Clock         uint64          ``                  // Node local clock in milliseconds since epoch
-	DBRecordCount uint64          ``                  // Number of records in database
-	DBSize        uint64          ``                  // Total size of records in database in bytes
-	Peers         []APIStatusPeer ``                  // Connected peers
-	ProxyStatus   *APIProxyStatus `json:",omitempty"` // Proxies can add this to describe their own config and status while still reporting that of the server
+	Software      string          // Software implementation name
+	Version       [4]int          // Version of software
+	MinAPIVersion int             // Minimum API version supported
+	MaxAPIVersion int             // Maximum API version supported
+	Uptime        uint64          // Node uptime in milliseconds since epoch
+	Clock         uint64          // Node local clock in milliseconds since epoch
+	DBRecordCount uint64          // Number of records in database
+	DBSize        uint64          // Total size of records in database in bytes
+	Peers         []APIStatusPeer // Connected peers
+	Genesis       Genesis         // Genesis record contents that define constraints for this LF network
+	ProxyStatus   *APIProxyStatus // Proxies can add this to describe their own config and status while still reporting that of the server
 }
 
 // APIQueryRange specifies a selector or selector range.
+// Selector ranges can be specified in one of two ways. If KeyRange is non-empty it contains a single
+// masked selector key or a range of keys. If KeyRange is empty then Name contains the plain text name
+// of the selector and Range contains its ordinal range and the server will compute selector keys. The
+// KeyRange method keeps selector names secret while the Name/Range method exposes them to the node or
+// proxy being queried.
 type APIQueryRange struct {
 	Name     []byte   `json:",omitempty"` // Name of selector (plain text)
 	Range    []uint64 `json:",omitempty"` // Ordinal value if [1] or range if [2] in size (assumed to be 0 if empty)
 	KeyRange [][]byte `json:",omitempty"` // Selector key or key range, overrides Name and Range if present (allows queries without revealing name)
-	Or       *bool    `json:",omitempty"` // Or previous selector? AND if false. (ignored for first selector)
 }
 
-// APIQuery describes a query for records.
-// It results in an array of APIQueryResult objects sorted in descending order of weight.
+// APIQuery describes a query for records in the form of an ordered series of selector ranges.
 type APIQuery []APIQueryRange
 
 // APIQueryResult is a single query result.
@@ -76,21 +80,31 @@ type APIQueryResult struct {
 	Weight string  // Record weight as a 128-bit hex value.
 }
 
+// APIQueryResults is a list of results to an API query.
+// Each record will be the best (as determined by weight and possibly trust relationships) for each combination
+// of record selectors. If there are more than one it's the application's responsibility to decide which are
+// relevant or trustworthy.
+type APIQueryResults []APIQueryResult
+
 // APINewSelector is a selector plain text name and an ordinal value (use zero if you don't care).
+// This is used as part of the APINew API request.
 type APINewSelector struct {
-	Name    []byte
-	Ordinal uint64
+	Name    []byte // Name of this selector
+	Ordinal uint64 // A sortable value (use 0 if you don't want to do range queries)
 }
 
-// APINew instructs this server (or proxy) to create a new record locally and submit it.
-// Full nodes will only do this if it's requested by authorized IPs. Normally this is done via a proxy
-// and also because typically you don't want to share your owner private key with some random node.
+// APINew is a request to create and submit a new record.
+// Nodes only allow authorized clients to do this for obvious CPU constraint reasons (proof of work).
+// Usually this is executed by a proxy, a thin LF agent that sits between a client and a full node.
+// Proxies are often run on the same system or within the same enclave (Amazon VPC, K8S cluster, etc.)
+// as LF users. Note that this API call implicitly shares your private key so it should not be made
+// against nodes or proxies that you don't control or trust or over unencrypted transport.
 type APINew struct {
 	Selectors       []APINewSelector ``                  // Plain text selector names and ordinals
 	OwnerPrivateKey []byte           ``                  // X.509 encoded private key with included public key
 	Links           [][]byte         ``                  // Links to other records in the DAG (each link must be 32 bytes in size)
 	Value           []byte           ``                  // Plain text value for this record
-	Timestamp       *uint64          `json:",omitempty"` // Record timestamp (server time is used if zero or omitted)
+	Timestamp       *uint64          `json:",omitempty"` // Record timestamp in SECONDS since epoch (server time is used if zero or omitted)
 }
 
 // APIError indicates an error and is returned with non-200 responses.
@@ -99,10 +113,8 @@ type APIError struct {
 	Message string // Message indicating the reason for the error
 }
 
-// Error implements the error interface, making APIError an 'error'.
-func (e APIError) Error() string {
-	return fmt.Sprintf("%d (%s)", e.Code, e.Message)
-}
+// Error implements the error interface, making APIError an 'error' in the Go sense.
+func (e APIError) Error() string { return fmt.Sprintf("%d (%s)", e.Code, e.Message) }
 
 // apiRun contains common code for the Run() methods of API request objects.
 func apiRun(url string, m interface{}) ([]byte, error) {
@@ -144,13 +156,15 @@ func (m *APIQuery) Run(url string) (*APIQueryResult, error) {
 	return &qr, nil
 }
 
-func (m *APIQuery) execute(n *Node) (qr []APIQueryResult, err error) {
-	var selectorRanges [][2][]byte
-	var andOr []bool
-
+func (m *APIQuery) execute(n *Node) (qr []APIQueryResult, err *APIError) {
 	mm := ([]APIQueryRange)(*m)
+	if len(mm) == 0 {
+		return nil, &APIError{http.StatusBadRequest, "a query requires at least one selector"}
+	}
+	var selectorRanges [][2][]byte
 	for i := 0; i < len(mm); i++ {
 		if len(mm[i].KeyRange) == 0 {
+			// If KeyRange is not used the selectors' names are specified in the clear and we generate keys locally.
 			if len(mm[i].Range) == 0 {
 				ss := MakeSelectorKey(mm[i].Name, 0)
 				selectorRanges = append(selectorRanges, [2][]byte{ss[:], ss[:]})
@@ -163,49 +177,49 @@ func (m *APIQuery) execute(n *Node) (qr []APIQueryResult, err error) {
 				selectorRanges = append(selectorRanges, [2][]byte{ss[:], ee[:]})
 			}
 		} else {
+			// Otherwise we use the sender-supplied key range which keeps names secret.
 			if len(mm[i].KeyRange) == 1 {
 				selectorRanges = append(selectorRanges, [2][]byte{mm[i].KeyRange[0], mm[i].KeyRange[0]})
 			} else {
 				selectorRanges = append(selectorRanges, [2][]byte{mm[i].KeyRange[0], mm[i].KeyRange[1]})
 			}
 		}
-		andOr = append(andOr, mm[i].Or != nil && *mm[i].Or)
 	}
 
-	bestByID := make(map[[32]byte]*[5]uint64)
-	n.db.query(selectorRanges, andOr, func(ts, weightL, weightH, doff, dlen uint64, id *[32]byte, owner []byte) bool {
+	// Iterate through results and store them in a temporary map by ID (hash of selector keys). This
+	// lets us find the highest scoring record for each combination of selectors without wasting the
+	// time to grab whole records that we don't ultimately return. Note that the C side of this code
+	// handles finding the latest record (max timestamp) by owner/ID combo.
+	bestByID := make(map[[32]byte]*[4]uint64)
+	n.db.query(selectorRanges, func(ts, weightL, weightH, doff, dlen uint64, id *[32]byte, owner []byte) bool {
 		rptr := bestByID[*id]
 		if rptr == nil {
-			bestByID[*id] = &([5]uint64{weightH, weightL, ts, doff, dlen})
+			bestByID[*id] = &([4]uint64{weightH, weightL, doff, dlen})
 		} else {
 			if rptr[0] < weightH {
 				return true
 			} else if rptr[0] == weightH {
 				if rptr[1] < weightL {
 					return true
-				} else if rptr[1] == weightL {
-					if rptr[2] <= ts {
-						return true
-					}
 				}
 			}
 			rptr[0] = weightH
 			rptr[1] = weightL
-			rptr[2] = ts
-			rptr[3] = doff
-			rptr[4] = dlen
+			rptr[2] = doff
+			rptr[3] = dlen
 		}
 		return true
 	})
 
+	// Actually grab the records and populate the qr[] slice.
 	for _, rptr := range bestByID {
-		rdata, err := n.db.getDataByOffset(rptr[3], uint(rptr[4]), nil)
+		rdata, err := n.db.getDataByOffset(rptr[2], uint(rptr[3]), nil)
 		if err != nil {
-			return nil, APIError{http.StatusInternalServerError, "error retrieving record data: " + err.Error()}
+			return nil, &APIError{http.StatusInternalServerError, "error retrieving record data: " + err.Error()}
 		}
 		rec, err := NewRecordFromBytes(rdata)
 		if err != nil {
-			return nil, APIError{http.StatusInternalServerError, "error retrieving record data: " + err.Error()}
+			return nil, &APIError{http.StatusInternalServerError, "error retrieving record data: " + err.Error()}
 		}
 		qr = append(qr, APIQueryResult{
 			Record: rec,
@@ -213,8 +227,22 @@ func (m *APIQuery) execute(n *Node) (qr []APIQueryResult, err error) {
 		})
 	}
 
+	// Sort qr[] by selector ordinals.
 	sort.Slice(qr, func(a, b int) bool {
-		return strings.Compare(qr[b].Weight, qr[a].Weight) < 0
+		sa := qr[a].Record.Selectors
+		sb := qr[b].Record.Selectors
+		sl := len(sa)
+		if len(sb) < sl {
+			sl = len(sb)
+		}
+		for i := 0; i < sl; i++ {
+			if sa[i].Ordinal < sb[i].Ordinal {
+				return true
+			} else if sa[i].Ordinal > sb[i].Ordinal {
+				return false
+			}
+		}
+		return false
 	})
 
 	return
@@ -233,14 +261,14 @@ func (m *APINew) Run(url string) (*Record, error) {
 	return &rec, nil
 }
 
-func (m *APINew) execute() (*Record, error) {
+func (m *APINew) execute() (*Record, *APIError) {
 	k, err := x509.ParseECPrivateKey(m.OwnerPrivateKey)
 	if err != nil {
-		return nil, err
+		return nil, &APIError{Code: http.StatusBadRequest, Message: "invalid x509 private key: " + err.Error()}
 	}
 	kpub, err := GetOwnerPublicKey(k)
 	if err != nil {
-		return nil, err
+		return nil, &APIError{Code: http.StatusBadRequest, Message: "cannot derive owner format public key from x509 private key: " + err.Error()}
 	}
 	var ts uint64
 	if m.Timestamp == nil || *m.Timestamp == 0 {
@@ -254,7 +282,11 @@ func (m *APINew) execute() (*Record, error) {
 		sel[i] = m.Selectors[i].Name
 		selord[i] = m.Selectors[i].Ordinal
 	}
-	return NewRecord(m.Value, m.Links, sel, selord, kpub, ts, RecordWorkAlgorithmWharrgarbl, k)
+	rec, err := NewRecord(m.Value, m.Links, sel, selord, kpub, ts, RecordWorkAlgorithmWharrgarbl, k)
+	if err != nil {
+		return nil, &APIError{Code: http.StatusBadRequest, Message: "record generation failed: " + err.Error()}
+	}
+	return rec, nil
 }
 
 func apiSetStandardHeaders(out http.ResponseWriter) {
@@ -309,6 +341,14 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 		if req.Method == http.MethodPost || req.Method == http.MethodPut {
 			var m APIQuery
 			if apiReadObj(out, req, &m) == nil {
+				results, err := m.execute(n)
+				if err != nil {
+					apiSendObj(out, req, err.Code, err)
+				} else if len(results) == 0 {
+					apiSendObj(out, req, http.StatusNotFound, &APIError{Code: http.StatusNotFound, Message: "no results found"})
+				} else {
+					apiSendObj(out, req, http.StatusOK, results)
+				}
 			}
 		} else {
 			out.Header().Set("Allow", "POST, PUT")
@@ -323,11 +363,11 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 			if apiIsTrusted(n, req) {
 				var m APINew
 				if apiReadObj(out, req, &m) == nil {
-					rec, err := m.execute()
-					if err != nil {
-						apiSendObj(out, req, http.StatusBadRequest, &APIError{Code: http.StatusForbidden, Message: "record creation failed: " + err.Error()})
+					rec, apiError := m.execute()
+					if apiError != nil {
+						apiSendObj(out, req, apiError.Code, apiError)
 					} else {
-						err = n.AddRecord(rec)
+						err := n.AddRecord(rec)
 						if err != nil {
 							apiSendObj(out, req, http.StatusBadRequest, &APIError{Code: http.StatusForbidden, Message: "record rejected or record import failed: " + err.Error()})
 						} else {

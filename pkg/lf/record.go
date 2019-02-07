@@ -22,10 +22,6 @@ import (
 var (
 	b1_0 = []byte{0x00}
 	b1_1 = []byte{0x01}
-
-	// This nonce is included in the hash used to derive a key for value masking encryption
-	// to make it different from other uses of that plain text key.
-	recordValueMaskKeyHashNonce = []byte("LFKeyForValueMasking")
 )
 
 // RecordMaxSize is a global maximum record size (binary serialized length).
@@ -345,8 +341,12 @@ func (r *Record) Score() uint32 {
 }
 
 // ID returns a sha256 hash of all this record's selector database keys in their specified order.
+// If the record has no selectors the ID is just its hash.
 func (r *Record) ID() *[32]byte {
 	if r.id == nil {
+		if len(r.Selectors) == 0 {
+			return r.Hash()
+		}
 		var id [32]byte
 		h := sha256.New()
 		for i := 0; i < len(r.Selectors); i++ {
@@ -371,17 +371,21 @@ func (r *Record) Validate() (err error) {
 		return ErrorRecordOwnerSignatureCheckFailed
 	}
 
-	bodySigningHash := r.Body.SigningHash()
+	selectorClaimSigningHash := r.Body.SigningHash()
 	workHashBytes := make([]byte, 0, 32+(len(r.Selectors)*128))
-	workHashBytes = append(workHashBytes, bodySigningHash[:]...)
+	workHashBytes = append(workHashBytes, selectorClaimSigningHash[:]...)
 	workBillableBytes := r.Body.SizeBytes()
 	for i := 0; i < len(r.Selectors); i++ {
 		sb := r.Selectors[i].Bytes()
 		workHashBytes = append(workHashBytes, sb...)
 		workBillableBytes += uint(len(sb))
-		if !r.Selectors[i].VerifyClaim(bodySigningHash[:]) {
+
+		if !r.Selectors[i].VerifyClaim(selectorClaimSigningHash[:]) {
 			return ErrorRecordSelectorClaimCheckFailed
 		}
+
+		sb = append(sb, selectorClaimSigningHash[:]...)
+		selectorClaimSigningHash = sha256.Sum256(sb)
 	}
 	workHash := sha256.Sum256(workHashBytes)
 
@@ -497,22 +501,24 @@ func NewRecordStart(value []byte, links [][]byte, plainTextSelectorNames [][]byt
 			r.Body.Links = append(r.Body.Links, links[i]...)
 		}
 	}
-
 	r.Body.Timestamp = ts
 
-	bodySigningHash := r.Body.SigningHash()
 	workBillableBytes = r.Body.SizeBytes()
 
 	workHasher := sha256.New()
-	workHasher.Write(bodySigningHash[:])
-
+	selectorClaimSigningHash := r.Body.SigningHash()
+	workHasher.Write(selectorClaimSigningHash[:])
 	if len(plainTextSelectorNames) > 0 {
 		r.Selectors = make([]Selector, len(plainTextSelectorNames))
 		for i := 0; i < len(plainTextSelectorNames); i++ {
-			r.Selectors[i].Claim(plainTextSelectorNames[i], selectorOrdinals[i], bodySigningHash[:])
+			r.Selectors[i].Claim(plainTextSelectorNames[i], selectorOrdinals[i], selectorClaimSigningHash[:])
+
 			sb := r.Selectors[i].Bytes()
 			workBillableBytes += uint(len(sb))
 			workHasher.Write(sb)
+
+			sb = append(sb, selectorClaimSigningHash[:]...)
+			selectorClaimSigningHash = sha256.Sum256(sb)
 		}
 	}
 

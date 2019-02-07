@@ -950,7 +950,7 @@ exit_putRecord:
 	return result;
 }
 
-struct ZTLF_QueryResults *ZTLF_DB_Query(struct ZTLF_DB *db,const void **sel,const int *selAndOr,const unsigned int *selSize,const unsigned int selCount)
+struct ZTLF_QueryResults *ZTLF_DB_Query(struct ZTLF_DB *db,const void **sel,const unsigned int *selSize,const unsigned int selCount)
 {
 	LogOutputCallback logger = db->logger;
 	void *loggerArg = (void *)db->loggerArg;
@@ -966,14 +966,9 @@ struct ZTLF_QueryResults *ZTLF_DB_Query(struct ZTLF_DB *db,const void **sel,cons
 		goto query_error;
 	}
 
-	/* Populate the temporary record doff table with records of those that match
-	 * the queried selector expression. The first selector range is added to the
-	 * table. Subsequent selector ranges are subtracted for AND or added for OR
-	 * (think sets) expressions on subsequent selector ranges. */
 	for(unsigned int i=0,j=0;i<selCount;++i) {
-		if ((i > 0)&&(selAndOr[i] == 0)) {
-			/* For ANDs we actually remove IDs in iterations after the first for records
-			 * NOT IN the given selector range. AND means it must be in this AND that. */
+		if (i > 0) {
+			/* Subsequent iterations are "AND" queries that remove non-matching records (set union). */
 			sqlite3_reset(db->sQueryAndSelectorRange);
 			sqlite3_bind_blob(db->sQueryAndSelectorRange,1,sel[j],(int)selSize[j],SQLITE_STATIC);
 			++j;
@@ -985,7 +980,7 @@ struct ZTLF_QueryResults *ZTLF_DB_Query(struct ZTLF_DB *db,const void **sel,cons
 				goto query_error;
 			}
 		} else {
-			/* For ORs or the first iteration we add IDs of records in the given selector range. */
+			/* The first iteration uses the "OR" query which adds matching records to the temporary table. */
 			sqlite3_reset(db->sQueryOrSelectorRange);
 			sqlite3_bind_blob(db->sQueryOrSelectorRange,1,sel[j],(int)selSize[j],SQLITE_STATIC);
 			++j;

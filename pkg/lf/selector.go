@@ -16,28 +16,30 @@ import (
 	"io"
 )
 
-// sha512csprng is a Reader that acts as a random source for generating ECDSA key pairs deterministically.
-type sha512csprng struct {
-	s512 [64]byte
+// sha384csprng is a Reader that acts as a random source for generating ECDSA key pairs deterministically.
+type sha384csprng struct {
+	s384 [48]byte
 	n    int
 }
 
-func (prng sha512csprng) Read(b []byte) (int, error) {
+func (prng sha384csprng) Read(b []byte) (int, error) {
 	for i := 0; i < len(b); i++ {
-		b[i] = prng.s512[prng.n]
+		b[i] = prng.s384[prng.n]
 		prng.n++
-		if prng.n == 64 {
-			prng.s512 = sha512.Sum512(prng.s512[:])
+		b[i] ^= prng.s384[prng.n] // make sure you can't infer CSPRNG state from output, though this probably doesn't matter for our use case
+		prng.n++
+		if prng.n == 48 {
+			prng.s384 = sha512.Sum384(prng.s384[:])
 			prng.n = 0
 		}
 	}
 	return len(b), nil
 }
 
-// SelectorTypeBP160 indicates a selector built from the brainpoolP160t1 elliptic curve.
+// SelectorTypeBP160 indicates a sortable selector built from the brainpoolP160t1 elliptic curve.
 const SelectorTypeBP160 byte = 0
 
-// Selector is a non-forgeable range queryable identifier for records, also rewinds wicked tracks at the behest of the DJ.
+// Selector is a non-forgeable range queryable identifier for records.
 // A selector consists of a public key from a key pair deterministically generated from the selector's plain text name,
 // a 64-bit ordinal that can be used for range queries, and a signature. The signature signs the record to which this
 // selector is attached, its key, and its ordinal. The purpose of this signature system is to prove knowledge of the
@@ -58,7 +60,7 @@ type Selector struct {
 // If this name is not used with range queries use zero for the ordinal. This function exists
 // to allow selector database keys to be created separate from record creation if needed.
 func MakeSelectorKey(plainTextName []byte, ord uint64) []byte {
-	priv, err := ecdsa.GenerateKey(&ECCCurveBrainpoolP160T1, &sha512csprng{s512: sha512.Sum512(plainTextName), n: 0})
+	priv, err := ecdsa.GenerateKey(&ECCCurveBrainpoolP160T1, &sha384csprng{s384: sha512.Sum384(plainTextName), n: 0})
 	if err != nil {
 		panic(err)
 	}
@@ -126,7 +128,7 @@ func (s *Selector) UnmarshalFrom(in io.Reader) error {
 func (s *Selector) Claim(plainTextName []byte, ord uint64, hash []byte) {
 	s.Ordinal = ord
 
-	priv, err := ecdsa.GenerateKey(&ECCCurveBrainpoolP160T1, &sha512csprng{s512: sha512.Sum512(plainTextName), n: 0})
+	priv, err := ecdsa.GenerateKey(&ECCCurveBrainpoolP160T1, &sha384csprng{s384: sha512.Sum384(plainTextName), n: 0})
 	if err != nil {
 		panic(err)
 	}

@@ -22,6 +22,8 @@ import (
 	"time"
 )
 
+//////////////////////////////////////////////////////////////////////////////
+
 // TestCore tests various core functions and helpers.
 func TestCore(out io.Writer) bool {
 	fmt.Fprintf(out, "Testing SpeckHash (part of Wharrgarbl)... ")
@@ -102,6 +104,8 @@ func TestCore(out io.Writer) bool {
 	return true
 }
 
+//////////////////////////////////////////////////////////////////////////////
+
 // TestWharrgarbl tests and runs benchmarks on the Wharrgarbl proof of work.
 func TestWharrgarbl(out io.Writer) bool {
 	testWharrgarblSamples := 25
@@ -130,6 +134,8 @@ func TestWharrgarbl(out io.Writer) bool {
 	}
 	return true
 }
+
+//////////////////////////////////////////////////////////////////////////////
 
 const testDatabaseInstances = 3
 const testDatabaseRecords = 1000
@@ -247,3 +253,5 @@ func TestDatabase(testBasePath string, out io.Writer) bool {
 
 	return true
 }
+
+//////////////////////////////////////////////////////////////////////////////
