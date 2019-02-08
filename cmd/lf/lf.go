@@ -301,7 +301,8 @@ func doMakeGenesis(cfg *Config, basePath string, jsonOutput bool, urlOverride st
 		RecordMaxValueSize: 1024,
 		Amendable:          false,
 	}
-	fmt.Printf("Creating %d genesis records...\n", g.RecordMinLinks)
+	gJSON, _ := json.MarshalIndent(g, "", "  ")
+	fmt.Printf("%s\nCreating %d genesis records...\n", gJSON, g.RecordMinLinks)
 	genesisRecords, genesisPrivate, err := lf.CreateGenesisRecords(&g)
 	if err != nil {
 		fmt.Printf("ERROR: %s\n", err.Error())
@@ -324,8 +325,9 @@ func doMakeGenesis(cfg *Config, basePath string, jsonOutput bool, urlOverride st
 		return
 	}
 	ioutil.WriteFile("genesis.bin", grData.Bytes(), 0644)
+	ioutil.WriteFile("genesis.go", []byte(fmt.Sprintf("%#v", grData.Bytes())), 0644)
 	ioutil.WriteFile("genesis.secret", gpx509, 0600)
-	fmt.Printf("Wrote genesis.bin and genesis.secret to current directory.\n")
+	fmt.Printf("Wrote genesis.bin, genesis.go, and genesis.secret to current directory.\n")
 }
 
 //////////////////////////////////////////////////////////////////////////////
