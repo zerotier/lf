@@ -302,7 +302,7 @@ func doMakeGenesis(cfg *Config, basePath string, jsonOutput bool, urlOverride st
 		Amendable:          false,
 	}
 	gJSON, _ := json.MarshalIndent(g, "", "  ")
-	fmt.Printf("%s\nCreating %d genesis records...\n", gJSON, g.RecordMinLinks)
+	fmt.Printf("Genesis parameters:\n\n%s\n\nCreating %d genesis records...\n", gJSON, g.RecordMinLinks)
 	genesisRecords, genesisPrivate, err := lf.CreateGenesisRecords(&g)
 	if err != nil {
 		fmt.Printf("ERROR: %s\n", err.Error())
