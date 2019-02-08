@@ -9,6 +9,7 @@ package lf
 
 import (
 	"bytes"
+	"compress/lzw"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	secrand "crypto/rand"
@@ -17,12 +18,16 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"io/ioutil"
 )
 
 var (
 	b1_0 = []byte{0x00}
 	b1_1 = []byte{0x01}
 )
+
+const recordBodyFlagHasCertificate byte = 0x01
+const recordBodyFlagValueLZW = 0x02
 
 // recordWharrgarblMemory is the default amount of memory to use for Wharrgarbl momentum-type PoW.
 const recordWharrgarblMemory = 1024 * 1024 * 384 // 384mb
@@ -67,6 +72,12 @@ func (rb *recordBody) unmarshalFrom(r io.Reader) error {
 	if err != nil {
 		return err
 	}
+	if (flags & recordBodyFlagValueLZW) != 0 {
+		rb.Value, err = ioutil.ReadAll(io.LimitReader(lzw.NewReader(bytes.NewReader(rb.Value), lzw.LSB, 8), recordMaxSize))
+		if err != nil {
+			return err
+		}
+	}
 
 	l, err = binary.ReadUvarint(&rr)
 	if err != nil {
@@ -81,7 +92,7 @@ func (rb *recordBody) unmarshalFrom(r io.Reader) error {
 		return err
 	}
 
-	if (flags & 0x01) != 0 {
+	if (flags & recordBodyFlagHasCertificate) != 0 {
 		var cert [32]byte
 		_, err = io.ReadFull(&rr, cert[:])
 		if err != nil {
@@ -114,17 +125,33 @@ func (rb *recordBody) unmarshalFrom(r io.Reader) error {
 func (rb *recordBody) marshalTo(w io.Writer) error {
 	var flags [1]byte
 	if len(rb.Certificate) == 32 {
-		flags[0] |= 0x01
+		flags[0] |= recordBodyFlagHasCertificate
+	}
+
+	v := rb.Value
+	if len(v) >= 16 {
+		var lzwBuf bytes.Buffer
+		lzwWriter := lzw.NewWriter(&lzwBuf, lzw.LSB, 8)
+		if _, err := lzwWriter.Write(v); err != nil {
+			return err
+		}
+		if err := lzwWriter.Close(); err != nil {
+			return err
+		}
+		if lzwBuf.Len() < len(v) {
+			v = lzwBuf.Bytes()
+			flags[0] |= recordBodyFlagValueLZW
+		}
 	}
 
 	if _, err := w.Write(flags[:]); err != nil {
 		return err
 	}
 
-	if _, err := writeUVarint(w, uint64(len(rb.Value))); err != nil {
+	if _, err := writeUVarint(w, uint64(len(v))); err != nil {
 		return err
 	}
-	if _, err := w.Write(rb.Value); err != nil {
+	if _, err := w.Write(v); err != nil {
 		return err
 	}
 
@@ -326,9 +353,12 @@ func (r *Record) Bytes() []byte {
 
 // SizeBytes returns the serialized size of this record.
 func (r *Record) SizeBytes() uint {
-	var cr countingWriter
-	r.MarshalTo(&cr)
-	return uint(cr)
+	if len(r.data) == 0 {
+		var cr countingWriter
+		r.MarshalTo(&cr)
+		return uint(cr)
+	}
+	return uint(len(r.data))
 }
 
 // Hash returns Shandwich256(record Bytes()).
