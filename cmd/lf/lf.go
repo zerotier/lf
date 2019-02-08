@@ -8,6 +8,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/x509"
 	"encoding/json"
 	"flag"
@@ -291,6 +292,41 @@ func doOwner(cfg *Config, basePath string, jsonOutput bool, urlOverride string, 
 	}
 }
 
+func doMakeGenesis(cfg *Config, basePath string, jsonOutput bool, urlOverride string, verboseOutput bool, args []string) {
+	g := lf.Genesis{
+		Name:               "1AU",
+		Contact:            "",
+		RecordMinLinks:     3,
+		RecordMaxValueSize: 1024,
+		Amendable:          false,
+		CAs:                nil,
+	}
+	genesisRecords, genesisPrivate, err := lf.CreateGenesisRecords(&g)
+	if err != nil {
+		fmt.Printf("ERROR: %s\n", err.Error())
+		os.Exit(-1)
+		return
+	}
+	var grData bytes.Buffer
+	for i := 0; i < len(genesisRecords); i++ {
+		err = genesisRecords[i].MarshalTo(&grData)
+		if err != nil {
+			fmt.Printf("ERROR: %s\n", err.Error())
+			os.Exit(-1)
+			return
+		}
+	}
+	gpx509, err := x509.MarshalECPrivateKey(genesisPrivate)
+	if err != nil {
+		fmt.Printf("ERROR: %s\n", err.Error())
+		os.Exit(-1)
+		return
+	}
+	ioutil.WriteFile("genesis.bin", grData.Bytes(), 0644)
+	ioutil.WriteFile("genesis.secret", gpx509, 0600)
+	fmt.Printf("Wrote genesis.bin and genesis.secret to current directory.\n")
+}
+
 //////////////////////////////////////////////////////////////////////////////
 
 func main() {
@@ -379,6 +415,9 @@ func main() {
 
 	case "owner":
 		doOwner(&cfg, *basePath, *jsonOutput, *urlOverride, *verboseOutput, cmdArgs)
+
+	case "makegenesis":
+		doMakeGenesis(&cfg, *basePath, *jsonOutput, *urlOverride, *verboseOutput, cmdArgs)
 
 	default:
 		printHelp("")

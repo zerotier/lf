@@ -803,17 +803,14 @@ int ZTLF_DB_PutRecord(
 			doff = sqlite3_column_int64(db->sGetMaxRecordDoff,0) + sqlite3_column_int64(db->sGetMaxRecordDoff,1);
 		}
 
-		/* Copy data into record data file prefixed by record size, growing if needed. */
+		/* Copy data into record data file. */
 		pthread_rwlock_wrlock(&db->dfLock);
-		uint8_t *rdata = (uint8_t *)ZTLF_MappedFile_Get(&db->df,(uintptr_t)doff,(uintptr_t)(rsize + 2));
+		uint8_t *rdata = (uint8_t *)ZTLF_MappedFile_Get(&db->df,(uintptr_t)doff,(uintptr_t)rsize);
 		if (!rdata) {
 			pthread_rwlock_unlock(&db->dfLock);
 			result = ZTLF_NEG(EIO);
 			goto exit_putRecord;
 		}
-		*(rdata++) = (uint8_t)((rsize >> 8) & 0xff);
-		*(rdata++) = (uint8_t)(rsize & 0xff);
-		doff += 2; /* size prefix isn't used during normal operation, just included so record file is useful without index.db */
 		memcpy(rdata,rec,rsize);
 		pthread_rwlock_unlock(&db->dfLock);
 
