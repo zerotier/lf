@@ -126,6 +126,7 @@ func (db *db) putRecord(r *Record) error {
 		unsafe.Pointer(rid),
 		C.uint64_t(r.recordBody.Timestamp),
 		C.uint32_t(r.Score()),
+		C.int(0), // TODO: reputation
 		(*unsafe.Pointer)(sptr),
 		(*C.uint)(ssptr),
 		C.uint(len(selectors)),

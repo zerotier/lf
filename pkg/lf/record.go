@@ -53,6 +53,8 @@ type recordBody struct {
 func (rb *recordBody) unmarshalFrom(r io.Reader) error {
 	rr := byteAndArrayReader{r}
 
+	flags, err := rr.ReadByte()
+
 	l, err := binary.ReadUvarint(&rr)
 	if err != nil {
 		return err
@@ -79,17 +81,15 @@ func (rb *recordBody) unmarshalFrom(r io.Reader) error {
 		return err
 	}
 
-	l, err = binary.ReadUvarint(&rr)
-	if err != nil {
-		return err
-	}
-	if l > recordMaxSize {
-		return ErrorRecordInvalid
-	}
-	rb.Certificate = make([]byte, uint(l))
-	_, err = io.ReadFull(&rr, rb.Certificate)
-	if err != nil {
-		return err
+	if (flags & 0x01) != 0 {
+		var cert [32]byte
+		_, err = io.ReadFull(&rr, cert[:])
+		if err != nil {
+			return err
+		}
+		rb.Certificate = cert[:]
+	} else {
+		rb.Certificate = nil
 	}
 
 	l, err = binary.ReadUvarint(&rr)
@@ -112,6 +112,15 @@ func (rb *recordBody) unmarshalFrom(r io.Reader) error {
 }
 
 func (rb *recordBody) marshalTo(w io.Writer) error {
+	var flags [1]byte
+	if len(rb.Certificate) == 32 {
+		flags[0] |= 0x01
+	}
+
+	if _, err := w.Write(flags[:]); err != nil {
+		return err
+	}
+
 	if _, err := writeUVarint(w, uint64(len(rb.Value))); err != nil {
 		return err
 	}
@@ -126,11 +135,10 @@ func (rb *recordBody) marshalTo(w io.Writer) error {
 		return err
 	}
 
-	if _, err := writeUVarint(w, uint64(len(rb.Certificate))); err != nil {
-		return err
-	}
-	if _, err := w.Write(rb.Certificate); err != nil {
-		return err
+	if len(rb.Certificate) == 32 {
+		if _, err := w.Write(rb.Certificate); err != nil {
+			return err
+		}
 	}
 
 	if len(rb.Links) >= 32 {

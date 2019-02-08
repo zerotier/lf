@@ -302,7 +302,7 @@ func (n *Node) Peers() (peers []APIStatusPeer) {
 	for a, p := range n.peers {
 		peers = append(peers, APIStatusPeer{
 			RemoteAddress: a,
-			PublicKey:     Base58EncodeWithCRC(p.remotePublicKey),
+			PublicKey:     p.remotePublicKey,
 			Inbound:       p.inbound,
 		})
 	}

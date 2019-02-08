@@ -301,6 +301,7 @@ func doMakeGenesis(cfg *Config, basePath string, jsonOutput bool, urlOverride st
 		RecordMaxValueSize: 1024,
 		Amendable:          false,
 	}
+	fmt.Printf("Creating %d genesis records...\n", g.RecordMinLinks)
 	genesisRecords, genesisPrivate, err := lf.CreateGenesisRecords(&g)
 	if err != nil {
 		fmt.Printf("ERROR: %s\n", err.Error())

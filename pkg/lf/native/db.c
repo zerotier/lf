@@ -113,9 +113,8 @@
 \
 "CREATE TABLE IF NOT EXISTS selector (" \
 "sel BLOB NOT NULL," \
-"sel_no INTEGER NOT NULL," \
 "record_doff INTEGER NOT NULL," \
-"PRIMARY KEY(sel,sel_no,record_doff)" \
+"PRIMARY KEY(sel,record_doff)" \
 ") WITHOUT ROWID;\n" \
 \
 "CREATE TABLE IF NOT EXISTS dangling_link (" \
@@ -503,7 +502,7 @@ int ZTLF_DB_Open(struct ZTLF_DB *db,const char *path,char *errbuf,unsigned int e
 	S(db->sAddRecord,
 	     "INSERT INTO record (doff,dlen,goff,ts,score,reputation,link_count,selector_count,hash,id,owner) VALUES (?,?,?,?,?,?,?,?,?,?,?)");
 	S(db->sAddSelector,
-	     "INSERT OR IGNORE INTO selector (sel,sel_no,record_doff) VALUES (?,?,?)");
+	     "INSERT OR IGNORE INTO selector (sel,record_doff) VALUES (?,?)");
 	S(db->sGetRecordCount,
 	     "SELECT COUNT(1) FROM record");
 	S(db->sGetDataSize,
@@ -555,9 +554,9 @@ int ZTLF_DB_Open(struct ZTLF_DB *db,const char *path,char *errbuf,unsigned int e
 	S(db->sQueryClearRecordSet,
 	     "DELETE FROM tmp.rs");
 	S(db->sQueryOrSelectorRange,
-	     "INSERT OR IGNORE INTO tmp.rs SELECT record_doff AS \"i\" FROM selector WHERE sel BETWEEN ? AND ? AND sel_no = ? LIMIT " ZTLF_DB_SELECTOR_QUERY_RESULT_LIMIT);
+	     "INSERT OR IGNORE INTO tmp.rs SELECT record_doff AS \"i\" FROM selector WHERE sel BETWEEN ? AND ? LIMIT " ZTLF_DB_SELECTOR_QUERY_RESULT_LIMIT);
 	S(db->sQueryAndSelectorRange,
-	     "DELETE FROM tmp.rs WHERE \"i\" NOT IN (SELECT record_doff FROM selector WHERE sel BETWEEN ? AND ? AND sel_no = ?)");
+	     "DELETE FROM tmp.rs WHERE \"i\" NOT IN (SELECT record_doff FROM selector WHERE sel BETWEEN ? AND ?)");
 	S(db->sQueryGetResults,
 	     "SELECT r.doff,r.dlen,r.goff,r.ts,r.id,r.owner FROM record AS r,tmp.rs AS rs WHERE r.doff = rs.i AND NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) ORDER BY r.owner,r.id,r.ts");
 
@@ -748,6 +747,7 @@ int ZTLF_DB_PutRecord(
 	const void *id,
 	const uint64_t ts,
 	const uint32_t score,
+	const int reputation,
 	const void **sel,
 	const unsigned int *selSize,
 	const unsigned int selCount,
@@ -827,7 +827,7 @@ int ZTLF_DB_PutRecord(
 	sqlite3_bind_int64(db->sAddRecord,3,goff);
 	sqlite3_bind_int64(db->sAddRecord,4,(sqlite3_int64)ts);
 	sqlite3_bind_int64(db->sAddRecord,5,(sqlite3_int64)score);
-	sqlite3_bind_int(db->sAddRecord,6,0);
+	sqlite3_bind_int(db->sAddRecord,6,reputation);
 	sqlite3_bind_int(db->sAddRecord,7,(int)linkCount);
 	sqlite3_bind_int(db->sAddRecord,8,(int)selCount);
 	sqlite3_bind_blob(db->sAddRecord,9,hash,32,SQLITE_STATIC);
@@ -842,8 +842,7 @@ int ZTLF_DB_PutRecord(
 	for(unsigned int i=0;i<selCount;++i) {
 		sqlite3_reset(db->sAddSelector);
 		sqlite3_bind_blob(db->sAddSelector,1,sel[i],(int)selSize[i],SQLITE_STATIC);
-		sqlite3_bind_int(db->sAddSelector,2,(int)i);
-		sqlite3_bind_int64(db->sAddSelector,3,doff);
+		sqlite3_bind_int64(db->sAddSelector,2,doff);
 		if (sqlite3_step(db->sAddSelector) != SQLITE_DONE) {
 			ZTLF_L_warning("database error adding selector, I/O error or database corrupt!");
 			break;
@@ -975,7 +974,6 @@ struct ZTLF_QueryResults *ZTLF_DB_Query(struct ZTLF_DB *db,const void **sel,cons
 			++j;
 			sqlite3_bind_blob(db->sQueryAndSelectorRange,2,sel[j],(int)selSize[j],SQLITE_STATIC);
 			++j;
-			sqlite3_bind_int(db->sQueryAndSelectorRange,3,(int)i);
 			if (sqlite3_step(db->sQueryAndSelectorRange) != SQLITE_DONE) {
 				ZTLF_L_warning("database error querying selector range into record ID cache (AND): %s",sqlite3_errmsg(db->dbc));
 				goto query_error;
@@ -987,7 +985,6 @@ struct ZTLF_QueryResults *ZTLF_DB_Query(struct ZTLF_DB *db,const void **sel,cons
 			++j;
 			sqlite3_bind_blob(db->sQueryOrSelectorRange,2,sel[j],(int)selSize[j],SQLITE_STATIC);
 			++j;
-			sqlite3_bind_int(db->sQueryOrSelectorRange,3,(int)i);
 			if (sqlite3_step(db->sQueryOrSelectorRange) != SQLITE_DONE) {
 				ZTLF_L_warning("database error querying selector range into record ID cache: %s",sqlite3_errmsg(db->dbc));
 				goto query_error;
