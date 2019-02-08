@@ -407,7 +407,7 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inb
 		n.logger.Printf("P2P connection to %s closed: invalid public key: %s", peerAddressStr, err.Error())
 		return
 	}
-	remoteShared, err := ECCAgree(elliptic.P384(), remotePubX, remotePubY, n.linkKeyPriv)
+	remoteShared, err := ECDHAgree(elliptic.P384(), remotePubX, remotePubY, n.linkKeyPriv)
 	if err != nil {
 		n.logger.Printf("P2P connection to %s closed: key agreement failed: %s", peerAddressStr, err.Error())
 		return

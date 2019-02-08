@@ -86,7 +86,7 @@ func (db *db) close() {
 
 // putRecord adds a valid record to the database.
 func (db *db) putRecord(r *Record) error {
-	if len(r.RecordBody.Owner) == 0 {
+	if len(r.recordBody.Owner) == 0 {
 		return ErrorRecordInvalid
 	}
 	rdata := r.Bytes()
@@ -111,10 +111,10 @@ func (db *db) putRecord(r *Record) error {
 		ssptr = unsafe.Pointer(&selectorSizes[0])
 	}
 	var lptr unsafe.Pointer
-	if len(r.RecordBody.Links) > 0 {
-		lptr = unsafe.Pointer(&r.RecordBody.Links[0])
+	if len(r.recordBody.Links) > 0 {
+		lptr = unsafe.Pointer(&r.recordBody.Links[0])
 	}
-	owner := r.RecordBody.Owner
+	owner := r.recordBody.Owner
 
 	cerr := C.ZTLF_DB_PutRecord(
 		(*C.struct_ZTLF_DB)(&db.cdb),
@@ -124,13 +124,13 @@ func (db *db) putRecord(r *Record) error {
 		C.uint(len(owner)),
 		unsafe.Pointer(rhash),
 		unsafe.Pointer(rid),
-		C.uint64_t(r.RecordBody.Timestamp),
+		C.uint64_t(r.recordBody.Timestamp),
 		C.uint32_t(r.Score()),
 		(*unsafe.Pointer)(sptr),
 		(*C.uint)(ssptr),
 		C.uint(len(selectors)),
 		lptr,
-		C.uint(r.RecordBody.LinkCount()))
+		C.uint(r.recordBody.LinkCount()))
 
 	if cerr != 0 {
 		return ErrorDatabase{int(cerr), "record add failed (" + strconv.Itoa(int(cerr)) + ")"}

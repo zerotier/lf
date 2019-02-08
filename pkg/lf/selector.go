@@ -64,7 +64,8 @@ func MakeSelectorKey(plainTextName []byte, ord uint64) []byte {
 	if err != nil {
 		panic(err)
 	}
-	ck, _ := ECDSACompressPublicKeyWithID(&priv.PublicKey, SelectorTypeBP160)
+	ck, _ := ECDSACompressPublicKey(&priv.PublicKey)
+	ck[0] |= SelectorTypeBP160 << 2
 	var o [8]byte
 	binary.BigEndian.PutUint64(o[:], ord)
 	return append(ck, o[:]...)
@@ -111,7 +112,7 @@ func (s *Selector) UnmarshalFrom(in io.Reader) error {
 	if err != nil {
 		return err
 	}
-	if (s.ClaimKey[0] >> 1) != SelectorTypeBP160 {
+	if (s.ClaimKey[0] >> 2) != SelectorTypeBP160 {
 		return ErrorUnsupportedType
 	}
 	_, err = br.Read(s.ClaimKey[1:])
@@ -132,10 +133,11 @@ func (s *Selector) Claim(plainTextName []byte, ord uint64, hash []byte) {
 	if err != nil {
 		panic(err)
 	}
-	ck, _ := ECDSACompressPublicKeyWithID(&priv.PublicKey, SelectorTypeBP160)
+	ck, _ := ECDSACompressPublicKey(&priv.PublicKey)
 	if len(ck) != len(s.ClaimKey) {
 		panic("claim key compression failed")
 	}
+	ck[0] |= SelectorTypeBP160 << 2
 	copy(s.ClaimKey[:], ck)
 
 	sigHash := sha256.New()

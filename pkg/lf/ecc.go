@@ -12,8 +12,6 @@ import (
 	"crypto/elliptic"
 	secrand "crypto/rand"
 	"crypto/sha256"
-	"crypto/x509"
-	"encoding/pem"
 	"math/big"
 )
 
@@ -54,6 +52,9 @@ func ECCCompressPublicKey(curve elliptic.Curve, kx, ky *big.Int) ([]byte, error)
 // ECCDecompressPublicKey decompresses a public key.
 // This won't work for Koblitz curves but will work with ECDSA curves compressed with the slightly alternate ECDSACompressPublicKeyWithID() function.
 func ECCDecompressPublicKey(c elliptic.Curve, data []byte) (*big.Int, *big.Int, error) {
+	if len(data) < 2 {
+		return nil, nil, ErrorInvalidPublicKey
+	}
 	var x, y, a, ax big.Int
 	params := c.Params()
 	x.SetBytes(data[1:])
@@ -74,9 +75,9 @@ func ECCDecompressPublicKey(c elliptic.Curve, data []byte) (*big.Int, *big.Int, 
 	return &x, &y, nil
 }
 
-// ECCAgree performs elliptic curve Diffie-Hellman key agreement and returns the sha256 digest of the resulting shared key.
+// ECDHAgree performs elliptic curve Diffie-Hellman key agreement and returns the sha256 digest of the resulting shared key.
 // This is just a simple wrapper function for clarity and brevity.
-func ECCAgree(c elliptic.Curve, pubX, pubY *big.Int, priv []byte) ([32]byte, error) {
+func ECDHAgree(c elliptic.Curve, pubX, pubY *big.Int, priv []byte) ([32]byte, error) {
 	x, _ := c.ScalarMult(pubX, pubY, priv)
 	return sha256.Sum256(x.Bytes()), nil
 }
@@ -94,21 +95,6 @@ func ECDSADecompressPublicKey(c elliptic.Curve, data []byte) (*ecdsa.PublicKey, 
 		return nil, err
 	}
 	return &ecdsa.PublicKey{Curve: c, X: x, Y: y}, nil
-}
-
-// ECDSACompressPublicKeyWithID uses a slightly different encoding for the first parity byte to allow an ID to be packed with no extra space.
-// The ID may be up to 7 bits in size (0..127). This deviates a little from the compressed point standard which always sets bit 0x02 to indicate
-// compression, so it should be used in roles where compression is always assumed.
-func ECDSACompressPublicKeyWithID(key *ecdsa.PublicKey, algorithmID byte) ([]byte, error) {
-	c, err := ECDSACompressPublicKey(key)
-	if err != nil {
-		return nil, err
-	}
-	if len(c) == 0 {
-		return nil, ErrorInvalidPublicKey
-	}
-	c[0] = (c[0] & 1) | (algorithmID << 1) // translate 2/3 even/odd parity to 0/1 and then stuff ID in most significant 7 bits
-	return c, nil
 }
 
 // ECDSASignatureSize returns the maximum packed binary signature size for a given curve.
@@ -170,26 +156,4 @@ func ECDSAVerify(key *ecdsa.PublicKey, hash []byte, signature []byte) bool {
 	s.SetBytes(signature[orderSize:])
 
 	return ecdsa.Verify(key, hash, &r, &s)
-}
-
-// ECDSAMarshalPEM creates a plain text PEM-encoded X.509 ECDSA private key (includes public).
-func ECDSAMarshalPEM(key *ecdsa.PrivateKey) []byte {
-	bin, err := x509.MarshalECPrivateKey(key)
-	if err != nil {
-		panic(err)
-	}
-	return pem.EncodeToMemory(&pem.Block{
-		Type:  "EC PRIVATE KEY",
-		Bytes: bin,
-	})
-}
-
-// ECDSAUnmarshalPEM unmarshals a PEM-encoded X.509 ECDSA private key.
-// Non-PEM parts of data are ignored.
-func ECDSAUnmarshalPEM(data []byte) (*ecdsa.PrivateKey, error) {
-	blk, _ := pem.Decode(data)
-	if blk.Type != "EC PRIVATE KEY" {
-		return nil, ErrorUnsupportedType
-	}
-	return x509.ParseECPrivateKey(blk.Bytes)
 }

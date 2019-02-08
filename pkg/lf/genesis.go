@@ -16,10 +16,10 @@ import (
 type Genesis struct {
 	Name               string   `json:",omitempty"` // Name of this LF network / data store
 	Contact            string   `json:",omitempty"` // Contact info for this network (may be empty)
+	CAs                [][]byte `json:",omitempty"` // X.509 certificates for master CAs for this data store (empty for an unbiased work-only data store)
 	RecordMinLinks     uint     ``                  // Minimum number of links required for non-genesis records
 	RecordMaxValueSize uint     ``                  // Maximum size of record values
 	Amendable          bool     ``                  // If true, genesis settings can be amended later by the same owner using the genesis private key
-	CAs                [][]byte `json:",omitempty"` // X.509 certificates for master CAs for this data store (empty for an unbiased work-only data store)
 }
 
 // CreateGenesisRecords creates a set of genesis records for a new LF data store.

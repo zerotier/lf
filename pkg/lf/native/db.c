@@ -33,10 +33,11 @@
  *   goff                     offset of graph node in memory mapped graph file (unique key)
  *   ts                       record timestamp
  *   score                    score of this record (alone, not with weight from links)
+ *   reputation               flag for records that are suspect for any reason
  *   link_count               number of links from this record (actual links are in graph node)
  *   selector_count           number of selectors for this record
  *   hash                     shandwich256(record data) (unique key)
- *   id                       sha256(selectors)
+ *   id                       sha256(selector keys)
  *   owner                    owner of this record or NULL if same as previous
  * 
  * selector
@@ -96,6 +97,7 @@
 "goff INTEGER NOT NULL," \
 "ts INTEGER NOT NULL," \
 "score INTEGER NOT NULL," \
+"reputation INTEGER NOT NULL," \
 "link_count INTEGER NOT NULL," \
 "selector_count INTEGER NOT NULL," \
 "hash BLOB NOT NULL," \
@@ -105,6 +107,7 @@
 \
 "CREATE UNIQUE INDEX IF NOT EXISTS record_goff ON record(goff);\n" \
 "CREATE UNIQUE INDEX IF NOT EXISTS record_hash ON record(hash);\n" \
+"CREATE INDEX IF NOT EXISTS record_id ON record(id);\n" \
 "CREATE INDEX IF NOT EXISTS record_doff_owner_id_ts ON record(doff,owner,id,ts);\n" \
 "CREATE INDEX IF NOT EXISTS record_ts ON record(ts);\n" \
 \
@@ -498,7 +501,7 @@ int ZTLF_DB_Open(struct ZTLF_DB *db,const char *path,char *errbuf,unsigned int e
 	S(db->sGetConfig,
 	     "SELECT \"v\" FROM config WHERE \"k\" = ?");
 	S(db->sAddRecord,
-	     "INSERT INTO record (doff,dlen,goff,ts,score,link_count,selector_count,hash,id,owner) VALUES (?,?,?,?,?,?,?,?,?,?)");
+	     "INSERT INTO record (doff,dlen,goff,ts,score,reputation,link_count,selector_count,hash,id,owner) VALUES (?,?,?,?,?,?,?,?,?,?,?)");
 	S(db->sAddSelector,
 	     "INSERT OR IGNORE INTO selector (sel,sel_no,record_doff) VALUES (?,?,?)");
 	S(db->sGetRecordCount,
@@ -512,7 +515,7 @@ int ZTLF_DB_Open(struct ZTLF_DB *db,const char *path,char *errbuf,unsigned int e
 	S(db->sGetCompletedRecordHashes,
 	     "SELECT r.hash FROM record AS r WHERE NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) ORDER BY r.hash ASC");
 	S(db->sGetLinkCandidates,
-	     "SELECT r.goff,r.hash FROM record AS r WHERE NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) AND NOT EXISTS (SELECT gp.record_goff FROM graph_pending AS gp WHERE gp.record_goff = r.goff) ORDER BY ts DESC");
+	     "SELECT r.goff,r.hash FROM record AS r WHERE NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) AND NOT EXISTS (SELECT gp.record_goff FROM graph_pending AS gp WHERE gp.record_goff = r.goff) AND r.reputation = 0 ORDER BY ts DESC");
 	S(db->sGetRecordByHash,
 	     "SELECT doff,dlen FROM record WHERE hash = ?");
 	S(db->sGetMaxRecordDoff,
@@ -824,11 +827,12 @@ int ZTLF_DB_PutRecord(
 	sqlite3_bind_int64(db->sAddRecord,3,goff);
 	sqlite3_bind_int64(db->sAddRecord,4,(sqlite3_int64)ts);
 	sqlite3_bind_int64(db->sAddRecord,5,(sqlite3_int64)score);
-	sqlite3_bind_int(db->sAddRecord,6,(int)linkCount);
-	sqlite3_bind_int(db->sAddRecord,7,(int)selCount);
-	sqlite3_bind_blob(db->sAddRecord,8,hash,32,SQLITE_STATIC);
-	sqlite3_bind_blob(db->sAddRecord,9,id,32,SQLITE_STATIC);
-	sqlite3_bind_blob(db->sAddRecord,10,owner,ownerSize,SQLITE_STATIC);
+	sqlite3_bind_int(db->sAddRecord,6,0);
+	sqlite3_bind_int(db->sAddRecord,7,(int)linkCount);
+	sqlite3_bind_int(db->sAddRecord,8,(int)selCount);
+	sqlite3_bind_blob(db->sAddRecord,9,hash,32,SQLITE_STATIC);
+	sqlite3_bind_blob(db->sAddRecord,10,id,32,SQLITE_STATIC);
+	sqlite3_bind_blob(db->sAddRecord,11,owner,ownerSize,SQLITE_STATIC);
 	if ((e = sqlite3_step(db->sAddRecord)) != SQLITE_DONE) {
 		result = ZTLF_POS(e);
 		goto exit_putRecord;

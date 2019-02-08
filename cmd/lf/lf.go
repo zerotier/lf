@@ -296,10 +296,10 @@ func doMakeGenesis(cfg *Config, basePath string, jsonOutput bool, urlOverride st
 	g := lf.Genesis{
 		Name:               "1AU",
 		Contact:            "",
+		CAs:                nil,
 		RecordMinLinks:     3,
 		RecordMaxValueSize: 1024,
 		Amendable:          false,
-		CAs:                nil,
 	}
 	genesisRecords, genesisPrivate, err := lf.CreateGenesisRecords(&g)
 	if err != nil {

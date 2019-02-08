@@ -24,40 +24,40 @@ var (
 	b1_1 = []byte{0x01}
 )
 
-// RecordMaxSize is a global maximum record size (binary serialized length).
-const RecordMaxSize = 65536
+// recordWharrgarblMemory is the default amount of memory to use for Wharrgarbl momentum-type PoW.
+const recordWharrgarblMemory = 1024 * 1024 * 384 // 384mb
 
-// RecordWorkAlgorithmNone indicates no work algorithm (not allowed on main network).
+// recordMaxSize is a global maximum record size (binary serialized length).
+// This is more or less a sanity limit to prevent malloc overflow attacks and similar things.
+const recordMaxSize = 65536
+
+// RecordWorkAlgorithmNone indicates no work algorithm (not allowed on main network but can exist in testing or private networks that are CA-only).
 const RecordWorkAlgorithmNone byte = 0
 
 // RecordWorkAlgorithmWharrgarbl indicates the Wharrgarbl momentum-like proof of work algorithm.
 const RecordWorkAlgorithmWharrgarbl byte = 1
 
-// RecordOwnerTypeP384 is a NIST P-384 point compressed public key.
-const RecordOwnerTypeP384 byte = 1
+// RecordOwnerTypeP384 is a NIST P-384 point compressed public key (valid types can be from 0 to 63).
+const RecordOwnerTypeP384 byte = 0
 
-// RecordWharrgarblMemory is the memory size that should be used for Wharrgarbl PoW.
-// This is large enough to perform well up to relatively big record sizes. It'll still work for
-// really huge ones of course, but performance starts to drop a bit. It can be increased and could
-// be made configurable in the future if ever needed.
-const RecordWharrgarblMemory = 1024 * 1024 * 384 // 384mb
-
-// RecordBody represents the main body of a record including its value, owner public keys, etc.
-type RecordBody struct {
-	Value     []byte // Record value
-	Owner     []byte // Owner of this record (public key with type)
-	Links     []byte // Links to previous records' hashes (size is a multiple of 32 bytes, link count is size / 32)
-	Timestamp uint64 // Timestamp (and revision ID) in SECONDS since Unix epoch
+// recordBody represents the main body of a record including its value, owner public keys, etc.
+// It's included as part of Record but separated since in record construction we want to treat it as a separate element.
+type recordBody struct {
+	Value       []byte // Record value
+	Owner       []byte // Owner of this record (public key with type)
+	Certificate []byte // Hash of exact record containing certificate for this owner (if CAs are enabled)
+	Links       []byte // Links to previous records' hashes (size is a multiple of 32 bytes, link count is size / 32)
+	Timestamp   uint64 // Timestamp (and revision ID) in SECONDS since Unix epoch
 }
 
-func (rb *RecordBody) unmarshalFrom(r io.Reader) error {
+func (rb *recordBody) unmarshalFrom(r io.Reader) error {
 	rr := byteAndArrayReader{r}
 
 	l, err := binary.ReadUvarint(&rr)
 	if err != nil {
 		return err
 	}
-	if l > RecordMaxSize {
+	if l > recordMaxSize {
 		return ErrorRecordInvalid
 	}
 	rb.Value = make([]byte, uint(l))
@@ -70,7 +70,7 @@ func (rb *RecordBody) unmarshalFrom(r io.Reader) error {
 	if err != nil {
 		return err
 	}
-	if l > RecordMaxSize {
+	if l > recordMaxSize {
 		return ErrorRecordInvalid
 	}
 	rb.Owner = make([]byte, uint(l))
@@ -83,8 +83,21 @@ func (rb *RecordBody) unmarshalFrom(r io.Reader) error {
 	if err != nil {
 		return err
 	}
+	if l > recordMaxSize {
+		return ErrorRecordInvalid
+	}
+	rb.Certificate = make([]byte, uint(l))
+	_, err = io.ReadFull(&rr, rb.Certificate)
+	if err != nil {
+		return err
+	}
+
+	l, err = binary.ReadUvarint(&rr)
+	if err != nil {
+		return err
+	}
 	l *= 32
-	if l > RecordMaxSize {
+	if l > recordMaxSize {
 		return ErrorRecordInvalid
 	}
 	rb.Links = make([]byte, uint(l))
@@ -98,7 +111,7 @@ func (rb *RecordBody) unmarshalFrom(r io.Reader) error {
 	return nil
 }
 
-func (rb *RecordBody) marshalTo(w io.Writer) error {
+func (rb *recordBody) marshalTo(w io.Writer) error {
 	if _, err := writeUVarint(w, uint64(len(rb.Value))); err != nil {
 		return err
 	}
@@ -110,6 +123,13 @@ func (rb *RecordBody) marshalTo(w io.Writer) error {
 		return err
 	}
 	if _, err := w.Write(rb.Owner); err != nil {
+		return err
+	}
+
+	if _, err := writeUVarint(w, uint64(len(rb.Certificate))); err != nil {
+		return err
+	}
+	if _, err := w.Write(rb.Certificate); err != nil {
 		return err
 	}
 
@@ -131,16 +151,7 @@ func (rb *RecordBody) marshalTo(w io.Writer) error {
 	return err
 }
 
-// LinkCount returns the number of links, which is just short for len(Links)/32
-func (rb *RecordBody) LinkCount() int { return (len(rb.Links) / 32) }
-
-func (rb *RecordBody) bytes() []byte {
-	var buf bytes.Buffer
-	rb.marshalTo(&buf)
-	return buf.Bytes()
-}
-
-func (rb *RecordBody) sizeBytes() uint {
+func (rb *recordBody) sizeBytes() uint {
 	var wc countingWriter
 	rb.marshalTo(&wc)
 	return uint(wc)
@@ -151,7 +162,7 @@ func (rb *RecordBody) sizeBytes() uint {
 // separately. This is done to make it possible in the future to store only value hashes
 // but still be able to authenticate records, which could allow the size of the data store
 // to get trimmed down a bit by discarding actual values for very old records.
-func (rb *RecordBody) signingHash() [32]byte {
+func (rb *recordBody) signingHash() [32]byte {
 	h := sha512.New()
 	vh := Shandwich256(rb.Value)
 	h.Write(vh[:])
@@ -167,10 +178,13 @@ func (rb *RecordBody) signingHash() [32]byte {
 	return Shandwich256FromSha512(h.Sum(s512buf[:]))
 }
 
+// LinkCount returns the number of links, which is just short for len(Links)/32
+func (rb *recordBody) LinkCount() int { return (len(rb.Links) / 32) }
+
 // Record combines the record body with one or more selectors, work, and a signature.
 // A record should not be modified once created. It should be treated as a read-only value.
 type Record struct {
-	RecordBody
+	recordBody
 
 	Selectors     []Selector // Things that can be used to find the record
 	Work          []byte     // Proof of work computed on sha256(Body Signing Hash | Selectors) with work cost based on size of body and selectors
@@ -194,7 +208,7 @@ func (r *Record) UnmarshalFrom(rdr io.Reader) error {
 		return ErrorRecordInvalid
 	}
 
-	if err = r.RecordBody.unmarshalFrom(&rr); err != nil {
+	if err = r.recordBody.unmarshalFrom(&rr); err != nil {
 		return err
 	}
 
@@ -202,7 +216,7 @@ func (r *Record) UnmarshalFrom(rdr io.Reader) error {
 	if err != nil {
 		return err
 	}
-	if selCount > (RecordMaxSize / 64) {
+	if selCount > (recordMaxSize / 64) {
 		return ErrorRecordInvalid
 	}
 	r.Selectors = make([]Selector, uint(selCount))
@@ -232,7 +246,7 @@ func (r *Record) UnmarshalFrom(rdr io.Reader) error {
 	if err != nil {
 		return err
 	}
-	if siglen > RecordMaxSize {
+	if siglen > recordMaxSize {
 		return ErrorRecordInvalid
 	}
 	r.Signature = make([]byte, uint(siglen))
@@ -259,7 +273,7 @@ func (r *Record) MarshalTo(w io.Writer) error {
 		return err
 	}
 
-	if err := r.RecordBody.marshalTo(w); err != nil {
+	if err := r.recordBody.marshalTo(w); err != nil {
 		return err
 	}
 
@@ -363,14 +377,14 @@ func (r *Record) Validate() (err error) {
 		}
 	}()
 
-	if len(r.RecordBody.Owner) == 0 {
+	if len(r.recordBody.Owner) == 0 {
 		return ErrorRecordOwnerSignatureCheckFailed
 	}
 
-	selectorClaimSigningHash := r.RecordBody.signingHash()
+	selectorClaimSigningHash := r.recordBody.signingHash()
 	workHashBytes := make([]byte, 0, 32+(len(r.Selectors)*128))
 	workHashBytes = append(workHashBytes, selectorClaimSigningHash[:]...)
-	workBillableBytes := r.RecordBody.sizeBytes()
+	workBillableBytes := r.recordBody.sizeBytes()
 	for i := 0; i < len(r.Selectors); i++ {
 		sb := r.Selectors[i].Bytes()
 		workHashBytes = append(workHashBytes, sb...)
@@ -392,7 +406,7 @@ func (r *Record) Validate() (err error) {
 		return ErrorRecordInsufficientWork
 	}
 
-	pubKey, err := ECDSADecompressPublicKey(elliptic.P384(), r.RecordBody.Owner) // the curve type is in the least significant bits of owner but right now there's only one allowed
+	pubKey, err := ECDSADecompressPublicKey(elliptic.P384(), r.recordBody.Owner) // the curve type is in the least significant bits of owner but right now there's only one allowed
 	if err != nil {
 		return ErrorRecordOwnerSignatureCheckFailed
 	}
@@ -425,8 +439,8 @@ func RecordWharrgarblCost(bytes uint) uint32 {
 	if bytes <= 1 { // byte counts <= 1 break the calculation (no real record is this small anyway)
 		return 1
 	}
-	if bytes > RecordMaxSize { // sanity check, shouldn't ever happen
-		bytes = RecordMaxSize
+	if bytes > recordMaxSize { // sanity check, shouldn't ever happen
+		bytes = recordMaxSize
 	}
 	b := uint64(bytes * 4)
 	c := (uint64(integerSqrtRounded(uint32(b))) * b * uint64(3)) - (b * 8)
@@ -461,10 +475,11 @@ func GenerateOwner() ([]byte, *ecdsa.PrivateKey) {
 	if err != nil {
 		panic(err)
 	}
-	pub, err := ECDSACompressPublicKeyWithID(&priv.PublicKey, RecordOwnerTypeP384)
+	pub, err := ECDSACompressPublicKey(&priv.PublicKey)
 	if err != nil {
 		panic(err)
 	}
+	pub[0] |= RecordOwnerTypeP384 << 2 // we can use the lower 6 bits of the first byte for a type
 	return pub, priv
 }
 
@@ -473,14 +488,19 @@ func GetOwnerPublicKey(k *ecdsa.PrivateKey) ([]byte, error) {
 	if k == nil || k.Params().Name != "P-384" {
 		return nil, ErrorUnsupportedCurve
 	}
-	return ECDSACompressPublicKeyWithID(&k.PublicKey, RecordOwnerTypeP384)
+	pub, err := ECDSACompressPublicKey(&k.PublicKey)
+	if err != nil {
+		return nil, err
+	}
+	pub[0] |= RecordOwnerTypeP384 << 2 // we can use the lower 6 bits of the first byte for a type
+	return pub, nil
 }
 
 // NewRecordStart creates an incomplete record with its body and selectors filled out but no work or final signature.
 // This can be used to do the first step of a three-phase record creation process with the next two phases being NewRecordAddWork
 // and NewRecordComplete. This is useful of record creation needs to be split among systems or participants.
 func NewRecordStart(value []byte, links [][]byte, plainTextSelectorNames [][]byte, selectorOrdinals []uint64, owner []byte, ts uint64) (r *Record, workHash [32]byte, workBillableBytes uint, err error) {
-	if len(value) > RecordMaxSize {
+	if len(value) > recordMaxSize {
 		err = ErrorInvalidParameter
 		return
 	}
@@ -488,21 +508,21 @@ func NewRecordStart(value []byte, links [][]byte, plainTextSelectorNames [][]byt
 	r = new(Record)
 
 	if len(value) > 0 {
-		r.RecordBody.Value = append(r.RecordBody.Value, value...)
+		r.recordBody.Value = append(r.recordBody.Value, value...)
 	}
-	r.RecordBody.Owner = append(r.RecordBody.Owner, owner...)
+	r.recordBody.Owner = append(r.recordBody.Owner, owner...)
 	if len(links) > 0 {
-		r.RecordBody.Links = make([]byte, 0, 32*len(links))
+		r.recordBody.Links = make([]byte, 0, 32*len(links))
 		for i := 0; i < len(links); i++ {
-			r.RecordBody.Links = append(r.RecordBody.Links, links[i]...)
+			r.recordBody.Links = append(r.recordBody.Links, links[i]...)
 		}
 	}
-	r.RecordBody.Timestamp = ts
+	r.recordBody.Timestamp = ts
 
-	workBillableBytes = r.RecordBody.sizeBytes()
+	workBillableBytes = r.recordBody.sizeBytes()
 
 	workHasher := sha256.New()
-	selectorClaimSigningHash := r.RecordBody.signingHash()
+	selectorClaimSigningHash := r.recordBody.signingHash()
 	workHasher.Write(selectorClaimSigningHash[:])
 	if len(plainTextSelectorNames) > 0 {
 		r.Selectors = make([]Selector, len(plainTextSelectorNames))
@@ -528,7 +548,7 @@ func NewRecordStart(value []byte, links [][]byte, plainTextSelectorNames [][]byt
 func NewRecordDoWork(workHash []byte, workBillableBytes uint, workAlgorithm byte) (work []byte, err error) {
 	if workAlgorithm != RecordWorkAlgorithmNone {
 		if workAlgorithm == RecordWorkAlgorithmWharrgarbl {
-			w, iter := Wharrgarbl(workHash, RecordWharrgarblCost(workBillableBytes), RecordWharrgarblMemory)
+			w, iter := Wharrgarbl(workHash, RecordWharrgarblCost(workBillableBytes), recordWharrgarblMemory)
 			if iter == 0 {
 				err = ErrorWharrgarblFailed
 				return
@@ -561,7 +581,7 @@ func NewRecordComplete(incompleteRecord *Record, signingHash []byte, ownerPrivat
 		return nil, ErrorUnsupportedCurve
 	}
 	r.Signature, err = ECDSASign(ownerPrivate, signingHash)
-	if r.SizeBytes() > RecordMaxSize {
+	if r.SizeBytes() > recordMaxSize {
 		return nil, ErrorRecordTooLarge
 	}
 	return
