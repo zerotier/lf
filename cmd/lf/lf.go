@@ -40,7 +40,7 @@ var lfDefaultPath = func() string {
 
 // ConfigOwner contains info about an owner.
 type ConfigOwner struct {
-	Owner   string
+	Owner   []byte
 	Secret  []byte
 	Default bool
 }
@@ -74,7 +74,7 @@ func (c *Config) load(path string) error {
 			dflName = u.Username
 		}
 		c.Owners[dflName] = &ConfigOwner{
-			Owner:   lf.Base58EncodeWithCRC(pub),
+			Owner:   pub,
 			Secret:  xb,
 			Default: true,
 		}
@@ -253,7 +253,7 @@ func doOwner(cfg *Config, basePath string, jsonOutput bool, urlOverride string, 
 		pub, pk := lf.GenerateOwner()
 		xb, _ := x509.MarshalECPrivateKey(pk)
 		cfg.Owners[name] = &ConfigOwner{
-			Owner:  lf.Base58EncodeWithCRC(pub),
+			Owner:  pub,
 			Secret: xb,
 		}
 		cfg.dirty = true
