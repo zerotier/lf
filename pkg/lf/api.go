@@ -439,6 +439,7 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 				DBRecordCount: rc,
 				DBSize:        ds,
 				Peers:         n.Peers(),
+				Genesis:       n.genesisConfig,
 			})
 		} else {
 			out.Header().Set("Allow", "GET, HEAD")
