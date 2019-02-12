@@ -52,8 +52,6 @@ func (h *shandwich256Hasher) BlockSize() int { return h[0].BlockSize() } // not 
 
 func (h *shandwich256Hasher) Sum(b []byte) []byte {
 	var hbuf [128]byte
-	hh := h[0].Sum(hbuf[:0])
-	hh = h[1].Sum(hh)
-	combined := sha256.Sum256(hh)
+	combined := sha256.Sum256(h[1].Sum(h[0].Sum(hbuf[:0])))
 	return append(b, combined[:]...)
 }

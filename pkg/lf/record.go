@@ -28,7 +28,7 @@ const recordBodyFlagHasCertificate byte = 0x01
 const recordBodyFlagValueLZW byte = 0x02
 
 // recordWharrgarblMemory is the default amount of memory to use for Wharrgarbl momentum-type PoW.
-const recordWharrgarblMemory = 1024 * 1024 * 512
+const recordWharrgarblMemory = 1024 * 1024 * 384
 
 // RecordMaxSize is a global maximum record size (binary serialized length).
 // This is more or less a sanity limit to prevent malloc overflow attacks and similar things.
@@ -39,9 +39,6 @@ const RecordWorkAlgorithmNone byte = 0
 
 // RecordWorkAlgorithmWharrgarbl indicates the Wharrgarbl momentum-like proof of work algorithm.
 const RecordWorkAlgorithmWharrgarbl byte = 1
-
-// RecordOwnerTypeP384 is a NIST P-384 point compressed public key (valid types can be from 0 to 63).
-const RecordOwnerTypeP384 byte = 0
 
 // RecordMaxForwardTimeDrift is the maximum number of seconds in the future a record can be timestamped.
 const RecordMaxForwardTimeDrift = 30
@@ -505,13 +502,13 @@ func RecordWharrgarblCost(bytes uint) uint32 {
 	// This function provides a relatively linear relationship between average Wharrgarbl time
 	// and the number of bytes (total) in a record.
 	//
-	if bytes <= 1 { // byte counts <= 1 break the calculation (no real record is this small anyway)
-		return 1
+	if bytes < 4 { // small byte counts break the calculation (no real record is this small anyway)
+		return uint32(bytes) + 1
 	}
 	if bytes > RecordMaxSize { // sanity check, shouldn't ever happen
 		bytes = RecordMaxSize
 	}
-	b := uint64(bytes * 4)
+	b := uint64(bytes * 3)
 	c := (uint64(integerSqrtRounded(uint32(b))) * b * uint64(3)) - (b * 8)
 	if c > 0xffffffff { // sanity check, no record gets this big
 		return 0xffffffff
@@ -520,19 +517,14 @@ func RecordWharrgarblCost(bytes uint) uint32 {
 }
 
 // RecordWharrgarblScore computes a score approximately scaled to uint32_max based on a Wharrgarbl cost value from a piece of work.
-// This is used by Record's Score() method.
 func RecordWharrgarblScore(cost uint32) uint32 {
-	if cost >= 0x17e00000 {
-		return 0xffffda7f
+	if cost > 0x0f7b0000 { // RecordWharrgarblCost(RecordMaxSize)
+		return 0xffffa8db
 	}
-	if cost <= 1 {
-		return 0x0000000a
+	if cost < 1 {
+		return 1
 	}
-	// The max cost that will ever be returned by RecordWharrgarblCost is 0x17e00000. The max
-	// value of a 32-bit integer divided by this is 10.722513086508705. This approximately
-	// scales the cost of a record to a value from 0 to approximately uint32_max. The max is
-	// actually 0xffffda7f, which is close enough.
-	return ((cost * 10) + ((cost / 10000) * 7225))
+	return ((cost * 16) + ((cost / 10000) * 5369))
 }
 
 // NewRecordStart creates an incomplete record with its body and selectors filled out but no work or final signature.

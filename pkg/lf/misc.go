@@ -36,28 +36,6 @@ func (mr byteAndArrayReader) ReadByte() (byte, error) {
 	return tmp[0], err
 }
 
-type countingReader struct {
-	r io.Reader
-	n uint
-}
-
-func (mr countingReader) Read(p []byte) (int, error) {
-	n, err := mr.r.Read(p)
-	if n > 0 {
-		mr.n += uint(n)
-	}
-	return n, err
-}
-
-func (mr countingReader) ReadByte() (byte, error) {
-	var tmp [1]byte
-	_, err := io.ReadFull(mr.r, tmp[:])
-	if err == nil {
-		mr.n++
-	}
-	return tmp[0], err
-}
-
 func writeUVarint(out io.Writer, v uint64) (int, error) {
 	var tmp [10]byte
 	l := binary.PutUvarint(tmp[:], v)
