@@ -9,7 +9,7 @@ package main
 
 import (
 	"bytes"
-	"crypto/x509"
+	secrand "crypto/rand"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -40,9 +40,9 @@ var lfDefaultPath = func() string {
 
 // ConfigOwner contains info about an owner.
 type ConfigOwner struct {
-	Owner   []byte
-	Secret  []byte
-	Default bool
+	Owner        []byte
+	OwnerPrivate []byte
+	Default      bool
 }
 
 // Config is the format of the JSON client configuration stored on disk
@@ -66,17 +66,16 @@ func (c *Config) load(path string) error {
 	// If the file didn't exist, init config with defaults.
 	if err != nil && os.IsNotExist(err) {
 		c.Urls = defaultNodeUrls
-		pub, pk := lf.GenerateOwner()
-		xb, _ := x509.MarshalECPrivateKey(pk)
+		owner, _ := lf.NewOwner(lf.OwnerTypeEd25519)
 		dflName := "default"
 		u, _ := user.Current()
 		if u != nil && len(u.Username) > 0 {
 			dflName = u.Username
 		}
 		c.Owners[dflName] = &ConfigOwner{
-			Owner:   pub,
-			Secret:  xb,
-			Default: true,
+			Owner:        owner.Bytes(),
+			OwnerPrivate: owner.PrivateBytes(),
+			Default:      true,
 		}
 		c.dirty = true
 		err = nil
@@ -250,14 +249,15 @@ func doOwner(cfg *Config, basePath string, jsonOutput bool, urlOverride string, 
 			fmt.Println("ERROR: an owner named '" + args[1] + "' already exists.")
 			return
 		}
-		pub, pk := lf.GenerateOwner()
-		xb, _ := x509.MarshalECPrivateKey(pk)
+		owner, _ := lf.NewOwner(lf.OwnerTypeEd25519)
+		isDfl := len(cfg.Owners) == 0
 		cfg.Owners[name] = &ConfigOwner{
-			Owner:  pub,
-			Secret: xb,
+			Owner:        owner.Bytes(),
+			OwnerPrivate: owner.PrivateBytes(),
+			Default:      isDfl,
 		}
 		cfg.dirty = true
-		fmt.Printf("%-24s %s\n", name, cfg.Owners[name].Owner)
+		fmt.Printf("%-24s %s\n", name, owner.Bytes())
 
 	case "default":
 		if len(args) < 2 {
@@ -293,24 +293,37 @@ func doOwner(cfg *Config, basePath string, jsonOutput bool, urlOverride string, 
 }
 
 func doMakeGenesis(cfg *Config, basePath string, jsonOutput bool, urlOverride string, verboseOutput bool, args []string) {
+	var nwKey [32]byte
+	secrand.Read(nwKey[:])
 	g := lf.Genesis{
-		Name:               "1AU",
-		Contact:            "",
-		CAs:                nil,
-		RecordMinLinks:     3,
-		RecordMaxValueSize: 1024,
-		Amendable:          false,
+		Name:                 "Sol",
+		Contact:              "",
+		Comment:              "",
+		CAs:                  nil,
+		BannedWorkAlgorithms: []uint{uint(lf.RecordWorkAlgorithmNone)},
+		Key:                  nwKey[:],
+		TimestampFloor:       lf.TimeSec(),
+		RecordMinLinks:       3,
+		RecordMaxValueSize:   1024,
+		RecordMaxSize:        lf.RecordMaxSize,
+		SettingsAmendable:    false,
+		CAsAmendable:         false,
 	}
+
 	gJSON, _ := json.MarshalIndent(g, "", "  ")
 	fmt.Printf("Genesis parameters:\n\n%s\n\nCreating %d genesis records...\n", gJSON, g.RecordMinLinks)
-	genesisRecords, genesisPrivate, err := lf.CreateGenesisRecords(&g)
+
+	genesisRecords, genesisOwner, err := lf.CreateGenesisRecords(lf.OwnerTypeEd25519, &g)
 	if err != nil {
 		fmt.Printf("ERROR: %s\n", err.Error())
 		os.Exit(-1)
 		return
 	}
+
 	var grData bytes.Buffer
 	for i := 0; i < len(genesisRecords); i++ {
+		rJSON, _ := json.MarshalIndent(genesisRecords[i], "", "  ")
+		fmt.Printf("%s\n", rJSON)
 		err = genesisRecords[i].MarshalTo(&grData)
 		if err != nil {
 			fmt.Printf("ERROR: %s\n", err.Error())
@@ -318,16 +331,14 @@ func doMakeGenesis(cfg *Config, basePath string, jsonOutput bool, urlOverride st
 			return
 		}
 	}
-	gpx509, err := x509.MarshalECPrivateKey(genesisPrivate)
-	if err != nil {
-		fmt.Printf("ERROR: %s\n", err.Error())
-		os.Exit(-1)
-		return
+
+	ioutil.WriteFile("genesis.lf", grData.Bytes(), 0644)
+	ioutil.WriteFile("genesis.go", []byte(fmt.Sprintf("/*\n%s\n*/\n%#v", gJSON, grData.Bytes())), 0644)
+	if g.SettingsAmendable || g.CAsAmendable {
+		ioutil.WriteFile("genesis.secret", genesisOwner.PrivateBytes(), 0600)
 	}
-	ioutil.WriteFile("genesis.bin", grData.Bytes(), 0644)
-	ioutil.WriteFile("genesis.go", []byte(fmt.Sprintf("%#v", grData.Bytes())), 0644)
-	ioutil.WriteFile("genesis.secret", gpx509, 0600)
-	fmt.Printf("Wrote genesis.bin, genesis.go, and genesis.secret to current directory.\n")
+
+	fmt.Printf("\nWrote genesis.lf, genesis.go, and genesis.secret (if amendable) to current directory.\n")
 }
 
 //////////////////////////////////////////////////////////////////////////////

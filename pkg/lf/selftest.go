@@ -20,39 +20,43 @@ import (
 	"path"
 	"strconv"
 	"time"
+
+	"golang.org/x/crypto/sha3"
 )
 
 //////////////////////////////////////////////////////////////////////////////
 
 // TestCore tests various core functions and helpers.
 func TestCore(out io.Writer) bool {
-	fmt.Fprintf(out, "Testing SpeckHash (part of Wharrgarbl)... ")
-	spout := SpeckHash([]byte("My hovercraft is full of eels."))
-	if spout[0] != 0xf50d1a72e7c3d28d || spout[1] != 0x709f7b2828f258ef {
-		fmt.Fprintf(out, "FAILED %x\n", spout)
-		return false
-	}
-	spout = SpeckHash(nil)
-	if spout[0] != 0xc37bb21256623786 || spout[1] != 0xe65f29102074e0b0 {
-		fmt.Fprintf(out, "FAILED %x\n", spout)
-		return false
-	}
-	fmt.Fprintf(out, "OK\n")
-
+	// This checks to make sure the Sum method of hashes fills arrays as expected.
+	// This is sort of an ambiguous behavior in the API docs, so we want to detect
+	// if the actual behavior changes. If it does we'll have to change a few spots.
+	testStr := []byte("My hovercraft is full of eels.")
 	fmt.Fprintf(out, "Testing hash slice filling behavior (API behavior check)... ")
-	ref := sha256.Sum256([]byte("My hovercraft is full of eels."))
+	ref := sha256.Sum256(testStr)
 	th := sha256.New()
-	th.Write([]byte("My hovercraft is full of eels."))
+	_, err := th.Write(testStr)
+	if err != nil {
+		panic(err)
+	}
 	var thout [32]byte
-	th.Sum(thout[:0]) // test that Sum() fills thout[] here as expected
-	if bytes.Equal(thout[:], ref[:]) {
+	th.Sum(thout[:0])
+	ref2 := sha3.Sum512(testStr)
+	th2 := sha3.New512()
+	_, err = th2.Write(testStr)
+	if err != nil {
+		panic(err)
+	}
+	var thout2 [64]byte
+	th2.Sum(thout2[:0])
+	if bytes.Equal(thout[:], ref[:]) && bytes.Equal(thout2[:], ref2[:]) {
 		fmt.Fprintf(out, "OK\n")
 	} else {
 		fmt.Fprintf(out, "FAILED\n")
 		return false
 	}
 
-	curves := []elliptic.Curve{elliptic.P384(), &ECCCurveBrainpoolP160T1}
+	curves := []elliptic.Curve{elliptic.P384(), ECCCurveBrainpoolP160T1}
 	for ci := range curves {
 		curve := curves[ci]
 		fmt.Fprintf(out, "Testing %s ECDSA...\n", curve.Params().Name)
@@ -130,8 +134,12 @@ func TestCore(out io.Writer) bool {
 		}
 		var testValue [32]byte
 		secrand.Read(testValue[:])
-		owner, ownerPriv := GenerateOwner()
-		rec, err := NewRecord(testValue[:], testLinks, [][]byte{[]byte("test0")}, []uint64{0}, owner, uint64(k), RecordWorkAlgorithmNone, ownerPriv)
+		owner, err := NewOwner(OwnerTypeEd25519)
+		if err != nil {
+			fmt.Fprintf(out, "FAILED (create owner): %s\n", err.Error())
+			return false
+		}
+		rec, err := NewRecord(testValue[:], testLinks, [][]byte{[]byte("test0")}, []uint64{0}, nil, uint64(k), RecordWorkAlgorithmNone, owner)
 		if err != nil {
 			fmt.Fprintf(out, "FAILED (create record): %s\n", err.Error())
 			return false
@@ -156,6 +164,32 @@ func TestCore(out io.Writer) bool {
 	}
 	fmt.Fprintf(out, "OK\n")
 
+	fmt.Fprintf(out, "Testing Record will full proof of work (generate, verify)... ")
+	var testLinks [][]byte
+	for i := 0; i < 3; i++ {
+		var tmp [32]byte
+		secrand.Read(tmp[:])
+		testLinks = append(testLinks, tmp[:])
+	}
+	var testValue [32]byte
+	secrand.Read(testValue[:])
+	owner, err := NewOwner(OwnerTypeEd25519)
+	if err != nil {
+		fmt.Fprintf(out, "FAILED (create owner): %s\n", err.Error())
+		return false
+	}
+	rec, err := NewRecord(testValue[:], testLinks, [][]byte{[]byte("full record test")}, []uint64{0}, nil, TimeSec(), RecordWorkAlgorithmWharrgarbl, owner)
+	if err != nil {
+		fmt.Fprintf(out, "FAILED (new record creation): %s\n", err.Error())
+		return false
+	}
+	err = rec.Validate()
+	if err != nil {
+		fmt.Fprintf(out, "FAILED (validate): %s\n", err.Error())
+		return false
+	}
+	fmt.Fprintf(out, "OK\n")
+
 	return true
 }
 
@@ -164,14 +198,15 @@ func TestCore(out io.Writer) bool {
 // TestWharrgarbl tests and runs benchmarks on the Wharrgarbl proof of work.
 func TestWharrgarbl(out io.Writer) bool {
 	testWharrgarblSamples := 25
-	var junk [64]byte
+	var junk [32]byte
 	var wout [20]byte
 	fmt.Fprintf(out, "RecordWharrgarblCost and RecordWharrgarblScore:\n")
-	for s := uint(1); s <= recordMaxSize; s *= 2 {
+	for s := uint(1); s <= RecordMaxSize; s *= 2 {
 		fmt.Fprintf(out, "  %5d: cost: %.8x score: %.8x\n", s, RecordWharrgarblCost(s), RecordWharrgarblScore(RecordWharrgarblCost(s)))
 	}
 	fmt.Fprintf(out, "Testing and benchmarking Wharrgarbl proof of work algorithm...\n")
 	for rs := uint(256); rs <= 2048; rs += 256 {
+		secrand.Read(junk[:])
 		diff := RecordWharrgarblCost(rs)
 		var iterations, ii uint64
 		startTime := TimeMs()
@@ -222,10 +257,9 @@ func TestDatabase(testBasePath string, out io.Writer) bool {
 	}()
 
 	fmt.Fprintf(out, "Generating %d owner public/private key pairs... ", testDatabaseOwners)
-	var ownerPub [testDatabaseOwners][]byte
-	var ownerPriv [testDatabaseOwners]*ecdsa.PrivateKey
-	for i := range ownerPub {
-		ownerPub[i], ownerPriv[i] = GenerateOwner()
+	var owners [testDatabaseOwners]*Owner
+	for i := range owners {
+		owners[i], err = NewOwner(OwnerTypeEd25519)
 		if err != nil {
 			fmt.Fprintf(out, "FAILED: %s\n", err.Error())
 			return false
@@ -257,7 +291,7 @@ func TestDatabase(testBasePath string, out io.Writer) bool {
 		ts++
 		sel := []byte("test-owner-number-" + strconv.FormatInt(int64(ri%testDatabaseOwners), 10))
 		value := []byte(strconv.FormatUint(ts, 10))
-		records[ri], err = NewRecord(value, links, [][]byte{sel}, []uint64{0}, ownerPub[ri%testDatabaseOwners], ts, RecordWorkAlgorithmNone, ownerPriv[ri%testDatabaseOwners])
+		records[ri], err = NewRecord(value, links, [][]byte{sel}, []uint64{0}, nil, ts, RecordWorkAlgorithmNone, owners[ri%testDatabaseOwners])
 		if err != nil {
 			fmt.Fprintf(out, "FAILED: %s\n", err.Error())
 			return false

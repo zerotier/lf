@@ -26,7 +26,6 @@ func TimeMsToTime(ms uint64) time.Time { return time.Unix(int64(ms/1000), int64(
 // TimeSecToTime converts a time in seconds since epoch to a Go native time.Time structure.
 func TimeSecToTime(s uint64) time.Time { return time.Unix(int64(s), 0) }
 
-// byteAndArrayReader wraps io.Reader to also make it support io.ByteReader because you can't read a varint from a Reader because derpity derpy derp
 type byteAndArrayReader struct{ r io.Reader }
 
 func (mr byteAndArrayReader) Read(p []byte) (int, error) { return mr.r.Read(p) }
@@ -34,6 +33,28 @@ func (mr byteAndArrayReader) Read(p []byte) (int, error) { return mr.r.Read(p) }
 func (mr byteAndArrayReader) ReadByte() (byte, error) {
 	var tmp [1]byte
 	_, err := io.ReadFull(mr.r, tmp[:])
+	return tmp[0], err
+}
+
+type countingReader struct {
+	r io.Reader
+	n uint
+}
+
+func (mr countingReader) Read(p []byte) (int, error) {
+	n, err := mr.r.Read(p)
+	if n > 0 {
+		mr.n += uint(n)
+	}
+	return n, err
+}
+
+func (mr countingReader) ReadByte() (byte, error) {
+	var tmp [1]byte
+	_, err := io.ReadFull(mr.r, tmp[:])
+	if err == nil {
+		mr.n++
+	}
 	return tmp[0], err
 }
 

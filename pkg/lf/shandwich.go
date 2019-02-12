@@ -8,37 +8,52 @@
 package lf
 
 import (
-	"crypto/aes"
 	"crypto/sha256"
 	"crypto/sha512"
+	"hash"
+
+	"golang.org/x/crypto/sha3"
 )
 
-// Shandwich256 computes a 256-bit compound hash using SHA512, SHA256, and AES.
-// This is designed to provide an extremely future-proof hash function resistant to even full breaks
-// of any single algorithm. Its name comes from the use of SHA on both sides with AES keyed from the
-// hidden middle state.
-func Shandwich256(in []byte) (out [32]byte) {
-	s512 := sha512.Sum512(in)
-	s256 := sha256.Sum256(s512[:])
-	c, _ := aes.NewCipher(s512[0:32])
-	c.Encrypt(out[0:16], s256[0:16])
-	c.Encrypt(out[16:32], s256[16:32])
-	for i := 0; i < 32; i++ {
-		out[i] ^= s256[i]
-	}
+// Shandwich256 uses sha256 to combine the outputs of sha512 and sha3-512 for a very future-proof 256-bit hash.
+// This is used to compute record identity hashes and in a few other critical spots where changing the hash
+// function would be a pain in the ass. It provides a very future-proof hash where a significant break of either
+// SHA2-512 or SHA3 would be relatively inconsequential since an attacker would have to successfully attack both.
+// A major break of SHA2-256 would also not matter much since we just use it to combine outputs in a nonlinear way.
+func Shandwich256(in []byte) (h [32]byte) {
+	h0 := sha512.Sum512(in)
+	h1 := sha3.Sum512(in)
+	combiner := sha256.New()
+	combiner.Write(h0[:])
+	combiner.Write(h1[:])
+	combiner.Sum(h[:0])
 	return
 }
 
-// Shandwich256FromSha512 computes Shandwich256 starting from a pre-existing SHA512 hash of an input.
-// This is useful if you want to instantiate SHA512 and hash from a stream and then compute a final
-// hash at the end.
-func Shandwich256FromSha512(s512 []byte) (out [32]byte) {
-	s256 := sha256.Sum256(s512[:])
-	c, _ := aes.NewCipher(s512[0:32])
-	c.Encrypt(out[0:16], s256[0:16])
-	c.Encrypt(out[16:32], s256[16:32])
-	for i := 0; i < 32; i++ {
-		out[i] ^= s256[i]
-	}
-	return
+type shandwich256Hasher [2]hash.Hash
+
+// NewShandwich256 creates a new hash.Hash that implements Shandwich256.
+func NewShandwich256() hash.Hash { return &shandwich256Hasher{sha512.New(), sha3.New512()} }
+
+func (h *shandwich256Hasher) Write(in []byte) (int, error) {
+	h[0].Write(in)
+	h[1].Write(in)
+	return len(in), nil
+}
+
+func (h *shandwich256Hasher) Reset() {
+	h[0].Reset()
+	h[1].Reset()
+}
+
+func (h *shandwich256Hasher) Size() int { return 32 }
+
+func (h *shandwich256Hasher) BlockSize() int { return h[0].BlockSize() } // not really correct but nothing in our code cares about this
+
+func (h *shandwich256Hasher) Sum(b []byte) []byte {
+	var hbuf [128]byte
+	hh := h[0].Sum(hbuf[:0])
+	hh = h[1].Sum(hh)
+	combined := sha256.Sum256(hh)
+	return append(b, combined[:]...)
 }

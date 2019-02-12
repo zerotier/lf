@@ -10,10 +10,11 @@ package lf
 import (
 	"bytes"
 	"crypto/ecdsa"
-	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/binary"
 	"io"
+
+	"golang.org/x/crypto/sha3"
 )
 
 // sha384csprng is a Reader that acts as a random source for generating ECDSA key pairs deterministically.
@@ -60,7 +61,7 @@ type Selector struct {
 // If this name is not used with range queries use zero for the ordinal. This function exists
 // to allow selector database keys to be created separate from record creation if needed.
 func MakeSelectorKey(plainTextName []byte, ord uint64) []byte {
-	priv, err := ecdsa.GenerateKey(&ECCCurveBrainpoolP160T1, &sha384csprng{s384: sha512.Sum384(plainTextName), n: 0})
+	priv, err := ecdsa.GenerateKey(ECCCurveBrainpoolP160T1, &sha384csprng{s384: sha512.Sum384(plainTextName), n: 0})
 	if err != nil {
 		panic(err)
 	}
@@ -129,7 +130,7 @@ func (s *Selector) UnmarshalFrom(in io.Reader) error {
 func (s *Selector) Claim(plainTextName []byte, ord uint64, hash []byte) {
 	s.Ordinal = ord
 
-	priv, err := ecdsa.GenerateKey(&ECCCurveBrainpoolP160T1, &sha384csprng{s384: sha512.Sum384(plainTextName), n: 0})
+	priv, err := ecdsa.GenerateKey(ECCCurveBrainpoolP160T1, &sha384csprng{s384: sha512.Sum384(plainTextName), n: 0})
 	if err != nil {
 		panic(err)
 	}
@@ -140,7 +141,7 @@ func (s *Selector) Claim(plainTextName []byte, ord uint64, hash []byte) {
 	ck[0] |= SelectorTypeBP160 << 2
 	copy(s.ClaimKey[:], ck)
 
-	sigHash := sha256.New()
+	sigHash := sha3.New256()
 	sigHash.Write(hash)
 	sigHash.Write(ck)
 	var obytes [8]byte
@@ -159,11 +160,11 @@ func (s *Selector) Claim(plainTextName []byte, ord uint64, hash []byte) {
 
 // VerifyClaim verifies that the creator of this selector knew its plain text name when it was attached to its record.
 func (s *Selector) VerifyClaim(hash []byte) bool {
-	pub, err := ECDSADecompressPublicKey(&ECCCurveBrainpoolP160T1, s.ClaimKey[:])
+	pub, err := ECDSADecompressPublicKey(ECCCurveBrainpoolP160T1, s.ClaimKey[:])
 	if err != nil {
 		return false
 	}
-	sigHash := sha256.New()
+	sigHash := sha3.New256()
 	sigHash.Write(hash)
 	sigHash.Write(s.ClaimKey[:])
 	var obytes [8]byte

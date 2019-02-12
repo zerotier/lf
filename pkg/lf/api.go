@@ -9,7 +9,6 @@ package lf
 
 import (
 	"bytes"
-	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -262,11 +261,7 @@ func (m *APINew) Run(url string) (*Record, error) {
 }
 
 func (m *APINew) execute() (*Record, *APIError) {
-	k, err := x509.ParseECPrivateKey(m.OwnerPrivateKey)
-	if err != nil {
-		return nil, &APIError{Code: http.StatusBadRequest, Message: "invalid x509 private key: " + err.Error()}
-	}
-	kpub, err := GetOwnerPublicKey(k)
+	owner, err := NewOwnerFromPrivateBytes(m.OwnerPrivateKey)
 	if err != nil {
 		return nil, &APIError{Code: http.StatusBadRequest, Message: "cannot derive owner format public key from x509 private key: " + err.Error()}
 	}
@@ -282,7 +277,7 @@ func (m *APINew) execute() (*Record, *APIError) {
 		sel[i] = m.Selectors[i].Name
 		selord[i] = m.Selectors[i].Ordinal
 	}
-	rec, err := NewRecord(m.Value, m.Links, sel, selord, kpub, ts, RecordWorkAlgorithmWharrgarbl, k)
+	rec, err := NewRecord(m.Value, m.Links, sel, selord, nil, ts, RecordWorkAlgorithmWharrgarbl, owner)
 	if err != nil {
 		return nil, &APIError{Code: http.StatusBadRequest, Message: "record generation failed: " + err.Error()}
 	}

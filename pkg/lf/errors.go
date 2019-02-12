@@ -43,17 +43,18 @@ func (e ErrorDatabase) Error() string {
 
 // General errors
 const (
-	ErrorInvalidPublicKey  Error = "invalid public key"
-	ErrorInvalidPrivateKey Error = "invalid private key"
-	ErrorInvalidParameter  Error = "invalid parameter"
-	ErrorUnsupportedType   Error = "unsupported type"
-	ErrorUnsupportedCurve  Error = "unsupported ECC curve (for this purpose)"
-	ErrorOutOfRange        Error = "parameter out of range"
-	ErrorWharrgarblFailed  Error = "Wharrgarbl proof of work algorithm failed (out of memory?)"
-	ErrorIO                Error = "I/O error"
-	ErrorIncorrectKey      Error = "incorrect key"
-	ErrorAlreadyConnected  Error = "already connected"
-	ErrorDuplicateRecord   Error = "duplicate record"
+	ErrorInvalidPublicKey   Error = "invalid public key"
+	ErrorInvalidPrivateKey  Error = "invalid private key"
+	ErrorInvalidParameter   Error = "invalid parameter"
+	ErrorUnsupportedType    Error = "unsupported type"
+	ErrorUnsupportedCurve   Error = "unsupported ECC curve (for this purpose)"
+	ErrorOutOfRange         Error = "parameter out of range"
+	ErrorWharrgarblFailed   Error = "Wharrgarbl proof of work algorithm failed (out of memory?)"
+	ErrorIO                 Error = "I/O error"
+	ErrorIncorrectKey       Error = "incorrect key"
+	ErrorAlreadyConnected   Error = "already connected"
+	ErrorDuplicateRecord    Error = "duplicate record"
+	ErrorPrivateKeyRequired Error = "private key required"
 )
 
 // Errors indicating that a record is invalid
@@ -62,6 +63,11 @@ const (
 	ErrorRecordOwnerSignatureCheckFailed ErrorRecord = "owner signature check failed"
 	ErrorRecordSelectorClaimCheckFailed  ErrorRecord = "selector claim check failed"
 	ErrorRecordInsufficientWork          ErrorRecord = "insufficient work to pay for this record"
+	ErrorRecordInsufficientLinks         ErrorRecord = "insufficient links"
 	ErrorRecordUnsupportedAlgorithm      ErrorRecord = "unsupported algorithm or type"
 	ErrorRecordTooLarge                  ErrorRecord = "record too large"
+	ErrorRecordValueTooLarge             ErrorRecord = "record value too large"
+	ErrorRecordViolatesSpecialRelativity ErrorRecord = "record timestamp too far in the future"
+	ErrorRecordTooOld                    ErrorRecord = "record older than network timestamp floor"
+	ErrorRecordCertificateInvalid        ErrorRecord = "certificate invalid"
 )

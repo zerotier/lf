@@ -11,16 +11,22 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	secrand "crypto/rand"
-	"crypto/sha256"
 	"math/big"
+
+	"golang.org/x/crypto/sha3"
 )
+
+// These are just glue functions to make various ECC operations easier. Point compression
+// is also here because for some reason (old expired patents?) it's absent from Go's
+// standard libraries. These functions are exported in case test or app code wants to
+// directly use them for anything.
 
 var (
 	// ECCCurveBrainpoolP160T1 is a 160-bit elliptic curve used for selectors and their claim signatures.
-	// This curve is used for selector claim signatures to prevent a form of denial of service attack. It's
-	// not used in really security-critical areas like owner and CA signatures or transport security. The
-	// much larger NIST P-384 curve is used there.
-	ECCCurveBrainpoolP160T1 = func() elliptic.CurveParams {
+	// This small curve is only used to prevent selector collision DOS type attacks by forcing record creators
+	// to prove selector ownership. It's not used for higher security stuff like owner signatures. A break of
+	// this curve would be of low impact to LF's overall security posture.
+	ECCCurveBrainpoolP160T1 = func() elliptic.Curve {
 		var c elliptic.CurveParams
 		c.Name = "brainpoolP160t1"
 		c.P, _ = new(big.Int).SetString("E95E4A5F737059DC60DFC7AD95B3D8139515620F", 16)
@@ -29,13 +35,15 @@ var (
 		c.Gx, _ = new(big.Int).SetString("B199B13B9B34EFC1397E64BAEB05ACC265FF2378", 16)
 		c.Gy, _ = new(big.Int).SetString("ADD6718B7C7C1961F0991B842443772152C9E0AD", 16)
 		c.BitSize = 160
-		return c
+		return &c
 	}()
 
 	bigInt3 = big.NewInt(3)
 )
 
 // ECCCompressPublicKey compresses a naked elliptic curve public key denoted by X and Y components.
+// Identifiers can be safely shoved into the most significant six bits of the first byte though this
+// results in a non-standard-looking compressed ECC point.
 func ECCCompressPublicKey(curve elliptic.Curve, kx, ky *big.Int) ([]byte, error) {
 	x := kx.Bytes()
 	bits := curve.Params().BitSize
@@ -50,7 +58,8 @@ func ECCCompressPublicKey(curve elliptic.Curve, kx, ky *big.Int) ([]byte, error)
 }
 
 // ECCDecompressPublicKey decompresses a public key.
-// This won't work for Koblitz curves but will work with ECDSA curves compressed with the slightly alternate ECDSACompressPublicKeyWithID() function.
+// This won't work for Koblitz curves. Note that the most significant 6 bits of the first byte are
+// ignored and therefore can be used to store curve or other type IDs.
 func ECCDecompressPublicKey(c elliptic.Curve, data []byte) (*big.Int, *big.Int, error) {
 	if len(data) < 2 {
 		return nil, nil, ErrorInvalidPublicKey
@@ -75,11 +84,11 @@ func ECCDecompressPublicKey(c elliptic.Curve, data []byte) (*big.Int, *big.Int, 
 	return &x, &y, nil
 }
 
-// ECDHAgree performs elliptic curve Diffie-Hellman key agreement and returns the sha256 digest of the resulting shared key.
+// ECDHAgree performs elliptic curve Diffie-Hellman key agreement and returns the sha3-256 digest of the resulting shared key.
 // This is just a simple wrapper function for clarity and brevity.
 func ECDHAgree(c elliptic.Curve, pubX, pubY *big.Int, priv []byte) ([32]byte, error) {
 	x, _ := c.ScalarMult(pubX, pubY, priv)
-	return sha256.Sum256(x.Bytes()), nil
+	return sha3.Sum256(x.Bytes()), nil
 }
 
 // ECDSACompressPublicKey compresses an ECDSA public key using standard ECC point compression for prime curves.

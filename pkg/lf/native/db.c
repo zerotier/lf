@@ -568,7 +568,7 @@ int ZTLF_DB_Open(struct ZTLF_DB *db,const char *path,char *errbuf,unsigned int e
 		e = 0;
 		goto exit_with_error;
 	}
-	snprintf(tmp,sizeof(tmp),"%s" ZTLF_PATH_SEPARATOR "records.bin",path);
+	snprintf(tmp,sizeof(tmp),"%s" ZTLF_PATH_SEPARATOR "records.lf",path);
 	e = ZTLF_MappedFile_Open(&db->df,tmp,ZTLF_GRAPH_FILE_CAPACITY_INCREMENT,ZTLF_GRAPH_FILE_CAPACITY_INCREMENT);
 	if (e) {
 		ZTLF_MappedFile_Close(&db->gf);
@@ -576,7 +576,7 @@ int ZTLF_DB_Open(struct ZTLF_DB *db,const char *path,char *errbuf,unsigned int e
 		e = 0;
 		goto exit_with_error;
 	}
-	snprintf(tmp,sizeof(tmp),"%s" ZTLF_PATH_SEPARATOR "weights",path);
+	snprintf(tmp,sizeof(tmp),"%s" ZTLF_PATH_SEPARATOR "weights.bin",path);
 	e = ZTLF_SUint96_Open(&db->wf,tmp);
 	if (e) {
 		errno = e;

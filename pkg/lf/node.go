@@ -61,7 +61,7 @@ type Node struct {
 	linkKeyPubX          *big.Int
 	linkKeyPubY          *big.Int
 	linkKeyPub           []byte
-	networkKey           []byte
+	genesisConfig        Genesis
 	peers                map[string]*peer
 	peersLock            sync.RWMutex
 	httpTCPListener      *net.TCPListener
@@ -244,18 +244,49 @@ func (n *Node) Connect(ip net.IP, port int, publicKey []byte, statusCallback fun
 }
 
 // AddRecord adds a record to the database if it's valid and we do not already have it.
+// If the record is a duplicate this returns ErrorDuplicateRecord.
 // If the record is new we announce that we have it to connected peers. This happens asynchronously.
+// This method is where the high level logic for determining record validity and reputation resides.
 func (n *Node) AddRecord(r *Record) error {
 	if r == nil {
 		return ErrorInvalidParameter
 	}
 
+	rdata := r.Bytes()
 	rhash := *r.Hash()
 
-	// Check to see if this is a redundant record.
+	// Check to see if we already have this record.
 	if n.db.hasRecord(rhash[:]) {
 		return ErrorDuplicateRecord
 	}
+
+	// Check various record constraints such as sizes, timestamp, etc. This is done first
+	// because these checks are simple and fast.
+	if len(rdata) > RecordMaxSize || uint(len(rdata)) > n.genesisConfig.RecordMaxSize {
+		return ErrorRecordTooLarge
+	}
+	if uint(len(r.Value)) > n.genesisConfig.RecordMaxValueSize {
+		return ErrorRecordValueTooLarge
+	}
+	if r.LinkCount() < n.genesisConfig.RecordMinLinks {
+		return ErrorRecordInsufficientLinks
+	}
+	if r.Timestamp > (TimeSec() + RecordMaxForwardTimeDrift) {
+		return ErrorRecordViolatesSpecialRelativity
+	}
+	if r.Timestamp < n.genesisConfig.TimestampFloor {
+		return ErrorRecordTooOld
+	}
+	for i := range n.genesisConfig.BannedWorkAlgorithms {
+		if uint(r.WorkAlgorithm) == n.genesisConfig.BannedWorkAlgorithms[i] {
+			return ErrorRecordInsufficientWork
+		}
+	}
+	if len(r.Certificate) > 0 && len(n.genesisConfig.CAs) == 0 { // don't let people shove crap into cert field
+		return ErrorRecordCertificateInvalid
+	}
+
+	// TODO: certs are not implemented yet!
 
 	// Validate record's internal structure and check signatures and work.
 	err := r.Validate()
@@ -412,9 +443,9 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inb
 		n.logger.Printf("P2P connection to %s closed: key agreement failed: %s", peerAddressStr, err.Error())
 		return
 	}
-	if len(n.networkKey) == 32 {
+	if len(n.genesisConfig.Key) == 32 {
 		for i := 0; i < 32; i++ {
-			remoteShared[i] ^= n.networkKey[i]
+			remoteShared[i] ^= n.genesisConfig.Key[i]
 		}
 	}
 
