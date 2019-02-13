@@ -100,9 +100,10 @@ type APINewSelector struct {
 // against nodes or proxies that you don't control or trust or over unencrypted transport.
 type APINew struct {
 	Selectors       []APINewSelector ``                  // Plain text selector names and ordinals
-	OwnerPrivateKey []byte           ``                  // X.509 encoded private key with included public key
+	MaskingKey      []byte           `json:",omitempty"` // An arbitrary key used to mask the record's value from those that don't know what they're looking for
+	OwnerPrivateKey []byte           ``                  // Full owner including private key (result of owner PrivateBytes() method)
 	Links           [][]byte         ``                  // Links to other records in the DAG (each link must be 32 bytes in size)
-	Value           []byte           ``                  // Plain text value for this record
+	Value           []byte           ``                  // Plain text (unmasked, uncompressed) value for this record
 	Timestamp       *uint64          `json:",omitempty"` // Record timestamp in SECONDS since epoch (server time is used if zero or omitted)
 }
 
@@ -141,6 +142,8 @@ func apiRun(url string, m interface{}) ([]byte, error) {
 
 	return body, nil
 }
+
+//////////////////////////////////////////////////////////////////////////////
 
 // Run executes this API query against a remote LF node or proxy
 func (m *APIQuery) Run(url string) (*APIQueryResult, error) {
@@ -247,6 +250,8 @@ func (m *APIQuery) execute(n *Node) (qr []APIQueryResult, err *APIError) {
 	return
 }
 
+//////////////////////////////////////////////////////////////////////////////
+
 // Run executes this API query against a remote LF node or proxy
 func (m *APINew) Run(url string) (*Record, error) {
 	body, err := apiRun(url, m)
@@ -260,29 +265,34 @@ func (m *APINew) Run(url string) (*Record, error) {
 	return &rec, nil
 }
 
-func (m *APINew) execute() (*Record, *APIError) {
+func (m *APINew) execute(workAlgorithm byte) (*Record, *APIError) {
 	owner, err := NewOwnerFromPrivateBytes(m.OwnerPrivateKey)
 	if err != nil {
 		return nil, &APIError{Code: http.StatusBadRequest, Message: "cannot derive owner format public key from x509 private key: " + err.Error()}
 	}
+
 	var ts uint64
 	if m.Timestamp == nil || *m.Timestamp == 0 {
 		ts = TimeMs()
 	} else {
 		ts = *m.Timestamp
 	}
+
 	sel := make([][]byte, len(m.Selectors))
 	selord := make([]uint64, len(m.Selectors))
 	for i := range m.Selectors {
 		sel[i] = m.Selectors[i].Name
 		selord[i] = m.Selectors[i].Ordinal
 	}
-	rec, err := NewRecord(m.Value, m.Links, sel, selord, nil, ts, RecordWorkAlgorithmWharrgarbl, owner)
+
+	rec, err := NewRecord(m.Value, m.Links, m.MaskingKey, sel, selord, nil, ts, workAlgorithm, owner)
 	if err != nil {
 		return nil, &APIError{Code: http.StatusBadRequest, Message: "record generation failed: " + err.Error()}
 	}
 	return rec, nil
 }
+
+//////////////////////////////////////////////////////////////////////////////
 
 func apiSetStandardHeaders(out http.ResponseWriter) {
 	h := out.Header()
@@ -358,7 +368,23 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 			if apiIsTrusted(n, req) {
 				var m APINew
 				if apiReadObj(out, req, &m) == nil {
-					rec, apiError := m.execute()
+					// Pick the most preferred least banned work algorithm.
+					workAlgorithm := RecordWorkAlgorithmNone
+					for _, a := range recordWorkAlgorithmPreferenceOrder {
+						var banned bool
+						for _, b := range n.genesisConfig.BannedWorkAlgorithms {
+							if a == byte(b) {
+								banned = true
+								break
+							}
+						}
+						if !banned {
+							workAlgorithm = a
+							break
+						}
+					}
+
+					rec, apiError := m.execute(workAlgorithm)
 					if apiError != nil {
 						apiSendObj(out, req, apiError.Code, apiError)
 					} else {

@@ -139,7 +139,7 @@ func TestCore(out io.Writer) bool {
 			fmt.Fprintf(out, "FAILED (create owner): %s\n", err.Error())
 			return false
 		}
-		rec, err := NewRecord(testValue[:], testLinks, [][]byte{[]byte("test0")}, []uint64{0}, nil, uint64(k), RecordWorkAlgorithmNone, owner)
+		rec, err := NewRecord(testValue[:], testLinks, []byte("test"), [][]byte{[]byte("test0")}, []uint64{0}, nil, uint64(k), RecordWorkAlgorithmNone, owner)
 		if err != nil {
 			fmt.Fprintf(out, "FAILED (create record): %s\n", err.Error())
 			return false
@@ -178,7 +178,7 @@ func TestCore(out io.Writer) bool {
 		fmt.Fprintf(out, "FAILED (create owner): %s\n", err.Error())
 		return false
 	}
-	rec, err := NewRecord(testValue[:], testLinks, [][]byte{[]byte("full record test")}, []uint64{0}, nil, TimeSec(), RecordWorkAlgorithmWharrgarbl, owner)
+	rec, err := NewRecord(testValue[:], testLinks, []byte("test"), [][]byte{[]byte("full record test")}, []uint64{0}, nil, TimeSec(), RecordWorkAlgorithmWharrgarbl, owner)
 	if err != nil {
 		fmt.Fprintf(out, "FAILED (new record creation): %s\n", err.Error())
 		return false
@@ -291,9 +291,14 @@ func TestDatabase(testBasePath string, out io.Writer) bool {
 		ts++
 		sel := []byte("test-owner-number-" + strconv.FormatInt(int64(ri%testDatabaseOwners), 10))
 		value := []byte(strconv.FormatUint(ts, 10))
-		records[ri], err = NewRecord(value, links, [][]byte{sel}, []uint64{0}, nil, ts, RecordWorkAlgorithmNone, owners[ri%testDatabaseOwners])
+		records[ri], err = NewRecord(value, links, []byte("test"), [][]byte{sel}, []uint64{0}, nil, ts, RecordWorkAlgorithmNone, owners[ri%testDatabaseOwners])
 		if err != nil {
 			fmt.Fprintf(out, "FAILED: %s\n", err.Error())
+			return false
+		}
+		valueDec := records[ri].GetValue([]byte("test"))
+		if !bytes.Equal(value, valueDec) {
+			fmt.Fprintf(out, "FAILED: record value unmask failed!\n")
 			return false
 		}
 	}

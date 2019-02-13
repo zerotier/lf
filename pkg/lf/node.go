@@ -246,7 +246,7 @@ func (n *Node) Connect(ip net.IP, port int, publicKey []byte, statusCallback fun
 // AddRecord adds a record to the database if it's valid and we do not already have it.
 // If the record is a duplicate this returns ErrorDuplicateRecord.
 // If the record is new we announce that we have it to connected peers. This happens asynchronously.
-// This method is where the high level logic for determining record validity and reputation resides.
+// This method is where the high level logic for determining record validity resides.
 func (n *Node) AddRecord(r *Record) error {
 	if r == nil {
 		return ErrorInvalidParameter
@@ -265,13 +265,13 @@ func (n *Node) AddRecord(r *Record) error {
 	if len(rdata) > RecordMaxSize || uint(len(rdata)) > n.genesisConfig.RecordMaxSize {
 		return ErrorRecordTooLarge
 	}
-	if uint(len(r.Value)) > n.genesisConfig.RecordMaxValueSize {
+	if uint(len(r.MaskedValue)) > n.genesisConfig.RecordMaxValueSize {
 		return ErrorRecordValueTooLarge
 	}
 	if r.LinkCount() < n.genesisConfig.RecordMinLinks {
 		return ErrorRecordInsufficientLinks
 	}
-	if r.Timestamp > (TimeSec() + RecordMaxForwardTimeDrift) {
+	if r.Timestamp > (TimeSec() + uint64(n.genesisConfig.RecordMaxForwardTimeDrift)) {
 		return ErrorRecordViolatesSpecialRelativity
 	}
 	if r.Timestamp < n.genesisConfig.TimestampFloor {

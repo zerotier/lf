@@ -10,6 +10,9 @@ package lf
 import (
 	"bytes"
 	"compress/lzw"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -25,7 +28,6 @@ var (
 )
 
 const recordBodyFlagHasCertificate byte = 0x01
-const recordBodyFlagValueLZW byte = 0x02
 
 // recordWharrgarblMemory is the default amount of memory to use for Wharrgarbl momentum-type PoW.
 const recordWharrgarblMemory = 1024 * 1024 * 384
@@ -40,13 +42,12 @@ const RecordWorkAlgorithmNone byte = 0
 // RecordWorkAlgorithmWharrgarbl indicates the Wharrgarbl momentum-like proof of work algorithm.
 const RecordWorkAlgorithmWharrgarbl byte = 1
 
-// RecordMaxForwardTimeDrift is the maximum number of seconds in the future a record can be timestamped.
-const RecordMaxForwardTimeDrift = 30
+var recordWorkAlgorithmPreferenceOrder = []byte{RecordWorkAlgorithmNone, RecordWorkAlgorithmWharrgarbl}
 
 // recordBody represents the main body of a record including its value, owner public keys, etc.
 // It's included as part of Record but separated since in record construction we want to treat it as a separate element.
 type recordBody struct {
-	Value       []byte `json:",omitempty"` // Record value
+	MaskedValue []byte `json:",omitempty"` // Masked and possibly compressed record value
 	Owner       []byte `json:",omitempty"` // Owner of this record (owner public bytes)
 	Certificate []byte `json:",omitempty"` // Hash of exact record containing certificate for this owner (if CAs are enabled)
 	Links       []byte `json:",omitempty"` // Links to previous records' hashes (size is a multiple of 32 bytes, link count is size / 32)
@@ -66,19 +67,13 @@ func (rb *recordBody) unmarshalFrom(r io.Reader) error {
 		if l > RecordMaxSize {
 			return ErrorRecordInvalid
 		}
-		rb.Value = make([]byte, uint(l))
-		_, err = io.ReadFull(&rr, rb.Value)
+		rb.MaskedValue = make([]byte, uint(l))
+		_, err = io.ReadFull(&rr, rb.MaskedValue)
 		if err != nil {
 			return err
 		}
-		if (flags & recordBodyFlagValueLZW) != 0 {
-			rb.Value, err = ioutil.ReadAll(io.LimitReader(lzw.NewReader(bytes.NewReader(rb.Value), lzw.LSB, 8), RecordMaxSize))
-			if err != nil {
-				return err
-			}
-		}
 	} else {
-		rb.Value = nil
+		rb.MaskedValue = nil
 	}
 
 	l, err = binary.ReadUvarint(&rr)
@@ -138,33 +133,14 @@ func (rb *recordBody) marshalTo(w io.Writer) error {
 		flags[0] |= recordBodyFlagHasCertificate
 	}
 
-	v := rb.Value
-	if len(v) >= 16 {
-		// For values of nontrivial size we will try to see if they compress via LZW. LZW is
-		// pretty good for high speed compression and decompression of small inputs like JSON
-		// blobs, and stuff like that is probably going to be pretty common in the LF.
-		var lzwBuf bytes.Buffer
-		lzwWriter := lzw.NewWriter(&lzwBuf, lzw.LSB, 8)
-		if _, err := lzwWriter.Write(v); err != nil {
-			return err
-		}
-		if err := lzwWriter.Close(); err != nil {
-			return err
-		}
-		if lzwBuf.Len() < len(v) {
-			v = lzwBuf.Bytes()
-			flags[0] |= recordBodyFlagValueLZW
-		}
-	}
-
 	if _, err := w.Write(flags[:]); err != nil {
 		return err
 	}
 
-	if _, err := writeUVarint(w, uint64(len(v))); err != nil {
+	if _, err := writeUVarint(w, uint64(len(rb.MaskedValue))); err != nil {
 		return err
 	}
-	if _, err := w.Write(v); err != nil {
+	if _, err := w.Write(rb.MaskedValue); err != nil {
 		return err
 	}
 
@@ -212,7 +188,7 @@ func (rb *recordBody) sizeBytes() uint {
 // to get trimmed down a bit by discarding actual values for very old records.
 func (rb *recordBody) signingHash() (sum [32]byte) {
 	h := NewShandwich256()
-	vh := Shandwich256(rb.Value)
+	vh := Shandwich256(rb.MaskedValue)
 	h.Write(vh[:])
 	h.Write(b1_0)
 	h.Write(rb.Owner)
@@ -231,6 +207,35 @@ func (rb *recordBody) signingHash() (sum [32]byte) {
 // LinkCount returns the number of links, which is just short for len(Links)/32
 func (rb *recordBody) LinkCount() uint { return uint(len(rb.Links) / 32) }
 
+// GetValue decrypts and possibly decompresses this record's masked value.
+// Decompression failure will result in an empty/nil value.
+func (rb *recordBody) GetValue(maskingKey []byte) []byte {
+	if len(rb.MaskedValue) == 0 {
+		return nil
+	}
+
+	unmaskedValue := make([]byte, len(rb.MaskedValue))
+	var cfbIv [16]byte
+	binary.BigEndian.PutUint64(cfbIv[0:8], rb.Timestamp)
+	if len(rb.Owner) >= 8 {
+		copy(cfbIv[8:16], rb.Owner[0:8])
+	}
+	maskingKeyH := sha256.Sum256(maskingKey)
+	c, _ := aes.NewCipher(maskingKeyH[:])
+	cipher.NewCFBDecrypter(c, cfbIv[:]).XORKeyStream(unmaskedValue, rb.MaskedValue)
+
+	if (unmaskedValue[0] & 0x01) != 0 {
+		var err error
+		unmaskedValue, err = ioutil.ReadAll(io.LimitReader(lzw.NewReader(bytes.NewReader(unmaskedValue[1:]), lzw.LSB, 8), RecordMaxSize))
+		if err != nil {
+			return nil
+		}
+		return unmaskedValue
+	}
+
+	return unmaskedValue[1:]
+}
+
 // Record combines the record body with one or more selectors, work, and a signature.
 // A record should not be modified once created. It should be treated as a read-only value.
 type Record struct {
@@ -247,6 +252,9 @@ type Record struct {
 }
 
 // UnmarshalFrom deserializes this record from a reader.
+// The special error ErrorRecordMarkedIgnore indicates a record whose first bytes have
+// been overwritten by 0xff followed by a 32-bit length. This can be used to mark a record
+// to be ignored in a flat file without having to rewrite the entire file to delete it.
 func (r *Record) UnmarshalFrom(rdr io.Reader) error {
 	rr := byteAndArrayReader{rdr}
 
@@ -254,7 +262,18 @@ func (r *Record) UnmarshalFrom(rdr io.Reader) error {
 	if err != nil {
 		return err
 	}
-	if hdrb != 0 {
+	if hdrb == 0xff {
+		var deadRecordLen [4]byte
+		if _, err = io.ReadFull(&rr, deadRecordLen[:]); err != nil {
+			return err
+		}
+		deadLen := binary.BigEndian.Uint32(deadRecordLen[:])
+		if deadLen >= 5 {
+			io.CopyN(ioutil.Discard, &rr, int64(deadLen-5))
+		}
+		return ErrorRecordMarkedIgnore
+	}
+	if hdrb != 0 { // right now header byte must be 0 for valid records -- could be used later for types or flags
 		return ErrorRecordInvalid
 	}
 
@@ -530,7 +549,7 @@ func RecordWharrgarblScore(cost uint32) uint32 {
 // NewRecordStart creates an incomplete record with its body and selectors filled out but no work or final signature.
 // This can be used to do the first step of a three-phase record creation process with the next two phases being NewRecordAddWork
 // and NewRecordComplete. This is useful of record creation needs to be split among systems or participants.
-func NewRecordStart(value []byte, links [][]byte, plainTextSelectorNames [][]byte, selectorOrdinals []uint64, ownerPublic, certificateRecordHash []byte, ts uint64) (r *Record, workHash [32]byte, workBillableBytes uint, err error) {
+func NewRecordStart(value []byte, links [][]byte, maskingKey []byte, plainTextSelectorNames [][]byte, selectorOrdinals []uint64, ownerPublic, certificateRecordHash []byte, ts uint64) (r *Record, workHash [32]byte, workBillableBytes uint, err error) {
 	if len(value) > RecordMaxSize {
 		err = ErrorInvalidParameter
 		return
@@ -539,7 +558,41 @@ func NewRecordStart(value []byte, links [][]byte, plainTextSelectorNames [][]byt
 	r = new(Record)
 
 	if len(value) > 0 {
-		r.recordBody.Value = append(r.recordBody.Value, value...)
+		valueMasked := make([]byte, 0, len(value)+1)
+
+		// If value is of non-trivial length, try to compress it with LZW. LZW is an older algorithm
+		// but is standard and tends to do fairly well with small compressable objects like JSON
+		// blobs, text, HTML, etc.
+		if len(value) >= 16 {
+			lzwBuf := bytes.NewBuffer(valueMasked)
+			lzwBuf.WriteByte(0x01) // flag 0x01 indicates compression
+			lzwWriter := lzw.NewWriter(lzwBuf, lzw.LSB, 8)
+			_, lzwErr := lzwWriter.Write(value)
+			lzwWriter.Close()
+			valueMasked = lzwBuf.Bytes()
+			if lzwErr != nil || len(valueMasked) > len(value) {
+				valueMasked = valueMasked[:0]
+			}
+		}
+
+		// If compression failed to improve size, store uncompressed.
+		if len(valueMasked) == 0 {
+			valueMasked = append(valueMasked, 0x00) // 0x00 indicates no compression
+			valueMasked = append(valueMasked, value...)
+		}
+
+		// Encrypt with AES256-CFB using the timestamp and owner for IV.
+		// No AEAD is needed here because the record is already authenticated by digital signature from the owner.
+		var cfbIv [16]byte
+		binary.BigEndian.PutUint64(cfbIv[0:8], ts)
+		if len(ownerPublic) >= 8 {
+			copy(cfbIv[8:16], ownerPublic[0:8])
+		}
+		maskingKeyH := sha256.Sum256(maskingKey) // sha256 is used here because it's more ubiquitous and should make implementation in other languages / code easier
+		c, _ := aes.NewCipher(maskingKeyH[:])
+		cipher.NewCFBEncrypter(c, cfbIv[:]).XORKeyStream(valueMasked, valueMasked)
+
+		r.MaskedValue = valueMasked
 	}
 	r.recordBody.Owner = append(r.recordBody.Owner, ownerPublic...)
 	if len(certificateRecordHash) == 32 {
@@ -625,10 +678,10 @@ func NewRecordComplete(incompleteRecord *Record, signingHash []byte, owner *Owne
 
 // NewRecord is a shortcut to running all incremental record creation functions.
 // Obviously this is time and memory intensive due to proof of work required to "pay" for this record.
-func NewRecord(value []byte, links [][]byte, plainTextSelectorNames [][]byte, selectorOrdinals []uint64, certificateRecordHash []byte, ts uint64, workAlgorithm byte, owner *Owner) (r *Record, err error) {
+func NewRecord(value []byte, links [][]byte, maskingKey []byte, plainTextSelectorNames [][]byte, selectorOrdinals []uint64, certificateRecordHash []byte, ts uint64, workAlgorithm byte, owner *Owner) (r *Record, err error) {
 	var wh, sh [32]byte
 	var wb uint
-	r, wh, wb, err = NewRecordStart(value, links, plainTextSelectorNames, selectorOrdinals, owner.Bytes(), certificateRecordHash, ts)
+	r, wh, wb, err = NewRecordStart(value, links, maskingKey, plainTextSelectorNames, selectorOrdinals, owner.Bytes(), certificateRecordHash, ts)
 	if err != nil {
 		return
 	}

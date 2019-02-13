@@ -70,4 +70,5 @@ const (
 	ErrorRecordViolatesSpecialRelativity ErrorRecord = "record timestamp too far in the future"
 	ErrorRecordTooOld                    ErrorRecord = "record older than network timestamp floor"
 	ErrorRecordCertificateInvalid        ErrorRecord = "certificate invalid"
+	ErrorRecordMarkedIgnore              ErrorRecord = "record marked 'ignore' in file or stream"
 )

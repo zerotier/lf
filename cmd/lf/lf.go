@@ -296,18 +296,19 @@ func doMakeGenesis(cfg *Config, basePath string, jsonOutput bool, urlOverride st
 	var nwKey [32]byte
 	secrand.Read(nwKey[:])
 	g := lf.Genesis{
-		Name:                 "Sol",
-		Contact:              "",
-		Comment:              "",
-		CAs:                  nil,
-		BannedWorkAlgorithms: []uint{uint(lf.RecordWorkAlgorithmNone)},
-		Key:                  nwKey[:],
-		TimestampFloor:       lf.TimeSec(),
-		RecordMinLinks:       3,
-		RecordMaxValueSize:   1024,
-		RecordMaxSize:        lf.RecordMaxSize,
-		SettingsAmendable:    false,
-		CAsAmendable:         false,
+		Name:                      "Sol",
+		Contact:                   "",
+		Comment:                   "",
+		CAs:                       nil,
+		BannedWorkAlgorithms:      []uint{uint(lf.RecordWorkAlgorithmNone)},
+		Key:                       nwKey[:],
+		TimestampFloor:            lf.TimeSec(),
+		RecordMinLinks:            3,
+		RecordMaxValueSize:        1024,
+		RecordMaxSize:             lf.RecordMaxSize,
+		RecordMaxForwardTimeDrift: 15,
+		SettingsAmendable:         false,
+		CAsAmendable:              false,
 	}
 
 	gJSON, _ := json.MarshalIndent(g, "", "  ")
