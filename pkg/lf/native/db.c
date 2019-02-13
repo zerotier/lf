@@ -81,7 +81,7 @@
 #define ZTLF_DB_INIT_SQL \
 "PRAGMA locking_mode = EXCLUSIVE;\n" \
 "PRAGMA journal_mode = MEMORY;\n" \
-"PRAGMA cache_size = -262144;\n" \
+"PRAGMA cache_size = -131072;\n" \
 "PRAGMA synchronous = 0;\n" \
 "PRAGMA auto_vacuum = 0;\n" \
 "PRAGMA foreign_keys = OFF;\n" \
@@ -108,7 +108,7 @@
 "CREATE UNIQUE INDEX IF NOT EXISTS record_goff ON record(goff);\n" \
 "CREATE UNIQUE INDEX IF NOT EXISTS record_hash ON record(hash);\n" \
 "CREATE INDEX IF NOT EXISTS record_id ON record(id);\n" \
-"CREATE INDEX IF NOT EXISTS record_doff_owner_id_ts ON record(doff,owner,id,ts);\n" \
+"CREATE INDEX IF NOT EXISTS record_doff_reputation_owner_id_ts ON record(doff,reputation,owner,id,ts);\n" \
 "CREATE INDEX IF NOT EXISTS record_ts ON record(ts);\n" \
 \
 "CREATE TABLE IF NOT EXISTS selector (" \
@@ -149,6 +149,172 @@
 "ATTACH DATABASE ':memory:' AS tmp;\n" \
 \
 "CREATE TABLE IF NOT EXISTS tmp.rs (\"i\" INTEGER PRIMARY KEY NOT NULL) WITHOUT ROWID;\n"
+
+#ifdef S
+#define ZTLF_oldS S
+#else
+#define ZTLF_oldS
+#endif
+#undef S
+#define S(v,s) if ((e = sqlite3_prepare_v3(db->dbc,(statement = (s)),-1,SQLITE_PREPARE_PERSISTENT,&(v),NULL)) != SQLITE_OK) goto exit_with_error
+
+int ZTLF_DB_Open(struct ZTLF_DB *db,const char *path,char *errbuf,unsigned int errbufSize,LogOutputCallback logger,void *loggerArg)
+{
+	char tmp[PATH_MAX];
+	int e = 0;
+	const char *statement = NULL;
+
+	if (strlen(path) >= (PATH_MAX - 16))
+		return ZTLF_NEG(ENAMETOOLONG);
+	memset(db,0,sizeof(struct ZTLF_DB));
+	strncpy(db->path,path,PATH_MAX-1);
+	db->logger = logger;
+	db->loggerArg = (uintptr_t)loggerArg;
+
+	ZTLF_L_trace("opening database at %s",path);
+
+	db->graphThreadStarted = false;
+	pthread_mutex_init(&db->dbLock,NULL);
+	for(int i=0;i<ZTLF_DB_GRAPH_NODE_LOCK_ARRAY_SIZE;++i)
+		pthread_mutex_init(&db->graphNodeLocks[i],NULL);
+	pthread_rwlock_init(&db->gfLock,NULL);
+	pthread_rwlock_init(&db->dfLock,NULL);
+
+	mkdir(path,0755);
+
+	/* Save PID of running instance of LF. */
+#ifndef __WINDOWS__
+	snprintf(tmp,sizeof(tmp),"%s" ZTLF_PATH_SEPARATOR "lf.pid",path);
+	int pidf = open(tmp,O_WRONLY|O_TRUNC);
+	if (pidf >= 0) {
+		/* TODO: should enter some kind of scan/recovery mode here! */
+		ZTLF_L_warning("LF may not have been shut down properly! database corruption is possible! (pid file still exists from previous run)");
+	} else {
+		pidf = open(tmp,O_WRONLY|O_CREAT|O_TRUNC,0644);
+	}
+	if (pidf < 0)
+		goto exit_with_error;
+	snprintf(tmp,sizeof(tmp),"%ld",(long)getpid());
+	write(pidf,tmp,strlen(tmp));
+	close(pidf);
+#endif
+
+	/* Open database and initialize schema if necessary. */
+	snprintf(tmp,sizeof(tmp),"%s" ZTLF_PATH_SEPARATOR "index.db",path);
+	if ((e = sqlite3_open_v2(tmp,&db->dbc,SQLITE_OPEN_CREATE|SQLITE_OPEN_READWRITE|SQLITE_OPEN_NOMUTEX,NULL)) != SQLITE_OK)
+		goto exit_with_error;
+	if ((e = sqlite3_exec(db->dbc,(ZTLF_DB_INIT_SQL),NULL,NULL,NULL)) != SQLITE_OK)
+		goto exit_with_error;
+
+	S(db->sSetConfig,
+	     "INSERT OR REPLACE INTO config (\"k\",\"v\") VALUES (?,?)");
+	S(db->sGetConfig,
+	     "SELECT \"v\" FROM config WHERE \"k\" = ?");
+	S(db->sAddRecord,
+	     "INSERT INTO record (doff,dlen,goff,ts,score,reputation,link_count,selector_count,hash,id,owner) VALUES (?,?,?,?,?,?,?,?,?,?,?)");
+	S(db->sAddSelector,
+	     "INSERT OR IGNORE INTO selector (sel,record_doff) VALUES (?,?)");
+	S(db->sGetRecordCount,
+	     "SELECT COUNT(1) FROM record");
+	S(db->sGetDataSize,
+	     "SELECT (doff + dlen) FROM record ORDER BY doff DESC LIMIT 1");
+	S(db->sGetAllRecords,
+	     "SELECT goff,hash FROM record ORDER BY hash ASC");
+	S(db->sGetLinkCandidates,
+	     "SELECT r.goff,r.hash FROM record AS r WHERE NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) AND NOT EXISTS (SELECT gp.record_goff FROM graph_pending AS gp WHERE gp.record_goff = r.goff) AND r.reputation >= 0 ORDER BY ts DESC");
+	S(db->sGetRecordByHash,
+	     "SELECT doff,dlen FROM record WHERE hash = ?");
+	S(db->sGetMaxRecordDoff,
+	     "SELECT doff,dlen FROM record ORDER BY doff DESC LIMIT 1");
+	S(db->sGetMaxRecordGoff,
+	     "SELECT MAX(goff) FROM record");
+	S(db->sGetRecordGoffByHash,
+	     "SELECT goff FROM record WHERE hash = ?");
+	S(db->sGetRecordScoreByGoff,
+	     "SELECT score FROM record WHERE goff = ?");
+	S(db->sGetDanglingLinks,
+	     "SELECT linking_record_goff,linking_record_link_idx FROM dangling_link WHERE hash = ?");
+	S(db->sDeleteDanglingLinks,
+	     "DELETE FROM dangling_link WHERE hash = ?");
+	S(db->sDeleteWantedHash,
+	     "DELETE FROM wanted WHERE hash = ?");
+	S(db->sAddDanglingLink,
+	     "INSERT OR IGNORE INTO dangling_link (hash,linking_record_goff,linking_record_link_idx) VALUES (?,?,?)");
+	S(db->sAddWantedHash,
+	     "INSERT OR REPLACE INTO wanted (hash,retries,last_retry_time) VALUES (?,0,0)");
+	S(db->sAddHole,
+	     "INSERT OR IGNORE INTO hole (waiting_record_goff,incomplete_goff,incomplete_link_idx) VALUES (?,?,?)");
+	S(db->sFlagRecordWeightApplicationPending,
+	     "INSERT OR REPLACE INTO graph_pending (record_goff,hole_count) VALUES (?,?)");
+	S(db->sGetRecordsForWeightApplication,
+	     "SELECT gp.record_goff FROM graph_pending AS gp WHERE NOT EXISTS (SELECT dl1.linking_record_goff FROM dangling_link AS dl1 WHERE dl1.linking_record_goff = gp.record_goff) AND (gp.hole_count <= 0 OR (SELECT COUNT(1) FROM hole AS h,dangling_link AS dl2 WHERE h.waiting_record_goff = gp.record_goff AND dl2.linking_record_goff = h.incomplete_goff AND dl2.linking_record_link_idx = h.incomplete_link_idx) = 0) ORDER BY gp.record_goff ASC");
+	S(db->sGetHoles,
+	     "SELECT incomplete_goff,incomplete_link_idx FROM hole WHERE waiting_record_goff = ?");
+	S(db->sDeleteHole,
+	     "DELETE FROM hole WHERE waiting_record_goff = ? AND incomplete_goff = ? AND incomplete_link_idx = ?");
+	S(db->sUpdatePendingHoleCount,
+	     "UPDATE graph_pending SET hole_count = ? WHERE record_goff = ?");
+	S(db->sDeleteCompletedPending,
+	     "DELETE FROM graph_pending WHERE record_goff = ?");
+	S(db->sGetAnyPending,
+	     "SELECT gp.record_goff FROM graph_pending AS gp WHERE NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = gp.record_goff) LIMIT 1");
+	S(db->sGetSynchronizedSince,
+	     "SELECT r.ts FROM record AS r WHERE NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) ORDER BY ts DESC LIMIT 1");
+	S(db->sQueryClearRecordSet,
+	     "DELETE FROM tmp.rs");
+	S(db->sQueryOrSelectorRange,
+	     "INSERT OR IGNORE INTO tmp.rs SELECT record_doff AS \"i\" FROM selector WHERE sel BETWEEN ? AND ? LIMIT " ZTLF_DB_SELECTOR_QUERY_RESULT_LIMIT);
+	S(db->sQueryAndSelectorRange,
+	     "DELETE FROM tmp.rs WHERE \"i\" NOT IN (SELECT record_doff FROM selector WHERE sel BETWEEN ? AND ?)");
+	S(db->sQueryGetResults,
+	     "SELECT r.doff,r.dlen,r.goff,r.ts,r.id,r.owner FROM record AS r,tmp.rs AS rs WHERE r.doff = rs.i AND r.reputation >= 0 AND NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) ORDER BY r.owner,r.id,r.ts");
+
+	/* Open and memory map graph and data files. */
+	snprintf(tmp,sizeof(tmp),"%s" ZTLF_PATH_SEPARATOR "graph.bin",path);
+	e = ZTLF_MappedFile_Open(&db->gf,tmp,ZTLF_GRAPH_FILE_CAPACITY_INCREMENT,ZTLF_GRAPH_FILE_CAPACITY_INCREMENT);
+	if (e) {
+		errno = e;
+		e = 0;
+		goto exit_with_error;
+	}
+	snprintf(tmp,sizeof(tmp),"%s" ZTLF_PATH_SEPARATOR "records.lf",path);
+	e = ZTLF_MappedFile_Open(&db->df,tmp,ZTLF_GRAPH_FILE_CAPACITY_INCREMENT,ZTLF_GRAPH_FILE_CAPACITY_INCREMENT);
+	if (e) {
+		ZTLF_MappedFile_Close(&db->gf);
+		errno = e;
+		e = 0;
+		goto exit_with_error;
+	}
+	snprintf(tmp,sizeof(tmp),"%s" ZTLF_PATH_SEPARATOR "weights.bin",path);
+	e = ZTLF_SUint96_Open(&db->wf,tmp);
+	if (e) {
+		errno = e;
+		e = 0;
+		goto exit_with_error;
+	}
+
+	db->running = true;
+	if (pthread_create(&db->graphThread,NULL,_ZTLF_DB_graphThreadMain,db) != 0) {
+		ZTLF_L_fatal("pthread_create() failed");
+		abort();
+	}
+	db->graphThreadStarted = true;
+
+	return 0;
+
+exit_with_error:
+	if ((e)&&(errbuf)&&(errbufSize)) {
+		if (statement)
+			snprintf(errbuf,errbufSize,"%s [%s]",sqlite3_errmsg(db->dbc),statement);
+		else strncpy(errbuf,sqlite3_errmsg(db->dbc),errbufSize);
+		errbuf[errbufSize-1] = 0;
+	}
+	ZTLF_DB_Close(db);
+	return ((e) ? ZTLF_POS(e) : ZTLF_NEG(errno));
+}
+
+#undef S
+#define S ZTLF_oldS
 
 /* Convenience function to create a hex string for logging purposes. */
 static const char *ZTLF_hexstr(const void *d,const unsigned long l,const unsigned int bufno)
@@ -439,174 +605,6 @@ end_graph_thread:
 	return NULL;
 }
 
-#ifdef S
-#define ZTLF_oldS S
-#else
-#define ZTLF_oldS
-#endif
-#undef S
-#define S(v,s) if ((e = sqlite3_prepare_v3(db->dbc,(statement = (s)),-1,SQLITE_PREPARE_PERSISTENT,&(v),NULL)) != SQLITE_OK) goto exit_with_error
-
-int ZTLF_DB_Open(struct ZTLF_DB *db,const char *path,char *errbuf,unsigned int errbufSize,LogOutputCallback logger,void *loggerArg)
-{
-	char tmp[PATH_MAX];
-	int e = 0;
-	const char *statement = NULL;
-
-	if (strlen(path) >= (PATH_MAX - 16))
-		return ZTLF_NEG(ENAMETOOLONG);
-	memset(db,0,sizeof(struct ZTLF_DB));
-	strncpy(db->path,path,PATH_MAX-1);
-	db->logger = logger;
-	db->loggerArg = (uintptr_t)loggerArg;
-
-	ZTLF_L_trace("opening database at %s",path);
-
-	db->graphThreadStarted = false;
-	pthread_mutex_init(&db->dbLock,NULL);
-	for(int i=0;i<ZTLF_DB_GRAPH_NODE_LOCK_ARRAY_SIZE;++i)
-		pthread_mutex_init(&db->graphNodeLocks[i],NULL);
-	pthread_rwlock_init(&db->gfLock,NULL);
-	pthread_rwlock_init(&db->dfLock,NULL);
-
-	mkdir(path,0755);
-
-	/* Save PID of running instance of LF. */
-#ifndef __WINDOWS__
-	snprintf(tmp,sizeof(tmp),"%s" ZTLF_PATH_SEPARATOR "lf.pid",path);
-	int pidf = open(tmp,O_WRONLY|O_TRUNC);
-	if (pidf >= 0) {
-		/* TODO: should enter some kind of scan/recovery mode here! */
-		ZTLF_L_warning("LF may not have been shut down properly! database corruption is possible! (pid file still exists from previous run)");
-	} else {
-		pidf = open(tmp,O_WRONLY|O_CREAT|O_TRUNC,0644);
-	}
-	if (pidf < 0)
-		goto exit_with_error;
-	snprintf(tmp,sizeof(tmp),"%ld",(long)getpid());
-	write(pidf,tmp,strlen(tmp));
-	close(pidf);
-#endif
-
-	/* Open database and initialize schema if necessary. */
-	snprintf(tmp,sizeof(tmp),"%s" ZTLF_PATH_SEPARATOR "index.db",path);
-	if ((e = sqlite3_open_v2(tmp,&db->dbc,SQLITE_OPEN_CREATE|SQLITE_OPEN_READWRITE|SQLITE_OPEN_NOMUTEX,NULL)) != SQLITE_OK)
-		goto exit_with_error;
-	if ((e = sqlite3_exec(db->dbc,(ZTLF_DB_INIT_SQL),NULL,NULL,NULL)) != SQLITE_OK)
-		goto exit_with_error;
-
-	S(db->sSetConfig,
-	     "INSERT OR REPLACE INTO config (\"k\",\"v\") VALUES (?,?)");
-	S(db->sGetConfig,
-	     "SELECT \"v\" FROM config WHERE \"k\" = ?");
-	S(db->sAddRecord,
-	     "INSERT INTO record (doff,dlen,goff,ts,score,reputation,link_count,selector_count,hash,id,owner) VALUES (?,?,?,?,?,?,?,?,?,?,?)");
-	S(db->sAddSelector,
-	     "INSERT OR IGNORE INTO selector (sel,record_doff) VALUES (?,?)");
-	S(db->sGetRecordCount,
-	     "SELECT COUNT(1) FROM record");
-	S(db->sGetDataSize,
-	     "SELECT (doff + dlen) FROM record ORDER BY doff DESC LIMIT 1");
-	S(db->sGetAllRecords,
-	     "SELECT goff,hash FROM record ORDER BY hash ASC");
-	S(db->sGetCompletedRecordCount,
-	     "SELECT ((SELECT COUNT(1) FROM record) - (SELECT COUNT(DISTINCT linking_record_goff) FROM dangling_link))");
-	S(db->sGetCompletedRecordHashes,
-	     "SELECT r.hash FROM record AS r WHERE NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) ORDER BY r.hash ASC");
-	S(db->sGetLinkCandidates,
-	     "SELECT r.goff,r.hash FROM record AS r WHERE NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) AND NOT EXISTS (SELECT gp.record_goff FROM graph_pending AS gp WHERE gp.record_goff = r.goff) AND r.reputation = 0 ORDER BY ts DESC");
-	S(db->sGetRecordByHash,
-	     "SELECT doff,dlen FROM record WHERE hash = ?");
-	S(db->sGetMaxRecordDoff,
-	     "SELECT doff,dlen FROM record ORDER BY doff DESC LIMIT 1");
-	S(db->sGetMaxRecordGoff,
-	     "SELECT MAX(goff) FROM record");
-	S(db->sGetRecordGoffByHash,
-	     "SELECT goff FROM record WHERE hash = ?");
-	S(db->sGetRecordScoreByGoff,
-	     "SELECT score FROM record WHERE goff = ?");
-	S(db->sGetDanglingLinks,
-	     "SELECT linking_record_goff,linking_record_link_idx FROM dangling_link WHERE hash = ?");
-	S(db->sDeleteDanglingLinks,
-	     "DELETE FROM dangling_link WHERE hash = ?");
-	S(db->sDeleteWantedHash,
-	     "DELETE FROM wanted WHERE hash = ?");
-	S(db->sAddDanglingLink,
-	     "INSERT OR IGNORE INTO dangling_link (hash,linking_record_goff,linking_record_link_idx) VALUES (?,?,?)");
-	S(db->sAddWantedHash,
-	     "INSERT OR REPLACE INTO wanted (hash,retries,last_retry_time) VALUES (?,0,0)");
-	S(db->sAddHole,
-	     "INSERT OR IGNORE INTO hole (waiting_record_goff,incomplete_goff,incomplete_link_idx) VALUES (?,?,?)");
-	S(db->sFlagRecordWeightApplicationPending,
-	     "INSERT OR REPLACE INTO graph_pending (record_goff,hole_count) VALUES (?,?)");
-	S(db->sGetRecordsForWeightApplication,
-	     "SELECT gp.record_goff FROM graph_pending AS gp WHERE NOT EXISTS (SELECT dl1.linking_record_goff FROM dangling_link AS dl1 WHERE dl1.linking_record_goff = gp.record_goff) AND (gp.hole_count <= 0 OR gp.hole_count != (SELECT COUNT(1) FROM hole AS h,dangling_link AS dl2 WHERE h.waiting_record_goff = gp.record_goff AND dl2.linking_record_goff = h.incomplete_goff AND dl2.linking_record_link_idx = h.incomplete_link_idx)) ORDER BY gp.record_goff ASC");
-	S(db->sGetHoles,
-	     "SELECT incomplete_goff,incomplete_link_idx FROM hole WHERE waiting_record_goff = ?");
-	S(db->sDeleteHole,
-	     "DELETE FROM hole WHERE waiting_record_goff = ? AND incomplete_goff = ? AND incomplete_link_idx = ?");
-	S(db->sUpdatePendingHoleCount,
-	     "UPDATE graph_pending SET hole_count = ? WHERE record_goff = ?");
-	S(db->sDeleteCompletedPending,
-	     "DELETE FROM graph_pending WHERE record_goff = ?");
-	S(db->sGetAnyPending,
-	     "SELECT gp.record_goff FROM graph_pending AS gp WHERE NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = gp.record_goff) LIMIT 1");
-	S(db->sQueryClearRecordSet,
-	     "DELETE FROM tmp.rs");
-	S(db->sQueryOrSelectorRange,
-	     "INSERT OR IGNORE INTO tmp.rs SELECT record_doff AS \"i\" FROM selector WHERE sel BETWEEN ? AND ? LIMIT " ZTLF_DB_SELECTOR_QUERY_RESULT_LIMIT);
-	S(db->sQueryAndSelectorRange,
-	     "DELETE FROM tmp.rs WHERE \"i\" NOT IN (SELECT record_doff FROM selector WHERE sel BETWEEN ? AND ?)");
-	S(db->sQueryGetResults,
-	     "SELECT r.doff,r.dlen,r.goff,r.ts,r.id,r.owner FROM record AS r,tmp.rs AS rs WHERE r.doff = rs.i AND NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) ORDER BY r.owner,r.id,r.ts");
-
-	/* Open and memory map graph and data files. */
-	snprintf(tmp,sizeof(tmp),"%s" ZTLF_PATH_SEPARATOR "graph.bin",path);
-	e = ZTLF_MappedFile_Open(&db->gf,tmp,ZTLF_GRAPH_FILE_CAPACITY_INCREMENT,ZTLF_GRAPH_FILE_CAPACITY_INCREMENT);
-	if (e) {
-		errno = e;
-		e = 0;
-		goto exit_with_error;
-	}
-	snprintf(tmp,sizeof(tmp),"%s" ZTLF_PATH_SEPARATOR "records.lf",path);
-	e = ZTLF_MappedFile_Open(&db->df,tmp,ZTLF_GRAPH_FILE_CAPACITY_INCREMENT,ZTLF_GRAPH_FILE_CAPACITY_INCREMENT);
-	if (e) {
-		ZTLF_MappedFile_Close(&db->gf);
-		errno = e;
-		e = 0;
-		goto exit_with_error;
-	}
-	snprintf(tmp,sizeof(tmp),"%s" ZTLF_PATH_SEPARATOR "weights.bin",path);
-	e = ZTLF_SUint96_Open(&db->wf,tmp);
-	if (e) {
-		errno = e;
-		e = 0;
-		goto exit_with_error;
-	}
-
-	db->running = true;
-	if (pthread_create(&db->graphThread,NULL,_ZTLF_DB_graphThreadMain,db) != 0) {
-		ZTLF_L_fatal("pthread_create() failed");
-		abort();
-	}
-	db->graphThreadStarted = true;
-
-	return 0;
-
-exit_with_error:
-	if ((e)&&(errbuf)&&(errbufSize)) {
-		if (statement)
-			snprintf(errbuf,errbufSize,"%s [%s]",sqlite3_errmsg(db->dbc),statement);
-		else strncpy(errbuf,sqlite3_errmsg(db->dbc),errbufSize);
-		errbuf[errbufSize-1] = 0;
-	}
-	ZTLF_DB_Close(db);
-	return ((e) ? ZTLF_POS(e) : ZTLF_NEG(errno));
-}
-
-#undef S
-#define S ZTLF_oldS
-
 void ZTLF_DB_Close(struct ZTLF_DB *db)
 {
 	char tmp[PATH_MAX];
@@ -633,8 +631,6 @@ void ZTLF_DB_Close(struct ZTLF_DB *db)
 		if (db->sGetRecordCount)                      sqlite3_finalize(db->sGetRecordCount);
 		if (db->sGetDataSize)                         sqlite3_finalize(db->sGetDataSize);
 		if (db->sGetAllRecords)                       sqlite3_finalize(db->sGetAllRecords);
-		if (db->sGetCompletedRecordCount)             sqlite3_finalize(db->sGetCompletedRecordCount);
-		if (db->sGetCompletedRecordHashes)            sqlite3_finalize(db->sGetCompletedRecordHashes);
 		if (db->sGetLinkCandidates)                   sqlite3_finalize(db->sGetLinkCandidates);
 		if (db->sGetRecordByHash)                     sqlite3_finalize(db->sGetRecordByHash);
 		if (db->sGetMaxRecordDoff)                    sqlite3_finalize(db->sGetMaxRecordDoff);
@@ -654,6 +650,7 @@ void ZTLF_DB_Close(struct ZTLF_DB *db)
 		if (db->sUpdatePendingHoleCount)              sqlite3_finalize(db->sUpdatePendingHoleCount);
 		if (db->sDeleteCompletedPending)              sqlite3_finalize(db->sDeleteCompletedPending);
 		if (db->sGetAnyPending)                       sqlite3_finalize(db->sGetAnyPending);
+		if (db->sGetSynchronizedSince)                sqlite3_finalize(db->sGetSynchronizedSince);
 		if (db->sQueryClearRecordSet)                 sqlite3_finalize(db->sQueryClearRecordSet);
 		if (db->sQueryOrSelectorRange)                sqlite3_finalize(db->sQueryOrSelectorRange);
 		if (db->sQueryAndSelectorRange)               sqlite3_finalize(db->sQueryAndSelectorRange);

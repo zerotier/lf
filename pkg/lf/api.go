@@ -273,7 +273,7 @@ func (m *APINew) execute(workAlgorithm byte) (*Record, *APIError) {
 
 	var ts uint64
 	if m.Timestamp == nil || *m.Timestamp == 0 {
-		ts = TimeMs()
+		ts = TimeSec()
 	} else {
 		ts = *m.Timestamp
 	}

@@ -89,8 +89,6 @@ struct ZTLF_DB
 	sqlite3_stmt *sGetRecordCount;
 	sqlite3_stmt *sGetDataSize;
 	sqlite3_stmt *sGetAllRecords;
-	sqlite3_stmt *sGetCompletedRecordCount;
-	sqlite3_stmt *sGetCompletedRecordHashes;
 	sqlite3_stmt *sGetLinkCandidates;
 	sqlite3_stmt *sGetRecordByHash;
 	sqlite3_stmt *sGetMaxRecordDoff;
@@ -110,6 +108,7 @@ struct ZTLF_DB
 	sqlite3_stmt *sUpdatePendingHoleCount;
 	sqlite3_stmt *sDeleteCompletedPending;
 	sqlite3_stmt *sGetAnyPending;
+	sqlite3_stmt *sGetSynchronizedSince;
 	sqlite3_stmt *sQueryClearRecordSet;
 	sqlite3_stmt *sQueryOrSelectorRange;
 	sqlite3_stmt *sQueryAndSelectorRange;

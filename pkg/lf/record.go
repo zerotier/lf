@@ -558,20 +558,24 @@ func NewRecordStart(value []byte, links [][]byte, maskingKey []byte, plainTextSe
 	r = new(Record)
 
 	if len(value) > 0 {
-		valueMasked := make([]byte, 0, len(value)+1)
+		var valueMasked []byte
 
 		// If value is of non-trivial length, try to compress it with LZW. LZW is an older algorithm
 		// but is standard and tends to do fairly well with small compressable objects like JSON
 		// blobs, text, HTML, etc.
-		if len(value) >= 16 {
-			lzwBuf := bytes.NewBuffer(valueMasked)
+		if len(value) >= 32 {
+			var lzwBuf bytes.Buffer
 			lzwBuf.WriteByte(0x01) // flag 0x01 indicates compression
-			lzwWriter := lzw.NewWriter(lzwBuf, lzw.LSB, 8)
+			lzwWriter := lzw.NewWriter(&lzwBuf, lzw.LSB, 8)
 			_, lzwErr := lzwWriter.Write(value)
-			lzwWriter.Close()
-			valueMasked = lzwBuf.Bytes()
-			if lzwErr != nil || len(valueMasked) > len(value) {
-				valueMasked = valueMasked[:0]
+			if lzwErr == nil {
+				lzwErr = lzwWriter.Close()
+				valueMasked = lzwBuf.Bytes()
+				if lzwErr != nil || len(valueMasked) > len(value) {
+					valueMasked = nil
+				}
+			} else {
+				valueMasked = nil
 			}
 		}
 
@@ -594,6 +598,7 @@ func NewRecordStart(value []byte, links [][]byte, maskingKey []byte, plainTextSe
 
 		r.MaskedValue = valueMasked
 	}
+
 	r.recordBody.Owner = append(r.recordBody.Owner, ownerPublic...)
 	if len(certificateRecordHash) == 32 {
 		var cert [32]byte
