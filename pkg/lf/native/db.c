@@ -22,6 +22,8 @@
 /* A sanity limit on the number of records returned by a selector range query (as string because it's concatenated into a static SQL statement). */
 #define ZTLF_DB_SELECTOR_QUERY_RESULT_LIMIT "16777216"
 
+static void *_ZTLF_DB_graphThreadMain(void *arg);
+
 /*
  * config
  *   k                        arbitrary config key
@@ -108,8 +110,8 @@
 "CREATE UNIQUE INDEX IF NOT EXISTS record_goff ON record(goff);\n" \
 "CREATE UNIQUE INDEX IF NOT EXISTS record_hash ON record(hash);\n" \
 "CREATE INDEX IF NOT EXISTS record_id ON record(id);\n" \
-"CREATE INDEX IF NOT EXISTS record_doff_reputation_owner_id_ts ON record(doff,reputation,owner,id,ts);\n" \
 "CREATE INDEX IF NOT EXISTS record_ts ON record(ts);\n" \
+"CREATE INDEX IF NOT EXISTS record_doff_owner_id_ts ON record(doff,owner,id,ts);\n" \
 \
 "CREATE TABLE IF NOT EXISTS selector (" \
 "sel BLOB NOT NULL," \
@@ -141,6 +143,7 @@
 "CREATE TABLE IF NOT EXISTS wanted (" \
 "hash BLOB PRIMARY KEY NOT NULL," \
 "retries INTEGER NOT NULL," \
+"first_wanted_time INTEGER NOT NULL," \
 "last_retry_time INTEGER NOT NULL" \
 ") WITHOUT ROWID;\n" \
 \
@@ -221,7 +224,7 @@ int ZTLF_DB_Open(struct ZTLF_DB *db,const char *path,char *errbuf,unsigned int e
 	S(db->sGetAllRecords,
 	     "SELECT goff,hash FROM record ORDER BY hash ASC");
 	S(db->sGetLinkCandidates,
-	     "SELECT r.goff,r.hash FROM record AS r WHERE NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) AND NOT EXISTS (SELECT gp.record_goff FROM graph_pending AS gp WHERE gp.record_goff = r.goff) AND r.reputation >= 0 ORDER BY ts DESC");
+	     "SELECT r.goff,r.hash FROM record AS r WHERE NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) AND NOT EXISTS (SELECT gp.record_goff FROM graph_pending AS gp WHERE gp.record_goff = r.goff) AND r.reputation = 0 ORDER BY ts DESC");
 	S(db->sGetRecordByHash,
 	     "SELECT doff,dlen FROM record WHERE hash = ?");
 	S(db->sGetMaxRecordDoff,
@@ -241,7 +244,7 @@ int ZTLF_DB_Open(struct ZTLF_DB *db,const char *path,char *errbuf,unsigned int e
 	S(db->sAddDanglingLink,
 	     "INSERT OR IGNORE INTO dangling_link (hash,linking_record_goff,linking_record_link_idx) VALUES (?,?,?)");
 	S(db->sAddWantedHash,
-	     "INSERT OR REPLACE INTO wanted (hash,retries,last_retry_time) VALUES (?,0,0)");
+	     "INSERT OR IGNORE INTO wanted (hash,retries,first_wanted_time,last_retry_time) VALUES (?,0,?,0)");
 	S(db->sAddHole,
 	     "INSERT OR IGNORE INTO hole (waiting_record_goff,incomplete_goff,incomplete_link_idx) VALUES (?,?,?)");
 	S(db->sFlagRecordWeightApplicationPending,
@@ -258,8 +261,8 @@ int ZTLF_DB_Open(struct ZTLF_DB *db,const char *path,char *errbuf,unsigned int e
 	     "DELETE FROM graph_pending WHERE record_goff = ?");
 	S(db->sGetAnyPending,
 	     "SELECT gp.record_goff FROM graph_pending AS gp WHERE NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = gp.record_goff) LIMIT 1");
-	S(db->sGetSynchronizedSince,
-	     "SELECT r.ts FROM record AS r WHERE NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) ORDER BY ts DESC LIMIT 1");
+	S(db->sGetHaveSynchronizedWithID,
+	     "SELECT COUNT(1) FROM record AS r WHERE r.id = ? AND r.owner != ? AND NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) AND NOT EXISTS (SELECT gp.record_goff FROM graph_pending AS gp WHERE gp.record_goff = r.goff) AND r.reputation = 0");
 	S(db->sQueryClearRecordSet,
 	     "DELETE FROM tmp.rs");
 	S(db->sQueryOrSelectorRange,
@@ -267,7 +270,7 @@ int ZTLF_DB_Open(struct ZTLF_DB *db,const char *path,char *errbuf,unsigned int e
 	S(db->sQueryAndSelectorRange,
 	     "DELETE FROM tmp.rs WHERE \"i\" NOT IN (SELECT record_doff FROM selector WHERE sel BETWEEN ? AND ?)");
 	S(db->sQueryGetResults,
-	     "SELECT r.doff,r.dlen,r.goff,r.ts,r.id,r.owner FROM record AS r,tmp.rs AS rs WHERE r.doff = rs.i AND r.reputation >= 0 AND NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) ORDER BY r.owner,r.id,r.ts");
+	     "SELECT r.doff,r.dlen,r.goff,r.ts,r.reputation,r.id,r.owner FROM record AS r,tmp.rs AS rs WHERE r.doff = rs.i AND NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) ORDER BY r.owner,r.id,r.ts");
 
 	/* Open and memory map graph and data files. */
 	snprintf(tmp,sizeof(tmp),"%s" ZTLF_PATH_SEPARATOR "graph.bin",path);
@@ -650,7 +653,6 @@ void ZTLF_DB_Close(struct ZTLF_DB *db)
 		if (db->sUpdatePendingHoleCount)              sqlite3_finalize(db->sUpdatePendingHoleCount);
 		if (db->sDeleteCompletedPending)              sqlite3_finalize(db->sDeleteCompletedPending);
 		if (db->sGetAnyPending)                       sqlite3_finalize(db->sGetAnyPending);
-		if (db->sGetSynchronizedSince)                sqlite3_finalize(db->sGetSynchronizedSince);
 		if (db->sQueryClearRecordSet)                 sqlite3_finalize(db->sQueryClearRecordSet);
 		if (db->sQueryOrSelectorRange)                sqlite3_finalize(db->sQueryOrSelectorRange);
 		if (db->sQueryAndSelectorRange)               sqlite3_finalize(db->sQueryAndSelectorRange);
@@ -884,6 +886,7 @@ int ZTLF_DB_PutRecord(
 			/* Wanted hash records track attempts to get records. */
 			sqlite3_reset(db->sAddWantedHash);
 			sqlite3_bind_blob(db->sAddWantedHash,1,l,32,SQLITE_STATIC);
+			sqlite3_bind_int64(db->sAddWantedHash,2,(sqlite_int64)time(NULL));
 			if ((e = sqlite3_step(db->sAddWantedHash)) != SQLITE_DONE) {
 				ZTLF_L_warning("database error adding/resetting wanted hash: %d (%s)",e,sqlite3_errmsg(db->dbc));
 			}
@@ -997,10 +1000,10 @@ struct ZTLF_QueryResults *ZTLF_DB_Query(struct ZTLF_DB *db,const void **sel,cons
 	memset(lastOwner,0,sizeof(lastOwner));
 	memset(lastId,0,sizeof(lastId));
 	int lastOwnerSize = -1;
-	while (sqlite3_step(db->sQueryGetResults) == SQLITE_ROW) { /* columns: doff,dlen,goff,ts,id,owner */
-		const void *id = sqlite3_column_blob(db->sQueryGetResults,4);
-		const void *owner = sqlite3_column_blob(db->sQueryGetResults,5);
-		const int ownerSize = sqlite3_column_bytes(db->sQueryGetResults,5);
+	while (sqlite3_step(db->sQueryGetResults) == SQLITE_ROW) { /* columns: doff,dlen,goff,ts,reputation,id,owner */
+		const void *id = sqlite3_column_blob(db->sQueryGetResults,5);
+		const void *owner = sqlite3_column_blob(db->sQueryGetResults,6);
+		const int ownerSize = sqlite3_column_bytes(db->sQueryGetResults,6);
 		if ((!owner)||(ownerSize <= 0)||(ownerSize > ZTLF_DB_QUERY_MAX_OWNER_SIZE))
 			continue;
 
@@ -1010,7 +1013,7 @@ struct ZTLF_QueryResults *ZTLF_DB_Query(struct ZTLF_DB *db,const void **sel,cons
 		 * Results within the same owner,id tuple update the latest result with that with the
 		 * latest timestamp. */
 		struct ZTLF_QueryResult *qr;
-		if ((lastOwnerSize != ownerSize)||(memcmp(lastOwner,owner,ownerSize) != 0)||(memcmp(lastId,id,32))) {
+		if ((lastOwnerSize != ownerSize)||(memcmp(lastOwner,owner,ownerSize) != 0)||(memcmp(lastId,id,32) != 0)) {
 			memcpy(lastOwner,owner,ownerSize);
 			memcpy(lastId,id,32);
 			lastOwnerSize = ownerSize;
@@ -1031,8 +1034,9 @@ struct ZTLF_QueryResults *ZTLF_DB_Query(struct ZTLF_DB *db,const void **sel,cons
 			qr->weightL = 0;
 			qr->weightH = 0;
 			qr->ownerSize = (unsigned int)ownerSize;
-			memcpy(qr->owner,owner,ownerSize);
+			qr->reputation = 0;
 			memcpy(qr->id,id,32);
+			memcpy(qr->owner,owner,ownerSize);
 		} else {
 			qr = &(r->results[r->count]);
 		}
@@ -1049,6 +1053,8 @@ struct ZTLF_QueryResults *ZTLF_DB_Query(struct ZTLF_DB *db,const void **sel,cons
 			qr->doff = (uint64_t)sqlite3_column_int64(db->sQueryGetResults,0);
 			qr->dlen = (unsigned int)sqlite3_column_int(db->sQueryGetResults,1);
 		}
+
+		qr->reputation |= sqlite3_column_int(db->sQueryGetResults,4);
 	}
 	++r->count;
 
@@ -1122,6 +1128,19 @@ int ZTLF_DB_HasPending(struct ZTLF_DB *db)
 		if (count == 0)
 			has = -1;
 	}
+	pthread_mutex_unlock(&db->dbLock);
+	return has;
+}
+
+int ZTLF_DB_HaveSynchronizedWithID(struct ZTLF_DB *db,const void *id,const void *notOwner,const unsigned int ownerSize)
+{
+	int has = 0;
+	pthread_mutex_lock(&db->dbLock);
+	sqlite3_reset(db->sGetHaveSynchronizedWithID);
+	sqlite3_bind_blob(db->sGetHaveSynchronizedWithID,1,id,32,SQLITE_STATIC);
+	sqlite3_bind_blob(db->sGetHaveSynchronizedWithID,2,notOwner,(int)ownerSize,SQLITE_STATIC);
+	if (sqlite3_step(db->sGetHaveSynchronizedWithID) == SQLITE_ROW)
+		has = (sqlite3_column_int64(db->sGetHaveSynchronizedWithID,0) > 0) ? 1 : 0;
 	pthread_mutex_unlock(&db->dbLock);
 	return has;
 }

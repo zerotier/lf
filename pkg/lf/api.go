@@ -49,8 +49,8 @@ type APIStatus struct {
 	Version       [4]int          // Version of software
 	MinAPIVersion int             // Minimum API version supported
 	MaxAPIVersion int             // Maximum API version supported
-	Uptime        uint64          // Node uptime in milliseconds since epoch
-	Clock         uint64          // Node local clock in milliseconds since epoch
+	Uptime        uint64          // Node uptime in seconds
+	Clock         uint64          // Node local clock in seconds since epoch
 	DBRecordCount uint64          // Number of records in database
 	DBSize        uint64          // Total size of records in database in bytes
 	Peers         []APIStatusPeer // Connected peers
@@ -71,12 +71,16 @@ type APIQueryRange struct {
 }
 
 // APIQuery describes a query for records in the form of an ordered series of selector ranges.
-type APIQuery []APIQueryRange
+type APIQuery struct {
+	Range      []APIQueryRange ``                  // Selectors or selector range(s)
+	MaskingKey []byte          `json:",omitempty"` // Masking key to unmask record value server-side (if non-empty)
+}
 
 // APIQueryResult is a single query result.
 type APIQueryResult struct {
-	Record *Record // Record itself.
-	Weight string  // Record weight as a 128-bit hex value.
+	Record *Record ``                  // Record itself.
+	Value  []byte  `json:",omitempty"` // Unmasked value if masking key was included
+	Weight string  ``                  // Record weight as a 128-bit hex value
 }
 
 // APIQueryResults is a list of results to an API query.
@@ -147,7 +151,7 @@ func apiRun(url string, m interface{}) ([]byte, error) {
 
 // Run executes this API query against a remote LF node or proxy
 func (m *APIQuery) Run(url string) (*APIQueryResult, error) {
-	body, err := apiRun(url, ([]APIQueryRange)(*m))
+	body, err := apiRun(url, m.Range)
 	if err != nil {
 		return nil, err
 	}
@@ -159,7 +163,7 @@ func (m *APIQuery) Run(url string) (*APIQueryResult, error) {
 }
 
 func (m *APIQuery) execute(n *Node) (qr []APIQueryResult, err *APIError) {
-	mm := ([]APIQueryRange)(*m)
+	mm := m.Range
 	if len(mm) == 0 {
 		return nil, &APIError{http.StatusBadRequest, "a query requires at least one selector"}
 	}
@@ -189,7 +193,7 @@ func (m *APIQuery) execute(n *Node) (qr []APIQueryResult, err *APIError) {
 	}
 
 	// Iterate through results and store them in a temporary map by ID (hash of selector keys). This
-	// lets us find the highest scoring record for each combination of selectors without wasting the
+	// lets us find the highest weighted record for each combination of selectors without wasting the
 	// time to grab whole records that we don't ultimately return. Note that the C side of this code
 	// handles finding the latest record (max timestamp) by owner/ID combo.
 	bestByID := make(map[[32]byte]*[4]uint64)
@@ -223,21 +227,30 @@ func (m *APIQuery) execute(n *Node) (qr []APIQueryResult, err *APIError) {
 		if err != nil {
 			return nil, &APIError{http.StatusInternalServerError, "error retrieving record data: " + err.Error()}
 		}
-		qr = append(qr, APIQueryResult{
-			Record: rec,
-			Weight: fmt.Sprintf("%.16x%.16x", rptr[0], rptr[1]),
-		})
+		var v []byte
+		if len(m.MaskingKey) > 0 {
+			v, err = rec.GetValue(m.MaskingKey)
+		}
+		if err == nil { // skip records with wrong masking key or invalid compressed data
+			qr = append(qr, APIQueryResult{
+				Record: rec,
+				Value:  v,
+				Weight: fmt.Sprintf("%.16x%.16x", rptr[0], rptr[1]),
+			})
+		}
 	}
 
 	// Sort qr[] by selector ordinals.
 	sort.Slice(qr, func(a, b int) bool {
 		sa := qr[a].Record.Selectors
 		sb := qr[b].Record.Selectors
-		sl := len(sa)
-		if len(sb) < sl {
-			sl = len(sb)
+		if len(sa) < len(sb) {
+			return true
 		}
-		for i := 0; i < sl; i++ {
+		if len(sa) > len(sb) {
+			return false
+		}
+		for i := 0; i < len(sa); i++ {
 			if sa[i].Ordinal < sb[i].Ordinal {
 				return true
 			} else if sa[i].Ordinal > sb[i].Ordinal {
@@ -300,7 +313,6 @@ func apiSetStandardHeaders(out http.ResponseWriter) {
 	h.Set("Cache-Control", "no-cache")
 	h.Set("Pragma", "no-cache")
 	h.Set("Date", now.String())
-	h.Set("X-LF-TimeMs", strconv.FormatUint(uint64(now.UnixNano())/uint64(1000000), 10))
 	h.Set("X-LF-Version", VersionStr)
 	h.Set("X-LF-APIVersion", apiVersionStr)
 	h.Set("Server", SoftwareName)
@@ -454,7 +466,7 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 		apiSetStandardHeaders(out)
 		if req.Method == http.MethodGet || req.Method == http.MethodHead {
 			rc, ds := n.db.stats()
-			now := TimeMs()
+			now := TimeSec()
 			apiSendObj(out, req, http.StatusOK, &APIStatus{
 				Software:      SoftwareName,
 				Version:       Version,

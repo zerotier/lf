@@ -33,7 +33,7 @@ const (
 	// It prevents a huge message from causing a huge memory allocation. It can be increased.
 	p2pProtoMaxMessageSize = 262144
 
-	// p2pProtoModeAES256GCMECCP384 indicates our simple AES-256 GCM encrypted stream protocol.
+	// p2pProtoModeAES256GCMECCP384 indicates our simple AES-256 GCM encrypted stream protocol with ECDH key exchange.
 	p2pProtoModeAES256GCMECCP384 byte = 1
 
 	p2pProtoMessageTypeRecord               byte = 1 // binary marshaled Record
@@ -181,6 +181,8 @@ func NewNode(path string, p2pPort int, httpPort int, logger *log.Logger) (*Node,
 		}
 	}()
 
+	n.startTime = TimeSec()
+
 	return n, nil
 }
 
@@ -294,8 +296,14 @@ func (n *Node) AddRecord(r *Record) error {
 		return err
 	}
 
+	reputation := 0
+	rid := r.ID()
+	if n.db.haveSynchronizedWithID(rid[:], r.Owner) {
+		reputation = dbRecordReputationFlagCollidesWithSynchronizedID
+	}
+
 	// Add record to database, aborting if this generates some kind of error.
-	err = n.db.putRecord(r)
+	err = n.db.putRecord(r, reputation)
 	if err != nil {
 		return err
 	}

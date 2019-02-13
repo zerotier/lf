@@ -208,10 +208,10 @@ func (rb *recordBody) signingHash() (sum [32]byte) {
 func (rb *recordBody) LinkCount() uint { return uint(len(rb.Links) / 32) }
 
 // GetValue decrypts and possibly decompresses this record's masked value.
-// Decompression failure will result in an empty/nil value.
-func (rb *recordBody) GetValue(maskingKey []byte) []byte {
-	if len(rb.MaskedValue) == 0 {
-		return nil
+// An invalid masking key or a decompression failure will result in an empty/nil value.
+func (rb *recordBody) GetValue(maskingKey []byte) ([]byte, error) {
+	if len(rb.MaskedValue) < 3 {
+		return nil, nil
 	}
 
 	unmaskedValue := make([]byte, len(rb.MaskedValue))
@@ -225,15 +225,20 @@ func (rb *recordBody) GetValue(maskingKey []byte) []byte {
 	cipher.NewCFBDecrypter(c, cfbIv[:]).XORKeyStream(unmaskedValue, rb.MaskedValue)
 
 	if (unmaskedValue[0] & 0x01) != 0 {
-		var err error
-		unmaskedValue, err = ioutil.ReadAll(io.LimitReader(lzw.NewReader(bytes.NewReader(unmaskedValue[1:]), lzw.LSB, 8), RecordMaxSize))
+		uncompressedValue, err := ioutil.ReadAll(io.LimitReader(lzw.NewReader(bytes.NewReader(unmaskedValue[3:]), lzw.LSB, 8), RecordMaxSize))
 		if err != nil {
-			return nil
+			return nil, err
 		}
-		return unmaskedValue
+		if crc16(uncompressedValue) != binary.BigEndian.Uint16(unmaskedValue[1:3]) {
+			return nil, ErrorIncorrectKey
+		}
+		return uncompressedValue, nil
 	}
 
-	return unmaskedValue[1:]
+	if crc16(unmaskedValue[3:]) != binary.BigEndian.Uint16(unmaskedValue[1:3]) {
+		return nil, ErrorIncorrectKey
+	}
+	return unmaskedValue[3:], nil
 }
 
 // Record combines the record body with one or more selectors, work, and a signature.
@@ -559,6 +564,7 @@ func NewRecordStart(value []byte, links [][]byte, maskingKey []byte, plainTextSe
 
 	if len(value) > 0 {
 		var valueMasked []byte
+		valueCrc16 := crc16(value)
 
 		// If value is of non-trivial length, try to compress it with LZW. LZW is an older algorithm
 		// but is standard and tends to do fairly well with small compressable objects like JSON
@@ -566,6 +572,8 @@ func NewRecordStart(value []byte, links [][]byte, maskingKey []byte, plainTextSe
 		if len(value) >= 32 {
 			var lzwBuf bytes.Buffer
 			lzwBuf.WriteByte(0x01) // flag 0x01 indicates compression
+			lzwBuf.WriteByte(byte(valueCrc16 >> 8))
+			lzwBuf.WriteByte(byte(valueCrc16))
 			lzwWriter := lzw.NewWriter(&lzwBuf, lzw.LSB, 8)
 			_, lzwErr := lzwWriter.Write(value)
 			if lzwErr == nil {
@@ -581,12 +589,13 @@ func NewRecordStart(value []byte, links [][]byte, maskingKey []byte, plainTextSe
 
 		// If compression failed to improve size, store uncompressed.
 		if len(valueMasked) == 0 {
-			valueMasked = append(valueMasked, 0x00) // 0x00 indicates no compression
+			valueMasked = append(valueMasked, 0x00, byte(valueCrc16>>8), byte(valueCrc16)) // 0x00 indicates no compression
 			valueMasked = append(valueMasked, value...)
 		}
 
 		// Encrypt with AES256-CFB using the timestamp and owner for IV.
 		// No AEAD is needed here because the record is already authenticated by digital signature from the owner.
+		// We do include a little CRC16 to detect invalid masking keys with some reliability to improve ease of use in some cases.
 		var cfbIv [16]byte
 		binary.BigEndian.PutUint64(cfbIv[0:8], ts)
 		if len(ownerPublic) >= 8 {

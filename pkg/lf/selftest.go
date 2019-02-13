@@ -296,8 +296,8 @@ func TestDatabase(testBasePath string, out io.Writer) bool {
 			fmt.Fprintf(out, "FAILED: %s\n", err.Error())
 			return false
 		}
-		valueDec := records[ri].GetValue([]byte("test"))
-		if !bytes.Equal(value, valueDec) {
+		valueDec, err := records[ri].GetValue([]byte("test"))
+		if !bytes.Equal(value, valueDec) || err != nil {
 			fmt.Fprintf(out, "FAILED: record value unmask failed!\n")
 			return false
 		}
@@ -314,7 +314,7 @@ func TestDatabase(testBasePath string, out io.Writer) bool {
 			}
 		}
 		for ri := 0; ri < testDatabaseRecords; ri++ {
-			err = db[dbi].putRecord(records[ri])
+			err = db[dbi].putRecord(records[ri], 0)
 			if err != nil {
 				fmt.Fprintf(out, "  #%d FAILED: %s\n", dbi, err.Error())
 				return false

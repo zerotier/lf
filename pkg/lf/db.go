@@ -27,6 +27,8 @@ import (
 const (
 	dbMaxOwnerSize       uint = C.ZTLF_DB_QUERY_MAX_OWNER_SIZE
 	dbMaxConfigValueSize int  = 131072
+
+	dbRecordReputationFlagCollidesWithSynchronizedID = 0x00000001
 )
 
 // DB is an instance of the LF database that stores records and manages record weights and linkages.
@@ -85,7 +87,7 @@ func (db *db) close() {
 }
 
 // putRecord adds a valid record to the database.
-func (db *db) putRecord(r *Record) error {
+func (db *db) putRecord(r *Record, reputation int) error {
 	if len(r.recordBody.Owner) == 0 {
 		return ErrorRecordInvalid
 	}
@@ -126,7 +128,7 @@ func (db *db) putRecord(r *Record) error {
 		unsafe.Pointer(rid),
 		C.uint64_t(r.recordBody.Timestamp),
 		C.uint32_t(r.Score()),
-		C.int(0), // TODO: reputation
+		C.int(reputation),
 		(*unsafe.Pointer)(sptr),
 		(*C.uint)(ssptr),
 		C.uint(len(selectors)),
@@ -258,6 +260,13 @@ func (db *db) query(selectorRanges [][2][]byte, f func(uint64, uint64, uint64, u
 	}
 
 	return nil
+}
+
+func (db *db) haveSynchronizedWithID(id []byte, notOwner []byte) bool {
+	if len(id) != 32 || len(notOwner) == 0 {
+		return false
+	}
+	return (C.ZTLF_DB_HaveSynchronizedWithID((*C.struct_ZTLF_DB)(&db.cdb), unsafe.Pointer(&id[0]), unsafe.Pointer(&notOwner[0]), C.uint(len(notOwner))) != 0)
 }
 
 func (db *db) getConfig(key string) []byte {

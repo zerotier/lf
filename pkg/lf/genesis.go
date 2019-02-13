@@ -11,6 +11,8 @@ import (
 	"encoding/json"
 )
 
+var genesisMaskingKey = []byte("_genesis")
+
 // Genesis is the payload (JSON encoded) of the first RecordMinLinks records in a global data store.
 type Genesis struct {
 	Name                      string   `json:",omitempty"` // Name of this LF network / data store
@@ -47,7 +49,7 @@ func CreateGenesisRecords(genesisOwnerType int, genesisParameters *Genesis) ([]*
 	now := TimeSec()
 
 	// Create the very first genesis record, which contains the genesis configuration structure in JSON format.
-	r, err := NewRecord(gpjson, nil, nil, nil, nil, nil, now, RecordWorkAlgorithmWharrgarbl, genesisOwner)
+	r, err := NewRecord(gpjson, nil, genesisMaskingKey, nil, nil, nil, now, RecordWorkAlgorithmWharrgarbl, genesisOwner)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -56,7 +58,7 @@ func CreateGenesisRecords(genesisOwnerType int, genesisParameters *Genesis) ([]*
 
 	// Subsequent genesis records are empty and just exist so real records can satisfy their minimum link requirement.
 	for i := uint(1); i < genesisParameters.RecordMinLinks; i++ {
-		r, err := NewRecord(nil, links, nil, nil, nil, nil, now, RecordWorkAlgorithmWharrgarbl, genesisOwner)
+		r, err := NewRecord(nil, links, genesisMaskingKey, nil, nil, nil, now, RecordWorkAlgorithmWharrgarbl, genesisOwner)
 		if err != nil {
 			return nil, nil, err
 		}
