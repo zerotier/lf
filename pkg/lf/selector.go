@@ -16,6 +16,21 @@ import (
 	"io"
 )
 
+//
+// A selector is a sortable token created from a name and an ordinal that defines sort order. A selector consists
+// of an ECDSA signature of a record's body (body hash) and the ordinal signed by a key pair created deterministically
+// from a plain text name. The selector key itself is the public key (which can be recovered from this signature)
+// followed by the ordinal, making it sortable.
+//
+// The purpose of this exotic construction is to simultaneously mask and prove knowledge of a selector's name. It is
+// not possible (without breaking a modest size ECC key) to create a selector for a given name without knowing that
+// name and selectors do not reveal the names from which they were created.
+//
+// This prevents a type of DOS or application level attack where an attacker could "claim" record IDs for records
+// not yet created by an application. It also means that selector names can be treated as secrets if desired and if
+// they are kept secret records cannot be created with them by anyone who doesn't know them.
+//
+
 // sha384csprng is a Reader that acts as a random source for generating ECDSA key pairs deterministically.
 type sha384csprng struct {
 	s384 [48]byte

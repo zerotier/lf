@@ -36,26 +36,26 @@ type APIStatusPeer struct {
 
 // APIProxyStatus contains info about the proxy through which this server was reached (if an LF proxy is present).
 type APIProxyStatus struct {
-	Server        string // URL of server being accessed through the proxy
-	Software      string // Software implementation name of proxy
-	Version       [4]int // Software version of proxy
-	MinAPIVersion int    // Minimum supported API version of proxy
-	MaxAPIVersion int    // Maximum supported API version of proxy
+	Server        string `json:",omitempty"` // URL of server being accessed through the proxy
+	Software      string `json:",omitempty"` // Software implementation name of proxy
+	Version       [4]int ``                  // Software version of proxy
+	MinAPIVersion int    ``                  // Minimum supported API version of proxy
+	MaxAPIVersion int    ``                  // Maximum supported API version of proxy
 }
 
 // APIStatus contains status information about this node and the network it belongs to.
 type APIStatus struct {
-	Software      string          // Software implementation name
-	Version       [4]int          // Version of software
-	MinAPIVersion int             // Minimum API version supported
-	MaxAPIVersion int             // Maximum API version supported
-	Uptime        uint64          // Node uptime in seconds
-	Clock         uint64          // Node local clock in seconds since epoch
-	DBRecordCount uint64          // Number of records in database
-	DBSize        uint64          // Total size of records in database in bytes
-	Peers         []APIStatusPeer // Connected peers
-	Genesis       Genesis         // Genesis record contents that define constraints for this LF network
-	ProxyStatus   *APIProxyStatus // Proxies can add this to describe their own config and status while still reporting that of the server
+	Software      string          `json:",omitempty"` // Software implementation name
+	Version       [4]int          ``                  // Version of software
+	MinAPIVersion int             ``                  // Minimum API version supported
+	MaxAPIVersion int             ``                  // Maximum API version supported
+	Uptime        uint64          ``                  // Node uptime in seconds
+	Clock         uint64          ``                  // Node local clock in seconds since epoch
+	DBRecordCount uint64          ``                  // Number of records in database
+	DBSize        uint64          ``                  // Total size of records in database in bytes
+	Peers         []APIStatusPeer `json:",omitempty"` // Connected peers
+	Genesis       Genesis         ``                  // Genesis record contents that define constraints for this LF network
+	ProxyStatus   *APIProxyStatus `json:",omitempty"` // Proxies can add this to describe their own config and status while still reporting that of the server
 }
 
 // APIQueryRange specifies a selector or selector range.

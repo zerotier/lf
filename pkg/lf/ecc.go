@@ -10,16 +10,13 @@ package lf
 import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
-	secrand "crypto/rand"
+	"crypto/sha256"
 	"math/big"
+
+	"github.com/codahale/rfc6979"
 
 	"golang.org/x/crypto/sha3"
 )
-
-// These are just glue functions to make various ECC operations easier. Point compression
-// is also here because for some reason (old expired patents?) it's absent from Go's
-// standard libraries. These functions are exported in case test or app code wants to
-// directly use them for anything.
 
 var (
 	// ECCCurveBrainpoolP160T1 is a 160-bit elliptic curve used for selectors and their claim signatures.
@@ -111,7 +108,7 @@ func ECDSADecompressPublicKey(c elliptic.Curve, data []byte) (*ecdsa.PublicKey, 
 // packed into a fixed byte array of ECDSASignatureSize bytes. This is simpler and more
 // compact than ASN.1 but assumes that the verifier knows the curve.
 func ECDSASign(key *ecdsa.PrivateKey, hash []byte) ([]byte, error) {
-	r, s, err := ecdsa.Sign(secrand.Reader, key, hash)
+	r, s, err := rfc6979.SignECDSA(key, hash, sha256.New) // RFC6979 deterministic signature isn't required but is nice for several reasons
 	if err != nil {
 		return nil, err
 	}
@@ -133,7 +130,7 @@ func ECDSASign(key *ecdsa.PrivateKey, hash []byte) ([]byte, error) {
 
 // ECDSASignEmbedRecoveryIndex creates a signature that also contains information required by ECDSARecover.
 func ECDSASignEmbedRecoveryIndex(key *ecdsa.PrivateKey, hash []byte) ([]byte, error) {
-	r, s, err := ecdsa.Sign(secrand.Reader, key, hash)
+	r, s, err := rfc6979.SignECDSA(key, hash, sha256.New)
 	if err != nil {
 		return nil, err
 	}

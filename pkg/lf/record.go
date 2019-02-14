@@ -630,8 +630,8 @@ func NewRecordStart(value []byte, links [][]byte, maskingKey []byte, plainTextSe
 
 	workBillableBytes = r.recordBody.sizeBytes()
 
-	workHasher := sha3.New256()
 	selectorClaimSigningHash := r.recordBody.signingHash()
+	workHasher := sha3.New256()
 	workHasher.Write(selectorClaimSigningHash[:])
 	if len(plainTextSelectorNames) > 0 {
 		r.Selectors = make([]Selector, len(plainTextSelectorNames))

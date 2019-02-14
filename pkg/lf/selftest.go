@@ -56,7 +56,7 @@ func TestCore(out io.Writer) bool {
 		return false
 	}
 
-	curves := []elliptic.Curve{elliptic.P384(), ECCCurveBrainpoolP160T1}
+	curves := []elliptic.Curve{elliptic.P384(), elliptic.P521(), ECCCurveBrainpoolP160T1}
 	for ci := range curves {
 		curve := curves[ci]
 
@@ -106,7 +106,7 @@ func TestCore(out io.Writer) bool {
 			return false
 		}
 
-		for i := 0; i < 64; i++ {
+		for i := 0; i < 32; i++ {
 			secrand.Read(junk[:])
 			sig, err := ECDSASignEmbedRecoveryIndex(priv, junk[:])
 			if pub == nil {
