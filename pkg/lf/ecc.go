@@ -106,18 +106,6 @@ func ECDSADecompressPublicKey(c elliptic.Curve, data []byte) (*ecdsa.PublicKey, 
 	return &ecdsa.PublicKey{Curve: c, X: x, Y: y}, nil
 }
 
-// ECDSASignatureSize returns the maximum packed binary signature size for a given curve.
-func ECDSASignatureSize(curve *elliptic.CurveParams) uint {
-	// ECDSA signatures consist of two integers from 0 to the order (N) of the curve.
-	orderSize := uint(curve.N.BitLen())
-	if (orderSize & 7) != 0 {
-		orderSize = (orderSize / 8) + 1
-	} else {
-		orderSize /= 8
-	}
-	return orderSize * 2
-}
-
 // ECDSASign signs a message hash with an ECDSA key pair, returning a byte packed signature.
 // The returned signature consists of the two integers from the ECDSA signature (r and s)
 // packed into a fixed byte array of ECDSASignatureSize bytes. This is simpler and more
@@ -143,13 +131,40 @@ func ECDSASign(key *ecdsa.PrivateKey, hash []byte) ([]byte, error) {
 	return sig, nil
 }
 
-// ECDSAVerify verifies a hash with a packed signature of the type created by ECDSASign().
-func ECDSAVerify(key *ecdsa.PublicKey, hash []byte, signature []byte) bool {
-	if key == nil || key.Curve == nil || key.X == nil || key.Y == nil {
-		return false
+// ECDSASignEmbedRecoveryIndex creates a signature that also contains information required by ECDSARecover.
+func ECDSASignEmbedRecoveryIndex(key *ecdsa.PrivateKey, hash []byte) ([]byte, error) {
+	r, s, err := ecdsa.Sign(secrand.Reader, key, hash)
+	if err != nil {
+		return nil, err
 	}
 
+	var rindex byte
+	pub := ecdsaRecoverPublicKey(key.Curve, r, s, hash, 1)
+	if pub != nil && pub.X.Cmp(key.X) == 0 && pub.Y.Cmp(key.Y) == 0 {
+		rindex = 1
+	} // else rindex must be 0, can only be 0 or 1 for the curves we use
+
+	rb, sb := r.Bytes(), s.Bytes()
+
 	orderSize := key.Params().N.BitLen()
+	if (orderSize & 7) != 0 {
+		orderSize = (orderSize / 8) + 1
+	} else {
+		orderSize /= 8
+	}
+	sig := make([]byte, (orderSize*2)+1)
+
+	copy(sig[orderSize-len(rb):], rb)
+	copy(sig[orderSize+(orderSize-len(sb)):], sb)
+	sig[len(sig)-1] = rindex
+
+	return sig, nil
+}
+
+// ECDSAVerify verifies a hash with a packed signature of the type created by ECDSASign().
+func ECDSAVerify(publicKey *ecdsa.PublicKey, hash, signature []byte) bool {
+	params := publicKey.Curve.Params()
+	orderSize := params.N.BitLen()
 	if (orderSize & 7) != 0 {
 		orderSize = (orderSize / 8) + 1
 	} else {
@@ -163,6 +178,77 @@ func ECDSAVerify(key *ecdsa.PublicKey, hash []byte, signature []byte) bool {
 	var r, s big.Int
 	r.SetBytes(signature[0:orderSize])
 	s.SetBytes(signature[orderSize:])
+	return ecdsa.Verify(publicKey, hash, &r, &s)
+}
 
-	return ecdsa.Verify(key, hash, &r, &s)
+// ECDSARecover recovers the public key from an ECDSA signature and the hash that was signed using ECDSASignEmbedRecoveryIndex.
+// This returns nil if the recovery operation fails for some reason.
+func ECDSARecover(curve elliptic.Curve, hash, signature []byte) *ecdsa.PublicKey {
+	params := curve.Params()
+
+	orderSize := params.N.BitLen()
+	if (orderSize & 7) != 0 {
+		orderSize = (orderSize / 8) + 1
+	} else {
+		orderSize /= 8
+	}
+	if len(signature) != int(orderSize*2)+1 {
+		return nil
+	}
+
+	var r, s big.Int
+	r.SetBytes(signature[0:orderSize])
+	s.SetBytes(signature[orderSize : len(signature)-1])
+	return ecdsaRecoverPublicKey(curve, &r, &s, hash, uint(signature[len(signature)-1]))
+}
+
+func ecdsaRecoverPublicKey(c elliptic.Curve, r, s *big.Int, hash []byte, iter uint) *ecdsa.PublicKey {
+	curve := c.Params()
+	var rx, iterBE, threeX, ry, e, invr, invrS big.Int
+
+	rx.Mul(curve.N, iterBE.SetInt64(int64(iter/2)))
+	rx.Add(&rx, r)
+	if rx.Cmp(curve.P) != -1 {
+		return nil
+	}
+
+	ry.Mul(&rx, &rx)
+	ry.Mul(&ry, &rx)
+	threeX.Lsh(&rx, 1)
+	threeX.Add(&threeX, &rx)
+	ry.Sub(&ry, &threeX)
+	ry.Add(&ry, curve.B)
+	ry.Mod(&ry, curve.P)
+	ry.ModSqrt(&ry, curve.P)
+	if ry.Bit(0) != iter&1 {
+		ry.Neg(&ry)
+		ry.Mod(&ry, curve.P)
+	}
+
+	orderBits := curve.N.BitLen()
+	orderBytes := (orderBits + 7) / 8
+	if len(hash) > orderBytes {
+		hash = hash[:orderBytes]
+	}
+	e.SetBytes(hash)
+	excess := len(hash)*8 - orderBits
+	if excess > 0 {
+		e.Rsh(&e, uint(excess))
+	}
+
+	invr.ModInverse(r, curve.N)
+	invrS.Mul(&invr, s)
+	invrS.Mod(&invrS, curve.N)
+	srx, sry := c.ScalarMult(&rx, &ry, invrS.Bytes())
+	e.Neg(&e)
+	e.Mod(&e, curve.N)
+	e.Mul(&e, &invr)
+	e.Mod(&e, curve.N)
+	minuseGx, minuseGy := c.ScalarBaseMult(e.Bytes())
+	qx, qy := c.Add(srx, sry, minuseGx, minuseGy)
+	return &ecdsa.PublicKey{
+		Curve: c,
+		X:     qx,
+		Y:     qy,
+	}
 }

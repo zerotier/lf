@@ -31,7 +31,7 @@ var crc16tab = [256]uint16{0x0000, 0x1021, 0x2042, 0x3063, 0x4084, 0x50a5, 0x60c
 // crc16 computes the CRC16-CCITT code for a given byte array.
 func crc16(bs []byte) (crc uint16) {
 	for _, b := range bs {
-		crc = ((crc << 8) & 0xff00) ^ crc16tab[((crc>>8)&0xff)^uint16(b)]
+		crc = (crc << 8) ^ crc16tab[(crc>>8)^uint16(b)]
 	}
 	return
 }

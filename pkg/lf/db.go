@@ -28,7 +28,7 @@ const (
 	dbMaxOwnerSize       uint = C.ZTLF_DB_QUERY_MAX_OWNER_SIZE
 	dbMaxConfigValueSize int  = 131072
 
-	dbRecordReputationFlagCollidesWithSynchronizedID = 0x00000001
+	dbRecordReputationFlagCollidesWithSynchronizedID = 0x0001
 )
 
 // DB is an instance of the LF database that stores records and manages record weights and linkages.
@@ -102,7 +102,7 @@ func (db *db) putRecord(r *Record, reputation int) error {
 	selectors := make([]uintptr, len(r.Selectors))
 	selectorSizes := make([]C.uint, len(r.Selectors))
 	for i := 0; i < len(r.Selectors); i++ {
-		selectorKeys[i] = r.Selectors[i].Key()
+		selectorKeys[i] = r.SelectorKey(i)
 		selectors[i] = uintptr(unsafe.Pointer(&selectorKeys[i]))
 		selectorSizes[i] = C.uint(len(selectorKeys[i]))
 	}

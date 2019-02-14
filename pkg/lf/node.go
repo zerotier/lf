@@ -247,15 +247,13 @@ func (n *Node) Connect(ip net.IP, port int, publicKey []byte, statusCallback fun
 
 // AddRecord adds a record to the database if it's valid and we do not already have it.
 // If the record is a duplicate this returns ErrorDuplicateRecord.
-// If the record is new we announce that we have it to connected peers. This happens asynchronously.
-// This method is where the high level logic for determining record validity resides.
 func (n *Node) AddRecord(r *Record) error {
 	if r == nil {
 		return ErrorInvalidParameter
 	}
 
 	rdata := r.Bytes()
-	rhash := *r.Hash()
+	rhash := r.Hash()
 
 	// Check to see if we already have this record.
 	if n.db.hasRecord(rhash[:]) {
@@ -308,29 +306,31 @@ func (n *Node) AddRecord(r *Record) error {
 		return err
 	}
 
-	// Announce that we have this record to connected peers that haven't informed us that
-	// they have it or sent it to us. If they don't have it they will request it.
-	n.backgroundThreadWG.Add(1)
-	go func() {
-		defer func() {
-			n.backgroundThreadWG.Done()
-		}()
+	/*
+		// Announce that we have this record to connected peers that haven't informed us that
+		// they have it or sent it to us. If they don't have it they will request it.
+		n.backgroundThreadWG.Add(1)
+		go func() {
+			defer func() {
+				n.backgroundThreadWG.Done()
+			}()
 
-		msg := make([]byte, 1, 33)
-		msg[0] = p2pProtoMessageTypeHaveRecords
-		msg = append(msg, rhash[:]...)
+			msg := make([]byte, 1, 33)
+			msg[0] = p2pProtoMessageTypeHaveRecords
+			msg = append(msg, rhash[:]...)
 
-		n.peersLock.RLock()
-		for _, p := range n.peers {
-			p.hasRecordsLock.Lock()
-			_, hasRecord := p.hasRecords[rhash]
-			p.hasRecordsLock.Unlock()
-			if !hasRecord {
-				p.send(msg)
+			n.peersLock.RLock()
+			for _, p := range n.peers {
+				p.hasRecordsLock.Lock()
+				_, hasRecord := p.hasRecords[*rhash]
+				p.hasRecordsLock.Unlock()
+				if !hasRecord {
+					p.send(msg)
+				}
 			}
-		}
-		n.peersLock.RUnlock()
-	}()
+			n.peersLock.RUnlock()
+		}()
+	*/
 
 	return nil
 }

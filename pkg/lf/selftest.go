@@ -59,6 +59,7 @@ func TestCore(out io.Writer) bool {
 	curves := []elliptic.Curve{elliptic.P384(), ECCCurveBrainpoolP160T1}
 	for ci := range curves {
 		curve := curves[ci]
+
 		fmt.Fprintf(out, "Testing %s ECDSA...\n", curve.Params().Name)
 		priv, err := ecdsa.GenerateKey(curve, secrand.Reader)
 		if err != nil {
@@ -80,6 +81,7 @@ func TestCore(out io.Writer) bool {
 			fmt.Fprintf(out, "  FAILED (decompress): results are not the same!\n")
 			return false
 		}
+
 		var junk [32]byte
 		secrand.Read(junk[:])
 		sig, err := ECDSASign(priv, junk[:])
@@ -103,21 +105,37 @@ func TestCore(out io.Writer) bool {
 			fmt.Fprintf(out, "  FAILED (verify): verify succeeded for incorrect signature (but correct message)\n")
 			return false
 		}
+
+		for i := 0; i < 64; i++ {
+			secrand.Read(junk[:])
+			sig, err := ECDSASignEmbedRecoveryIndex(priv, junk[:])
+			if pub == nil {
+				fmt.Fprintf(out, "  FAILED (ECDSARecover returned error: %s)\n", err.Error())
+			}
+			if i == 0 {
+				fmt.Fprintf(out, "  Key Recoverable Signature: [%d] %x\n", len(sig), sig)
+			}
+			pub := ECDSARecover(curve, junk[:], sig)
+			if pub == nil {
+				fmt.Fprintf(out, "  FAILED (ECDSARecover returned nil)\n")
+			}
+			if pub.X.Cmp(priv.PublicKey.X) != 0 || pub.Y.Cmp(priv.PublicKey.Y) != 0 {
+				pcomp, _ := ECDSACompressPublicKey(pub)
+				fmt.Fprintf(out, "  FAILED (ECDSARecover returned wrong key: %x)\n", pcomp)
+			}
+		}
 	}
 
 	fmt.Fprintf(out, "Testing Selector... ")
-	var testSelectors [128]Selector
+	var testSelectors [32]Selector
 	var testSelectorClaimHash [32]byte
 	secrand.Read(testSelectorClaimHash[:])
 	for k := range testSelectors {
-		testSelectors[k].Claim(testSelectorClaimHash[:], uint64(k), testSelectorClaimHash[:])
-		if !testSelectors[k].VerifyClaim(testSelectorClaimHash[:]) {
-			fmt.Fprintf(out, "FAILED (verify #%d)\n", k)
-			return false
-		}
+		testSelectors[k].Set([]byte("name"), uint64(k), testSelectorClaimHash[:])
 	}
 	for k := 1; k < len(testSelectors); k++ {
-		if bytes.Compare(testSelectors[k-1].Key(), testSelectors[k].Key()) >= 0 {
+		sk := testSelectors[k].Key(testSelectorClaimHash[:])
+		if bytes.Compare(testSelectors[k-1].Key(testSelectorClaimHash[:]), sk) >= 0 {
 			fmt.Fprintf(out, "FAILED (compare %d not < %d)\n", k-1, k)
 			return false
 		}

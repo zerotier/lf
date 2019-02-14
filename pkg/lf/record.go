@@ -251,9 +251,10 @@ type Record struct {
 	WorkAlgorithm byte       ``                  // Proof of work algorithm
 	Signature     []byte     `json:",omitempty"` // Signature of sha3-256(sha3-256(Body Signing Hash | Selectors) | Work | WorkAlgorithm)
 
-	data []byte    // Cached raw data
-	hash *[32]byte // Cached hash
-	id   *[32]byte // Cached ID
+	selectorKeys [][]byte  // Cached selector keys
+	data         []byte    // Cached raw data
+	hash         *[32]byte // Cached hash
+	id           *[32]byte // Cached ID
 }
 
 // UnmarshalFrom deserializes this record from a reader.
@@ -328,6 +329,7 @@ func (r *Record) UnmarshalFrom(rdr io.Reader) error {
 		return err
 	}
 
+	r.selectorKeys = nil
 	r.data = nil
 	r.hash = nil
 	r.id = nil
@@ -400,14 +402,11 @@ func (r *Record) SizeBytes() uint {
 	return uint(len(r.data))
 }
 
-// Hash returns Shandwich256(record Bytes()).
+// Hash returns Shandwich256(Bytes()).
 // This is the main record hash used for record linking.
 func (r *Record) Hash() *[32]byte {
 	if r.hash == nil {
-		h := NewShandwich256()
-		r.MarshalTo(h)
-		var sum [32]byte
-		h.Sum(sum[:0])
+		sum := Shandwich256(r.Bytes())
 		r.hash = &sum
 	}
 	return r.hash
@@ -426,6 +425,23 @@ func (r *Record) Score() uint32 {
 	return 0
 }
 
+// SelectorKey returns the selector key for a given selector at a given index in []Selectors.
+// This is easier than getting the record body hash and calling the selector's Key method and
+// also caches keys for faster retrieval later.
+func (r *Record) SelectorKey(selectorIndex int) []byte {
+	if selectorIndex < len(r.Selectors) {
+		if len(r.selectorKeys) != len(r.Selectors) {
+			r.selectorKeys = make([][]byte, len(r.Selectors))
+			selectorClaimSigningHash := r.recordBody.signingHash()
+			for si := range r.Selectors {
+				r.selectorKeys[si] = r.Selectors[si].Key(selectorClaimSigningHash[:])
+			}
+		}
+		return r.selectorKeys[selectorIndex]
+	}
+	return nil
+}
+
 // ID returns a Shandwich256 hash of all this record's selector database keys sorted in ascending order.
 // If the record has no selectors the ID is just its hash.
 func (r *Record) ID() *[32]byte {
@@ -436,7 +452,7 @@ func (r *Record) ID() *[32]byte {
 
 		var selectorKeys [][]byte
 		for i := range r.Selectors {
-			selectorKeys = append(selectorKeys, r.Selectors[i].Key())
+			selectorKeys = append(selectorKeys, r.SelectorKey(i))
 		}
 		sort.Slice(selectorKeys, func(a, b int) bool { return bytes.Compare(selectorKeys[a], selectorKeys[b]) < 0 })
 
@@ -468,20 +484,10 @@ func (r *Record) Validate() (err error) {
 	workBillableBytes := r.recordBody.sizeBytes()
 	workHasher := sha3.New256()
 	workHasher.Write(selectorClaimSigningHash[:])
-	selectorClaimSigningHasher := sha3.New256()
 	for i := 0; i < len(r.Selectors); i++ {
-		if !r.Selectors[i].VerifyClaim(selectorClaimSigningHash[:]) {
-			return ErrorRecordSelectorClaimCheckFailed
-		}
-
 		sb := r.Selectors[i].Bytes()
 		workHasher.Write(sb)
 		workBillableBytes += uint(len(sb))
-
-		selectorClaimSigningHasher.Reset()
-		selectorClaimSigningHasher.Write(selectorClaimSigningHash[:])
-		selectorClaimSigningHasher.Write(sb)
-		selectorClaimSigningHasher.Sum(selectorClaimSigningHash[:0])
 	}
 	var workHash [32]byte
 	workHasher.Sum(workHash[:0])
@@ -627,20 +633,13 @@ func NewRecordStart(value []byte, links [][]byte, maskingKey []byte, plainTextSe
 	workHasher := sha3.New256()
 	selectorClaimSigningHash := r.recordBody.signingHash()
 	workHasher.Write(selectorClaimSigningHash[:])
-	selectorClaimSigningHasher := sha3.New256()
 	if len(plainTextSelectorNames) > 0 {
 		r.Selectors = make([]Selector, len(plainTextSelectorNames))
 		for i := 0; i < len(plainTextSelectorNames); i++ {
-			r.Selectors[i].Claim(plainTextSelectorNames[i], selectorOrdinals[i], selectorClaimSigningHash[:])
-
+			r.Selectors[i].Set(plainTextSelectorNames[i], selectorOrdinals[i], selectorClaimSigningHash[:])
 			sb := r.Selectors[i].Bytes()
 			workBillableBytes += uint(len(sb))
 			workHasher.Write(sb)
-
-			selectorClaimSigningHasher.Reset()
-			selectorClaimSigningHasher.Write(selectorClaimSigningHash[:])
-			selectorClaimSigningHasher.Write(sb)
-			selectorClaimSigningHasher.Sum(selectorClaimSigningHash[:0])
 		}
 	}
 
@@ -684,6 +683,10 @@ func NewRecordAddWork(incompleteRecord *Record, workHash []byte, work []byte, wo
 func NewRecordComplete(incompleteRecord *Record, signingHash []byte, owner *Owner) (r *Record, err error) {
 	r = incompleteRecord
 	r.Signature, err = owner.Sign(signingHash)
+	r.selectorKeys = nil
+	r.data = nil
+	r.hash = nil
+	r.id = nil
 	if r.SizeBytes() > RecordMaxSize {
 		return nil, ErrorRecordTooLarge
 	}
