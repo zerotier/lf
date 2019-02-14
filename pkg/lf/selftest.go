@@ -131,11 +131,11 @@ func TestCore(out io.Writer) bool {
 	var testSelectorClaimHash [32]byte
 	secrand.Read(testSelectorClaimHash[:])
 	for k := range testSelectors {
-		testSelectors[k].Set([]byte("name"), uint64(k), testSelectorClaimHash[:])
+		testSelectors[k].set([]byte("name"), uint64(k), testSelectorClaimHash[:])
 	}
 	for k := 1; k < len(testSelectors); k++ {
-		sk := testSelectors[k].Key(testSelectorClaimHash[:])
-		if bytes.Compare(testSelectors[k-1].Key(testSelectorClaimHash[:]), sk) >= 0 {
+		sk := testSelectors[k].key(testSelectorClaimHash[:])
+		if bytes.Compare(testSelectors[k-1].key(testSelectorClaimHash[:]), sk) >= 0 {
 			fmt.Fprintf(out, "FAILED (compare %d not < %d)\n", k-1, k)
 			return false
 		}
@@ -218,9 +218,9 @@ func TestWharrgarbl(out io.Writer) bool {
 	testWharrgarblSamples := 25
 	var junk [32]byte
 	var wout [20]byte
-	fmt.Fprintf(out, "RecordWharrgarblCost and RecordWharrgarblScore:\n")
+	fmt.Fprintf(out, "Wharrgarbl cost and score:\n")
 	for s := uint(1); s <= RecordMaxSize; s *= 2 {
-		fmt.Fprintf(out, "  %5d: cost: %.8x score: %.8x\n", s, RecordWharrgarblCost(s), RecordWharrgarblScore(RecordWharrgarblCost(s)))
+		fmt.Fprintf(out, "  %5d: cost: %.8x score: %.8x\n", s, RecordWharrgarblCost(s), recordWharrgarblScore(RecordWharrgarblCost(s)))
 	}
 	fmt.Fprintf(out, "Testing and benchmarking Wharrgarbl proof of work algorithm...\n")
 	for rs := uint(256); rs <= 2048; rs += 256 {

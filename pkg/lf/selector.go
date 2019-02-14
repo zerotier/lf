@@ -56,8 +56,9 @@ const SelectorTypeBP160 byte = 0
 
 // Selector is a non-forgeable range queryable identifier for records.
 type Selector struct {
-	Ordinal uint64   // An ordinal value that can be used to perform range queries against selectors
-	Claim   [41]byte // 40-byte brainpoolP160t1 signature with additional byte of recovery information
+	Ordinal  uint64 // An ordinal value that can be used to perform range queries against selectors
+	Claim    []byte // 41-byte brainpoolP160t1 recoverable signature
+	claimBuf [41]byte
 }
 
 // MakeSelectorKey generates a masked selector database key from a plain text name.
@@ -74,17 +75,17 @@ func MakeSelectorKey(plainTextName []byte, ord uint64) []byte {
 	return append(ck, o[:]...)
 }
 
-// Key returns the sortable and comparable database key for this selector.
+// key returns the sortable and comparable database key for this selector.
 // This must be supplied with the hash that was used in Set() to perform key recovery.
 // The Record SelectorKey(n) method is a more convenient way to use this.
-func (s *Selector) Key(hash []byte) []byte {
+func (s *Selector) key(hash []byte) []byte {
 	var obytes [8]byte
 	binary.BigEndian.PutUint64(obytes[:], s.Ordinal)
 	sigHash := sha256.New()
 	sigHash.Write(hash)
 	sigHash.Write(obytes[:])
 	var sigHashBuf [32]byte
-	pub := ECDSARecover(ECCCurveBrainpoolP160T1, sigHash.Sum(sigHashBuf[:0]), s.Claim[:])
+	pub := ECDSARecover(ECCCurveBrainpoolP160T1, sigHash.Sum(sigHashBuf[:0]), s.claimBuf[:])
 	if pub == nil {
 		return obytes[:]
 	}
@@ -95,25 +96,25 @@ func (s *Selector) Key(hash []byte) []byte {
 	return append(pcomp, obytes[:]...)
 }
 
-// MarshalTo outputs this selector to a writer.
-func (s *Selector) MarshalTo(out io.Writer) error {
+// marshalTo outputs this selector to a writer.
+func (s *Selector) marshalTo(out io.Writer) error {
 	out.Write([]byte{SelectorTypeBP160})
 	writeUVarint(out, s.Ordinal)
-	if _, err := out.Write(s.Claim[:]); err != nil {
+	if _, err := out.Write(s.claimBuf[:]); err != nil {
 		return err
 	}
 	return nil
 }
 
-// Bytes returns this selector marshaled to a byte array.
-func (s *Selector) Bytes() []byte {
+// bytes returns this selector marshaled to a byte array.
+func (s *Selector) bytes() []byte {
 	var b bytes.Buffer
-	s.MarshalTo(&b)
+	s.marshalTo(&b)
 	return b.Bytes()
 }
 
-// UnmarshalFrom reads a selector from this input stream.
-func (s *Selector) UnmarshalFrom(in io.Reader) error {
+// unmarshalFrom reads a selector from this input stream.
+func (s *Selector) unmarshalFrom(in io.Reader) error {
 	br := byteAndArrayReader{r: in}
 	selType, err := br.ReadByte()
 	if err != nil {
@@ -126,14 +127,15 @@ func (s *Selector) UnmarshalFrom(in io.Reader) error {
 	if err != nil {
 		return err
 	}
-	_, err = io.ReadFull(&br, s.Claim[:])
+	_, err = io.ReadFull(&br, s.claimBuf[:])
+	s.Claim = s.claimBuf[:]
 	return err
 }
 
-// Set sets this selector to a given plain text name, ordinal, and record body hash.
+// set sets this selector to a given plain text name, ordinal, and record body hash.
 // The hash supplied is the record's body hash. If this selector is not intended for range
 // queries use zero for its ordinal.
-func (s *Selector) Set(plainTextName []byte, ord uint64, hash []byte) {
+func (s *Selector) set(plainTextName []byte, ord uint64, hash []byte) {
 	s.Ordinal = ord
 
 	priv, err := ecdsa.GenerateKey(ECCCurveBrainpoolP160T1, &sha384csprng{s384: sha512.Sum384(plainTextName), n: 0})
@@ -148,9 +150,10 @@ func (s *Selector) Set(plainTextName []byte, ord uint64, hash []byte) {
 	if err != nil {
 		panic(err)
 	}
-	if len(cs) != len(s.Claim) {
+	if len(cs) != len(s.claimBuf) {
 		panic("claim signature size is not correct")
 	}
 
-	copy(s.Claim[:], cs)
+	copy(s.claimBuf[:], cs)
+	s.Claim = s.claimBuf[:]
 }

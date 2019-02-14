@@ -296,7 +296,7 @@ func (r *Record) UnmarshalFrom(rdr io.Reader) error {
 	}
 	r.Selectors = make([]Selector, uint(selCount))
 	for i := 0; i < len(r.Selectors); i++ {
-		err = r.Selectors[i].UnmarshalFrom(rr)
+		err = r.Selectors[i].unmarshalFrom(rr)
 		if err != nil {
 			return err
 		}
@@ -357,7 +357,7 @@ func (r *Record) MarshalTo(w io.Writer) error {
 		return err
 	}
 	for i := 0; i < len(r.Selectors); i++ {
-		if err := r.Selectors[i].MarshalTo(w); err != nil {
+		if err := r.Selectors[i].marshalTo(w); err != nil {
 			return err
 		}
 	}
@@ -420,7 +420,7 @@ func (r *Record) Score() uint32 {
 	case RecordWorkAlgorithmNone:
 		return 1
 	case RecordWorkAlgorithmWharrgarbl:
-		return RecordWharrgarblScore(WharrgarblGetDifficulty(r.Work))
+		return recordWharrgarblScore(WharrgarblGetDifficulty(r.Work))
 	}
 	return 0
 }
@@ -434,7 +434,7 @@ func (r *Record) SelectorKey(selectorIndex int) []byte {
 			r.selectorKeys = make([][]byte, len(r.Selectors))
 			selectorClaimSigningHash := r.recordBody.signingHash()
 			for si := range r.Selectors {
-				r.selectorKeys[si] = r.Selectors[si].Key(selectorClaimSigningHash[:])
+				r.selectorKeys[si] = r.Selectors[si].key(selectorClaimSigningHash[:])
 			}
 		}
 		return r.selectorKeys[selectorIndex]
@@ -485,7 +485,7 @@ func (r *Record) Validate() (err error) {
 	workHasher := sha3.New256()
 	workHasher.Write(selectorClaimSigningHash[:])
 	for i := 0; i < len(r.Selectors); i++ {
-		sb := r.Selectors[i].Bytes()
+		sb := r.Selectors[i].bytes()
 		workHasher.Write(sb)
 		workBillableBytes += uint(len(sb))
 	}
@@ -546,8 +546,8 @@ func RecordWharrgarblCost(bytes uint) uint32 {
 	return uint32(c)
 }
 
-// RecordWharrgarblScore computes a score approximately scaled to uint32_max based on a Wharrgarbl cost value from a piece of work.
-func RecordWharrgarblScore(cost uint32) uint32 {
+// recordWharrgarblScore computes a score approximately scaled to uint32_max based on a Wharrgarbl cost value from a piece of work.
+func recordWharrgarblScore(cost uint32) uint32 {
 	if cost > 0x0f7b0000 { // RecordWharrgarblCost(RecordMaxSize)
 		return 0xffffa8db
 	}
@@ -629,15 +629,14 @@ func NewRecordStart(value []byte, links [][]byte, maskingKey []byte, plainTextSe
 	r.recordBody.Timestamp = ts
 
 	workBillableBytes = r.recordBody.sizeBytes()
-
 	selectorClaimSigningHash := r.recordBody.signingHash()
 	workHasher := sha3.New256()
 	workHasher.Write(selectorClaimSigningHash[:])
 	if len(plainTextSelectorNames) > 0 {
 		r.Selectors = make([]Selector, len(plainTextSelectorNames))
 		for i := 0; i < len(plainTextSelectorNames); i++ {
-			r.Selectors[i].Set(plainTextSelectorNames[i], selectorOrdinals[i], selectorClaimSigningHash[:])
-			sb := r.Selectors[i].Bytes()
+			r.Selectors[i].set(plainTextSelectorNames[i], selectorOrdinals[i], selectorClaimSigningHash[:])
+			sb := r.Selectors[i].bytes()
 			workBillableBytes += uint(len(sb))
 			workHasher.Write(sb)
 		}
