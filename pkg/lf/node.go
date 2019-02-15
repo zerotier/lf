@@ -45,6 +45,8 @@ const (
 	p2pDesiredConnectionCount = 32
 )
 
+var nullLogger = log.New(ioutil.Discard, "", log.LstdFlags)
+
 type peer struct {
 	c               *net.TCPConn        // TCP connection to this peer
 	cryptor         cipher.AEAD         // AES-GCM instance
@@ -56,32 +58,38 @@ type peer struct {
 
 // Node is an instance of a full LF node.
 type Node struct {
-	logger             *log.Logger      //
-	linkKeyPriv        []byte           // P-384 private key
-	linkKeyPubX        *big.Int         // X coordinate of P-384 public key
-	linkKeyPubY        *big.Int         // Y coordinate of P-384 public key
-	linkKeyPub         []byte           // Point compressed P-384 public key
-	genesisConfig      Genesis          // Genesis configuration for this node's network
-	peers              map[string]*peer // Currently connected peers by address
-	peersLock          sync.RWMutex     //
-	httpTCPListener    *net.TCPListener //
-	httpServer         *http.Server     //
-	p2pTCPListener     *net.TCPListener //
-	db                 db               //
-	backgroundThreadWG sync.WaitGroup   // Wait group for background goroutines
-	startTime          uint64           // Time node was started in seconds since epoch
-	shutdown           uintptr          // Set to non-zero to signal all background goroutines to exit
+	log                [logLevelCount]*log.Logger //
+	linkKeyPriv        []byte                     // P-384 private key
+	linkKeyPubX        *big.Int                   // X coordinate of P-384 public key
+	linkKeyPubY        *big.Int                   // Y coordinate of P-384 public key
+	linkKeyPub         []byte                     // Point compressed P-384 public key
+	genesisConfig      Genesis                    // Genesis configuration for this node's network
+	peers              map[string]*peer           // Currently connected peers by address
+	peersLock          sync.RWMutex               //
+	httpTCPListener    *net.TCPListener           //
+	httpServer         *http.Server               //
+	p2pTCPListener     *net.TCPListener           //
+	db                 db                         //
+	backgroundThreadWG sync.WaitGroup             // Wait group for background goroutines
+	startTime          uint64                     // Time node was started in seconds since epoch
+	shutdown           uintptr                    // Set to non-zero to signal all background goroutines to exit
 }
 
 // NewNode creates and starts a node.
-func NewNode(path string, p2pPort int, httpPort int, logger *log.Logger) (*Node, error) {
-	var err error
-	n := new(Node)
+func NewNode(path string, p2pPort int, httpPort int, logger *log.Logger, logLevel int) (n *Node, err error) {
+	n = new(Node)
 
 	if logger == nil {
-		n.logger = log.New(ioutil.Discard, "", log.LstdFlags)
-	} else {
-		n.logger = logger
+		logger = nullLogger
+	}
+	if logLevel < 0 {
+		logLevel = 0
+	}
+	for i := 0; i <= logLevel && i < logLevelCount; i++ {
+		n.log[i] = logger
+	}
+	for i := logLevel + 1; i < logLevelCount; i++ {
+		n.log[i] = nullLogger
 	}
 
 	priv, px, py, err := elliptic.GenerateKey(elliptic.P384(), secrand.Reader)
@@ -109,7 +117,8 @@ func NewNode(path string, p2pPort int, httpPort int, logger *log.Logger) (*Node,
 		Handler:        gziphandler.GzipHandler(apiCreateHTTPServeMux(n)),
 		IdleTimeout:    10 * time.Second,
 		ReadTimeout:    10 * time.Second,
-		WriteTimeout:   60 * time.Second}
+		WriteTimeout:   60 * time.Second,
+	}
 	n.httpServer.SetKeepAlivesEnabled(true)
 
 	ta.Port = p2pPort
@@ -363,7 +372,7 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inb
 	defer func() {
 		e := recover()
 		if e != nil {
-			n.logger.Printf("P2P connection to %s closed: caught panic: %v", peerAddressStr, e)
+			n.log[LogLevelNormal].Printf("P2P connection to %s closed: caught panic: %v", peerAddressStr, e)
 		}
 
 		n.peersLock.Lock()
@@ -390,32 +399,32 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inb
 	copy(helloMessage[2:], n.linkKeyPub)
 	_, err := c.Write(helloMessage)
 	if err != nil {
-		n.logger.Printf("P2P connection to %s closed: unable to write hello message", peerAddressStr)
+		n.log[LogLevelNormal].Printf("P2P connection to %s closed: unable to write hello message", peerAddressStr)
 		return
 	}
 
 	_, err = io.ReadFull(reader, helloMessage[0:2])
 	if err != nil {
-		n.logger.Printf("P2P connection to %s closed: %s", peerAddressStr, err.Error())
+		n.log[LogLevelNormal].Printf("P2P connection to %s closed: %s", peerAddressStr, err.Error())
 		return
 	}
 	if helloMessage[0] != p2pProtoModeAES256GCMECCP384 || helloMessage[0] == 0 {
-		n.logger.Printf("P2P connection to %s closed: protocol mode not supported or invalid key length", peerAddressStr)
+		n.log[LogLevelNormal].Printf("P2P connection to %s closed: protocol mode not supported or invalid key length", peerAddressStr)
 		return
 	}
 
 	rpk := make([]byte, uint(helloMessage[1]))
 	_, err = io.ReadFull(reader, rpk)
 	if err != nil {
-		n.logger.Printf("P2P connection to %s closed: %s", peerAddressStr, err.Error())
+		n.log[LogLevelNormal].Printf("P2P connection to %s closed: %s", peerAddressStr, err.Error())
 		return
 	}
 	if bytes.Equal(rpk, n.linkKeyPub) {
-		n.logger.Printf("P2P connection to %s closed: detected connection to self!", peerAddressStr)
+		n.log[LogLevelNormal].Printf("P2P connection to %s closed: detected connection to self!", peerAddressStr)
 		return
 	}
 	if len(expectedPublicKey) > 0 && !bytes.Equal(expectedPublicKey, rpk) {
-		n.logger.Printf("P2P connection to %s closed: remote public key does not match expected (pinned) public key", peerAddressStr)
+		n.log[LogLevelNormal].Printf("P2P connection to %s closed: remote public key does not match expected (pinned) public key", peerAddressStr)
 		return
 	}
 
@@ -428,7 +437,7 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inb
 	n.peersLock.Lock()
 	for _, p2 := range n.peers {
 		if bytes.Equal(p2.remotePublicKey, rpk) {
-			n.logger.Printf("P2P connection to %s closed: redundant connection to already linked peer", peerAddressStr)
+			n.log[LogLevelNormal].Printf("P2P connection to %s closed: redundant connection to already linked peer", peerAddressStr)
 			n.peersLock.Unlock()
 			return
 		}
@@ -438,12 +447,12 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inb
 
 	remotePubX, remotePubY, err := ECCDecompressPublicKey(elliptic.P384(), p.remotePublicKey)
 	if err != nil {
-		n.logger.Printf("P2P connection to %s closed: invalid public key: %s", peerAddressStr, err.Error())
+		n.log[LogLevelNormal].Printf("P2P connection to %s closed: invalid public key: %s", peerAddressStr, err.Error())
 		return
 	}
 	remoteShared, err := ECDHAgree(elliptic.P384(), remotePubX, remotePubY, n.linkKeyPriv)
 	if err != nil {
-		n.logger.Printf("P2P connection to %s closed: key agreement failed: %s", peerAddressStr, err.Error())
+		n.log[LogLevelNormal].Printf("P2P connection to %s closed: key agreement failed: %s", peerAddressStr, err.Error())
 		return
 	}
 	if len(n.genesisConfig.Key) == 32 {
@@ -462,18 +471,18 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inb
 		// Read 12-byte GCM IV
 		_, err = io.ReadFull(reader, msgIv[:])
 		if err != nil {
-			n.logger.Printf("P2P connection to %s closed: %s", peerAddressStr, err.Error())
+			n.log[LogLevelNormal].Printf("P2P connection to %s closed: %s", peerAddressStr, err.Error())
 			break
 		}
 
 		// Read size of message (varint)
 		msgSize, err := binary.ReadUvarint(reader)
 		if err != nil {
-			n.logger.Printf("P2P connection to %s closed: %s", peerAddressStr, err.Error())
+			n.log[LogLevelNormal].Printf("P2P connection to %s closed: %s", peerAddressStr, err.Error())
 			break
 		}
 		if msgSize == 0 || msgSize > p2pProtoMaxMessageSize {
-			n.logger.Printf("P2P connection to %s closed: invalid message size", peerAddressStr)
+			n.log[LogLevelNormal].Printf("P2P connection to %s closed: invalid message size", peerAddressStr)
 			break
 		}
 
@@ -488,7 +497,7 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inb
 		msg := msgbuf[0 : uint(msgSize)+16]
 		_, err = io.ReadFull(reader, msg)
 		if err != nil {
-			n.logger.Printf("P2P connection to %s closed: %s", peerAddressStr, err.Error())
+			n.log[LogLevelNormal].Printf("P2P connection to %s closed: %s", peerAddressStr, err.Error())
 			break
 		}
 
@@ -499,11 +508,11 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inb
 		// Decrypt and authenticate message
 		msg, err = p.cryptor.Open(msg[:0], msgIv[:], msg, nil)
 		if err != nil {
-			n.logger.Printf("P2P connection to %s closed: %s", peerAddressStr, err.Error())
+			n.log[LogLevelNormal].Printf("P2P connection to %s closed: %s", peerAddressStr, err.Error())
 			break
 		}
 		if len(msg) < 1 {
-			n.logger.Printf("P2P connection to %s closed: invalid message size", peerAddressStr)
+			n.log[LogLevelNormal].Printf("P2P connection to %s closed: invalid message size", peerAddressStr)
 			break
 		}
 		incomingMessageType := msg[0]
@@ -579,7 +588,7 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inb
 				}
 				if len(ip) > 0 {
 					n.Connect((net.IP)(msg[3:7]), int(port), publicKey, func(err error) {
-						n.logger.Printf("connected to peer %s:%d (learned from peer %s)", ip.String(), port, peerAddressStr)
+						n.log[LogLevelNormal].Printf("connected to peer %s:%d (learned from peer %s)", ip.String(), port, peerAddressStr)
 					})
 				}
 			}

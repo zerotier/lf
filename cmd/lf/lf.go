@@ -207,7 +207,7 @@ not already exist.
 func doNodeStart(cfg *Config, basePath string, jsonOutput bool, urlOverride string, verboseOutput bool, args []string) {
 	signal.Notify(osSignalChannel, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGUSR1, syscall.SIGUSR2)
 	stdoutLogger := log.New(os.Stdout, "", log.LstdFlags)
-	_, err := lf.NewNode(basePath, 8893, 8093, stdoutLogger)
+	_, err := lf.NewNode(basePath, 8893, 8093, stdoutLogger, lf.LogLevelTrace)
 	if err != nil {
 		fmt.Printf("ERROR: unable to start node: %s\n", err.Error())
 		os.Exit(-1)

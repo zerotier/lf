@@ -84,6 +84,9 @@ func ECCDecompressPublicKey(c elliptic.Curve, data []byte) (*big.Int, *big.Int, 
 // ECDHAgree performs elliptic curve Diffie-Hellman key agreement and returns the sha3-256 digest of the resulting shared key.
 // This is just a simple wrapper function for clarity and brevity.
 func ECDHAgree(c elliptic.Curve, pubX, pubY *big.Int, priv []byte) ([32]byte, error) {
+	if !c.IsOnCurve(pubX, pubY) {
+		return [32]byte{}, ErrorInvalidPublicKey
+	}
 	x, _ := c.ScalarMult(pubX, pubY, priv)
 	return sha3.Sum256(x.Bytes()), nil
 }

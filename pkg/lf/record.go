@@ -208,21 +208,26 @@ func (rb *recordBody) signingHash() (sum [32]byte) {
 func (rb *recordBody) LinkCount() uint { return uint(len(rb.Links) / 32) }
 
 // GetValue decrypts and possibly decompresses this record's masked value.
-// An invalid masking key or a decompression failure will result in an empty/nil value.
+// An apparently invalid masking key or a decompression failure will result in an empty/nil value.
 func (rb *recordBody) GetValue(maskingKey []byte) ([]byte, error) {
 	if len(rb.MaskedValue) < 3 {
 		return nil, nil
 	}
 
-	unmaskedValue := make([]byte, len(rb.MaskedValue))
-	var cfbIv [16]byte
-	binary.BigEndian.PutUint64(cfbIv[0:8], rb.Timestamp)
-	if len(rb.Owner) >= 8 {
-		copy(cfbIv[8:16], rb.Owner[0:8])
+	var unmaskedValue []byte
+	if len(maskingKey) > 0 {
+		unmaskedValue = make([]byte, len(rb.MaskedValue))
+		var cfbIv [16]byte
+		binary.BigEndian.PutUint64(cfbIv[0:8], rb.Timestamp)
+		if len(rb.Owner) >= 8 {
+			copy(cfbIv[8:16], rb.Owner[0:8])
+		}
+		maskingKeyH := sha256.Sum256(maskingKey)
+		c, _ := aes.NewCipher(maskingKeyH[:])
+		cipher.NewCFBDecrypter(c, cfbIv[:]).XORKeyStream(unmaskedValue, rb.MaskedValue)
+	} else {
+		unmaskedValue = rb.MaskedValue
 	}
-	maskingKeyH := sha256.Sum256(maskingKey)
-	c, _ := aes.NewCipher(maskingKeyH[:])
-	cipher.NewCFBDecrypter(c, cfbIv[:]).XORKeyStream(unmaskedValue, rb.MaskedValue)
 
 	if (unmaskedValue[0] & 0x01) != 0 {
 		uncompressedValue, err := ioutil.ReadAll(io.LimitReader(lzw.NewReader(bytes.NewReader(unmaskedValue[3:]), lzw.LSB, 8), RecordMaxSize))
@@ -599,17 +604,19 @@ func NewRecordStart(value []byte, links [][]byte, maskingKey []byte, plainTextSe
 			valueMasked = append(valueMasked, value...)
 		}
 
-		// Encrypt with AES256-CFB using the timestamp and owner for IV.
-		// No AEAD is needed here because the record is already authenticated by digital signature from the owner.
-		// We do include a little CRC16 to detect invalid masking keys with some reliability to improve ease of use in some cases.
-		var cfbIv [16]byte
-		binary.BigEndian.PutUint64(cfbIv[0:8], ts)
-		if len(ownerPublic) >= 8 {
-			copy(cfbIv[8:16], ownerPublic[0:8])
+		if len(maskingKey) > 0 {
+			// Encrypt with AES256-CFB using the timestamp and owner for IV.
+			// No AEAD is needed here because the record is already authenticated by digital signature from the owner.
+			// We do include a little CRC16 to detect invalid masking keys with some reliability to improve ease of use in some cases.
+			var cfbIv [16]byte
+			binary.BigEndian.PutUint64(cfbIv[0:8], ts)
+			if len(ownerPublic) >= 8 {
+				copy(cfbIv[8:16], ownerPublic[0:8])
+			}
+			maskingKeyH := sha256.Sum256(maskingKey) // sha256 is used here because it's more ubiquitous and should make implementation in other languages / code easier
+			c, _ := aes.NewCipher(maskingKeyH[:])
+			cipher.NewCFBEncrypter(c, cfbIv[:]).XORKeyStream(valueMasked, valueMasked)
 		}
-		maskingKeyH := sha256.Sum256(maskingKey) // sha256 is used here because it's more ubiquitous and should make implementation in other languages / code easier
-		c, _ := aes.NewCipher(maskingKeyH[:])
-		cipher.NewCFBEncrypter(c, cfbIv[:]).XORKeyStream(valueMasked, valueMasked)
 
 		r.recordBody.MaskedValue = valueMasked
 	}

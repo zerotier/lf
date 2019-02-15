@@ -344,11 +344,11 @@ static inline uint64_t ZTLF_htonll(const uint64_t n)
 #define ZTLF_NEG(e) (((e) <= 0) ? (e) : -(e))
 #define ZTLF_POS(e) (((e) >= 0) ? (e) : -(e))
 
-#define ZTLF_LOG_LEVEL_NORMAL 0
-#define ZTLF_LOG_LEVEL_WARNING -1
-#define ZTLF_LOG_LEVEL_FATAL -2
-#define ZTLF_LOG_LEVEL_VERBOSE 1
-#define ZTLF_LOG_LEVEL_TRACE 2
+#define ZTLF_LOG_LEVEL_FATAL 0
+#define ZTLF_LOG_LEVEL_WARNING 1
+#define ZTLF_LOG_LEVEL_NORMAL 2
+#define ZTLF_LOG_LEVEL_VERBOSE 3
+#define ZTLF_LOG_LEVEL_TRACE 4
 
 // Arguments are: level, source file, line, message, and an externally supplied logger argument.
 typedef void (*LogOutputCallback)(int,const char *,int,const char *,void *);

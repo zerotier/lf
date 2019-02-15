@@ -21,20 +21,22 @@ import (
 
 // These must be the same as the log levels in native/common.h.
 const (
-	// LogLevelNormal indicates normal log messages that most users would want to see or record.
-	LogLevelNormal int = 0
+	// LogLevelFatal messages precede fatal error shutdowns and indicate serious problems like I/O errors or bugs.
+	LogLevelFatal int = 0
 
 	// LogLevelWarning messages indicate a non-fatal but potentailly serious problem such as a database that may have corruption.
-	LogLevelWarning int = -1
+	LogLevelWarning int = 1
 
-	// LogLevelFatal messages precede fatal error shutdowns and indicate serious problems like I/O errors or bugs.
-	LogLevelFatal int = -2
+	// LogLevelNormal indicates normal log messages that most users would want to see or record.
+	LogLevelNormal int = 2
 
 	// LogLevelVerbose tracks details that some users might not care about.
-	LogLevelVerbose int = 1
+	LogLevelVerbose int = 3
 
 	// LogLevelTrace only works if tracing is enabled at compile time and outputs a ton of detail useful only to developers.
-	LogLevelTrace int = 2
+	LogLevelTrace int = 4
+
+	logLevelCount = 5
 )
 
 // This callback handles logger output from the C parts of LF. Right now that's mostly just db.c, so this is here,
