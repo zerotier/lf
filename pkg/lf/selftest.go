@@ -220,12 +220,12 @@ func TestWharrgarbl(out io.Writer) bool {
 	var wout [20]byte
 	fmt.Fprintf(out, "Wharrgarbl cost and score:\n")
 	for s := uint(1); s <= RecordMaxSize; s *= 2 {
-		fmt.Fprintf(out, "  %5d: cost: %.8x score: %.8x\n", s, RecordWharrgarblCost(s), recordWharrgarblScore(RecordWharrgarblCost(s)))
+		fmt.Fprintf(out, "  %5d: cost: %.8x score: %.8x\n", s, recordWharrgarblCost(s), recordWharrgarblScore(recordWharrgarblCost(s)))
 	}
 	fmt.Fprintf(out, "Testing and benchmarking Wharrgarbl proof of work algorithm...\n")
 	for rs := uint(256); rs <= 2048; rs += 256 {
 		secrand.Read(junk[:])
-		diff := RecordWharrgarblCost(rs)
+		diff := recordWharrgarblCost(rs)
 		var iterations, ii uint64
 		startTime := TimeMs()
 		for k := 0; k < testWharrgarblSamples; k++ {

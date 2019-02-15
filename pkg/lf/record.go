@@ -495,7 +495,7 @@ func (r *Record) Validate() (err error) {
 	switch r.WorkAlgorithm {
 	case RecordWorkAlgorithmNone:
 	case RecordWorkAlgorithmWharrgarbl:
-		if WharrgarblVerify(r.Work, workHash[:]) < RecordWharrgarblCost(workBillableBytes) {
+		if WharrgarblVerify(r.Work, workHash[:]) < recordWharrgarblCost(workBillableBytes) {
 			return ErrorRecordInsufficientWork
 		}
 	default:
@@ -518,8 +518,8 @@ func (r *Record) Validate() (err error) {
 	return nil
 }
 
-// RecordWharrgarblCost computes the cost in Wharrgarbl difficulty for a record of a given number of "billable" bytes.
-func RecordWharrgarblCost(bytes uint) uint32 {
+// recordWharrgarblCost computes the cost in Wharrgarbl difficulty for a record of a given number of "billable" bytes.
+func recordWharrgarblCost(bytes uint) uint32 {
 	//
 	// This function was figured out by:
 	//
@@ -611,7 +611,7 @@ func NewRecordStart(value []byte, links [][]byte, maskingKey []byte, plainTextSe
 		c, _ := aes.NewCipher(maskingKeyH[:])
 		cipher.NewCFBEncrypter(c, cfbIv[:]).XORKeyStream(valueMasked, valueMasked)
 
-		r.MaskedValue = valueMasked
+		r.recordBody.MaskedValue = valueMasked
 	}
 
 	r.recordBody.Owner = append(r.recordBody.Owner, ownerPublic...)
@@ -652,7 +652,7 @@ func NewRecordStart(value []byte, links [][]byte, maskingKey []byte, plainTextSe
 func NewRecordDoWork(workHash []byte, workBillableBytes uint, workAlgorithm byte) (work []byte, err error) {
 	if workAlgorithm != RecordWorkAlgorithmNone {
 		if workAlgorithm == RecordWorkAlgorithmWharrgarbl {
-			w, iter := Wharrgarbl(workHash, RecordWharrgarblCost(workBillableBytes), recordWharrgarblMemory)
+			w, iter := Wharrgarbl(workHash, recordWharrgarblCost(workBillableBytes), recordWharrgarblMemory)
 			if iter == 0 {
 				err = ErrorWharrgarblFailed
 				return

@@ -56,22 +56,21 @@ type peer struct {
 
 // Node is an instance of a full LF node.
 type Node struct {
-	logger               *log.Logger
-	linkKeyPriv          []byte
-	linkKeyPubX          *big.Int
-	linkKeyPubY          *big.Int
-	linkKeyPub           []byte
-	genesisConfig        Genesis
-	peers                map[string]*peer
-	peersLock            sync.RWMutex
-	httpTCPListener      *net.TCPListener
-	httpServer           *http.Server
-	p2pTCPListener       *net.TCPListener
-	db                   db
-	backgroundThreadWG   sync.WaitGroup
-	lastSynchronizedTime uint64
-	startTime            uint64
-	shutdown             uintptr
+	logger             *log.Logger      //
+	linkKeyPriv        []byte           // P-384 private key
+	linkKeyPubX        *big.Int         // X coordinate of P-384 public key
+	linkKeyPubY        *big.Int         // Y coordinate of P-384 public key
+	linkKeyPub         []byte           // Point compressed P-384 public key
+	genesisConfig      Genesis          // Genesis configuration for this node's network
+	peers              map[string]*peer // Currently connected peers by address
+	peersLock          sync.RWMutex     //
+	httpTCPListener    *net.TCPListener //
+	httpServer         *http.Server     //
+	p2pTCPListener     *net.TCPListener //
+	db                 db               //
+	backgroundThreadWG sync.WaitGroup   // Wait group for background goroutines
+	startTime          uint64           // Time node was started in seconds since epoch
+	shutdown           uintptr          // Set to non-zero to signal all background goroutines to exit
 }
 
 // NewNode creates and starts a node.
@@ -149,7 +148,7 @@ func NewNode(path string, p2pPort int, httpPort int, logger *log.Logger) (*Node,
 	n.backgroundThreadWG.Add(1)
 	go func() {
 		defer n.backgroundThreadWG.Done()
-		var lastCleanedPeerHasRecords, lastCheckedSync uint64
+		var lastCleanedPeerHasRecords uint64
 		for atomic.LoadUintptr(&n.shutdown) == 0 {
 			time.Sleep(time.Millisecond * 250)
 			now := TimeMs()
@@ -168,15 +167,6 @@ func NewNode(path string, p2pPort int, httpPort int, logger *log.Logger) (*Node,
 					p.hasRecordsLock.Unlock()
 				}
 				n.peersLock.RUnlock()
-			}
-
-			// Check every second to see if the database is in a fully synchronized (has records
-			// and all record links are satisfied) state.
-			if (now - lastCheckedSync) > 1000 {
-				lastCheckedSync = now
-				if !n.db.hasPending() {
-					n.lastSynchronizedTime = now
-				}
 			}
 		}
 	}()
