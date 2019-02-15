@@ -23,7 +23,7 @@ import (
 	"../../pkg/lf"
 )
 
-var clientConfigFile = "client.json"
+var clientConfigFile = "config.json"
 
 var defaultNodeUrls = []string{}
 
@@ -174,7 +174,7 @@ Commands:
   proxy-start                              Start a local record creation proxy
   use <url>                                Add a node URL for client/proxy
   drop <url>                               Remove a node URL for client/proxy
-  set [options] [<key> ...] <value>        Set a new entry
+  set [-opt] <name[#ord]> [...] <value>    Set a new entry
       [-owner <owner>]                     - Use this specific owner
       [-file]                              - Value is a file, not a literal
   owner <operation> [...]                  Owner management commands
@@ -235,7 +235,7 @@ func doOwner(cfg *Config, basePath string, jsonOutput bool, urlOverride string, 
 				if o.Default {
 					dfl = "*"
 				}
-				fmt.Printf("%-24s %s %s\n", n, dfl, o.Owner)
+				fmt.Printf("%-24s %s %x\n", n, dfl, o.Owner)
 			}
 		}
 
@@ -257,7 +257,11 @@ func doOwner(cfg *Config, basePath string, jsonOutput bool, urlOverride string, 
 			Default:      isDfl,
 		}
 		cfg.dirty = true
-		fmt.Printf("%-24s %s\n", name, owner.Bytes())
+		dfl := " "
+		if isDfl {
+			dfl = "*"
+		}
+		fmt.Printf("%-24s %s %x\n", name, dfl, owner.Bytes())
 
 	case "default":
 		if len(args) < 2 {
@@ -273,13 +277,34 @@ func doOwner(cfg *Config, basePath string, jsonOutput bool, urlOverride string, 
 			o.Default = (n == name)
 		}
 		cfg.dirty = true
-		fmt.Printf("%-24s %s\n", name, cfg.Owners[name].Owner)
+		fmt.Printf("%-24s * %x\n", name, cfg.Owners[name].Owner)
 
 	case "delete":
 		if len(args) < 2 {
 			printHelp("")
 			return
 		}
+		name := strings.TrimSpace(args[1])
+		if _, have := cfg.Owners[name]; !have {
+			fmt.Println("ERROR: an owner named '" + args[1] + "' does not exist.")
+			return
+		}
+		delete(cfg.Owners, name)
+		hasDfl := false
+		for _, o := range cfg.Owners {
+			if o.Default {
+				hasDfl = true
+				break
+			}
+		}
+		if !hasDfl {
+			for _, o := range cfg.Owners {
+				o.Default = true
+				break
+			}
+		}
+		cfg.dirty = true
+		fmt.Printf("%s deleted.\n", name)
 
 	case "rename":
 		if len(args) < 3 {
@@ -437,5 +462,14 @@ func main() {
 	default:
 		printHelp("")
 
+	}
+
+	if cfg.dirty {
+		err = cfg.save(cfgPath)
+		if err != nil {
+			fmt.Printf("ERROR: cannot write %s: %s\n", cfgPath, err.Error())
+			os.Exit(-1)
+			return
+		}
 	}
 }

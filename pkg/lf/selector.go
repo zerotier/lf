@@ -56,9 +56,9 @@ const SelectorTypeBP160 byte = 0
 
 // Selector is a non-forgeable range queryable identifier for records.
 type Selector struct {
-	Ordinal  uint64 // An ordinal value that can be used to perform range queries against selectors
-	Claim    []byte // 41-byte brainpoolP160t1 recoverable signature
-	claimBuf [41]byte
+	Ordinal  uint64   // An ordinal value that can be used to perform range queries against selectors
+	Claim    []byte   // 41-byte brainpoolP160t1 recoverable signature
+	claimBuf [41]byte // actual buffer -- this is just referenced by []Claim so JSON encoding will do the right thing
 }
 
 // MakeSelectorKey generates a masked selector database key from a plain text name.

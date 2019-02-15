@@ -92,8 +92,8 @@ type APIQueryResults []APIQueryResult
 // APINewSelector is a selector plain text name and an ordinal value (use zero if you don't care).
 // This is used as part of the APINew API request.
 type APINewSelector struct {
-	Name    []byte // Name of this selector
-	Ordinal uint64 // A sortable value (use 0 if you don't want to do range queries)
+	Name    []byte `json:",omitempty"` // Name of this selector
+	Ordinal uint64 ``                  // A sortable value (use 0 if you don't want to do range queries)
 }
 
 // APINew is a request to create and submit a new record.
@@ -103,11 +103,11 @@ type APINewSelector struct {
 // as LF users. Note that this API call implicitly shares your private key so it should not be made
 // against nodes or proxies that you don't control or trust or over unencrypted transport.
 type APINew struct {
-	Selectors       []APINewSelector ``                  // Plain text selector names and ordinals
+	Selectors       []APINewSelector `json:",omitempty"` // Plain text selector names and ordinals
 	MaskingKey      []byte           `json:",omitempty"` // An arbitrary key used to mask the record's value from those that don't know what they're looking for
-	OwnerPrivateKey []byte           ``                  // Full owner including private key (result of owner PrivateBytes() method)
-	Links           [][]byte         ``                  // Links to other records in the DAG (each link must be 32 bytes in size)
-	Value           []byte           ``                  // Plain text (unmasked, uncompressed) value for this record
+	OwnerPrivateKey []byte           `json:",omitempty"` // Full owner including private key (result of owner PrivateBytes() method)
+	Links           [][]byte         `json:",omitempty"` // Links to other records in the DAG (each link must be 32 bytes in size)
+	Value           []byte           `json:",omitempty"` // Plain text (unmasked, uncompressed) value for this record
 	Timestamp       *uint64          `json:",omitempty"` // Record timestamp in SECONDS since epoch (server time is used if zero or omitted)
 }
 
