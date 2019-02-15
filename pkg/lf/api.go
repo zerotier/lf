@@ -22,10 +22,10 @@ import (
 // APIVersion is the version of the current implementation
 const APIVersion = 1
 
+var apiVersionStr = strconv.FormatInt(int64(APIVersion), 10)
+
 // APIMaxResponseSize is a sanity limit on the maximum size of a response from the LF HTTP API (can be increased)
 const APIMaxResponseSize = 4194304
-
-var apiVersionStr = strconv.FormatInt(int64(APIVersion), 10)
 
 // APIStatusPeer contains information about a connected peer.
 type APIStatusPeer struct {
@@ -47,6 +47,7 @@ type APIProxyStatus struct {
 type APIStatus struct {
 	Software      string          `json:",omitempty"` // Software implementation name
 	Version       [4]int          ``                  // Version of software
+	APIVersion    int             ``                  // Current version of API
 	MinAPIVersion int             ``                  // Minimum API version supported
 	MaxAPIVersion int             ``                  // Maximum API version supported
 	Uptime        uint64          ``                  // Node uptime in seconds
@@ -439,17 +440,20 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 		}
 	})
 
-	// Get links for incorporation into a new record, returns up to 31 raw binary hashes. A ?count= parameter can be added to specify how many are desired.
+	// Get links for incorporation into a new record, returns up to 2048 raw binary hashes. A ?count= parameter can be added to specify how many are desired.
 	smux.HandleFunc("/links", func(out http.ResponseWriter, req *http.Request) {
 		apiSetStandardHeaders(out)
 		if req.Method == http.MethodGet || req.Method == http.MethodHead {
-			desired := uint(3)
+			desired := n.genesisConfig.RecordMinLinks
 			desiredStr := req.URL.Query().Get("count")
 			if len(desiredStr) > 0 {
 				tmp, _ := strconv.ParseUint(desiredStr, 10, 64)
-				if tmp > 0 {
-					desired = uint(tmp)
-				}
+				desired = uint(tmp)
+			}
+			if desired == 0 {
+				desired = 1
+			} else if desired > 2048 {
+				desired = 2048
 			}
 			_, links, _ := n.db.getLinks(desired)
 			out.Header().Set("Content-Type", "application/octet-stream")
@@ -470,6 +474,7 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 			apiSendObj(out, req, http.StatusOK, &APIStatus{
 				Software:      SoftwareName,
 				Version:       Version,
+				APIVersion:    APIVersion,
 				MinAPIVersion: APIVersion,
 				MaxAPIVersion: APIVersion,
 				Uptime:        (now - n.startTime),

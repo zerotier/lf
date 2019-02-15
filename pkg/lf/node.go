@@ -50,8 +50,8 @@ type peer struct {
 	cryptor         cipher.AEAD         // AES-GCM instance
 	hasRecords      map[[32]byte]uint64 // Record this peer has recently reported that it has or has sent
 	hasRecordsLock  sync.Mutex          //
-	inbound         bool                // True if this is an incoming connection
 	remotePublicKey []byte              // Remote public key
+	inbound         bool                // True if this is an incoming connection
 }
 
 // Node is an instance of a full LF node.
@@ -229,7 +229,7 @@ func (n *Node) Connect(ip net.IP, port int, publicKey []byte, statusCallback fun
 					statusCallback(err)
 				}
 			}
-		} else if err != nil {
+		} else if c != nil {
 			c.Close()
 		}
 	}()
@@ -272,11 +272,9 @@ func (n *Node) AddRecord(r *Record) error {
 			return ErrorRecordInsufficientWork
 		}
 	}
-	if len(r.Certificate) > 0 && len(n.genesisConfig.CAs) == 0 { // don't let people shove crap into cert field
+	if len(r.Certificate) > 0 && len(n.genesisConfig.CAs) == 0 { // don't let people shove crap into cert field if it's not used
 		return ErrorRecordCertificateInvalid
 	}
-
-	// TODO: certs are not implemented yet!
 
 	// Validate record's internal structure and check signatures and work.
 	err := r.Validate()
@@ -284,6 +282,8 @@ func (n *Node) AddRecord(r *Record) error {
 		return err
 	}
 
+	// Check to see if there's another fully synchronized and reputation=0 record with the
+	// same ID. If so, flag this one.
 	reputation := 0
 	rid := r.ID()
 	if n.db.haveSynchronizedWithID(rid[:], r.Owner) {
@@ -419,7 +419,12 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inb
 		return
 	}
 
-	p := peer{c: c, hasRecords: make(map[[32]byte]uint64), inbound: inbound, remotePublicKey: rpk}
+	p := peer{
+		c:               c,
+		hasRecords:      make(map[[32]byte]uint64),
+		remotePublicKey: rpk,
+		inbound:         inbound,
+	}
 	n.peersLock.Lock()
 	for _, p2 := range n.peers {
 		if bytes.Equal(p2.remotePublicKey, rpk) {
@@ -507,12 +512,14 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inb
 		switch incomingMessageType {
 
 		case p2pProtoMessageTypeRecord:
-			rec, err := NewRecordFromBytes(msg)
-			if err == nil {
-				p.hasRecordsLock.Lock()
-				p.hasRecords[*rec.Hash()] = TimeMs()
-				p.hasRecordsLock.Unlock()
-				n.AddRecord(rec)
+			if len(msg) > 0 {
+				rec, err := NewRecordFromBytes(msg)
+				if err == nil {
+					p.hasRecordsLock.Lock()
+					p.hasRecords[*rec.Hash()] = TimeMs()
+					p.hasRecordsLock.Unlock()
+					n.AddRecord(rec)
+				}
 			}
 
 		case p2pProtoMesaggeTypeRequestRecordsByHash:

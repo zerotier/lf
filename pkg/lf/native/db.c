@@ -111,7 +111,7 @@ static void *_ZTLF_DB_graphThreadMain(void *arg);
 "CREATE UNIQUE INDEX IF NOT EXISTS record_hash ON record(hash);\n" \
 "CREATE INDEX IF NOT EXISTS record_id ON record(id);\n" \
 "CREATE INDEX IF NOT EXISTS record_ts ON record(ts);\n" \
-"CREATE INDEX IF NOT EXISTS record_doff_owner_id_ts ON record(doff,owner,id,ts);\n" \
+"CREATE INDEX IF NOT EXISTS record_doff_reputation_selector_count_owner_id_ts ON record(doff,reputation,selector_count,owner,id,ts);\n" \
 \
 "CREATE TABLE IF NOT EXISTS selector (" \
 "sel BLOB NOT NULL," \
@@ -270,7 +270,7 @@ int ZTLF_DB_Open(struct ZTLF_DB *db,const char *path,char *errbuf,unsigned int e
 	S(db->sQueryAndSelectorRange,
 	     "DELETE FROM tmp.rs WHERE \"i\" NOT IN (SELECT record_doff FROM selector WHERE sel BETWEEN ? AND ?)");
 	S(db->sQueryGetResults,
-	     "SELECT r.doff,r.dlen,r.goff,r.ts,r.reputation,r.id,r.owner FROM record AS r,tmp.rs AS rs WHERE r.doff = rs.i AND NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) ORDER BY r.owner,r.id,r.ts");
+	     "SELECT r.doff,r.dlen,r.goff,r.ts,r.id,r.owner FROM record AS r,tmp.rs AS rs WHERE r.doff = rs.i AND r.reputation = 0 AND r.selector_count = ? AND NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) AND NOT EXISTS (SELECT gp.record_goff FROM graph_pending AS gp WHERE gp.record_goff = r.goff) ORDER BY r.owner,r.id,r.ts");
 
 	/* Open and memory map graph and data files. */
 	snprintf(tmp,sizeof(tmp),"%s" ZTLF_PATH_SEPARATOR "graph.bin",path);
@@ -713,13 +713,35 @@ unsigned int ZTLF_DB_GetLinks(struct ZTLF_DB *db,void *const lbuf,const unsigned
 	pthread_mutex_lock(&db->dbLock);
 	pthread_rwlock_rdlock(&db->gfLock);
 
+	/* Pass 1: link to records with a preference for records with fewer existing links to them. */
 	sqlite3_reset(db->sGetLinkCandidates);
 	while (sqlite3_step(db->sGetLinkCandidates) == SQLITE_ROW) {
 		rn += (uint64_t)rand();
 		struct ZTLF_DB_GraphNode *const gn = (struct ZTLF_DB_GraphNode *)ZTLF_MappedFile_TryGet(&db->gf,(uintptr_t)sqlite3_column_int64(db->sGetLinkCandidates,0),ZTLF_DB_MAX_GRAPH_NODE_SIZE);
-		if (gn) {
-			if ((rn % ((gn->linkedCount + 1ULL) * 2ULL)) == 0) {
-				memcpy(l,sqlite3_column_blob(db->sGetLinkCandidates,1),32);
+		if ((gn)&&((rn % (gn->linkedCount + 1ULL)) == 0)) {
+			memcpy(l,sqlite3_column_blob(db->sGetLinkCandidates,1),32);
+			l += 32;
+			if (++lc >= cnt) {
+				pthread_rwlock_unlock(&db->gfLock);
+				pthread_mutex_unlock(&db->dbLock);
+				return lc;
+			}
+		}
+	}
+
+	/* Pass 2: if we don't have enough links, grab a few more without discriminating. */
+	if (lc < cnt) {
+		sqlite3_reset(db->sGetLinkCandidates);
+		while (sqlite3_step(db->sGetLinkCandidates) == SQLITE_ROW) {
+			const void *lnk = sqlite3_column_blob(db->sGetLinkCandidates,1);
+			for(uint8_t *ll=(uint8_t *)lbuf;ll!=l;ll+=32) {
+				if (memcmp(ll,lnk,32) == 0) {
+					lnk = NULL; /* skip ones we already linked */
+					break;
+				}
+			}
+			if (lnk) {
+				memcpy(l,lnk,32);
 				l += 32;
 				if (++lc >= cnt) {
 					pthread_rwlock_unlock(&db->gfLock);
@@ -995,15 +1017,16 @@ struct ZTLF_QueryResults *ZTLF_DB_Query(struct ZTLF_DB *db,const void **sel,cons
 	/* Get and collate final results. */
 	r->count = -1; /* gets incremented on very first iteration */
 	sqlite3_reset(db->sQueryGetResults);
+	sqlite3_bind_int(db->sQueryGetResults,1,(int)selCount);
 	uint8_t lastOwner[ZTLF_DB_QUERY_MAX_OWNER_SIZE];
 	uint8_t lastId[32];
 	memset(lastOwner,0,sizeof(lastOwner));
 	memset(lastId,0,sizeof(lastId));
 	int lastOwnerSize = -1;
-	while (sqlite3_step(db->sQueryGetResults) == SQLITE_ROW) { /* columns: doff,dlen,goff,ts,reputation,id,owner */
-		const void *id = sqlite3_column_blob(db->sQueryGetResults,5);
-		const void *owner = sqlite3_column_blob(db->sQueryGetResults,6);
-		const int ownerSize = sqlite3_column_bytes(db->sQueryGetResults,6);
+	while (sqlite3_step(db->sQueryGetResults) == SQLITE_ROW) { /* columns: doff,dlen,goff,ts,id,owner */
+		const void *id = sqlite3_column_blob(db->sQueryGetResults,4);
+		const void *owner = sqlite3_column_blob(db->sQueryGetResults,5);
+		const int ownerSize = sqlite3_column_bytes(db->sQueryGetResults,5);
 		if ((!owner)||(ownerSize <= 0)||(ownerSize > ZTLF_DB_QUERY_MAX_OWNER_SIZE))
 			continue;
 
@@ -1034,7 +1057,6 @@ struct ZTLF_QueryResults *ZTLF_DB_Query(struct ZTLF_DB *db,const void **sel,cons
 			qr->weightL = 0;
 			qr->weightH = 0;
 			qr->ownerSize = (unsigned int)ownerSize;
-			qr->reputation = 0;
 			memcpy(qr->id,id,32);
 			memcpy(qr->owner,owner,ownerSize);
 		} else {
@@ -1053,8 +1075,6 @@ struct ZTLF_QueryResults *ZTLF_DB_Query(struct ZTLF_DB *db,const void **sel,cons
 			qr->doff = (uint64_t)sqlite3_column_int64(db->sQueryGetResults,0);
 			qr->dlen = (unsigned int)sqlite3_column_int(db->sQueryGetResults,1);
 		}
-
-		qr->reputation |= sqlite3_column_int(db->sQueryGetResults,4);
 	}
 	++r->count;
 

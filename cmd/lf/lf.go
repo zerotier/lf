@@ -14,29 +14,44 @@ import (
 	"flag"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"os"
+	"os/signal"
 	"os/user"
 	"path"
 	"sort"
 	"strings"
+	"syscall"
 
 	"../../pkg/lf"
 )
 
-var clientConfigFile = "config.json"
+var (
+	clientConfigFile = "config.json"
+	defaultNodeUrls  = []string{}
+	osSignalChannel  = make(chan os.Signal, 16)
 
-var defaultNodeUrls = []string{}
+	lfDefaultPath = func() string {
+		if os.Getuid() == 0 {
+			return "/var/lib/lf"
+		}
+		h := os.Getenv("HOME")
+		if len(h) > 0 {
+			return path.Join(h, ".lf")
+		}
+		return "./lf"
+	}()
+)
 
-var lfDefaultPath = func() string {
-	if os.Getuid() == 0 {
-		return "/var/lib/lf"
+func jsonP(obj interface{}) {
+	jb, _ := json.MarshalIndent(obj, "", "  ")
+	if len(jb) > 0 {
+		os.Stdout.Write(jb)
+		os.Stdout.Write([]byte{'\n'})
 	}
-	h := os.Getenv("HOME")
-	if len(h) > 0 {
-		return path.Join(h, ".lf")
-	}
-	return "./lf"
-}()
+}
+
+//////////////////////////////////////////////////////////////////////////////
 
 // ConfigOwner contains info about an owner.
 type ConfigOwner struct {
@@ -117,14 +132,6 @@ func (c *Config) save(path string) error {
 	return err
 }
 
-func jsonP(obj interface{}) {
-	jb, _ := json.MarshalIndent(obj, "", "  ")
-	if len(jb) > 0 {
-		os.Stdout.Write(jb)
-		os.Stdout.Write([]byte{'\n'})
-	}
-}
-
 //////////////////////////////////////////////////////////////////////////////
 
 func printHelpHdr() {
@@ -198,6 +205,15 @@ not already exist.
 //////////////////////////////////////////////////////////////////////////////
 
 func doNodeStart(cfg *Config, basePath string, jsonOutput bool, urlOverride string, verboseOutput bool, args []string) {
+	signal.Notify(osSignalChannel, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGUSR1, syscall.SIGUSR2)
+	stdoutLogger := log.New(os.Stdout, "", log.LstdFlags)
+	_, err := lf.NewNode(basePath, 8893, 8093, stdoutLogger)
+	if err != nil {
+		fmt.Printf("ERROR: unable to start node: %s\n", err.Error())
+		os.Exit(-1)
+		return
+	}
+	_ = <-osSignalChannel
 }
 
 func doProxyStart(cfg *Config, basePath string, jsonOutput bool, urlOverride string, verboseOutput bool, args []string) {
@@ -426,8 +442,8 @@ func main() {
 			fmt.Println()
 			lf.TestDatabase("./lf-db-test", os.Stdout)
 			fmt.Println()
-			lf.TestWharrgarbl(os.Stdout)
-			fmt.Println()
+			//lf.TestWharrgarbl(os.Stdout)
+			//fmt.Println()
 		case "core":
 			lf.TestCore(os.Stdout)
 		case "wharrgarbl":

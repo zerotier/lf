@@ -18,8 +18,10 @@ import (
 	"golang.org/x/crypto/sha3"
 )
 
-var wharrgarblMemory []uint32
-var wharrgarblMemoryLock sync.Mutex
+var (
+	wharrgarblMemory     []uint32
+	wharrgarblMemoryLock sync.Mutex
+)
 
 // WharrgarblOutputSize is the size of Wharrgarbl's result in bytes.
 const WharrgarblOutputSize = 20
