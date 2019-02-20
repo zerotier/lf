@@ -11,7 +11,6 @@ import (
 	"bytes"
 	"crypto/ecdsa"
 	"crypto/sha256"
-	"crypto/sha512"
 	"encoding/binary"
 	"io"
 )
@@ -31,26 +30,6 @@ import (
 // they are kept secret records cannot be created with them by anyone who doesn't know them.
 //
 
-// sha384csprng is a Reader that acts as a random source for generating ECDSA key pairs deterministically.
-type sha384csprng struct {
-	s384 [48]byte
-	n    int
-}
-
-func (prng sha384csprng) Read(b []byte) (int, error) {
-	for i := 0; i < len(b); i++ {
-		b[i] = prng.s384[prng.n]
-		prng.n++
-		b[i] ^= prng.s384[prng.n] // make sure you can't infer CSPRNG state from output, though this probably doesn't matter for our use case
-		prng.n++
-		if prng.n == 48 {
-			prng.s384 = sha512.Sum384(prng.s384[:])
-			prng.n = 0
-		}
-	}
-	return len(b), nil
-}
-
 // SelectorTypeBP160 indicates a sortable selector built from the brainpoolP160t1 elliptic curve.
 const SelectorTypeBP160 byte = 0
 
@@ -65,7 +44,9 @@ type Selector struct {
 // If this name is not used with range queries use zero for the ordinal. This function exists
 // to allow selector database keys to be created separate from record creation if needed.
 func MakeSelectorKey(plainTextName []byte, ord uint64) []byte {
-	priv, err := ecdsa.GenerateKey(ECCCurveBrainpoolP160T1, &sha384csprng{s384: sha512.Sum384(plainTextName), n: 0})
+	var prng seededPrng
+	prng.seed(plainTextName)
+	priv, err := ecdsa.GenerateKey(ECCCurveBrainpoolP160T1, &prng)
 	if err != nil {
 		panic(err)
 	}
@@ -138,7 +119,9 @@ func (s *Selector) unmarshalFrom(in io.Reader) error {
 func (s *Selector) set(plainTextName []byte, ord uint64, hash []byte) {
 	s.Ordinal = ord
 
-	priv, err := ecdsa.GenerateKey(ECCCurveBrainpoolP160T1, &sha384csprng{s384: sha512.Sum384(plainTextName), n: 0})
+	var prng seededPrng
+	prng.seed(plainTextName)
+	priv, err := ecdsa.GenerateKey(ECCCurveBrainpoolP160T1, &prng)
 
 	var obytes [8]byte
 	binary.BigEndian.PutUint64(obytes[:], ord)

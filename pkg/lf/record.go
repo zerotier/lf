@@ -42,8 +42,6 @@ const RecordWorkAlgorithmNone byte = 0
 // RecordWorkAlgorithmWharrgarbl indicates the Wharrgarbl momentum-like proof of work algorithm.
 const RecordWorkAlgorithmWharrgarbl byte = 1
 
-var recordWorkAlgorithmPreferenceOrder = []byte{RecordWorkAlgorithmNone, RecordWorkAlgorithmWharrgarbl}
-
 // recordBody represents the main body of a record including its value, owner public keys, etc.
 // It's included as part of Record but separated since in record construction we want to treat it as a separate element.
 type recordBody struct {

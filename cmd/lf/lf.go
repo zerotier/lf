@@ -20,6 +20,7 @@ import (
 	"os/user"
 	"path"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -62,8 +63,10 @@ type ConfigOwner struct {
 
 // Config is the format of the JSON client configuration stored on disk
 type Config struct {
-	Urls   []string                // URLs of full nodes and/or proxies
-	Owners map[string]*ConfigOwner // Owners by name
+	NodeHTTPPort int                     //
+	NodeP2PPort  int                     //
+	Urls         []string                // URLs of full nodes and/or proxies
+	Owners       map[string]*ConfigOwner // Owners by name
 
 	dirty bool // internal flag that causes client config to get written
 }
@@ -142,10 +145,10 @@ MIT License
 Usage: lf [-global options] <command> [-command options] [...]
 
 Global options:
-  -path <path>                             Override default home directory
-  -use <url>                               Override default node/proxy URL(s)
-  -verbose                                 Generate verbose output to stderr
-  -json                                    Output raw JSON for API queries
+  -path <path>                              Override default home directory
+  -use <url>                                Override default node/proxy URL(s)
+  -verbose                                  Generate verbose output to stderr
+  -json                                     Output raw JSON for API queries
 `)
 }
 
@@ -161,9 +164,9 @@ func printHelp(cmd string) {
 		case "selftest":
 			fmt.Print(`
 The 'selftest' command can run the following tests:
-  core                                     Test core functions and data types
-  wharrgarbl                               Test and benchmark work function
-  database                                 Test database and graph algorithms
+  core                                      Test core functions and data types
+  wharrgarbl                                Test and benchmark work function
+  database                                  Test database and graph algorithms
 
 Use 'all' to run all tests.
 `)
@@ -174,22 +177,22 @@ Use 'all' to run all tests.
 
 	fmt.Print(`
 Commands:
-  help                                     Display help about a command
-  version                                  Display version information
-  selftest [<test>]                        Show tests or run an internal test
-  node-start                               Start a full node
-  proxy-start                              Start a local record creation proxy
-  use <url>                                Add a node URL for client/proxy
-  drop <url>                               Remove a node URL for client/proxy
-  set [-opt] <name[#ord]> [...] <value>    Set a new entry
-      [-owner <owner>]                     - Use this specific owner
-      [-file]                              - Value is a file, not a literal
-  owner <operation> [...]                  Owner management commands
-        list                               - List owners
-        new <name>                         - Create a new owner
-        default <name>                     - Set default owner
-        delete <name>                      - Delete an owner (PERMANENT)
-        rename <old name> <new name>       - Rename an owner
+  help                                      Display help about a command
+  version                                   Display version information
+  selftest [test name]                      Show tests or run an internal test
+  node-start                                Start a full node
+  proxy-start                               Start a proxy
+  use <url>                                 Add a node URL for client/proxy
+  drop <url>                                Remove a node URL for client/proxy
+  set [-options] [name[#ord]] [...] <value> Set a new entry
+      [-owner <owner>]                      - Use this specific owner
+      [-file]                               - Value is a file, not a literal
+  owner <operation> [...]                   Owner management commands
+        list                                - List owners
+        new <name>                          - Create a new owner
+        default <name>                      - Set default owner
+        delete <name>                       - Delete an owner (PERMANENT)
+        rename <old name> <new name>        - Rename an owner
 
 Configuration and other data is stored in LF's home directory. The default
 location for the current user on this system is:
@@ -204,10 +207,10 @@ not already exist.
 
 //////////////////////////////////////////////////////////////////////////////
 
-func doNodeStart(cfg *Config, basePath string, jsonOutput bool, urlOverride string, verboseOutput bool, args []string) {
+func doNodeStart(cfg *Config, basePath string, jsonOutput bool, nodeURL string, verboseOutput bool, args []string) {
 	signal.Notify(osSignalChannel, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGUSR1, syscall.SIGUSR2)
 	stdoutLogger := log.New(os.Stdout, "", log.LstdFlags)
-	_, err := lf.NewNode(basePath, 8893, 8093, stdoutLogger, lf.LogLevelTrace)
+	_, err := lf.NewNode(basePath, lf.DefaultP2PPort, lf.DefaultHTTPPort, stdoutLogger, lf.LogLevelTrace)
 	if err != nil {
 		fmt.Printf("ERROR: unable to start node: %s\n", err.Error())
 		os.Exit(-1)
@@ -216,19 +219,78 @@ func doNodeStart(cfg *Config, basePath string, jsonOutput bool, urlOverride stri
 	_ = <-osSignalChannel
 }
 
-func doProxyStart(cfg *Config, basePath string, jsonOutput bool, urlOverride string, verboseOutput bool, args []string) {
+func doProxyStart(cfg *Config, basePath string, jsonOutput bool, nodeURL string, verboseOutput bool, args []string) {
 }
 
-func doUse(cfg *Config, basePath string, jsonOutput bool, urlOverride string, verboseOutput bool, args []string) {
+func doUse(cfg *Config, basePath string, jsonOutput bool, nodeURL string, verboseOutput bool, args []string) {
 }
 
-func doDrop(cfg *Config, basePath string, jsonOutput bool, urlOverride string, verboseOutput bool, args []string) {
+func doDrop(cfg *Config, basePath string, jsonOutput bool, nodeURL string, verboseOutput bool, args []string) {
 }
 
-func doSet(cfg *Config, basePath string, jsonOutput bool, urlOverride string, verboseOutput bool, args []string) {
+func doSet(cfg *Config, basePath string, jsonOutput bool, nodeURL string, verboseOutput bool, args []string) {
+	setOpts := flag.NewFlagSet("set", flag.ContinueOnError)
+	owner := setOpts.String("owner", "", "")
+	valueIsFile := setOpts.Bool("file", false, "")
+	err := setOpts.Parse(args)
+	if err != nil {
+		printHelp("")
+		return
+	}
+	args = setOpts.Args()
+	if len(args) < 1 {
+		printHelp("")
+		return
+	}
+
+	var selectors []lf.APINewSelector
+	for i := 0; i < len(args)-1; i++ {
+		sel := args[i]
+		var ord uint64
+		ordSepIdx := strings.LastIndex(sel, "#")
+		if ordSepIdx >= 0 {
+			if ordSepIdx < (len(sel) - 1) {
+				ord, err = strconv.ParseUint(sel[ordSepIdx+1:], 10, 64)
+				if err != nil {
+					printHelp("")
+					return
+				}
+			}
+			sel = sel[0:ordSepIdx]
+		}
+		selectors = append(selectors, lf.APINewSelector{
+			Name:    []byte(sel),
+			Ordinal: ord,
+		})
+	}
+
+	cfgOwner := cfg.Owners[*owner]
+	if cfgOwner == nil {
+		fmt.Printf("ERROR: owner '%s' not found.\n", *owner)
+	}
+
+	value := []byte(args[len(args)-1])
+	if *valueIsFile {
+	}
+
+	ts := lf.TimeSec()
+	req := lf.APINew{
+		Selectors:       selectors,
+		MaskingKey:      nil,
+		OwnerPrivateKey: cfgOwner.OwnerPrivate,
+		Links:           nil,
+		Value:           value,
+		Timestamp:       &ts,
+	}
+	rec, err := req.Run(nodeURL)
+
+	if err != nil {
+		fmt.Printf("ERROR: %s\n", err.Error())
+	}
+	fmt.Printf("%#v\n", rec)
 }
 
-func doOwner(cfg *Config, basePath string, jsonOutput bool, urlOverride string, verboseOutput bool, args []string) {
+func doOwner(cfg *Config, basePath string, jsonOutput bool, nodeURL string, verboseOutput bool, args []string) {
 	if len(args) == 0 {
 		printHelp("")
 		return
@@ -333,16 +395,13 @@ func doOwner(cfg *Config, basePath string, jsonOutput bool, urlOverride string, 
 	}
 }
 
-func doMakeGenesis(cfg *Config, basePath string, jsonOutput bool, urlOverride string, verboseOutput bool, args []string) {
+func doMakeGenesis(cfg *Config, basePath string, jsonOutput bool, nodeURL string, verboseOutput bool, args []string) {
 	var nwKey [32]byte
 	secrand.Read(nwKey[:])
-	g := lf.Genesis{
+	g := lf.GenesisParameters{
 		Name:                      "Sol",
-		Contact:                   "",
-		Comment:                   "",
-		CAs:                       nil,
-		BannedWorkAlgorithms:      []uint{uint(lf.RecordWorkAlgorithmNone)},
-		Key:                       nwKey[:],
+		WorkRequired:              true,
+		LinkKey:                   nwKey[:],
 		TimestampFloor:            lf.TimeSec(),
 		RecordMinLinks:            3,
 		RecordMaxValueSize:        1024,
@@ -417,6 +476,13 @@ func main() {
 		return
 	}
 
+	var nodeURL string
+	if len(*urlOverride) > 0 {
+		nodeURL = *urlOverride
+	} else {
+		nodeURL = "http://127.0.0.1:9980"
+	}
+
 	switch args[1] {
 
 	case "help":
@@ -455,25 +521,25 @@ func main() {
 		}
 
 	case "node-start":
-		doNodeStart(&cfg, *basePath, *jsonOutput, *urlOverride, *verboseOutput, cmdArgs)
+		doNodeStart(&cfg, *basePath, *jsonOutput, nodeURL, *verboseOutput, cmdArgs)
 
 	case "proxy-start":
-		doProxyStart(&cfg, *basePath, *jsonOutput, *urlOverride, *verboseOutput, cmdArgs)
+		doProxyStart(&cfg, *basePath, *jsonOutput, nodeURL, *verboseOutput, cmdArgs)
 
 	case "use":
-		doUse(&cfg, *basePath, *jsonOutput, *urlOverride, *verboseOutput, cmdArgs)
+		doUse(&cfg, *basePath, *jsonOutput, nodeURL, *verboseOutput, cmdArgs)
 
 	case "drop":
-		doDrop(&cfg, *basePath, *jsonOutput, *urlOverride, *verboseOutput, cmdArgs)
+		doDrop(&cfg, *basePath, *jsonOutput, nodeURL, *verboseOutput, cmdArgs)
 
 	case "set":
-		doSet(&cfg, *basePath, *jsonOutput, *urlOverride, *verboseOutput, cmdArgs)
+		doSet(&cfg, *basePath, *jsonOutput, nodeURL, *verboseOutput, cmdArgs)
 
 	case "owner":
-		doOwner(&cfg, *basePath, *jsonOutput, *urlOverride, *verboseOutput, cmdArgs)
+		doOwner(&cfg, *basePath, *jsonOutput, nodeURL, *verboseOutput, cmdArgs)
 
 	case "makegenesis":
-		doMakeGenesis(&cfg, *basePath, *jsonOutput, *urlOverride, *verboseOutput, cmdArgs)
+		doMakeGenesis(&cfg, *basePath, *jsonOutput, nodeURL, *verboseOutput, cmdArgs)
 
 	default:
 		printHelp("")

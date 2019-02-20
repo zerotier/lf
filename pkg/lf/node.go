@@ -43,6 +43,12 @@ const (
 
 	// p2pDesiredConnectionCount is how many TCP connections we want to have open (will stop connecting to announced peers after this)
 	p2pDesiredConnectionCount = 32
+
+	// DefaultHTTPPort is the default LF HTTP API port
+	DefaultHTTPPort = 9980
+
+	// DefaultP2PPort is the default LF P2P port
+	DefaultP2PPort = 9908
 )
 
 var nullLogger = log.New(ioutil.Discard, "", log.LstdFlags)
@@ -63,7 +69,7 @@ type Node struct {
 	linkKeyPubX        *big.Int                   // X coordinate of P-384 public key
 	linkKeyPubY        *big.Int                   // Y coordinate of P-384 public key
 	linkKeyPub         []byte                     // Point compressed P-384 public key
-	genesisConfig      Genesis                    // Genesis configuration for this node's network
+	genesisParameters  GenesisParameters          // Genesis configuration for this node's network
 	peers              map[string]*peer           // Currently connected peers by address
 	peersLock          sync.RWMutex               //
 	httpTCPListener    *net.TCPListener           //
@@ -261,27 +267,25 @@ func (n *Node) AddRecord(r *Record) error {
 
 	// Check various record constraints such as sizes, timestamp, etc. This is done first
 	// because these checks are simple and fast.
-	if len(rdata) > RecordMaxSize || uint(len(rdata)) > n.genesisConfig.RecordMaxSize {
+	if len(rdata) > RecordMaxSize || uint(len(rdata)) > n.genesisParameters.RecordMaxSize {
 		return ErrorRecordTooLarge
 	}
-	if uint(len(r.MaskedValue)) > n.genesisConfig.RecordMaxValueSize {
+	if uint(len(r.MaskedValue)) > n.genesisParameters.RecordMaxValueSize {
 		return ErrorRecordValueTooLarge
 	}
-	if r.LinkCount() < n.genesisConfig.RecordMinLinks {
+	if r.LinkCount() < n.genesisParameters.RecordMinLinks {
 		return ErrorRecordInsufficientLinks
 	}
-	if r.Timestamp > (TimeSec() + uint64(n.genesisConfig.RecordMaxForwardTimeDrift)) {
+	if r.Timestamp > (TimeSec() + uint64(n.genesisParameters.RecordMaxForwardTimeDrift)) {
 		return ErrorRecordViolatesSpecialRelativity
 	}
-	if r.Timestamp < n.genesisConfig.TimestampFloor {
+	if r.Timestamp < n.genesisParameters.TimestampFloor {
 		return ErrorRecordTooOld
 	}
-	for i := range n.genesisConfig.BannedWorkAlgorithms {
-		if uint(r.WorkAlgorithm) == n.genesisConfig.BannedWorkAlgorithms[i] {
-			return ErrorRecordInsufficientWork
-		}
+	if r.WorkAlgorithm == RecordWorkAlgorithmNone && n.genesisParameters.WorkRequired {
+		return ErrorRecordInsufficientWork
 	}
-	if len(r.Certificate) > 0 && len(n.genesisConfig.CAs) == 0 { // don't let people shove crap into cert field if it's not used
+	if len(r.Certificate) > 0 && len(n.genesisParameters.RootCertificateAuthorities) == 0 { // don't let people shove crap into cert field if it's not used
 		return ErrorRecordCertificateInvalid
 	}
 
@@ -339,9 +343,9 @@ func (n *Node) Peers() (peers []APIStatusPeer) {
 	n.peersLock.RLock()
 	for a, p := range n.peers {
 		peers = append(peers, APIStatusPeer{
-			RemoteAddress: a,
-			PublicKey:     p.remotePublicKey,
-			Inbound:       p.inbound,
+			Address:   a,
+			PublicKey: p.remotePublicKey,
+			Inbound:   p.inbound,
 		})
 	}
 	n.peersLock.RUnlock()
@@ -455,9 +459,9 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inb
 		n.log[LogLevelNormal].Printf("P2P connection to %s closed: key agreement failed: %s", peerAddressStr, err.Error())
 		return
 	}
-	if len(n.genesisConfig.Key) == 32 {
+	if len(n.genesisParameters.LinkKey) == 32 {
 		for i := 0; i < 32; i++ {
-			remoteShared[i] ^= n.genesisConfig.Key[i]
+			remoteShared[i] ^= n.genesisParameters.LinkKey[i]
 		}
 	}
 

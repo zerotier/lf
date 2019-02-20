@@ -36,7 +36,7 @@ type db struct {
 	logger          *log.Logger
 	verboseLogger   *log.Logger
 	globalLoggerIdx uint
-	cdb             C.struct_ZTLF_DB
+	cdb             *C.struct_ZTLF_DB
 }
 
 // Global variables that store logger instances for use by the callback in db-log-callback.go.
@@ -47,15 +47,16 @@ var (
 )
 
 func (db *db) open(path string, logger *log.Logger) error {
+	var errbuf [2048]byte
 	db.logger = logger
+	db.cdb = new(C.struct_ZTLF_DB)
 
 	globalLoggersLock.Lock()
 	globalLoggers = append(globalLoggers, logger)
 	db.globalLoggerIdx = uint(len(globalLoggers) - 1)
 	globalLoggersLock.Unlock()
 
-	var errbuf [2048]byte
-	cerr := C.ZTLF_DB_Open_fromGo((*C.struct_ZTLF_DB)(&db.cdb), C.CString(path), (*C.char)(unsafe.Pointer(&errbuf[0])), 2047, C.uintptr_t(db.globalLoggerIdx))
+	cerr := C.ZTLF_DB_Open_fromGo(db.cdb, C.CString(path), (*C.char)(unsafe.Pointer(&errbuf[0])), 2047, C.uintptr_t(db.globalLoggerIdx))
 	if cerr != 0 {
 		errstr := "unknown or I/O level error " + strconv.FormatInt(int64(cerr), 10)
 		if cerr > 0 {
@@ -80,7 +81,7 @@ func (db *db) open(path string, logger *log.Logger) error {
 }
 
 func (db *db) close() {
-	C.ZTLF_DB_Close((*C.struct_ZTLF_DB)(&db.cdb))
+	C.ZTLF_DB_Close(db.cdb)
 	globalLoggersLock.Lock()
 	globalLoggers[db.globalLoggerIdx] = nil
 	globalLoggersLock.Unlock()
@@ -119,7 +120,7 @@ func (db *db) putRecord(r *Record, reputation int) error {
 	owner := r.recordBody.Owner
 
 	cerr := C.ZTLF_DB_PutRecord(
-		(*C.struct_ZTLF_DB)(&db.cdb),
+		db.cdb,
 		unsafe.Pointer(&rdata[0]),
 		C.uint(len(rdata)),
 		unsafe.Pointer(&owner[0]),
@@ -148,14 +149,14 @@ func (db *db) getDataByHash(h []byte, buf []byte) (int, []byte, error) {
 	}
 
 	var doff uint64
-	dlen := int(C.ZTLF_DB_GetByHash((*C.struct_ZTLF_DB)(&db.cdb), unsafe.Pointer(&(h[0])), (*C.ulonglong)(unsafe.Pointer(&doff))))
+	dlen := int(C.ZTLF_DB_GetByHash(db.cdb, unsafe.Pointer(&(h[0])), (*C.ulonglong)(unsafe.Pointer(&doff))))
 	if dlen == 0 {
 		return 0, buf, nil
 	}
 
 	startPos := len(buf)
 	buf = append(buf, make([]byte, dlen)...)
-	ok := int(C.ZTLF_DB_GetRecordData((*C.struct_ZTLF_DB)(&db.cdb), C.ulonglong(doff), unsafe.Pointer(&(buf[startPos])), C.uint(dlen)))
+	ok := int(C.ZTLF_DB_GetRecordData(db.cdb, C.ulonglong(doff), unsafe.Pointer(&(buf[startPos])), C.uint(dlen)))
 	if ok == 0 {
 		buf = buf[0:startPos]
 		return 0, buf, ErrorIO
@@ -168,7 +169,7 @@ func (db *db) getDataByHash(h []byte, buf []byte) (int, []byte, error) {
 func (db *db) getDataByOffset(doff uint64, dlen uint, buf []byte) ([]byte, error) {
 	startPos := len(buf)
 	buf = append(buf, make([]byte, dlen)...)
-	ok := int(C.ZTLF_DB_GetRecordData((*C.struct_ZTLF_DB)(&db.cdb), C.ulonglong(doff), unsafe.Pointer(&(buf[startPos])), C.uint(dlen)))
+	ok := int(C.ZTLF_DB_GetRecordData(db.cdb, C.ulonglong(doff), unsafe.Pointer(&(buf[startPos])), C.uint(dlen)))
 	if ok == 0 {
 		buf = buf[0:startPos]
 		return buf, ErrorIO
@@ -180,7 +181,7 @@ func (db *db) getDataByOffset(doff uint64, dlen uint, buf []byte) ([]byte, error
 func (db *db) hasRecord(h []byte) bool {
 	if len(h) == 32 {
 		var doff uint64
-		dlen := int(C.ZTLF_DB_GetByHash((*C.struct_ZTLF_DB)(&db.cdb), unsafe.Pointer(&(h[0])), (*C.ulonglong)(unsafe.Pointer(&doff))))
+		dlen := int(C.ZTLF_DB_GetByHash(db.cdb, unsafe.Pointer(&(h[0])), (*C.ulonglong)(unsafe.Pointer(&doff))))
 		return dlen > 0
 	}
 	return false
@@ -192,26 +193,26 @@ func (db *db) getLinks(count uint) (uint, []byte, error) {
 		return 0, nil, nil
 	}
 	lbuf := make([]byte, 32*count)
-	lc := uint(C.ZTLF_DB_GetLinks((*C.struct_ZTLF_DB)(&db.cdb), unsafe.Pointer(&(lbuf[0])), C.uint(count)))
+	lc := uint(C.ZTLF_DB_GetLinks(db.cdb, unsafe.Pointer(&(lbuf[0])), C.uint(count)))
 	return lc, lbuf[0 : 32*lc], nil
 }
 
 // stats returns some basic statistics about this database.
 func (db *db) stats() (recordCount, dataSize uint64) {
-	C.ZTLF_DB_Stats((*C.struct_ZTLF_DB)(&db.cdb), (*C.ulonglong)(unsafe.Pointer(&recordCount)), (*C.ulonglong)(unsafe.Pointer(&dataSize)))
+	C.ZTLF_DB_Stats(db.cdb, (*C.ulonglong)(unsafe.Pointer(&recordCount)), (*C.ulonglong)(unsafe.Pointer(&dataSize)))
 	return
 }
 
 // crc64 returns a CRC64 of this database's important state information including hashes, graph weights, etc.
 func (db *db) crc64() uint64 {
-	return uint64(C.ZTLF_DB_CRC64((*C.struct_ZTLF_DB)(&db.cdb)))
+	return uint64(C.ZTLF_DB_CRC64(db.cdb))
 }
 
 // hasPending returns true if this database is not waiting for any records to fill any graph gaps or satisfy any links.
 // This can also be used to check whether synchronization is complete since it returns true only if there are records
 // and all links for them are satisfied.
 func (db *db) hasPending() bool {
-	return (C.ZTLF_DB_HasPending((*C.struct_ZTLF_DB)(&db.cdb)) > 0)
+	return (C.ZTLF_DB_HasPending(db.cdb) > 0)
 }
 
 // query executes a query against a number of selector ranges. The function is executed for each result, with
@@ -237,7 +238,7 @@ func (db *db) query(selectorRanges [][2][]byte, f func(uint64, uint64, uint64, u
 		selSizes[ii] = C.uint(len(selectorRanges[i][1]))
 	}
 
-	cresults := C.ZTLF_DB_Query((*C.struct_ZTLF_DB)(&db.cdb), &sel[0], (*C.uint)(unsafe.Pointer(&selSizes[0])), C.uint(len(selectorRanges)))
+	cresults := C.ZTLF_DB_Query(db.cdb, &sel[0], (*C.uint)(unsafe.Pointer(&selSizes[0])), C.uint(len(selectorRanges)))
 	if uintptr(unsafe.Pointer(cresults)) != 0 {
 		var owner [dbMaxOwnerSize]byte
 		var id [32]byte
@@ -266,12 +267,12 @@ func (db *db) haveSynchronizedWithID(id []byte, notOwner []byte) bool {
 	if len(id) != 32 || len(notOwner) == 0 {
 		return false
 	}
-	return (C.ZTLF_DB_HaveSynchronizedWithID((*C.struct_ZTLF_DB)(&db.cdb), unsafe.Pointer(&id[0]), unsafe.Pointer(&notOwner[0]), C.uint(len(notOwner))) != 0)
+	return (C.ZTLF_DB_HaveSynchronizedWithID(db.cdb, unsafe.Pointer(&id[0]), unsafe.Pointer(&notOwner[0]), C.uint(len(notOwner))) != 0)
 }
 
 func (db *db) getConfig(key string) []byte {
 	var tmp [dbMaxConfigValueSize]byte
-	l := C.ZTLF_DB_GetConfig((*C.struct_ZTLF_DB)(&db.cdb), C.CString(key), unsafe.Pointer(&tmp[0]), C.uint(dbMaxConfigValueSize))
+	l := C.ZTLF_DB_GetConfig(db.cdb, C.CString(key), unsafe.Pointer(&tmp[0]), C.uint(dbMaxConfigValueSize))
 	if l > 0 {
 		r := make([]byte, uint(l))
 		copy(r, tmp[0:uint(l)])
@@ -285,7 +286,7 @@ func (db *db) setConfig(key string, value []byte) error {
 		if len(value) > dbMaxConfigValueSize {
 			return ErrorInvalidParameter
 		}
-		e := C.ZTLF_DB_SetConfig((*C.struct_ZTLF_DB)(&db.cdb), C.CString(key), unsafe.Pointer(&value[0]), C.uint(len(value)))
+		e := C.ZTLF_DB_SetConfig(db.cdb, C.CString(key), unsafe.Pointer(&value[0]), C.uint(len(value)))
 		if e != 0 {
 			return fmt.Errorf("database error %d", int(e))
 		}

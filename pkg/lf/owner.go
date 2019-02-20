@@ -5,6 +5,7 @@ import (
 	"crypto/elliptic"
 	secrand "crypto/rand"
 	"crypto/x509"
+	"io"
 
 	"golang.org/x/crypto/ed25519"
 )
@@ -25,12 +26,10 @@ type Owner struct {
 	privateECDSA *ecdsa.PrivateKey // an ECDSA private key if this owner happens to be of that type
 }
 
-// NewOwner creates a new owner key pair.
-// Most users will want OwnerTypeEd25519. Only those that need ECDSA with NSA Suite B crypto will want to use OwnerTypeNistP384.
-func NewOwner(ownerType int) (*Owner, error) {
+func newOwnerIntl(ownerType int, prng io.Reader) (*Owner, error) {
 	switch ownerType {
 	case OwnerTypeEd25519:
-		pub, priv, err := ed25519.GenerateKey(secrand.Reader)
+		pub, priv, err := ed25519.GenerateKey(prng)
 		if err != nil {
 			return nil, err
 		}
@@ -40,7 +39,7 @@ func NewOwner(ownerType int) (*Owner, error) {
 			privateECDSA: nil,
 		}, nil
 	case OwnerTypeNistP384:
-		priv, err := ecdsa.GenerateKey(elliptic.P384(), secrand.Reader)
+		priv, err := ecdsa.GenerateKey(elliptic.P384(), prng)
 		if err != nil {
 			return nil, err
 		}
@@ -61,6 +60,18 @@ func NewOwner(ownerType int) (*Owner, error) {
 	}
 	return nil, ErrorInvalidParameter
 }
+
+// NewOwnerFromSeed creates a new owner whose key pair is generated using deterministic randomness from the given seed.
+// Most users will want OwnerTypeEd25519. Only those that need ECDSA with NSA Suite B crypto will want to use OwnerTypeNistP384.
+func NewOwnerFromSeed(ownerType int, seed []byte) (*Owner, error) {
+	var prng seededPrng
+	prng.seed(seed)
+	return newOwnerIntl(ownerType, &prng)
+}
+
+// NewOwner creates a new owner key pair.
+// Most users will want OwnerTypeEd25519. Only those that need ECDSA with NSA Suite B crypto will want to use OwnerTypeNistP384.
+func NewOwner(ownerType int) (*Owner, error) { return newOwnerIntl(ownerType, secrand.Reader) }
 
 // NewOwnerFromBytes creates a new Owner object from a set of public Owner bytes (as returned by Bytes()).
 func NewOwnerFromBytes(publicBytes []byte) (*Owner, error) {
