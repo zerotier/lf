@@ -149,14 +149,14 @@ func (db *db) getDataByHash(h []byte, buf []byte) (int, []byte, error) {
 	}
 
 	var doff uint64
-	dlen := int(C.ZTLF_DB_GetByHash(db.cdb, unsafe.Pointer(&(h[0])), (*C.ulonglong)(unsafe.Pointer(&doff))))
+	dlen := int(C.ZTLF_DB_GetByHash(db.cdb, unsafe.Pointer(&(h[0])), (*C.uint64_t)(unsafe.Pointer(&doff))))
 	if dlen == 0 {
 		return 0, buf, nil
 	}
 
 	startPos := len(buf)
 	buf = append(buf, make([]byte, dlen)...)
-	ok := int(C.ZTLF_DB_GetRecordData(db.cdb, C.ulonglong(doff), unsafe.Pointer(&(buf[startPos])), C.uint(dlen)))
+	ok := int(C.ZTLF_DB_GetRecordData(db.cdb, C.uint64_t(doff), unsafe.Pointer(&(buf[startPos])), C.uint(dlen)))
 	if ok == 0 {
 		buf = buf[0:startPos]
 		return 0, buf, ErrorIO
@@ -169,7 +169,7 @@ func (db *db) getDataByHash(h []byte, buf []byte) (int, []byte, error) {
 func (db *db) getDataByOffset(doff uint64, dlen uint, buf []byte) ([]byte, error) {
 	startPos := len(buf)
 	buf = append(buf, make([]byte, dlen)...)
-	ok := int(C.ZTLF_DB_GetRecordData(db.cdb, C.ulonglong(doff), unsafe.Pointer(&(buf[startPos])), C.uint(dlen)))
+	ok := int(C.ZTLF_DB_GetRecordData(db.cdb, C.uint64_t(doff), unsafe.Pointer(&(buf[startPos])), C.uint(dlen)))
 	if ok == 0 {
 		buf = buf[0:startPos]
 		return buf, ErrorIO
@@ -181,7 +181,7 @@ func (db *db) getDataByOffset(doff uint64, dlen uint, buf []byte) ([]byte, error
 func (db *db) hasRecord(h []byte) bool {
 	if len(h) == 32 {
 		var doff uint64
-		dlen := int(C.ZTLF_DB_GetByHash(db.cdb, unsafe.Pointer(&(h[0])), (*C.ulonglong)(unsafe.Pointer(&doff))))
+		dlen := int(C.ZTLF_DB_GetByHash(db.cdb, unsafe.Pointer(&(h[0])), (*C.uint64_t)(unsafe.Pointer(&doff))))
 		return dlen > 0
 	}
 	return false
@@ -199,7 +199,7 @@ func (db *db) getLinks(count uint) (uint, []byte, error) {
 
 // stats returns some basic statistics about this database.
 func (db *db) stats() (recordCount, dataSize uint64) {
-	C.ZTLF_DB_Stats(db.cdb, (*C.ulonglong)(unsafe.Pointer(&recordCount)), (*C.ulonglong)(unsafe.Pointer(&dataSize)))
+	C.ZTLF_DB_Stats(db.cdb, (*C.uint64_t)(unsafe.Pointer(&recordCount)), (*C.uint64_t)(unsafe.Pointer(&dataSize)))
 	return
 }
 
