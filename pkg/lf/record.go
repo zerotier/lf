@@ -49,7 +49,7 @@ type recordBody struct {
 	Owner       Blob   `json:",omitempty"` // Owner of this record (owner public bytes)
 	Certificate Blob   `json:",omitempty"` // Hash of exact record containing certificate for this owner (if CAs are enabled)
 	Links       Blob   `json:",omitempty"` // Links to previous records' hashes (size is a multiple of 32 bytes, link count is size / 32)
-	Timestamp   uint64 `json:""`           // Timestamp (and revision ID) in SECONDS since Unix epoch
+	Timestamp   uint64 ``                  // Timestamp (and revision ID) in SECONDS since Unix epoch
 }
 
 func (rb *recordBody) unmarshalFrom(r io.Reader) error {
@@ -251,7 +251,7 @@ type Record struct {
 
 	Selectors     []Selector `json:",omitempty"` // Things that can be used to find the record
 	Work          Blob       `json:",omitempty"` // Proof of work computed on sha3-256(Body Signing Hash | Selectors) with work cost based on size of body and selectors
-	WorkAlgorithm byte       `json:""`           // Proof of work algorithm
+	WorkAlgorithm byte       ``                  // Proof of work algorithm
 	Signature     Blob       `json:",omitempty"` // Signature of sha3-256(sha3-256(Body Signing Hash | Selectors) | Work | WorkAlgorithm)
 
 	selectorKeys [][]byte  // Cached selector keys

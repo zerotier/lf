@@ -11,7 +11,10 @@ import (
 	"bytes"
 	"crypto/ecdsa"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/binary"
+	"encoding/json"
+	"fmt"
 	"io"
 )
 
@@ -35,9 +38,33 @@ const SelectorTypeBP160 byte = 0
 
 // Selector is a non-forgeable range queryable identifier for records.
 type Selector struct {
-	Ordinal  uint64   // An ordinal value that can be used to perform range queries against selectors
-	Claim    []byte   // 41-byte brainpoolP160t1 recoverable signature
-	claimBuf [41]byte // actual buffer -- this is just referenced by []Claim so JSON encoding will do the right thing
+	Ordinal uint64   // An ordinal value that can be used to perform range queries against selectors
+	Claim   [41]byte // 41-byte brainpoolP160t1 recoverable signature
+}
+
+type selectorInternalJSON struct {
+	Ordinal uint64
+	Claim   Blob
+}
+
+// MarshalJSON encodes this Selector as a JSON object using Blob to encode the claim.
+func (s *Selector) MarshalJSON() ([]byte, error) {
+	str := fmt.Sprintf("{\"Ordinal\":%d,\"Claim\":\"\\b%s\"}", s.Ordinal, base64.StdEncoding.EncodeToString(s.Claim[:]))
+	return []byte(str), nil
+}
+
+// UnmarshalJSON decodes this Selector as a JSON object.
+func (s *Selector) UnmarshalJSON(j []byte) error {
+	var tmp selectorInternalJSON
+	err := json.Unmarshal(j, &tmp)
+	if err != nil {
+		return err
+	}
+	s.Ordinal = tmp.Ordinal
+	if len(tmp.Claim) == len(s.Claim) {
+		copy(s.Claim[:], tmp.Claim)
+	}
+	return nil
 }
 
 // MakeSelectorKey generates a masked selector database key from a plain text name.
@@ -66,7 +93,7 @@ func (s *Selector) key(hash []byte) []byte {
 	sigHash.Write(hash)
 	sigHash.Write(obytes[:])
 	var sigHashBuf [32]byte
-	pub := ECDSARecover(ECCCurveBrainpoolP160T1, sigHash.Sum(sigHashBuf[:0]), s.claimBuf[:])
+	pub := ECDSARecover(ECCCurveBrainpoolP160T1, sigHash.Sum(sigHashBuf[:0]), s.Claim[:])
 	if pub == nil {
 		return obytes[:]
 	}
@@ -81,7 +108,7 @@ func (s *Selector) key(hash []byte) []byte {
 func (s *Selector) marshalTo(out io.Writer) error {
 	out.Write([]byte{SelectorTypeBP160})
 	writeUVarint(out, s.Ordinal)
-	if _, err := out.Write(s.claimBuf[:]); err != nil {
+	if _, err := out.Write(s.Claim[:]); err != nil {
 		return err
 	}
 	return nil
@@ -108,8 +135,7 @@ func (s *Selector) unmarshalFrom(in io.Reader) error {
 	if err != nil {
 		return err
 	}
-	_, err = io.ReadFull(&br, s.claimBuf[:])
-	s.Claim = s.claimBuf[:]
+	_, err = io.ReadFull(&br, s.Claim[:])
 	return err
 }
 
@@ -133,10 +159,8 @@ func (s *Selector) set(plainTextName []byte, ord uint64, hash []byte) {
 	if err != nil {
 		panic(err)
 	}
-	if len(cs) != len(s.claimBuf) {
+	if len(cs) != len(s.Claim) {
 		panic("claim signature size is not correct")
 	}
-
-	copy(s.claimBuf[:], cs)
-	s.Claim = s.claimBuf[:]
+	copy(s.Claim[:], cs)
 }

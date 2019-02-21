@@ -409,7 +409,7 @@ func doMakeGenesis(cfg *Config, basePath string, jsonOutput bool, nodeURL string
 		RecordMaxForwardTimeDrift: 15,
 	}
 
-	fmt.Printf("Genesis parameters:\n\n%s\n\nCreating %d genesis records...\n", lf.PrettyJSON(g), g.RecordMinLinks)
+	fmt.Printf("Genesis parameters:\n\n%s\nCreating %d genesis records...\n", lf.PrettyJSON(g), g.RecordMinLinks)
 
 	genesisRecords, genesisOwner, err := lf.CreateGenesisRecords(lf.OwnerTypeEd25519, &g)
 	if err != nil {
