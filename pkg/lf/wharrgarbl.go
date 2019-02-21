@@ -8,13 +8,14 @@
 package lf
 
 import (
+	"crypto/aes"
 	"encoding/binary"
 	"math/rand"
 	"runtime"
 	"sync"
 	"sync/atomic"
+	"unsafe"
 
-	"golang.org/x/crypto/blake2s"
 	"golang.org/x/crypto/sha3"
 )
 
@@ -25,6 +26,17 @@ var (
 
 // WharrgarblOutputSize is the size of Wharrgarbl's result in bytes.
 const WharrgarblOutputSize = 20
+
+var wharrgarblMMOHashAes, _ = aes.NewCipher([]byte{0xfe, 0xed, 0xd0, 0x0d, 0xde, 0xad, 0xbe, 0xef, 0xfe, 0xed, 0xba, 0xbe, 0xde, 0xad, 0xbe, 0xef})
+
+// wharrgarblMMOHash is a simple Matyas-Meyer-Oseas single block hash function.
+// https://en.wikipedia.org/wiki/One-way_compression_function#Matyas–Meyer–Oseas
+// https://crypto.stackexchange.com/questions/56247/matyas-meyer-oseas-for-super-fast-single-block-hash-function
+func wharrgarblMMOHash(out, in *[2]uint64) {
+	wharrgarblMMOHashAes.Encrypt(((*[16]byte)(unsafe.Pointer(out)))[:], ((*[16]byte)(unsafe.Pointer(in)))[:])
+	out[0] ^= in[0]
+	out[1] ^= in[1]
+}
 
 // Wharrgarbl computes a proof of work from an input challenge.
 func Wharrgarbl(in []byte, difficulty uint32, minMemorySize uint) (out [20]byte, iterations uint64) {
@@ -49,34 +61,27 @@ func Wharrgarbl(in []byte, difficulty uint32, minMemorySize uint) (out [20]byte,
 	doneWG.Add(cpus)
 	for c := 0; c < cpus; c++ {
 		go func() {
-			var hashBuf [40]byte
-			copy(hashBuf[8:], inHashed[:])
-			var collisionHash [32]byte
+			var hashBuf, collisionHash [2]uint64
+			hashBuf0 := binary.BigEndian.Uint64(inHashed[0:8]) ^ binary.BigEndian.Uint64(inHashed[8:16])
+			hashBuf[1] = binary.BigEndian.Uint64(inHashed[16:24]) ^ binary.BigEndian.Uint64(inHashed[24:32])
 			thisCollider := rand.Uint64()
 			var iter uint64
 			for atomic.LoadUint32(&done) == 0 {
 				iter++
 				thisCollider++
 
-				hashBuf[0] = byte(thisCollider >> 56)
-				hashBuf[1] = byte(thisCollider >> 48)
-				hashBuf[2] = byte(thisCollider >> 40)
-				hashBuf[3] = byte(thisCollider >> 32)
-				hashBuf[4] = byte(thisCollider >> 24)
-				hashBuf[5] = byte(thisCollider >> 16)
-				hashBuf[6] = byte(thisCollider >> 8)
-				hashBuf[7] = byte(thisCollider)
-				collisionHash = blake2s.Sum256(hashBuf[:])
-				thisCollision := (uint64(collisionHash[0])<<56 | uint64(collisionHash[1])<<48 | uint64(collisionHash[2])<<40 | uint64(collisionHash[3])<<32 | uint64(collisionHash[4])<<24 | uint64(collisionHash[5])<<16 | uint64(collisionHash[6])<<8 | uint64(collisionHash[7])) % diff64
+				hashBuf[0] = hashBuf0 + thisCollider
+				wharrgarblMMOHash(&collisionHash, &hashBuf)
+				thisCollision := (collisionHash[0] ^ collisionHash[1]) % diff64
 				thisCollision32 := uint32(thisCollision) + uint32(thisCollision>>32)
 				memIdx := uint((thisCollision^runNonce)%collisionTableSize) * 3
 
 				if wharrgarblMemory[memIdx] == thisCollision32 {
 					otherCollider := (uint64(wharrgarblMemory[memIdx+1]) << 32) | uint64(wharrgarblMemory[memIdx+2])
 					if otherCollider != thisCollider {
-						binary.BigEndian.PutUint64(hashBuf[:], otherCollider)
-						collisionHash = blake2s.Sum256(hashBuf[:])
-						if (binary.BigEndian.Uint64(collisionHash[:]) % diff64) == thisCollision {
+						hashBuf[0] = hashBuf0 + thisCollider
+						wharrgarblMMOHash(&collisionHash, &hashBuf)
+						if ((collisionHash[0] ^ collisionHash[1]) % diff64) == thisCollision {
 							atomic.StoreUint32(&done, 1)
 							outLock.Lock()
 							binary.BigEndian.PutUint64(out[0:8], thisCollider)
@@ -109,8 +114,9 @@ func WharrgarblVerify(work []byte, in []byte) uint32 {
 	}
 
 	inHashed := sha3.Sum256(in)
-	var hashBuf [40]byte
-	copy(hashBuf[8:], inHashed[:])
+	var hashBuf, collisionHash [2]uint64
+	hashBuf0 := binary.BigEndian.Uint64(inHashed[0:8]) ^ binary.BigEndian.Uint64(inHashed[8:16])
+	hashBuf[1] = binary.BigEndian.Uint64(inHashed[16:24]) ^ binary.BigEndian.Uint64(inHashed[24:32])
 
 	var colliders [2]uint64
 	for i := 0; i < 2; i++ {
@@ -123,12 +129,11 @@ func WharrgarblVerify(work []byte, in []byte) uint32 {
 	}
 
 	diff64 := (uint64(difficulty) << 32) | 0x00000000ffffffff
-	var collisionHash [32]byte
 	var collisions [2]uint64
 	for i := 0; i < 2; i++ {
-		binary.BigEndian.PutUint64(hashBuf[:], colliders[i])
-		collisionHash = blake2s.Sum256(hashBuf[:])
-		collisions[i] = binary.BigEndian.Uint64(collisionHash[0:8]) % diff64
+		hashBuf[0] = hashBuf0 + colliders[i]
+		wharrgarblMMOHash(&collisionHash, &hashBuf)
+		collisions[i] = (collisionHash[0] ^ collisionHash[1]) % diff64
 	}
 
 	if collisions[0] == collisions[1] {
