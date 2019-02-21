@@ -401,18 +401,15 @@ func doMakeGenesis(cfg *Config, basePath string, jsonOutput bool, nodeURL string
 	g := lf.GenesisParameters{
 		Name:                      "Sol",
 		WorkRequired:              true,
-		LinkKey:                   nwKey[:],
+		LinkKey:                   nwKey,
 		TimestampFloor:            lf.TimeSec(),
 		RecordMinLinks:            3,
 		RecordMaxValueSize:        1024,
 		RecordMaxSize:             lf.RecordMaxSize,
 		RecordMaxForwardTimeDrift: 15,
-		SettingsAmendable:         false,
-		CAsAmendable:              false,
 	}
 
-	gJSON, _ := json.MarshalIndent(g, "", "  ")
-	fmt.Printf("Genesis parameters:\n\n%s\n\nCreating %d genesis records...\n", gJSON, g.RecordMinLinks)
+	fmt.Printf("Genesis parameters:\n\n%s\n\nCreating %d genesis records...\n", lf.PrettyJSON(g), g.RecordMinLinks)
 
 	genesisRecords, genesisOwner, err := lf.CreateGenesisRecords(lf.OwnerTypeEd25519, &g)
 	if err != nil {
@@ -423,8 +420,7 @@ func doMakeGenesis(cfg *Config, basePath string, jsonOutput bool, nodeURL string
 
 	var grData bytes.Buffer
 	for i := 0; i < len(genesisRecords); i++ {
-		rJSON, _ := json.MarshalIndent(genesisRecords[i], "", "  ")
-		fmt.Printf("%s\n", rJSON)
+		fmt.Printf("%s\n", lf.PrettyJSON(genesisRecords[i]))
 		err = genesisRecords[i].MarshalTo(&grData)
 		if err != nil {
 			fmt.Printf("ERROR: %s\n", err.Error())
@@ -434,8 +430,8 @@ func doMakeGenesis(cfg *Config, basePath string, jsonOutput bool, nodeURL string
 	}
 
 	ioutil.WriteFile("genesis.lf", grData.Bytes(), 0644)
-	ioutil.WriteFile("genesis.go", []byte(fmt.Sprintf("/*\n%s\n*/\n%#v", gJSON, grData.Bytes())), 0644)
-	if g.SettingsAmendable || g.CAsAmendable {
+	ioutil.WriteFile("genesis.go", []byte(fmt.Sprintf("/*\n%s\n*/\n%#v", lf.PrettyJSON(g), grData.Bytes())), 0644)
+	if len(g.Amendable) > 0 {
 		ioutil.WriteFile("genesis.secret", genesisOwner.PrivateBytes(), 0600)
 	}
 

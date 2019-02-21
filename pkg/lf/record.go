@@ -45,11 +45,11 @@ const RecordWorkAlgorithmWharrgarbl byte = 1
 // recordBody represents the main body of a record including its value, owner public keys, etc.
 // It's included as part of Record but separated since in record construction we want to treat it as a separate element.
 type recordBody struct {
-	MaskedValue []byte `json:",omitempty"` // Masked and possibly compressed record value
-	Owner       []byte `json:",omitempty"` // Owner of this record (owner public bytes)
-	Certificate []byte `json:",omitempty"` // Hash of exact record containing certificate for this owner (if CAs are enabled)
-	Links       []byte `json:",omitempty"` // Links to previous records' hashes (size is a multiple of 32 bytes, link count is size / 32)
-	Timestamp   uint64 ``                  // Timestamp (and revision ID) in SECONDS since Unix epoch
+	Value       Blob   `json:",omitempty"` // Record value (possibly masked and/or compressed, use GetValue() to get)
+	Owner       Blob   `json:",omitempty"` // Owner of this record (owner public bytes)
+	Certificate Blob   `json:",omitempty"` // Hash of exact record containing certificate for this owner (if CAs are enabled)
+	Links       Blob   `json:",omitempty"` // Links to previous records' hashes (size is a multiple of 32 bytes, link count is size / 32)
+	Timestamp   uint64 `json:""`           // Timestamp (and revision ID) in SECONDS since Unix epoch
 }
 
 func (rb *recordBody) unmarshalFrom(r io.Reader) error {
@@ -65,13 +65,13 @@ func (rb *recordBody) unmarshalFrom(r io.Reader) error {
 		if l > RecordMaxSize {
 			return ErrorRecordInvalid
 		}
-		rb.MaskedValue = make([]byte, uint(l))
-		_, err = io.ReadFull(&rr, rb.MaskedValue)
+		rb.Value = make([]byte, uint(l))
+		_, err = io.ReadFull(&rr, rb.Value)
 		if err != nil {
 			return err
 		}
 	} else {
-		rb.MaskedValue = nil
+		rb.Value = nil
 	}
 
 	l, err = binary.ReadUvarint(&rr)
@@ -135,10 +135,10 @@ func (rb *recordBody) marshalTo(w io.Writer) error {
 		return err
 	}
 
-	if _, err := writeUVarint(w, uint64(len(rb.MaskedValue))); err != nil {
+	if _, err := writeUVarint(w, uint64(len(rb.Value))); err != nil {
 		return err
 	}
-	if _, err := w.Write(rb.MaskedValue); err != nil {
+	if _, err := w.Write(rb.Value); err != nil {
 		return err
 	}
 
@@ -186,7 +186,7 @@ func (rb *recordBody) sizeBytes() uint {
 // to get trimmed down a bit by discarding actual values for very old records.
 func (rb *recordBody) signingHash() (sum [32]byte) {
 	h := NewShandwich256()
-	vh := Shandwich256(rb.MaskedValue)
+	vh := Shandwich256(rb.Value)
 	h.Write(vh[:])
 	h.Write(b1_0)
 	h.Write(rb.Owner)
@@ -208,13 +208,13 @@ func (rb *recordBody) LinkCount() uint { return uint(len(rb.Links) / 32) }
 // GetValue decrypts and possibly decompresses this record's masked value.
 // An apparently invalid masking key or a decompression failure will result in an empty/nil value.
 func (rb *recordBody) GetValue(maskingKey []byte) ([]byte, error) {
-	if len(rb.MaskedValue) < 3 {
+	if len(rb.Value) < 3 {
 		return nil, nil
 	}
 
 	var unmaskedValue []byte
 	if len(maskingKey) > 0 {
-		unmaskedValue = make([]byte, len(rb.MaskedValue))
+		unmaskedValue = make([]byte, len(rb.Value))
 		var cfbIv [16]byte
 		binary.BigEndian.PutUint64(cfbIv[0:8], rb.Timestamp)
 		if len(rb.Owner) >= 8 {
@@ -222,9 +222,9 @@ func (rb *recordBody) GetValue(maskingKey []byte) ([]byte, error) {
 		}
 		maskingKeyH := sha256.Sum256(maskingKey)
 		c, _ := aes.NewCipher(maskingKeyH[:])
-		cipher.NewCFBDecrypter(c, cfbIv[:]).XORKeyStream(unmaskedValue, rb.MaskedValue)
+		cipher.NewCFBDecrypter(c, cfbIv[:]).XORKeyStream(unmaskedValue, rb.Value)
 	} else {
-		unmaskedValue = rb.MaskedValue
+		unmaskedValue = rb.Value
 	}
 
 	if (unmaskedValue[0] & 0x01) != 0 {
@@ -250,9 +250,9 @@ type Record struct {
 	recordBody
 
 	Selectors     []Selector `json:",omitempty"` // Things that can be used to find the record
-	Work          []byte     `json:",omitempty"` // Proof of work computed on sha3-256(Body Signing Hash | Selectors) with work cost based on size of body and selectors
-	WorkAlgorithm byte       ``                  // Proof of work algorithm
-	Signature     []byte     `json:",omitempty"` // Signature of sha3-256(sha3-256(Body Signing Hash | Selectors) | Work | WorkAlgorithm)
+	Work          Blob       `json:",omitempty"` // Proof of work computed on sha3-256(Body Signing Hash | Selectors) with work cost based on size of body and selectors
+	WorkAlgorithm byte       `json:""`           // Proof of work algorithm
+	Signature     Blob       `json:",omitempty"` // Signature of sha3-256(sha3-256(Body Signing Hash | Selectors) | Work | WorkAlgorithm)
 
 	selectorKeys [][]byte  // Cached selector keys
 	data         []byte    // Cached raw data
@@ -616,7 +616,7 @@ func NewRecordStart(value []byte, links [][]byte, maskingKey []byte, plainTextSe
 			cipher.NewCFBEncrypter(c, cfbIv[:]).XORKeyStream(valueMasked, valueMasked)
 		}
 
-		r.recordBody.MaskedValue = valueMasked
+		r.recordBody.Value = valueMasked
 	}
 
 	r.recordBody.Owner = append(r.recordBody.Owner, ownerPublic...)

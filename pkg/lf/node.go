@@ -270,7 +270,7 @@ func (n *Node) AddRecord(r *Record) error {
 	if len(rdata) > RecordMaxSize || uint(len(rdata)) > n.genesisParameters.RecordMaxSize {
 		return ErrorRecordTooLarge
 	}
-	if uint(len(r.MaskedValue)) > n.genesisParameters.RecordMaxValueSize {
+	if uint(len(r.Value)) > n.genesisParameters.RecordMaxValueSize {
 		return ErrorRecordValueTooLarge
 	}
 	if r.LinkCount() < n.genesisParameters.RecordMinLinks {

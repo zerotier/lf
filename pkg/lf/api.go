@@ -29,34 +29,34 @@ const APIMaxResponseSize = 4194304
 
 // APIStatusPeer contains information about a connected peer.
 type APIStatusPeer struct {
-	Address   string `json:"address"`   // IP and port
-	PublicKey []byte `json:"publickey"` // public key
-	Inbound   bool   `json:"inbound"`   // true if this is an inbound connection
+	Address   string `json:""` // IP and port
+	PublicKey []byte `json:""` // public key
+	Inbound   bool   `json:""` // true if this is an inbound connection
 }
 
 // APIProxyStatus contains info about the proxy through which this server was reached (if an LF proxy is present).
 type APIProxyStatus struct {
-	Server        string `json:"server,omitempty"`   // URL of server being accessed through the proxy
-	Software      string `json:"software,omitempty"` // Software implementation name of proxy
-	Version       [4]int `json:"version"`            // Software version of proxy
-	MinAPIVersion int    `json:"minapiversion"`      // Minimum supported API version of proxy
-	MaxAPIVersion int    `json:"maxapiversion"`      // Maximum supported API version of proxy
+	Server        string `json:",omitempty"` // URL of server being accessed through the proxy
+	Software      string `json:",omitempty"` // Software implementation name of proxy
+	Version       [4]int `json:""`           // Software version of proxy
+	MinAPIVersion int    `json:""`           // Minimum supported API version of proxy
+	MaxAPIVersion int    `json:""`           // Maximum supported API version of proxy
 }
 
 // APIStatus contains status information about this node and the network it belongs to.
 type APIStatus struct {
-	Software          string            `json:"software,omitempty"` // Software implementation name
-	Version           [4]int            `json:"version"`            // Version of software
-	APIVersion        int               `json:"apiversion"`         // Current version of API
-	MinAPIVersion     int               `json:"minapiversion"`      // Minimum API version supported
-	MaxAPIVersion     int               `json:"maxapiversion"`      // Maximum API version supported
-	Uptime            uint64            `json:"uptime"`             // Node uptime in seconds
-	Clock             uint64            `json:"clock"`              // Node local clock in seconds since epoch
-	DBRecordCount     uint64            `json:"dbrecordcount"`      // Number of records in database
-	DBSize            uint64            `json:"dbsize"`             // Total size of records in database in bytes
-	Peers             []APIStatusPeer   `json:"peers,omitempty"`    // Connected peers
-	GenesisParameters GenesisParameters `json:"genesisparameters"`  // Genesis record contents that define constraints for this LF network
-	ViaProxy          *APIProxyStatus   `json:"viaproxy,omitempty"` // Proxies can add this to describe their own config and status while still reporting that of the server
+	Software          string            `json:",omitempty"` // Software implementation name
+	Version           [4]int            `json:""`           // Version of software
+	APIVersion        int               `json:""`           // Current version of API
+	MinAPIVersion     int               `json:""`           // Minimum API version supported
+	MaxAPIVersion     int               `json:""`           // Maximum API version supported
+	Uptime            uint64            `json:""`           // Node uptime in seconds
+	Clock             uint64            `json:""`           // Node local clock in seconds since epoch
+	DBRecordCount     uint64            `json:""`           // Number of records in database
+	DBSize            uint64            `json:""`           // Total size of records in database in bytes
+	Peers             []APIStatusPeer   `json:",omitempty"` // Connected peers
+	GenesisParameters GenesisParameters `json:""`           // Genesis record contents that define constraints for this LF network
+	ViaProxy          *APIProxyStatus   `json:",omitempty"` // Proxies can add this to describe their own config and status while still reporting that of the server
 }
 
 // APIQueryRange specifies a selector or selector range.
@@ -66,22 +66,22 @@ type APIStatus struct {
 // KeyRange method keeps selector names secret while the Name/Range method exposes them to the node or
 // proxy being queried.
 type APIQueryRange struct {
-	Name     []byte   `json:"name,omitempty"`     // Name of selector (plain text)
-	Range    []uint64 `json:"range,omitempty"`    // Ordinal value if [1] or range if [2] in size (assumed to be 0 if empty)
-	KeyRange [][]byte `json:"keyrange,omitempty"` // Selector key or key range, overrides Name and Range if present (allows queries without revealing name)
+	Name     Blob     `json:",omitempty"` // Name of selector (plain text)
+	Range    []uint64 `json:",omitempty"` // Ordinal value if [1] or range if [2] in size (assumed to be 0 if empty)
+	KeyRange []Blob   `json:",omitempty"` // Selector key or key range, overrides Name and Range if present (allows queries without revealing name)
 }
 
 // APIQuery describes a query for records in the form of an ordered series of selector ranges.
 type APIQuery struct {
-	Range      []APIQueryRange `json:"range"`                // Selectors or selector range(s)
-	MaskingKey []byte          `json:"maskingkey,omitempty"` // Masking key to unmask record value server-side (if non-empty)
+	Range      []APIQueryRange `json:""`           // Selectors or selector range(s)
+	MaskingKey Blob            `json:",omitempty"` // Masking key to unmask record value server-side (if non-empty)
 }
 
 // APIQueryResult is a single query result.
 type APIQueryResult struct {
-	Record *Record `json:"record"`          // Record itself.
-	Value  []byte  `json:"value,omitempty"` // Unmasked value if masking key was included
-	Weight string  `json:"weight"`          // Record weight as a 128-bit hex value
+	Record *Record `json:""`           // Record itself.
+	Value  Blob    `json:",omitempty"` // Unmasked value if masking key was included
+	Weight string  `json:""`           // Record weight as a 128-bit hex value
 }
 
 // APIQueryResults is a list of results to an API query.
@@ -92,25 +92,25 @@ type APIQueryResults []APIQueryResult
 
 // APINewSelector is a selector plain text name and an ordinal value (use zero if you don't care).
 type APINewSelector struct {
-	Name    []byte `json:"name,omitempty"` // Name of this selector
-	Ordinal uint64 `json:"ordinal"`        // A sortable value (use 0 if you don't want to do range queries)
+	Name    Blob   `json:",omitempty"` // Name of this selector
+	Ordinal uint64 `json:""`           // A sortable value (use 0 if you don't want to do range queries)
 }
 
 // APINew is a request to create and submit a new record.
 type APINew struct {
-	Selectors       []APINewSelector `json:"selectors,omitempty"`       // Plain text selector names and ordinals
-	MaskingKey      []byte           `json:"maskingkey,omitempty"`      // An arbitrary key used to mask the record's value from those that don't know what they're looking for
-	OwnerPrivateKey []byte           `json:"ownerprivatekey,omitempty"` // Full owner including private key (result of owner PrivateBytes() method)
-	OwnerSeed       []byte           `json:"ownerseed,omitempty"`       // Seed to deterministically generate owner (used if ownerprivatekey is missing)
-	Links           [][]byte         `json:"links,omitempty"`           // Links to other records in the DAG (each link must be 32 bytes in size)
-	Value           []byte           `json:"value,omitempty"`           // Plain text (unmasked, uncompressed) value for this record
-	Timestamp       *uint64          `json:"timestamp,omitempty"`       // Record timestamp in SECONDS since epoch (server time is used if zero or omitted)
+	Selectors       []APINewSelector `json:",omitempty"` // Plain text selector names and ordinals
+	MaskingKey      Blob             `json:",omitempty"` // An arbitrary key used to mask the record's value from those that don't know what they're looking for
+	OwnerPrivateKey Blob             `json:",omitempty"` // Full owner including private key (result of owner PrivateBytes() method)
+	OwnerSeed       Blob             `json:",omitempty"` // Seed to deterministically generate owner (used if ownerprivatekey is missing)
+	Links           []Blob256        `json:",omitempty"` // Links to other records in the DAG (each link must be 32 bytes in size)
+	Value           Blob             `json:",omitempty"` // Plain text (unmasked, uncompressed) value for this record
+	Timestamp       *uint64          `json:",omitempty"` // Record timestamp in SECONDS since epoch (server time is used if zero or omitted)
 }
 
 // APIError indicates an error and is returned with non-200 responses.
 type APIError struct {
-	Code    int    `json:"code"`              // Positive error codes simply mirror HTTP response codes, while negative ones are LF-specific
-	Message string `json:"message,omitempty"` // Message indicating the reason for the error
+	Code    int    `json:""`           // Positive error codes simply mirror HTTP response codes, while negative ones are LF-specific
+	Message string `json:",omitempty"` // Message indicating the reason for the error
 }
 
 // Error implements the error interface, making APIError an 'error' in the Go sense.
@@ -305,7 +305,11 @@ func (m *APINew) execute(workAlgorithm byte) (*Record, *APIError) {
 		selord[i] = m.Selectors[i].Ordinal
 	}
 
-	rec, err := NewRecord(m.Value, m.Links, m.MaskingKey, sel, selord, nil, ts, workAlgorithm, owner)
+	links := make([][]byte, len(m.Links))
+	for i := range m.Links {
+		links[i] = m.Links[i][:]
+	}
+	rec, err := NewRecord(m.Value, links, m.MaskingKey, sel, selord, nil, ts, workAlgorithm, owner)
 	if err != nil {
 		return nil, &APIError{Code: http.StatusBadRequest, Message: "record generation failed: " + err.Error()}
 	}

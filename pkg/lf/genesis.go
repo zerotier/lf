@@ -13,19 +13,18 @@ import (
 
 // GenesisParameters is the payload (JSON encoded) of the first RecordMinLinks records in a global data store.
 type GenesisParameters struct {
-	Name                       string   `json:"name,omitempty"`                       // Name of this LF network / data store
-	Contact                    string   `json:"contact,omitempty"`                    // Contact info for this network (may be empty)
-	Comment                    string   `json:"comment,omitempty"`                    // Optional comment
-	RootCertificateAuthorities [][]byte `json:"rootcertificateauthorities,omitempty"` // X.509 certificates for master CAs for this data store (empty for an unbiased work-only data store)
-	WorkRequired               bool     `json:"workrequired"`                         // Is proof of work required?
-	LinkKey                    []byte   `json:"linkkey"`                              // Static 32-byte key used to ensure that nodes in this network only connect to one another
-	TimestampFloor             uint64   `json:"timestampfloor"`                       // Floor for network record timestamps
-	RecordMinLinks             uint     `json:"recordminlinks"`                       // Minimum number of links required for non-genesis records
-	RecordMaxValueSize         uint     `json:"recordmaxvaluesize"`                   // Maximum size of record values
-	RecordMaxSize              uint     `json:"recordmaxsize"`                        // Maximum size of records (up to the RecordMaxSize constant)
-	RecordMaxForwardTimeDrift  uint     `json:"recordmaxforwardtimedrift"`            // Maximum number of seconds in the future a record can be timestamped
-	SettingsAmendable          bool     `json:"settingsamendable"`                    // If true, genesis settings can be amended later by the same owner using the genesis private key
-	CAsAmendable               bool     `json:"casamendable"`                         // If true, CAs can be amended (if present)
+	Name                       string   `json:",omitempty"` // Name of this LF network / data store
+	Contact                    string   `json:",omitempty"` // Contact info for this network (may be empty)
+	Comment                    string   `json:",omitempty"` // Optional comment
+	RootCertificateAuthorities []Blob   `json:",omitempty"` // X.509 certificates for master CAs for this data store (empty for an unbiased work-only data store)
+	WorkRequired               bool     `json:""`           // Is proof of work required?
+	LinkKey                    Blob256  `json:""`           // Static 32-byte key used to ensure that nodes in this network only connect to one another
+	TimestampFloor             uint64   `json:""`           // Floor for network record timestamps
+	RecordMinLinks             uint     `json:""`           // Minimum number of links required for non-genesis records
+	RecordMaxValueSize         uint     `json:""`           // Maximum size of record values
+	RecordMaxSize              uint     `json:""`           // Maximum size of records (up to the RecordMaxSize constant)
+	RecordMaxForwardTimeDrift  uint     `json:""`           // Maximum number of seconds in the future a record can be timestamped
+	Amendable                  []string `json:",omitempty"` // List of json field names that the genesis owner can change by posting more records
 }
 
 // CreateGenesisRecords creates a set of genesis records for a new LF data store.
@@ -56,7 +55,7 @@ func CreateGenesisRecords(genesisOwnerType int, genesisParameters *GenesisParame
 
 	// Subsequent genesis records are empty and just exist so real records can satisfy their minimum link requirement.
 	for i := uint(1); i < genesisParameters.RecordMinLinks; i++ {
-		r, err := NewRecord(nil, links, nil, nil, nil, nil, now, RecordWorkAlgorithmWharrgarbl, genesisOwner)
+		r, err := NewRecord(nil, links, nil, nil, nil, nil, now+uint64(i), RecordWorkAlgorithmWharrgarbl, genesisOwner)
 		if err != nil {
 			return nil, nil, err
 		}

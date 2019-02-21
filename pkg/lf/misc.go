@@ -9,9 +9,12 @@ package lf
 
 import (
 	"encoding/binary"
+	"encoding/json"
 	"io"
 	"math"
 	"time"
+
+	"github.com/tidwall/pretty"
 )
 
 // TimeMs returns the time in milliseconds since epoch.
@@ -104,4 +107,21 @@ func (cr *countingWriter) Write(b []byte) (n int, err error) {
 	n = len(b)
 	*cr = countingWriter(uint(*cr) + uint(n))
 	return
+}
+
+var jsonPrettyOptions = &pretty.Options{
+	Width:    2147483647, // always put arrays on one line
+	Prefix:   "",
+	Indent:   "  ",
+	SortKeys: false,
+}
+
+// PrettyJSON returns a "pretty" JSON string or the "null" string if something goes wrong.
+// This formats things a little differently from MarshalIndent to make the sorts of JSON we generate easier to read.
+func PrettyJSON(obj interface{}) string {
+	j, err := json.Marshal(obj)
+	if err != nil {
+		return "null"
+	}
+	return string(pretty.PrettyOptions(j, jsonPrettyOptions))
 }

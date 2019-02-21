@@ -13,6 +13,7 @@ import (
 	"crypto/elliptic"
 	secrand "crypto/rand"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"io"
 	"math/rand"
@@ -55,6 +56,28 @@ func TestCore(out io.Writer) bool {
 		fmt.Fprintf(out, "FAILED\n")
 		return false
 	}
+	fmt.Fprintf(out, "Testing Blob serialize/deserialize... ")
+	for i := 1; i < 1024; i++ {
+		var bb Blob
+		bb = make([]byte, i)
+		secrand.Read(bb)
+		bj, err := json.Marshal(bb)
+		if err != nil {
+			fmt.Fprintf(out, "FAILED (marshal %d)\n", i)
+			return false
+		}
+		var bb2 Blob
+		err = json.Unmarshal(bj, &bb2)
+		if err != nil {
+			fmt.Fprintf(out, "FAILED (unmarshal %d, %s)\n", i, err.Error())
+			return false
+		}
+		if !bytes.Equal(bb, bb2) {
+			fmt.Fprintf(out, "FAILED (unmarshal %d, values not equal)\n", i)
+			return false
+		}
+	}
+	fmt.Fprintf(out, "OK\n")
 
 	curves := []elliptic.Curve{elliptic.P384(), elliptic.P521(), ECCCurveBrainpoolP160T1}
 	for ci := range curves {
@@ -108,22 +131,20 @@ func TestCore(out io.Writer) bool {
 
 		for i := 0; i < 32; i++ {
 			secrand.Read(junk[:])
-			sig, err := ECDSASignEmbedRecoveryIndex(priv, junk[:])
-			if pub == nil {
-				fmt.Fprintf(out, "  FAILED (ECDSARecover returned error: %s)\n", err.Error())
-			}
+			sig, _ := ECDSASignEmbedRecoveryIndex(priv, junk[:])
 			if i == 0 {
-				fmt.Fprintf(out, "  Key Recoverable Signature: [%d] %x\n", len(sig), sig)
+				fmt.Fprintf(out, "  Key Recoverable Signature: [%d] %x\n  Testing key recovery... ", len(sig), sig)
 			}
 			pub := ECDSARecover(curve, junk[:], sig)
 			if pub == nil {
-				fmt.Fprintf(out, "  FAILED (ECDSARecover returned nil)\n")
+				fmt.Fprintf(out, "FAILED (ECDSARecover returned nil)\n")
 			}
 			if pub.X.Cmp(priv.PublicKey.X) != 0 || pub.Y.Cmp(priv.PublicKey.Y) != 0 {
 				pcomp, _ := ECDSACompressPublicKey(pub)
-				fmt.Fprintf(out, "  FAILED (ECDSARecover returned wrong key: %x)\n", pcomp)
+				fmt.Fprintf(out, "FAILED (ECDSARecover returned wrong key: %x)\n", pcomp)
 			}
 		}
+		fmt.Fprintf(out, "OK\n")
 	}
 
 	fmt.Fprintf(out, "Testing Selector... ")
