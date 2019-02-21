@@ -63,7 +63,7 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <signal.h>
-#include <pthread/pthread.h>
+#include <pthread.h>
 #include <sched.h>
 
 #ifndef MAP_FILE /* legacy flag, not used on some platforms */
