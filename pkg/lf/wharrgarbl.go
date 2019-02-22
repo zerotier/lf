@@ -28,13 +28,12 @@ var (
 // WharrgarblOutputSize is the size of Wharrgarbl's result in bytes.
 const WharrgarblOutputSize = 20
 
-// wharrgarblMMOHash is a simple 12X dual Matyas-Meyer-Oseas single block hash function.
-// https://en.wikipedia.org/wiki/One-way_compression_function#Matyas–Meyer–Oseas
-// https://crypto.stackexchange.com/questions/56247/matyas-meyer-oseas-for-super-fast-single-block-hash-function
+// wharrgarblMMOHash is a simple 16X dual Matyas-Meyer-Oseas single block hash function.
 func wharrgarblMMOHash(mmoCipher0, mmoCipher1 cipher.Block, out, in *[16]byte) {
 	var tmp0, tmp1 [2]uint64
 	tmp0s := ((*[16]byte)(unsafe.Pointer(&tmp0)))[:]
 	tmp1s := ((*[16]byte)(unsafe.Pointer(&tmp1)))[:]
+
 	mmoCipher0.Encrypt(tmp0s, in[:])
 	for i := 0; i < 16; i++ {
 		tmp0s[i] ^= in[i]
@@ -42,7 +41,8 @@ func wharrgarblMMOHash(mmoCipher0, mmoCipher1 cipher.Block, out, in *[16]byte) {
 	mmoCipher1.Encrypt(tmp1s, tmp0s)
 	tmp1[0] ^= tmp0[0]
 	tmp1[1] ^= tmp0[1]
-	for k := 0; k < 8; k++ {
+
+	for k := 0; k < 12; k++ {
 		mmoCipher0.Encrypt(tmp0s, tmp1s)
 		tmp0[0] ^= tmp1[0]
 		tmp0[1] ^= tmp1[1]
@@ -50,6 +50,7 @@ func wharrgarblMMOHash(mmoCipher0, mmoCipher1 cipher.Block, out, in *[16]byte) {
 		tmp1[0] ^= tmp0[0]
 		tmp1[1] ^= tmp0[1]
 	}
+
 	mmoCipher0.Encrypt(tmp0s, tmp1s)
 	tmp0[0] ^= tmp1[0]
 	tmp0[1] ^= tmp1[1]
@@ -59,14 +60,61 @@ func wharrgarblMMOHash(mmoCipher0, mmoCipher1 cipher.Block, out, in *[16]byte) {
 	}
 }
 
+func wharrgarblWorkerFunc(mmoCipher0, mmoCipher1 cipher.Block, runNonce, collisionTableSize, diff64 uint64, iterations *uint64, done *uint32, outLock *sync.Mutex, out []byte, doneWG *sync.WaitGroup) {
+	var collisionHashIn, collisionHashOut [16]byte
+	var iter uint64
+	thisCollider := rand.Uint64()
+
+	for atomic.LoadUint32(done) == 0 {
+		iter++
+		thisCollider++
+
+		binary.BigEndian.PutUint64(collisionHashIn[0:8], thisCollider)
+		wharrgarblMMOHash(mmoCipher0, mmoCipher1, &collisionHashOut, &collisionHashIn)
+		thisCollision := (binary.BigEndian.Uint64(collisionHashOut[0:8]) ^ binary.BigEndian.Uint64(collisionHashOut[8:16])) % diff64
+		thisCollision32 := uint32(thisCollision) + uint32(thisCollision>>32)
+		memIdx := uint((thisCollision^runNonce)%collisionTableSize) * 3
+
+		if wharrgarblMemory[memIdx] == thisCollision32 {
+			otherCollider := (uint64(wharrgarblMemory[memIdx+1]) << 32) | uint64(wharrgarblMemory[memIdx+2])
+			if otherCollider != thisCollider {
+				binary.BigEndian.PutUint64(collisionHashIn[0:8], otherCollider)
+				wharrgarblMMOHash(mmoCipher0, mmoCipher1, &collisionHashOut, &collisionHashIn)
+				otherCollision := (binary.BigEndian.Uint64(collisionHashOut[0:8]) ^ binary.BigEndian.Uint64(collisionHashOut[8:16])) % diff64
+				if otherCollision == thisCollision {
+					atomic.StoreUint32(done, 1)
+					outLock.Lock()
+					binary.BigEndian.PutUint64(out[0:8], thisCollider)
+					binary.BigEndian.PutUint64(out[8:16], otherCollider)
+					outLock.Unlock()
+					break
+				}
+			}
+		}
+
+		wharrgarblMemory[memIdx] = thisCollision32
+		wharrgarblMemory[memIdx+1] = uint32(thisCollider >> 32)
+		wharrgarblMemory[memIdx+2] = uint32(thisCollider)
+	}
+
+	atomic.AddUint64(iterations, iter)
+
+	doneWG.Done()
+}
+
 // Wharrgarbl computes a proof of work from an input challenge.
 func Wharrgarbl(in []byte, difficulty uint32, minMemorySize uint) (out [20]byte, iterations uint64) {
 	wharrgarblMemoryLock.Lock()
 	defer wharrgarblMemoryLock.Unlock()
+
 	if minMemorySize < (1024 * 3) {
 		minMemorySize = (1024 * 3)
 	}
 	if uint(len(wharrgarblMemory)) < (minMemorySize / 4) {
+		if wharrgarblMemory != nil {
+			wharrgarblMemory = nil
+			runtime.GC()
+		}
 		wharrgarblMemory = make([]uint32, minMemorySize/4)
 	}
 	collisionTableSize := uint64(len(wharrgarblMemory) / 3)
@@ -74,54 +122,18 @@ func Wharrgarbl(in []byte, difficulty uint32, minMemorySize uint) (out [20]byte,
 	inHashed := sha3.Sum256(in)
 	mmoCipher0, _ := aes.NewCipher(inHashed[0:16])
 	mmoCipher1, _ := aes.NewCipher(inHashed[16:32])
-
 	diff64 := (uint64(difficulty) << 32) | 0x00000000ffffffff
 	runNonce := rand.Uint64() // a nonce that randomizes indexes in the collision table to facilitate re-use without clearing
-	cpus := runtime.NumCPU()
+
 	var outLock sync.Mutex
 	var done uint32
 	var doneWG sync.WaitGroup
+	cpus := runtime.NumCPU()
 	doneWG.Add(cpus)
-	for c := 0; c < cpus; c++ {
-		go func() {
-			var collisionHashIn, collisionHashOut [16]byte
-			thisCollider := rand.Uint64()
-			var iter uint64
-			for atomic.LoadUint32(&done) == 0 {
-				iter++
-				thisCollider++
-
-				binary.BigEndian.PutUint64(collisionHashIn[0:8], thisCollider)
-				wharrgarblMMOHash(mmoCipher0, mmoCipher1, &collisionHashOut, &collisionHashIn)
-				thisCollision := (binary.BigEndian.Uint64(collisionHashOut[0:8]) ^ binary.BigEndian.Uint64(collisionHashOut[8:16])) % diff64
-				thisCollision32 := uint32(thisCollision) + uint32(thisCollision>>32)
-				memIdx := uint((thisCollision^runNonce)%collisionTableSize) * 3
-
-				if wharrgarblMemory[memIdx] == thisCollision32 {
-					otherCollider := (uint64(wharrgarblMemory[memIdx+1]) << 32) | uint64(wharrgarblMemory[memIdx+2])
-					if otherCollider != thisCollider {
-						binary.BigEndian.PutUint64(collisionHashIn[0:8], otherCollider)
-						wharrgarblMMOHash(mmoCipher0, mmoCipher1, &collisionHashOut, &collisionHashIn)
-						otherCollision := (binary.BigEndian.Uint64(collisionHashOut[0:8]) ^ binary.BigEndian.Uint64(collisionHashOut[8:16])) % diff64
-						if otherCollision == thisCollision {
-							atomic.StoreUint32(&done, 1)
-							outLock.Lock()
-							binary.BigEndian.PutUint64(out[0:8], thisCollider)
-							binary.BigEndian.PutUint64(out[8:16], otherCollider)
-							outLock.Unlock()
-							break
-						}
-					}
-				}
-
-				wharrgarblMemory[memIdx] = thisCollision32
-				wharrgarblMemory[memIdx+1] = uint32(thisCollider >> 32)
-				wharrgarblMemory[memIdx+2] = uint32(thisCollider)
-			}
-			atomic.AddUint64(&iterations, iter)
-			doneWG.Done()
-		}()
+	for c := 1; c < cpus; c++ {
+		go wharrgarblWorkerFunc(mmoCipher0, mmoCipher1, runNonce, collisionTableSize, diff64, &iterations, &done, &outLock, out[:], &doneWG)
 	}
+	wharrgarblWorkerFunc(mmoCipher0, mmoCipher1, runNonce, collisionTableSize, diff64, &iterations, &done, &outLock, out[:], &doneWG)
 	doneWG.Wait()
 
 	binary.BigEndian.PutUint32(out[16:20], difficulty)

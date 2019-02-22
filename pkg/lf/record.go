@@ -30,7 +30,7 @@ var (
 const recordBodyFlagHasCertificate byte = 0x01
 
 // recordWharrgarblMemory is the default amount of memory to use for Wharrgarbl momentum-type PoW.
-const recordWharrgarblMemory = 1024 * 1024 * 384
+const recordWharrgarblMemory = 1024 * 1024 * 512
 
 // RecordMaxSize is a global maximum record size (binary serialized length).
 // This is more or less a sanity limit to prevent malloc overflow attacks and similar things.
