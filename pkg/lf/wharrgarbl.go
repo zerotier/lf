@@ -28,24 +28,34 @@ var (
 // WharrgarblOutputSize is the size of Wharrgarbl's result in bytes.
 const WharrgarblOutputSize = 20
 
-// wharrgarblMMOHash is a simple 32X Matyas-Meyer-Oseas single block hash function.
+// wharrgarblMMOHash is a simple 12X dual Matyas-Meyer-Oseas single block hash function.
 // https://en.wikipedia.org/wiki/One-way_compression_function#Matyas–Meyer–Oseas
 // https://crypto.stackexchange.com/questions/56247/matyas-meyer-oseas-for-super-fast-single-block-hash-function
-func wharrgarblMMOHash(mmoCipher0, mmoCipher1 cipher.Block, out, in *[2]uint64) {
-	var tmp [2]uint64
-	mmoCipher0.Encrypt(((*[16]byte)(unsafe.Pointer(&tmp)))[:], ((*[16]byte)(unsafe.Pointer(in)))[:])
-	tmp[0] ^= in[0]
-	tmp[1] ^= in[1]
-	mmoCipher1.Encrypt(((*[16]byte)(unsafe.Pointer(out)))[:], ((*[16]byte)(unsafe.Pointer(&tmp)))[:])
-	out[0] ^= tmp[0]
-	out[1] ^= tmp[1]
-	for k := 0; k < 15; k++ {
-		mmoCipher0.Encrypt(((*[16]byte)(unsafe.Pointer(&tmp)))[:], ((*[16]byte)(unsafe.Pointer(out)))[:])
-		tmp[0] ^= out[0]
-		tmp[1] ^= out[1]
-		mmoCipher1.Encrypt(((*[16]byte)(unsafe.Pointer(out)))[:], ((*[16]byte)(unsafe.Pointer(&tmp)))[:])
-		out[0] ^= tmp[0]
-		out[1] ^= tmp[1]
+func wharrgarblMMOHash(mmoCipher0, mmoCipher1 cipher.Block, out, in *[16]byte) {
+	var tmp0, tmp1 [2]uint64
+	tmp0s := ((*[16]byte)(unsafe.Pointer(&tmp0)))[:]
+	tmp1s := ((*[16]byte)(unsafe.Pointer(&tmp1)))[:]
+	mmoCipher0.Encrypt(tmp0s, in[:])
+	for i := 0; i < 16; i++ {
+		tmp0s[i] ^= in[i]
+	}
+	mmoCipher1.Encrypt(tmp1s, tmp0s)
+	tmp1[0] ^= tmp0[0]
+	tmp1[1] ^= tmp0[1]
+	for k := 0; k < 8; k++ {
+		mmoCipher0.Encrypt(tmp0s, tmp1s)
+		tmp0[0] ^= tmp1[0]
+		tmp0[1] ^= tmp1[1]
+		mmoCipher1.Encrypt(tmp1s, tmp0s)
+		tmp1[0] ^= tmp0[0]
+		tmp1[1] ^= tmp0[1]
+	}
+	mmoCipher0.Encrypt(tmp0s, tmp1s)
+	tmp0[0] ^= tmp1[0]
+	tmp0[1] ^= tmp1[1]
+	mmoCipher1.Encrypt(out[:], tmp0s)
+	for i := 0; i < 16; i++ {
+		out[i] ^= tmp0s[i]
 	}
 }
 
@@ -74,25 +84,26 @@ func Wharrgarbl(in []byte, difficulty uint32, minMemorySize uint) (out [20]byte,
 	doneWG.Add(cpus)
 	for c := 0; c < cpus; c++ {
 		go func() {
-			var hashBuf, collisionHash [2]uint64
+			var collisionHashIn, collisionHashOut [16]byte
 			thisCollider := rand.Uint64()
 			var iter uint64
 			for atomic.LoadUint32(&done) == 0 {
 				iter++
 				thisCollider++
 
-				hashBuf[0] = thisCollider
-				wharrgarblMMOHash(mmoCipher0, mmoCipher1, &collisionHash, &hashBuf)
-				thisCollision := (collisionHash[0] ^ collisionHash[1]) % diff64
+				binary.BigEndian.PutUint64(collisionHashIn[0:8], thisCollider)
+				wharrgarblMMOHash(mmoCipher0, mmoCipher1, &collisionHashOut, &collisionHashIn)
+				thisCollision := (binary.BigEndian.Uint64(collisionHashOut[0:8]) ^ binary.BigEndian.Uint64(collisionHashOut[8:16])) % diff64
 				thisCollision32 := uint32(thisCollision) + uint32(thisCollision>>32)
 				memIdx := uint((thisCollision^runNonce)%collisionTableSize) * 3
 
 				if wharrgarblMemory[memIdx] == thisCollision32 {
 					otherCollider := (uint64(wharrgarblMemory[memIdx+1]) << 32) | uint64(wharrgarblMemory[memIdx+2])
 					if otherCollider != thisCollider {
-						hashBuf[0] = otherCollider
-						wharrgarblMMOHash(mmoCipher0, mmoCipher1, &collisionHash, &hashBuf)
-						if ((collisionHash[0] ^ collisionHash[1]) % diff64) == thisCollision {
+						binary.BigEndian.PutUint64(collisionHashIn[0:8], otherCollider)
+						wharrgarblMMOHash(mmoCipher0, mmoCipher1, &collisionHashOut, &collisionHashIn)
+						otherCollision := (binary.BigEndian.Uint64(collisionHashOut[0:8]) ^ binary.BigEndian.Uint64(collisionHashOut[8:16])) % diff64
+						if otherCollision == thisCollision {
 							atomic.StoreUint32(&done, 1)
 							outLock.Lock()
 							binary.BigEndian.PutUint64(out[0:8], thisCollider)
@@ -124,8 +135,8 @@ func WharrgarblVerify(work []byte, in []byte) uint32 {
 		return 0
 	}
 
+	var collisionHashIn, collisionHashOut [16]byte
 	inHashed := sha3.Sum256(in)
-	var hashBuf, collisionHash [2]uint64
 	mmoCipher0, _ := aes.NewCipher(inHashed[0:16])
 	mmoCipher1, _ := aes.NewCipher(inHashed[16:32])
 
@@ -142,9 +153,9 @@ func WharrgarblVerify(work []byte, in []byte) uint32 {
 	diff64 := (uint64(difficulty) << 32) | 0x00000000ffffffff
 	var collisions [2]uint64
 	for i := 0; i < 2; i++ {
-		hashBuf[0] = colliders[i]
-		wharrgarblMMOHash(mmoCipher0, mmoCipher1, &collisionHash, &hashBuf)
-		collisions[i] = (collisionHash[0] ^ collisionHash[1]) % diff64
+		binary.BigEndian.PutUint64(collisionHashIn[0:8], colliders[i])
+		wharrgarblMMOHash(mmoCipher0, mmoCipher1, &collisionHashOut, &collisionHashIn)
+		collisions[i] = (binary.BigEndian.Uint64(collisionHashOut[0:8]) ^ binary.BigEndian.Uint64(collisionHashOut[8:16])) % diff64
 	}
 
 	if collisions[0] == collisions[1] {
