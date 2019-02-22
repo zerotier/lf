@@ -203,6 +203,7 @@ func (n *Node) Stop() {
 	n.peersLock.RUnlock()
 	n.backgroundThreadWG.Wait()
 	n.db.close()
+	WharrgarblFreeMemory()
 }
 
 // Connect attempts to establish a peer-to-peer connection to a remote node.

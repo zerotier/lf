@@ -30,27 +30,32 @@ import "C"
 var (
 	wharrgarblMemoryPtr     unsafe.Pointer
 	wharrgarblMemorySize    uint
-	wharrgarblMemoryEntries uint
+	wharrgarblMemoryEntries uintptr
 	wharrgarblMemoryLock    sync.Mutex
 
 	wharrgarblStaticTable            [4194304]uint64
 	wharrgarblStaticTableInitialized = func() bool {
-		wharrgarblStaticTableKey := sha3.Sum256([]byte("WharrrrRRRRgarbl!"))
 		wharrgarblStaticTableMem := (*[4194304 * 8]byte)(unsafe.Pointer(&wharrgarblStaticTable[0]))
+		copy(wharrgarblStaticTableMem[:], []byte("WharrrrRRRRgarbl!"))
 		for i := 0; i < 8; i++ {
+			wharrgarblStaticTableKey := sha3.Sum256(wharrgarblStaticTableMem[:])
 			wharrgarblStaticTableAes, _ := aes.NewCipher(wharrgarblStaticTableKey[:])
 			cfb := cipher.NewCFBEncrypter(wharrgarblStaticTableAes, wharrgarblStaticTableKey[0:16])
 			cfb.XORKeyStream(wharrgarblStaticTableMem[:], wharrgarblStaticTableMem[:])
-			wharrgarblStaticTableKey = sha3.Sum256(wharrgarblStaticTableMem[:])
 		}
 		return true
 	}()
 )
 
 // WharrgarblOutputSize is the size of Wharrgarbl's result in bytes.
-const WharrgarblOutputSize = 20
+const WharrgarblOutputSize = 14
 
-// wharrgarblMMOHash is a simple 16X Matyas-Meyer-Oseas single block hash function that also requires a 32MB static table.
+// wharrgarblMMOHash is a simple 16X Matyas-Meyer-Oseas single block hash function with a 32MB static table requirement.
+// This takes two AES ciphers as arguments. They are initialized in Wharrgarbl from the hash of
+// the input on which PoW is being computed. Differently initialized block ciphers for single-block
+// MMO make it a keyed hash, so each Wharrgarbl input results in a different search space. This
+// then computes 16 iterations of single-block MMO perturbed from a 32MB lookup table and alternating
+// between the two ciphers.
 func wharrgarblMMOHash(mmoCipher0, mmoCipher1 cipher.Block, in *[16]byte) uint64 {
 	var tmp0, tmp1 [2]uint64
 	tmp0s := ((*[16]byte)(unsafe.Pointer(&tmp0)))[:]
@@ -128,47 +133,50 @@ func wharrgarblMMOHash(mmoCipher0, mmoCipher1 cipher.Block, in *[16]byte) uint64
 func wharrgarblWorkerFunc(mmoCipher0, mmoCipher1 cipher.Block, runNonce, diff64 uint64, iterations *uint64, done *uint32, outLock *sync.Mutex, out []byte, doneWG *sync.WaitGroup) {
 	var collisionHashIn [16]byte
 	var iter uint64
-	var wharrgarblMemory *[2147483647]uint64
-	wharrgarblMemory = (*[2147483647]uint64)(wharrgarblMemoryPtr) // array is not actually this big, but trick Go into using a simple pointer
-	_ = wharrgarblMemory[wharrgarblMemoryEntries-1]
 
-	thisCollider := rand.Uint32()
+	thisCollider := uint64(rand.Uint32()) ^ (uint64(rand.Uint32()&0x3f) << 32)
 	for *done == 0 {
 		iter++
 		thisCollider++
 
-		binary.BigEndian.PutUint32(collisionHashIn[4:8], thisCollider)
+		binary.BigEndian.PutUint64(collisionHashIn[0:8], thisCollider)
 		thisCollision := wharrgarblMMOHash(mmoCipher0, mmoCipher1, &collisionHashIn) % diff64
-		thisCollision32 := uint32(thisCollision) + uint32(thisCollision>>32)
+		collisionTableEntry := (*uint64)(unsafe.Pointer(uintptr(wharrgarblMemoryPtr) + (uintptr(thisCollision^runNonce)%wharrgarblMemoryEntries)<<3))
 
-		collisionTableIdx := uint(thisCollision^runNonce) % wharrgarblMemoryEntries
-		collisionTableEntry := wharrgarblMemory[collisionTableIdx]
-
-		if uint32(collisionTableEntry>>32) == thisCollision32 {
-			otherCollider := uint32(collisionTableEntry)
+		collisionTableEntryCurrent := *collisionTableEntry
+		thisCollision24 := uint32(thisCollision) & 0x00ffffff
+		if uint32(collisionTableEntryCurrent>>40) == thisCollision24 {
+			otherCollider := collisionTableEntryCurrent & 0xffffffffff
 			if otherCollider != thisCollider {
-				binary.BigEndian.PutUint32(collisionHashIn[4:8], otherCollider)
+				binary.BigEndian.PutUint64(collisionHashIn[0:8], otherCollider)
 				if (wharrgarblMMOHash(mmoCipher0, mmoCipher1, &collisionHashIn) % diff64) == thisCollision {
 					atomic.StoreUint32(done, 1)
 					outLock.Lock()
-					binary.BigEndian.PutUint32(out[4:8], thisCollider)
-					binary.BigEndian.PutUint32(out[12:16], otherCollider)
+					out[0] = byte(thisCollider >> 32)
+					out[1] = byte(thisCollider >> 24)
+					out[2] = byte(thisCollider >> 16)
+					out[3] = byte(thisCollider >> 8)
+					out[4] = byte(thisCollider)
+					out[5] = byte(otherCollider >> 32)
+					out[6] = byte(otherCollider >> 24)
+					out[7] = byte(otherCollider >> 16)
+					out[8] = byte(otherCollider >> 8)
+					out[9] = byte(otherCollider)
 					outLock.Unlock()
 					break
 				}
 			}
 		}
 
-		wharrgarblMemory[collisionTableIdx] = (uint64(thisCollision32) << 32) | uint64(thisCollider)
+		*collisionTableEntry = (uint64(thisCollision24) << 40) | uint64(thisCollider)
 	}
 
 	atomic.AddUint64(iterations, iter)
-
 	doneWG.Done()
 }
 
 // Wharrgarbl computes a proof of work from an input challenge.
-func Wharrgarbl(in []byte, difficulty uint32, minMemorySize uint) (out [20]byte, iterations uint64) {
+func Wharrgarbl(in []byte, difficulty uint32, minMemorySize uint) (out [WharrgarblOutputSize]byte, iterations uint64) {
 	wharrgarblMemoryLock.Lock()
 	defer wharrgarblMemoryLock.Unlock()
 
@@ -189,7 +197,7 @@ func Wharrgarbl(in []byte, difficulty uint32, minMemorySize uint) (out [20]byte,
 		}
 		C.memset(wharrgarblMemoryPtr, 0, C.ulong(minMemorySize))
 		wharrgarblMemorySize = minMemorySize
-		wharrgarblMemoryEntries = minMemorySize / 8
+		wharrgarblMemoryEntries = uintptr(minMemorySize / 8)
 	}
 
 	inHashed := sha3.Sum256(in)
@@ -209,7 +217,7 @@ func Wharrgarbl(in []byte, difficulty uint32, minMemorySize uint) (out [20]byte,
 	wharrgarblWorkerFunc(mmoCipher0, mmoCipher1, runNonce, diff64, &iterations, &done, &outLock, out[:], &doneWG)
 	doneWG.Wait()
 
-	binary.BigEndian.PutUint32(out[16:20], difficulty)
+	binary.BigEndian.PutUint32(out[10:14], difficulty)
 
 	return
 }
@@ -226,10 +234,9 @@ func WharrgarblVerify(work []byte, in []byte) uint32 {
 	mmoCipher1, _ := aes.NewCipher(inHashed[16:32])
 
 	var colliders [2]uint64
-	for i := 0; i < 2; i++ {
-		colliders[i] = binary.BigEndian.Uint64(work[8*i:])
-	}
-	difficulty := binary.BigEndian.Uint32(work[16:20])
+	colliders[0] = (uint64(work[0]) << 32) | (uint64(work[1]) << 24) | (uint64(work[2]) << 16) | (uint64(work[3]) << 8) | uint64(work[4])
+	colliders[1] = (uint64(work[5]) << 32) | (uint64(work[6]) << 24) | (uint64(work[7]) << 16) | (uint64(work[8]) << 8) | uint64(work[9])
+	difficulty := binary.BigEndian.Uint32(work[10:14])
 
 	if colliders[0] == colliders[1] {
 		return 0
