@@ -119,3 +119,37 @@ func (b *Blob256) UnmarshalJSON(j []byte) error {
 	}
 	return nil
 }
+
+// Blob328 is a 328-bit / 41 byte Blob that always serializes to a JSON array.
+type Blob328 [41]byte
+
+// MarshalJSON returns this blob as a JSON object.
+func (b *Blob328) MarshalJSON() ([]byte, error) {
+	var s strings.Builder
+	s.WriteRune('[')
+	s.WriteString(strconv.FormatUint(uint64(b[0]), 10))
+	for i := 1; i < 41; i++ {
+		s.WriteRune(',')
+		s.WriteString(strconv.FormatUint(uint64(b[i]), 10))
+	}
+	s.WriteRune(']')
+	return []byte(s.String()), nil
+}
+
+// UnmarshalJSON unmarshals this Blob328, supporting all the formats supported by Blob.
+func (b *Blob328) UnmarshalJSON(j []byte) error {
+	var b2 Blob
+	err := b2.UnmarshalJSON(j)
+	if err != nil {
+		return err
+	}
+	if len(b2) >= 41 {
+		copy(b[:], b2[0:41])
+	} else {
+		copy(b[:], b2)
+		for i := len(b2); i < 41; i++ {
+			b[i] = 0
+		}
+	}
+	return nil
+}

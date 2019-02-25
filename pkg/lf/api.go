@@ -66,9 +66,9 @@ type APIStatus struct {
 // KeyRange method keeps selector names secret while the Name/Range method exposes them to the node or
 // proxy being queried.
 type APIQueryRange struct {
-	Name     Blob     `json:",omitempty"` // Name of selector (plain text)
-	Range    []uint64 `json:",omitempty"` // Ordinal value if [1] or range if [2] in size (assumed to be 0 if empty)
-	KeyRange []Blob   `json:",omitempty"` // Selector key or key range, overrides Name and Range if present (allows queries without revealing name)
+	Name     Blob   `json:",omitempty"` // Name of selector (plain text)
+	Range    []Blob `json:",omitempty"` // Ordinal value if [1] or range if [2] in size
+	KeyRange []Blob `json:",omitempty"` // Selector key or key range, overrides Name and Range if present (allows queries without revealing name)
 }
 
 // APIQuery describes a query for records in the form of an ordered series of selector ranges.
@@ -92,8 +92,8 @@ type APIQueryResults []APIQueryResult
 
 // APINewSelector is a selector plain text name and an ordinal value (use zero if you don't care).
 type APINewSelector struct {
-	Name    Blob   `json:",omitempty"` // Name of this selector
-	Ordinal uint64 ``                  // A sortable value (use 0 if you don't want to do range queries)
+	Name    Blob `json:",omitempty"` // Name of this selector
+	Ordinal Blob `json:",omitempty"` // A sortable public value (optional)
 }
 
 // APINew is a request to create and submit a new record.
@@ -168,7 +168,7 @@ func (m *APIQuery) execute(n *Node) (qr []APIQueryResult, err *APIError) {
 		if len(mm[i].KeyRange) == 0 {
 			// If KeyRange is not used the selectors' names are specified in the clear and we generate keys locally.
 			if len(mm[i].Range) == 0 {
-				ss := MakeSelectorKey(mm[i].Name, 0)
+				ss := MakeSelectorKey(mm[i].Name, nil)
 				selectorRanges = append(selectorRanges, [2][]byte{ss[:], ss[:]})
 			} else if len(mm[i].Range) == 1 {
 				ss := MakeSelectorKey(mm[i].Name, mm[i].Range[0])
@@ -247,9 +247,10 @@ func (m *APIQuery) execute(n *Node) (qr []APIQueryResult, err *APIError) {
 			return false
 		}
 		for i := 0; i < len(sa); i++ {
-			if sa[i].Ordinal < sb[i].Ordinal {
+			c := bytes.Compare(sa[i].Ordinal, sb[i].Ordinal)
+			if c < 0 {
 				return true
-			} else if sa[i].Ordinal > sb[i].Ordinal {
+			} else if c > 0 {
 				return false
 			}
 		}
@@ -299,7 +300,7 @@ func (m *APINew) execute(workAlgorithm byte) (*Record, *APIError) {
 	}
 
 	sel := make([][]byte, len(m.Selectors))
-	selord := make([]uint64, len(m.Selectors))
+	selord := make([][]byte, len(m.Selectors))
 	for i := range m.Selectors {
 		sel[i] = m.Selectors[i].Name
 		selord[i] = m.Selectors[i].Ordinal

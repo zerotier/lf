@@ -20,7 +20,6 @@ import (
 	"os/user"
 	"path"
 	"sort"
-	"strconv"
 	"strings"
 	"syscall"
 
@@ -246,21 +245,17 @@ func doSet(cfg *Config, basePath string, jsonOutput bool, nodeURL string, verbos
 	var selectors []lf.APINewSelector
 	for i := 0; i < len(args)-1; i++ {
 		sel := args[i]
-		var ord uint64
+		var ord string
 		ordSepIdx := strings.LastIndex(sel, "#")
 		if ordSepIdx >= 0 {
 			if ordSepIdx < (len(sel) - 1) {
-				ord, err = strconv.ParseUint(sel[ordSepIdx+1:], 10, 64)
-				if err != nil {
-					printHelp("")
-					return
-				}
+				ord = sel[ordSepIdx+1:]
 			}
 			sel = sel[0:ordSepIdx]
 		}
 		selectors = append(selectors, lf.APINewSelector{
 			Name:    []byte(sel),
-			Ordinal: ord,
+			Ordinal: []byte(ord),
 		})
 	}
 

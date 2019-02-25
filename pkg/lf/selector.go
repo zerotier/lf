@@ -11,11 +11,10 @@ import (
 	"bytes"
 	"crypto/ecdsa"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/binary"
-	"encoding/json"
-	"fmt"
 	"io"
+
+	"golang.org/x/crypto/sha3"
 )
 
 //
@@ -38,76 +37,90 @@ const SelectorTypeBP160 byte = 0
 
 // Selector is a non-forgeable range queryable identifier for records.
 type Selector struct {
-	Ordinal uint64   // An ordinal value that can be used to perform range queries against selectors
-	Claim   [41]byte // 41-byte brainpoolP160t1 recoverable signature
+	Ordinal Blob    // An ordinal value that can be used to perform range queries against selectors
+	Claim   Blob328 // 41-byte brainpoolP160t1 recoverable signature
 }
 
-type selectorInternalJSON struct {
-	Ordinal uint64
-	Claim   Blob
-}
+func addOrdinalToHash(h *[32]byte, ordinal []byte) {
+	var carry byte
+	for hi, oi := 31, len(ordinal)-1; hi >= 0; hi-- {
+		var o byte
+		if oi >= 0 {
+			o = ordinal[oi]
+			oi--
+		} else if carry == 0 {
+			break
+		}
 
-// MarshalJSON encodes this Selector as a JSON object using Blob to encode the claim.
-func (s *Selector) MarshalJSON() ([]byte, error) {
-	str := fmt.Sprintf("{\"Ordinal\":%d,\"Claim\":\"\\b%s\"}", s.Ordinal, base64.StdEncoding.EncodeToString(s.Claim[:]))
-	return []byte(str), nil
-}
+		b := h[hi]
+		old := b
+		b += o
+		var c byte
+		if b < old {
+			c = 1
+		}
+		h[hi] = b + carry
 
-// UnmarshalJSON decodes this Selector as a JSON object.
-func (s *Selector) UnmarshalJSON(j []byte) error {
-	var tmp selectorInternalJSON
-	err := json.Unmarshal(j, &tmp)
-	if err != nil {
-		return err
+		carry = c
 	}
-	s.Ordinal = tmp.Ordinal
-	if len(tmp.Claim) == len(s.Claim) {
-		copy(s.Claim[:], tmp.Claim)
-	}
-	return nil
 }
 
 // MakeSelectorKey generates a masked selector database key from a plain text name.
 // If this name is not used with range queries use zero for the ordinal. This function exists
 // to allow selector database keys to be created separate from record creation if needed.
-func MakeSelectorKey(plainTextName []byte, ord uint64) []byte {
+func MakeSelectorKey(plainTextName []byte, ordinal []byte) []byte {
 	var prng seededPrng
 	prng.seed(plainTextName)
 	priv, err := ecdsa.GenerateKey(ECCCurveBrainpoolP160T1, &prng)
 	if err != nil {
 		panic(err)
 	}
-	ck, _ := ECDSACompressPublicKey(&priv.PublicKey)
-	var o [8]byte
-	binary.BigEndian.PutUint64(o[:], ord)
-	return append(ck, o[:]...)
+
+	var publicKeyHash [32]byte
+	pcomp, _ := ECDSACompressPublicKey(&priv.PublicKey)
+	if pcomp != nil {
+		publicKeyHash = sha3.Sum256(pcomp)
+	}
+
+	addOrdinalToHash(&publicKeyHash, ordinal)
+
+	return publicKeyHash[:]
 }
 
 // key returns the sortable and comparable database key for this selector.
-// This must be supplied with the hash that was used in Set() to perform key recovery.
+// This must be supplied with the hash that was used in set() to perform key recovery.
 // The Record SelectorKey(n) method is a more convenient way to use this.
 func (s *Selector) key(hash []byte) []byte {
-	var obytes [8]byte
-	binary.BigEndian.PutUint64(obytes[:], s.Ordinal)
 	sigHash := sha256.New()
 	sigHash.Write(hash)
-	sigHash.Write(obytes[:])
+	sigHash.Write(s.Ordinal)
 	var sigHashBuf [32]byte
 	pub := ECDSARecover(ECCCurveBrainpoolP160T1, sigHash.Sum(sigHashBuf[:0]), s.Claim[:])
-	if pub == nil {
-		return obytes[:]
+
+	var publicKeyHash [32]byte
+	if pub != nil {
+		pcomp, _ := ECDSACompressPublicKey(pub)
+		if pcomp != nil {
+			publicKeyHash = sha3.Sum256(pcomp)
+		}
 	}
-	pcomp, err := ECDSACompressPublicKey(pub)
-	if err != nil {
-		return obytes[:]
-	}
-	return append(pcomp, obytes[:]...)
+
+	addOrdinalToHash(&publicKeyHash, s.Ordinal)
+
+	return publicKeyHash[:]
 }
 
 // marshalTo outputs this selector to a writer.
 func (s *Selector) marshalTo(out io.Writer) error {
-	out.Write([]byte{SelectorTypeBP160})
-	writeUVarint(out, s.Ordinal)
+	if _, err := writeUVarint(out, uint64(len(s.Ordinal))); err != nil {
+		return err
+	}
+	if _, err := out.Write(s.Ordinal); err != nil {
+		return err
+	}
+	if _, err := out.Write([]byte{SelectorTypeBP160}); err != nil {
+		return err
+	}
 	if _, err := out.Write(s.Claim[:]); err != nil {
 		return err
 	}
@@ -123,17 +136,25 @@ func (s *Selector) bytes() []byte {
 
 // unmarshalFrom reads a selector from this input stream.
 func (s *Selector) unmarshalFrom(in io.Reader) error {
-	br := byteAndArrayReader{r: in}
-	selType, err := br.ReadByte()
+	br := byteAndArrayReader{in}
+	l, err := binary.ReadUvarint(&br)
 	if err != nil {
 		return err
 	}
-	if selType != SelectorTypeBP160 {
+	if l > RecordMaxSize {
+		return ErrorRecordTooLarge
+	}
+	s.Ordinal = make([]byte, int(l))
+	_, err = io.ReadFull(&br, s.Ordinal)
+	if err != nil {
+		return err
+	}
+	t, err := br.ReadByte()
+	if err != nil {
+		return err
+	}
+	if t != SelectorTypeBP160 {
 		return ErrorUnsupportedType
-	}
-	s.Ordinal, err = binary.ReadUvarint(&br)
-	if err != nil {
-		return err
 	}
 	_, err = io.ReadFull(&br, s.Claim[:])
 	return err
@@ -142,18 +163,16 @@ func (s *Selector) unmarshalFrom(in io.Reader) error {
 // set sets this selector to a given plain text name, ordinal, and record body hash.
 // The hash supplied is the record's body hash. If this selector is not intended for range
 // queries use zero for its ordinal.
-func (s *Selector) set(plainTextName []byte, ord uint64, hash []byte) {
+func (s *Selector) set(plainTextName []byte, ord []byte, hash []byte) {
 	s.Ordinal = ord
 
 	var prng seededPrng
 	prng.seed(plainTextName)
 	priv, err := ecdsa.GenerateKey(ECCCurveBrainpoolP160T1, &prng)
 
-	var obytes [8]byte
-	binary.BigEndian.PutUint64(obytes[:], ord)
 	sigHash := sha256.New()
 	sigHash.Write(hash)
-	sigHash.Write(obytes[:])
+	sigHash.Write(ord)
 	var sigHashBuf [32]byte
 	cs, err := ECDSASignEmbedRecoveryIndex(priv, sigHash.Sum(sigHashBuf[:0]))
 	if err != nil {

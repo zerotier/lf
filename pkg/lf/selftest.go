@@ -148,11 +148,11 @@ func TestCore(out io.Writer) bool {
 	}
 
 	fmt.Fprintf(out, "Testing Selector... ")
-	var testSelectors [32]Selector
+	var testSelectors [256]Selector
 	var testSelectorClaimHash [32]byte
 	secrand.Read(testSelectorClaimHash[:])
 	for k := range testSelectors {
-		testSelectors[k].set([]byte("name"), uint64(k), testSelectorClaimHash[:])
+		testSelectors[k].set([]byte("name"), []byte(fmt.Sprintf("%.16x", k)), testSelectorClaimHash[:])
 	}
 	for k := 1; k < len(testSelectors); k++ {
 		sk := testSelectors[k].key(testSelectorClaimHash[:])
@@ -160,6 +160,12 @@ func TestCore(out io.Writer) bool {
 			fmt.Fprintf(out, "FAILED (compare %d not < %d)\n", k-1, k)
 			return false
 		}
+	}
+	var selTest Selector
+	selTest.set([]byte("name"), []byte("ord"), testSelectorClaimHash[:])
+	if !bytes.Equal(MakeSelectorKey([]byte("name"), []byte("ord")), selTest.key(testSelectorClaimHash[:])) {
+		fmt.Fprintf(out, "FAILED (keys from key() vs MakeSelectorKey() are not equal)\n")
+		return false
 	}
 	fmt.Fprintf(out, "OK\n")
 
@@ -178,7 +184,7 @@ func TestCore(out io.Writer) bool {
 			fmt.Fprintf(out, "FAILED (create owner): %s\n", err.Error())
 			return false
 		}
-		rec, err := NewRecord(testValue[:], testLinks, []byte("test"), [][]byte{[]byte("test0")}, []uint64{0}, nil, uint64(k), RecordWorkAlgorithmNone, owner)
+		rec, err := NewRecord(testValue[:], testLinks, []byte("test"), [][]byte{[]byte("test0")}, [][]byte{[]byte("0000")}, nil, uint64(k), RecordWorkAlgorithmNone, owner)
 		if err != nil {
 			fmt.Fprintf(out, "FAILED (create record): %s\n", err.Error())
 			return false
@@ -217,7 +223,7 @@ func TestCore(out io.Writer) bool {
 		fmt.Fprintf(out, "FAILED (create owner): %s\n", err.Error())
 		return false
 	}
-	rec, err := NewRecord(testValue[:], testLinks, []byte("test"), [][]byte{[]byte("full record test")}, []uint64{0}, nil, TimeSec(), RecordWorkAlgorithmWharrgarbl, owner)
+	rec, err := NewRecord(testValue[:], testLinks, []byte("test"), [][]byte{[]byte("full record test")}, [][]byte{[]byte("0000")}, nil, TimeSec(), RecordWorkAlgorithmWharrgarbl, owner)
 	if err != nil {
 		fmt.Fprintf(out, "FAILED (new record creation): %s\n", err.Error())
 		return false
@@ -330,7 +336,7 @@ func TestDatabase(testBasePath string, out io.Writer) bool {
 		ts++
 		sel := []byte("test-owner-number-" + strconv.FormatInt(int64(ri%testDatabaseOwners), 10))
 		value := []byte(strconv.FormatUint(ts, 10))
-		records[ri], err = NewRecord(value, links, []byte("test"), [][]byte{sel}, []uint64{0}, nil, ts, RecordWorkAlgorithmNone, owners[ri%testDatabaseOwners])
+		records[ri], err = NewRecord(value, links, []byte("test"), [][]byte{sel}, [][]byte{[]byte("0000")}, nil, ts, RecordWorkAlgorithmNone, owners[ri%testDatabaseOwners])
 		if err != nil {
 			fmt.Fprintf(out, "FAILED: %s\n", err.Error())
 			return false

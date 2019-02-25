@@ -563,7 +563,7 @@ func recordWharrgarblScore(cost uint32) uint32 {
 // NewRecordStart creates an incomplete record with its body and selectors filled out but no work or final signature.
 // This can be used to do the first step of a three-phase record creation process with the next two phases being NewRecordAddWork
 // and NewRecordComplete. This is useful of record creation needs to be split among systems or participants.
-func NewRecordStart(value []byte, links [][]byte, maskingKey []byte, plainTextSelectorNames [][]byte, selectorOrdinals []uint64, ownerPublic, certificateRecordHash []byte, ts uint64) (r *Record, workHash [32]byte, workBillableBytes uint, err error) {
+func NewRecordStart(value []byte, links [][]byte, maskingKey []byte, plainTextSelectorNames [][]byte, selectorOrdinals [][]byte, ownerPublic, certificateRecordHash []byte, ts uint64) (r *Record, workHash [32]byte, workBillableBytes uint, err error) {
 	if len(value) > RecordMaxSize {
 		err = ErrorInvalidParameter
 		return
@@ -699,7 +699,7 @@ func NewRecordComplete(incompleteRecord *Record, signingHash []byte, owner *Owne
 
 // NewRecord is a shortcut to running all incremental record creation functions.
 // Obviously this is time and memory intensive due to proof of work required to "pay" for this record.
-func NewRecord(value []byte, links [][]byte, maskingKey []byte, plainTextSelectorNames [][]byte, selectorOrdinals []uint64, certificateRecordHash []byte, ts uint64, workAlgorithm byte, owner *Owner) (r *Record, err error) {
+func NewRecord(value []byte, links [][]byte, maskingKey []byte, plainTextSelectorNames [][]byte, selectorOrdinals [][]byte, certificateRecordHash []byte, ts uint64, workAlgorithm byte, owner *Owner) (r *Record, err error) {
 	var wh, sh [32]byte
 	var wb uint
 	r, wh, wb, err = NewRecordStart(value, links, maskingKey, plainTextSelectorNames, selectorOrdinals, owner.Bytes(), certificateRecordHash, ts)
