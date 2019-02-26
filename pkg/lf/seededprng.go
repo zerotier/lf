@@ -25,17 +25,15 @@ func (s *seededPrng) seed(b []byte) {
 
 func (s *seededPrng) Read(b []byte) (int, error) {
 	var tmp [16]byte
-	i := s.i
 	for k := 0; k < len(b); k++ {
-		if i == 16 {
-			i = 0
+		if s.i == 16 {
+			s.i = 0
 			s.n++
 			binary.BigEndian.PutUint64(tmp[0:8], s.n)
 			s.c.Encrypt(s.b[:], tmp[:])
 		}
-		b[k] = s.b[i]
-		i++
+		b[k] = s.b[s.i]
+		s.i++
 	}
-	s.i = i
 	return len(b), nil
 }

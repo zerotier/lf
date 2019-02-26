@@ -88,7 +88,7 @@ func MakeSelectorKey(plainTextName []byte, ordinal []byte) []byte {
 }
 
 // key returns the sortable and comparable database key for this selector.
-// This must be supplied with the hash that was used in set() to perform key recovery.
+// This must be supplied with the hash that was used in set() to perform ECDSA key recovery.
 // The Record SelectorKey(n) method is a more convenient way to use this.
 func (s *Selector) key(hash []byte) []byte {
 	sigHash := sha256.New()

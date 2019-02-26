@@ -23,7 +23,7 @@ func (b Blob) MarshalJSON() ([]byte, error) {
 		if (c <= 31 && c != 9 && c != 10 && c != 13) || c >= 127 {
 			// String is binary, so output as either an array (for short values) or base64 (for longer values)
 			var sb strings.Builder
-			if len(b) <= 32 {
+			if len(b) <= 64 {
 				sb.WriteRune('[')
 				sb.WriteString(strconv.FormatUint(uint64(b[0]), 10))
 				for i := 1; i < len(b); i++ {
