@@ -30,7 +30,7 @@ const APIMaxResponseSize = 4194304
 // APIStatusPeer contains information about a connected peer.
 type APIStatusPeer struct {
 	Address   string `` // IP and port
-	PublicKey []byte `` // public key
+	PublicKey Blob   `` // public key
 	Inbound   bool   `` // true if this is an inbound connection
 }
 

@@ -11,10 +11,9 @@ import (
 	"bytes"
 	"crypto/ecdsa"
 	"crypto/sha256"
+	"crypto/sha512"
 	"encoding/binary"
 	"io"
-
-	"golang.org/x/crypto/sha3"
 )
 
 //
@@ -41,9 +40,9 @@ type Selector struct {
 	Claim   Blob328 // 41-byte brainpoolP160t1 recoverable signature
 }
 
-func addOrdinalToHash(h *[32]byte, ordinal []byte) {
+func addOrdinalToHash(h *[64]byte, ordinal []byte) {
 	var carry byte
-	for hi, oi := 31, len(ordinal)-1; hi >= 0; hi-- {
+	for hi, oi := 63, len(ordinal)-1; hi >= 0; hi-- {
 		var o byte
 		if oi >= 0 {
 			o = ordinal[oi]
@@ -76,10 +75,10 @@ func MakeSelectorKey(plainTextName []byte, ordinal []byte) []byte {
 		panic(err)
 	}
 
-	var publicKeyHash [32]byte
+	var publicKeyHash [64]byte
 	pcomp, _ := ECDSACompressPublicKey(&priv.PublicKey)
 	if pcomp != nil {
-		publicKeyHash = sha3.Sum256(pcomp)
+		publicKeyHash = sha512.Sum512(pcomp)
 	}
 
 	addOrdinalToHash(&publicKeyHash, ordinal)
@@ -97,11 +96,11 @@ func (s *Selector) key(hash []byte) []byte {
 	var sigHashBuf [32]byte
 	pub := ECDSARecover(ECCCurveBrainpoolP160T1, sigHash.Sum(sigHashBuf[:0]), s.Claim[:])
 
-	var publicKeyHash [32]byte
+	var publicKeyHash [64]byte
 	if pub != nil {
 		pcomp, _ := ECDSACompressPublicKey(pub)
 		if pcomp != nil {
-			publicKeyHash = sha3.Sum256(pcomp)
+			publicKeyHash = sha512.Sum512(pcomp)
 		}
 	}
 
@@ -166,20 +165,24 @@ func (s *Selector) unmarshalFrom(in io.Reader) error {
 func (s *Selector) set(plainTextName []byte, ord []byte, hash []byte) {
 	s.Ordinal = ord
 
+	// Generate an ECDSA key pair deterministically using the plain text name. Note that
+	// this depends on the ECDSA key generation algorithm. Go currently implements the
+	// standard [NSA] A.2.1 algorithm. As long as this doesn't change we're fine. If it
+	// does we'll have to copypasta the original [NSA] A.2.1 code. This is checked by
+	// testing known selectors in selftest.go.
 	var prng seededPrng
 	prng.seed(plainTextName)
 	priv, err := ecdsa.GenerateKey(ECCCurveBrainpoolP160T1, &prng)
 
+	// The hash we actually sign includes the ordinal so that ordinals, while publicly
+	// visible, can't be forged without knowledge of the plain text name.
 	sigHash := sha256.New()
 	sigHash.Write(hash)
 	sigHash.Write(ord)
 	var sigHashBuf [32]byte
 	cs, err := ECDSASignEmbedRecoveryIndex(priv, sigHash.Sum(sigHashBuf[:0]))
-	if err != nil {
-		panic(err)
-	}
-	if len(cs) != len(s.Claim) {
-		panic("claim signature size is not correct")
+	if err != nil || len(cs) != len(s.Claim) { // this would indicate a bug
+		panic("ECDSA signature for selector generation failed!")
 	}
 	copy(s.Claim[:], cs)
 }
