@@ -50,7 +50,7 @@ var (
 // WharrgarblOutputSize is the size of Wharrgarbl's result in bytes.
 const WharrgarblOutputSize = 14
 
-// wharrgarblMMOHash is a simple 16X Matyas-Meyer-Oseas single block hash function with a 32MB static table requirement.
+// wharrgarblMMOHash is a simple 24X Matyas-Meyer-Oseas single block hash function with a 32MB static table requirement.
 // This takes two AES ciphers as arguments. They are initialized in Wharrgarbl from the hash of
 // the input on which PoW is being computed. Differently initialized block ciphers for single-block
 // MMO make it a keyed hash, so each Wharrgarbl input results in a different search space. This
@@ -66,6 +66,38 @@ func wharrgarblMMOHash(mmoCipher0, mmoCipher1 cipher.Block, in *[16]byte) uint64
 		tmp0s[i] ^= in[i]
 	}
 	tmp0[1] ^= wharrgarblStaticTable[uint(tmp0[0])%4194304]
+
+	mmoCipher1.Encrypt(tmp1s, tmp0s)
+	tmp1[0] ^= tmp0[0]
+	tmp1[1] ^= tmp0[1] ^ wharrgarblStaticTable[uint(tmp0[0])%4194304]
+
+	mmoCipher0.Encrypt(tmp0s, tmp1s)
+	tmp0[0] ^= tmp1[0]
+	tmp0[1] ^= tmp1[1] ^ wharrgarblStaticTable[uint(tmp0[0])%4194304]
+
+	mmoCipher1.Encrypt(tmp1s, tmp0s)
+	tmp1[0] ^= tmp0[0]
+	tmp1[1] ^= tmp0[1] ^ wharrgarblStaticTable[uint(tmp0[0])%4194304]
+
+	mmoCipher0.Encrypt(tmp0s, tmp1s)
+	tmp0[0] ^= tmp1[0]
+	tmp0[1] ^= tmp1[1] ^ wharrgarblStaticTable[uint(tmp0[0])%4194304]
+
+	mmoCipher1.Encrypt(tmp1s, tmp0s)
+	tmp1[0] ^= tmp0[0]
+	tmp1[1] ^= tmp0[1] ^ wharrgarblStaticTable[uint(tmp0[0])%4194304]
+
+	mmoCipher0.Encrypt(tmp0s, tmp1s)
+	tmp0[0] ^= tmp1[0]
+	tmp0[1] ^= tmp1[1] ^ wharrgarblStaticTable[uint(tmp0[0])%4194304]
+
+	mmoCipher1.Encrypt(tmp1s, tmp0s)
+	tmp1[0] ^= tmp0[0]
+	tmp1[1] ^= tmp0[1] ^ wharrgarblStaticTable[uint(tmp0[0])%4194304]
+
+	mmoCipher0.Encrypt(tmp0s, tmp1s)
+	tmp0[0] ^= tmp1[0]
+	tmp0[1] ^= tmp1[1] ^ wharrgarblStaticTable[uint(tmp0[0])%4194304]
 
 	mmoCipher1.Encrypt(tmp1s, tmp0s)
 	tmp1[0] ^= tmp0[0]

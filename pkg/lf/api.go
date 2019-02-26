@@ -29,9 +29,9 @@ const APIMaxResponseSize = 4194304
 
 // APIStatusPeer contains information about a connected peer.
 type APIStatusPeer struct {
-	Address   string `` // IP and port
-	PublicKey Blob   `` // public key
-	Inbound   bool   `` // true if this is an inbound connection
+	Address   string `json:",omitempty"` // IP and port
+	PublicKey Blob   `json:",omitempty"` // public key
+	Inbound   bool   ``                  // true if this is an inbound connection
 }
 
 // APIProxyStatus contains info about the proxy through which this server was reached (if an LF proxy is present).
@@ -73,15 +73,15 @@ type APIQueryRange struct {
 
 // APIQuery describes a query for records in the form of an ordered series of selector ranges.
 type APIQuery struct {
-	Range      []APIQueryRange ``                  // Selectors or selector range(s)
+	Range      []APIQueryRange `json:",omitempty"` // Selectors or selector range(s)
 	MaskingKey Blob            `json:",omitempty"` // Masking key to unmask record value server-side (if non-empty)
 }
 
 // APIQueryResult is a single query result.
 type APIQueryResult struct {
-	Record *Record ``                  // Record itself.
+	Record *Record `json:",omitempty"` // Record itself.
 	Value  Blob    `json:",omitempty"` // Unmasked value if masking key was included
-	Weight string  ``                  // Record weight as a 128-bit hex value
+	Weight string  `json:",omitempty"` // Record weight as a 128-bit hex value
 }
 
 // APIQueryResults is a list of results to an API query.
