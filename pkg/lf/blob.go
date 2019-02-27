@@ -7,6 +7,7 @@ import (
 )
 
 var jsonEmptyStr = []byte("\"\"")
+var emptyBytes = []byte{}
 
 // Blob is a byte array that JSON serializes to something more user-friendly than just always a base64 blob.
 type Blob []byte
@@ -21,11 +22,11 @@ func (b Blob) MarshalJSON() ([]byte, error) {
 	for _, c := range b {
 		if (c <= 31 && c != 9 && c != 10 && c != 13) || c >= 127 {
 			// If string is binary, prepend with \b and then use base64.
-			var sb strings.Builder
-			sb.WriteString("\"\\b")
-			sb.WriteString(base64.StdEncoding.EncodeToString(b))
-			sb.WriteRune('"')
-			return []byte(sb.String()), nil
+			s.Reset()
+			s.WriteString("\"\\b")
+			s.WriteString(base64.StdEncoding.EncodeToString(b))
+			s.WriteRune('"')
+			return []byte(s.String()), nil
 		}
 		switch c {
 		case 9:
@@ -49,17 +50,20 @@ func (b Blob) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON unmarshals this blob from a JSON array, string, or base64 string prefixed by a backspace (ascii 8, string "\b").
 func (b *Blob) UnmarshalJSON(j []byte) error {
 	if len(j) == 0 {
-		*b = []byte{}
+		*b = emptyBytes
 		return nil
 	}
 	var str string
-	json.Unmarshal(j, &str)
-	if str[0] == 8 && len(str) > 1 {
-		var err error
-		*b, err = base64.StdEncoding.DecodeString(str[1:])
-		return err
+	err := json.Unmarshal(j, &str)
+	if err == nil {
+		if len(str) > 1 && str[0] == 8 {
+			*b, err = base64.StdEncoding.DecodeString(str[1:])
+			return err
+		}
+		*b = []byte(str)
+	} else {
+		*b = emptyBytes
 	}
-	*b = []byte(str)
 	return nil
 }
 

@@ -1,3 +1,13 @@
+# Makefile for
+
+all: lf
+
+lf: FORCE
+	go build -a cmd/lf/lf.go
+
+clean:	FORCE
+	rm -rf lf lf-db-test
+
 godeps:	FORCE
 	go get -u github.com/NYTimes/gziphandler
 	go get -u github.com/codahale/rfc6979

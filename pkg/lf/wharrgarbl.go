@@ -10,6 +10,7 @@ package lf
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/sha256"
 	"encoding/binary"
 	"math/rand"
 	"runtime"
@@ -26,25 +27,15 @@ import "C"
 
 // Wharrgarbl holds a global pointer to memory allocated via external C malloc().
 // There's not much point in allocating this on demand since this uses all cores
-// anyway so one at a time is about the best you can do.
+// anyway so one at a time is about the best you can do. There is also a static
+// table that is locked by the same lock and is initialized at first use.
 var (
-	wharrgarblMemoryPtr     unsafe.Pointer
-	wharrgarblMemorySize    uint
-	wharrgarblMemoryEntries uintptr
-	wharrgarblMemoryLock    sync.Mutex
-
+	wharrgarblMemoryPtr              unsafe.Pointer
+	wharrgarblMemorySize             uint
+	wharrgarblMemoryEntries          uintptr
+	wharrgarblMemoryLock             sync.Mutex
 	wharrgarblStaticTable            [4194304]uint64
-	wharrgarblStaticTableInitialized = func() bool {
-		wharrgarblStaticTableMem := (*[4194304 * 8]byte)(unsafe.Pointer(&wharrgarblStaticTable[0]))
-		copy(wharrgarblStaticTableMem[:], []byte("WharrrrRRRRgarbl!"))
-		for i := 0; i < 8; i++ {
-			wharrgarblStaticTableKey := sha3.Sum256(wharrgarblStaticTableMem[:])
-			wharrgarblStaticTableAes, _ := aes.NewCipher(wharrgarblStaticTableKey[:])
-			cfb := cipher.NewCFBEncrypter(wharrgarblStaticTableAes, wharrgarblStaticTableKey[0:16])
-			cfb.XORKeyStream(wharrgarblStaticTableMem[:], wharrgarblStaticTableMem[:])
-		}
-		return true
-	}()
+	wharrgarblStaticTableInitialized = false
 )
 
 // WharrgarblOutputSize is the size of Wharrgarbl's result in bytes.
@@ -54,7 +45,7 @@ const WharrgarblOutputSize = 14
 // This takes two AES ciphers as arguments. They are initialized in Wharrgarbl from the hash of
 // the input on which PoW is being computed. Differently initialized block ciphers for single-block
 // MMO make it a keyed hash, so each Wharrgarbl input results in a different search space. This
-// then computes 16 iterations of single-block MMO perturbed from a 32MB lookup table and alternating
+// then computes 24 iterations of single-block MMO perturbed from a 32MB lookup table and alternating
 // between the two ciphers.
 func wharrgarblMMOHash(mmoCipher0, mmoCipher1 cipher.Block, in *[16]byte) uint64 {
 	var tmp0, tmp1 [2]uint64
@@ -166,13 +157,24 @@ func wharrgarblWorkerFunc(mmoCipher0, mmoCipher1 cipher.Block, runNonce, diff64 
 	var collisionHashIn [16]byte
 	var iter uint64
 
+	// Generate an initial 40-bit collider.
+
 	thisCollider := uint64(rand.Uint32()) ^ (uint64(rand.Uint32()&0x3f) << 32)
 	for *done == 0 {
 		iter++
 		thisCollider++
 
-		binary.BigEndian.PutUint64(collisionHashIn[0:8], thisCollider)
+		collisionHashIn[3] = byte(thisCollider >> 32)
+		collisionHashIn[4] = byte(thisCollider >> 24)
+		collisionHashIn[5] = byte(thisCollider >> 16)
+		collisionHashIn[6] = byte(thisCollider >> 8)
+		collisionHashIn[7] = byte(thisCollider)
 		thisCollision := wharrgarblMMOHash(mmoCipher0, mmoCipher1, &collisionHashIn) % diff64
+
+		// The collision table contains 64-bit entries indexed by collision. These contain
+		// the collider (least significant 40 bits) and 24 bits of the other collision. We
+		// then recompute the full collision for the other collider to verify since there's
+		// a 1/2^24 chance of a false positive.
 		collisionTableEntry := (*uint64)(unsafe.Pointer(uintptr(wharrgarblMemoryPtr) + (uintptr(thisCollision^runNonce)%wharrgarblMemoryEntries)<<3))
 
 		collisionTableEntryCurrent := *collisionTableEntry
@@ -180,7 +182,11 @@ func wharrgarblWorkerFunc(mmoCipher0, mmoCipher1 cipher.Block, runNonce, diff64 
 		if uint32(collisionTableEntryCurrent>>40) == thisCollision24 {
 			otherCollider := collisionTableEntryCurrent & 0xffffffffff
 			if otherCollider != thisCollider {
-				binary.BigEndian.PutUint64(collisionHashIn[0:8], otherCollider)
+				collisionHashIn[3] = byte(otherCollider >> 32)
+				collisionHashIn[4] = byte(otherCollider >> 24)
+				collisionHashIn[5] = byte(otherCollider >> 16)
+				collisionHashIn[6] = byte(otherCollider >> 8)
+				collisionHashIn[7] = byte(otherCollider)
 				if (wharrgarblMMOHash(mmoCipher0, mmoCipher1, &collisionHashIn) % diff64) == thisCollision {
 					atomic.StoreUint32(done, 1)
 					outLock.Lock()
@@ -213,7 +219,15 @@ func Wharrgarbl(in []byte, difficulty uint32, minMemorySize uint) (out [Wharrgar
 	defer wharrgarblMemoryLock.Unlock()
 
 	if !wharrgarblStaticTableInitialized {
-		panic("Wharrgarbl static table not initialized")
+		wharrgarblStaticTableMem := (*[4194304 * 8]byte)(unsafe.Pointer(&wharrgarblStaticTable[0]))
+		copy(wharrgarblStaticTableMem[:], []byte("WharrrrRRRRgarbl!"))
+		for i := 0; i < 8; i++ {
+			wharrgarblStaticTableKey := sha256.Sum256(wharrgarblStaticTableMem[:])
+			wharrgarblStaticTableAes, _ := aes.NewCipher(wharrgarblStaticTableKey[:])
+			cfb := cipher.NewCFBEncrypter(wharrgarblStaticTableAes, wharrgarblStaticTableKey[0:16])
+			cfb.XORKeyStream(wharrgarblStaticTableMem[:], wharrgarblStaticTableMem[:])
+		}
+		wharrgarblStaticTableInitialized = true
 	}
 
 	if minMemorySize < 1048576 {

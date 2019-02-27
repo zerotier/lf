@@ -242,24 +242,38 @@ func TestCore(out io.Writer) bool {
 
 // TestWharrgarbl tests and runs benchmarks on the Wharrgarbl proof of work.
 func TestWharrgarbl(out io.Writer) bool {
+	var startTime, iterations, runTime uint64
 	testWharrgarblSamples := 25
 	var junk [32]byte
 	var wout [WharrgarblOutputSize]byte
+
 	fmt.Fprintf(out, "Wharrgarbl cost and score:\n")
 	for s := uint(1); s <= RecordMaxSize; s *= 2 {
 		fmt.Fprintf(out, "  %5d: cost: %.8x score: %.8x\n", s, recordWharrgarblCost(s), recordWharrgarblScore(recordWharrgarblCost(s)))
 	}
+
+	// Uncomment this part to see how long it takes to compute Wharrgarbl at max difficulty.
+	/*
+		fmt.Fprintf(out, "Computing Wharrgarbl with max difficulty... ")
+		startTime = TimeMs()
+		_, iterations = Wharrgarbl(junk[:], 0xffffffff, recordWharrgarblMemory)
+		runTime = (TimeMs() - startTime)
+		fmt.Fprintf(out, "%d milliseconds %d iterations\n", runTime, iterations)
+	*/
+
 	fmt.Fprintf(out, "Testing and benchmarking Wharrgarbl proof of work algorithm...\n")
-	for rs := uint(256); rs <= 65536; rs += 256 {
+	Wharrgarbl(junk[:], 1, recordWharrgarblMemory) // run once before benchmarking for 'warm up'
+	for rs := uint(256); rs <= 2048; rs += 256 {
 		secrand.Read(junk[:])
 		diff := recordWharrgarblCost(rs)
-		var iterations, ii uint64
-		startTime := TimeMs()
+		iterations = 0
+		startTime = TimeMs()
 		for k := 0; k < testWharrgarblSamples; k++ {
+			var ii uint64
 			wout, ii = Wharrgarbl(junk[:], diff, recordWharrgarblMemory)
 			iterations += ii
 		}
-		runTime := (TimeMs() - startTime) / uint64(testWharrgarblSamples)
+		runTime = (TimeMs() - startTime) / uint64(testWharrgarblSamples)
 		iterations /= uint64(testWharrgarblSamples)
 		if WharrgarblVerify(wout[:], junk[:]) == 0 {
 			fmt.Fprintf(out, "  %.8x: FAILED (verify)\n", diff)
@@ -267,6 +281,7 @@ func TestWharrgarbl(out io.Writer) bool {
 		}
 		fmt.Fprintf(out, "  %.8x: %d milliseconds %d iterations (difficulty for %d bytes)\n", diff, runTime, iterations, rs)
 	}
+
 	return true
 }
 

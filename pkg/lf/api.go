@@ -27,14 +27,16 @@ var apiVersionStr = strconv.FormatInt(int64(APIVersion), 10)
 // APIMaxResponseSize is a sanity limit on the maximum size of a response from the LF HTTP API (can be increased)
 const APIMaxResponseSize = 4194304
 
-// APIStatusPeer contains information about a connected peer.
+//////////////////////////////////////////////////////////////////////////////
+
+// APIStatusPeer (response) contains information about a connected peer.
 type APIStatusPeer struct {
 	Address   string `json:",omitempty"` // IP and port
 	PublicKey Blob   `json:",omitempty"` // public key
 	Inbound   bool   ``                  // true if this is an inbound connection
 }
 
-// APIProxyStatus contains info about the proxy through which this server was reached (if an LF proxy is present).
+// APIProxyStatus (response, part of APIStatus) contains info about LF proxies between the client and the full node.
 type APIProxyStatus struct {
 	Server        string `json:",omitempty"` // URL of server being accessed through the proxy
 	Software      string `json:",omitempty"` // Software implementation name of proxy
@@ -43,7 +45,7 @@ type APIProxyStatus struct {
 	MaxAPIVersion int    ``                  // Maximum supported API version of proxy
 }
 
-// APIStatus contains status information about this node and the network it belongs to.
+// APIStatus (response) contains status information about this node and the network it belongs to.
 type APIStatus struct {
 	Software          string            `json:",omitempty"` // Software implementation name
 	Version           [4]int            ``                  // Version of software
@@ -56,10 +58,10 @@ type APIStatus struct {
 	DBSize            uint64            ``                  // Total size of records in database in bytes
 	Peers             []APIStatusPeer   `json:",omitempty"` // Connected peers
 	GenesisParameters GenesisParameters ``                  // Genesis record contents that define constraints for this LF network
-	ViaProxy          *APIProxyStatus   `json:",omitempty"` // Proxies can add this to describe their own config and status while still reporting that of the server
+	Proxies           []APIProxyStatus  `json:",omitempty"` // Each proxy adds itself to the front of this list
 }
 
-// APIQueryRange specifies a selector or selector range.
+// APIQueryRange (request, part of APIQuery) specifies a selector or selector range.
 // Selector ranges can be specified in one of two ways. If KeyRange is non-empty it contains a single
 // masked selector key or a range of keys. If KeyRange is empty then Name contains the plain text name
 // of the selector and Range contains its ordinal range and the server will compute selector keys. The
@@ -71,13 +73,13 @@ type APIQueryRange struct {
 	KeyRange []Blob `json:",omitempty"` // Selector key or key range, overrides Name and Range if present (allows queries without revealing name)
 }
 
-// APIQuery describes a query for records in the form of an ordered series of selector ranges.
+// APIQuery (request) describes a query for records in the form of an ordered series of selector ranges.
 type APIQuery struct {
 	Range      []APIQueryRange `json:",omitempty"` // Selectors or selector range(s)
 	MaskingKey Blob            `json:",omitempty"` // Masking key to unmask record value server-side (if non-empty)
 }
 
-// APIQueryResult is a single query result.
+// APIQueryResult (response, part of APIQueryResults) is a single query result.
 type APIQueryResult struct {
 	Record *Record `json:",omitempty"` // Record itself.
 	Value  Blob    `json:",omitempty"` // Unmasked value if masking key was included
@@ -90,13 +92,13 @@ type APIQueryResult struct {
 // relevant or trustworthy.
 type APIQueryResults []APIQueryResult
 
-// APINewSelector is a selector plain text name and an ordinal value (use zero if you don't care).
+// APINewSelector (request, part of APINew) is a selector plain text name and an ordinal value (use zero if you don't care).
 type APINewSelector struct {
-	Name    Blob `json:",omitempty"` // Name of this selector
+	Name    Blob `json:",omitempty"` // Name of this selector (masked so as to be hidden from those that don't know it)
 	Ordinal Blob `json:",omitempty"` // A sortable public value (optional)
 }
 
-// APINew is a request to create and submit a new record.
+// APINew (request) asks the proxy or node to perform server-side record generation and proof of work.
 type APINew struct {
 	Selectors       []APINewSelector `json:",omitempty"` // Plain text selector names and ordinals
 	MaskingKey      Blob             `json:",omitempty"` // An arbitrary key used to mask the record's value from those that don't know what they're looking for
@@ -107,11 +109,13 @@ type APINew struct {
 	Timestamp       *uint64          `json:",omitempty"` // Record timestamp in SECONDS since epoch (server time is used if zero or omitted)
 }
 
-// APIError indicates an error and is returned with non-200 responses.
+// APIError (response) indicates an error and is returned with non-200 responses.
 type APIError struct {
 	Code    int    ``                  // Positive error codes simply mirror HTTP response codes, while negative ones are LF-specific
 	Message string `json:",omitempty"` // Message indicating the reason for the error
 }
+
+//////////////////////////////////////////////////////////////////////////////
 
 // Error implements the error interface, making APIError an 'error' in the Go sense.
 func (e APIError) Error() string { return fmt.Sprintf("%d (%s)", e.Code, e.Message) }
