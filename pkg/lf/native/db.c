@@ -83,7 +83,7 @@ static void *_ZTLF_DB_graphThreadMain(void *arg);
 #define ZTLF_DB_INIT_SQL \
 "PRAGMA locking_mode = EXCLUSIVE;\n" \
 "PRAGMA journal_mode = MEMORY;\n" \
-"PRAGMA cache_size = -131072;\n" \
+"PRAGMA cache_size = -524288;\n" \
 "PRAGMA synchronous = 0;\n" \
 "PRAGMA auto_vacuum = 0;\n" \
 "PRAGMA foreign_keys = OFF;\n" \
@@ -718,7 +718,7 @@ unsigned int ZTLF_DB_GetLinks(struct ZTLF_DB *db,void *const lbuf,const unsigned
 	while (sqlite3_step(db->sGetLinkCandidates) == SQLITE_ROW) {
 		rn += (uint64_t)rand();
 		struct ZTLF_DB_GraphNode *const gn = (struct ZTLF_DB_GraphNode *)ZTLF_MappedFile_TryGet(&db->gf,(uintptr_t)sqlite3_column_int64(db->sGetLinkCandidates,0),ZTLF_DB_MAX_GRAPH_NODE_SIZE);
-		if ((gn)&&((rn % (gn->linkedCount + 1ULL)) == 0)) {
+		if ((gn)&&((rn % (ZTLF_getu64_le(gn->linkedCount) + 1ULL)) == 0)) {
 			memcpy(l,sqlite3_column_blob(db->sGetLinkCandidates,1),32);
 			l += 32;
 			if (++lc >= cnt) {

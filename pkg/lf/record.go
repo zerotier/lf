@@ -47,7 +47,7 @@ const RecordWorkAlgorithmWharrgarbl byte = 1
 type recordBody struct {
 	Value       Blob   `json:",omitempty"` // Record value (possibly masked and/or compressed, use GetValue() to get)
 	Owner       Blob   `json:",omitempty"` // Owner of this record (owner public bytes)
-	Certificate Blob   `json:",omitempty"` // Hash of exact record containing certificate for this owner (if CAs are enabled)
+	Certificate Blob   `json:",omitempty"` // Hash (256-bit) of exact record containing certificate for this owner (if CAs are enabled)
 	Links       Blob   `json:",omitempty"` // Links to previous records' hashes (size is a multiple of 32 bytes, link count is size / 32)
 	Timestamp   uint64 ``                  // Timestamp (and revision ID) in SECONDS since Unix epoch
 }

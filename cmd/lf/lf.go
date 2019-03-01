@@ -395,6 +395,8 @@ func doMakeGenesis(cfg *Config, basePath string, jsonOutput bool, nodeURL string
 	secrand.Read(nwKey[:])
 	g := lf.GenesisParameters{
 		Name:                      "Sol",
+		Comment:                   "Global Public LF Data Store",
+		CertificateRequired:       false,
 		WorkRequired:              true,
 		LinkKey:                   nwKey,
 		TimestampFloor:            lf.TimeSec(),
@@ -426,7 +428,7 @@ func doMakeGenesis(cfg *Config, basePath string, jsonOutput bool, nodeURL string
 
 	ioutil.WriteFile("genesis.lf", grData.Bytes(), 0644)
 	ioutil.WriteFile("genesis.go", []byte(fmt.Sprintf("/*\n%s\n*/\n%#v", lf.PrettyJSON(g), grData.Bytes())), 0644)
-	if len(g.Amendable) > 0 {
+	if len(g.AmendableFields) > 0 {
 		ioutil.WriteFile("genesis.secret", genesisOwner.PrivateBytes(), 0600)
 	}
 

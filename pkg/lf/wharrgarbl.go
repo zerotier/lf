@@ -221,7 +221,7 @@ func Wharrgarbl(in []byte, difficulty uint32, minMemorySize uint) (out [Wharrgar
 	if !wharrgarblStaticTableInitialized {
 		wharrgarblStaticTableMem := (*[4194304 * 8]byte)(unsafe.Pointer(&wharrgarblStaticTable[0]))
 		copy(wharrgarblStaticTableMem[:], []byte("WharrrrRRRRgarbl!"))
-		for i := 0; i < 8; i++ {
+		for i := 0; i < 4; i++ {
 			wharrgarblStaticTableKey := sha256.Sum256(wharrgarblStaticTableMem[:])
 			wharrgarblStaticTableAes, _ := aes.NewCipher(wharrgarblStaticTableKey[:])
 			cfb := cipher.NewCFBEncrypter(wharrgarblStaticTableAes, wharrgarblStaticTableKey[0:16])

@@ -15,6 +15,7 @@ import (
 	"crypto/elliptic"
 	secrand "crypto/rand"
 	"encoding/binary"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"log"
@@ -186,6 +187,17 @@ func NewNode(path string, p2pPort int, httpPort int, logger *log.Logger, logLeve
 		}
 	}()
 
+	n.backgroundThreadWG.Add(1)
+	go func() {
+		defer n.backgroundThreadWG.Done()
+		for atomic.LoadUintptr(&n.shutdown) == 0 {
+			time.Sleep(time.Millisecond * 10)
+
+			linkCount, links, _ := n.db.getLinks(n.genesisParameters.RecordMinLinks)
+			fmt.Printf("%d %x\n", linkCount, links)
+		}
+	}()
+
 	n.startTime = TimeSec()
 
 	return n, nil
@@ -287,6 +299,9 @@ func (n *Node) AddRecord(r *Record) error {
 	}
 	if len(r.Certificate) > 0 && len(n.genesisParameters.RootCertificateAuthorities) == 0 { // don't let people shove crap into cert field if it's not used
 		return ErrorRecordCertificateInvalid
+	}
+	if len(r.Certificate) == 0 && n.genesisParameters.CertificateRequired {
+		return ErrorRecordCertificateRequired
 	}
 
 	// Validate record's internal structure and check signatures and work.
