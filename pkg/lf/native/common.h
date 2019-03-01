@@ -368,12 +368,12 @@ static inline void ZTLF_L_func(LogOutputCallback logger,void *loggerArg,int leve
 	logger(level,srcf,line,msg,loggerArg);
 }
 
-#define ZTLF_L(...) ZTLF_L_func(logger,(void *)loggerArg,0,__FILE__,__LINE__,__VA_ARGS__)
-#define ZTLF_L_warning(...) ZTLF_L_func(logger,(void *)loggerArg,-1,__FILE__,__LINE__,__VA_ARGS__)
-#define ZTLF_L_fatal(...) ZTLF_L_func(logger,(void *)loggerArg,-2,__FILE__,__LINE__,__VA_ARGS__)
-#define ZTLF_L_verbose(...) ZTLF_L_func(logger,(void *)loggerArg,1,__FILE__,__LINE__,__VA_ARGS__)
+#define ZTLF_L(...) ZTLF_L_func(logger,(void *)loggerArg,2,__FILE__,__LINE__,__VA_ARGS__)
+#define ZTLF_L_warning(...) ZTLF_L_func(logger,(void *)loggerArg,1,__FILE__,__LINE__,__VA_ARGS__)
+#define ZTLF_L_fatal(...) ZTLF_L_func(logger,(void *)loggerArg,0,__FILE__,__LINE__,__VA_ARGS__)
+#define ZTLF_L_verbose(...) ZTLF_L_func(logger,(void *)loggerArg,3,__FILE__,__LINE__,__VA_ARGS__)
 #ifdef ZTLF_TRACE
-#define ZTLF_L_trace(...) ZTLF_L_func(logger,(void *)loggerArg,2,__FILE__,__LINE__,__VA_ARGS__)
+#define ZTLF_L_trace(...) ZTLF_L_func(logger,(void *)loggerArg,4,__FILE__,__LINE__,__VA_ARGS__)
 #else
 #define ZTLF_L_trace(...)
 #endif

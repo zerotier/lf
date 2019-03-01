@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"math/rand"
 	"os"
 	"path"
@@ -302,7 +303,7 @@ func TestDatabase(testBasePath string, out io.Writer) bool {
 	for i := range db {
 		p := path.Join(testBasePath, strconv.FormatInt(int64(i), 10))
 		os.MkdirAll(p, 0755)
-		err = db[i].open(p, nil)
+		err = db[i].open(p, [logLevelCount]*log.Logger{nil, nil, nil, nil, nil})
 		if err != nil {
 			fmt.Fprintf(out, "FAILED: %s\n", err.Error())
 			return false

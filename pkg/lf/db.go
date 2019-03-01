@@ -18,7 +18,6 @@ import "C"
 import (
 	"fmt"
 	"log"
-	"os"
 	"strconv"
 	"sync"
 	"unsafe"
@@ -33,26 +32,24 @@ const (
 
 // DB is an instance of the LF database that stores records and manages record weights and linkages.
 type db struct {
-	logger          *log.Logger
-	verboseLogger   *log.Logger
+	log             [logLevelCount]*log.Logger
 	globalLoggerIdx uint
 	cdb             *C.struct_ZTLF_DB
 }
 
 // Global variables that store logger instances for use by the callback in db-log-callback.go.
 var (
-	globalLoggers       []*log.Logger
-	globalDefaultLogger = log.New(os.Stdout, "", log.LstdFlags)
-	globalLoggersLock   sync.Mutex
+	globalLoggers     [][logLevelCount]*log.Logger
+	globalLoggersLock sync.Mutex
 )
 
-func (db *db) open(basePath string, logger *log.Logger) error {
+func (db *db) open(basePath string, loggers [logLevelCount]*log.Logger) error {
 	var errbuf [2048]byte
-	db.logger = logger
+	db.log = loggers
 	db.cdb = new(C.struct_ZTLF_DB)
 
 	globalLoggersLock.Lock()
-	globalLoggers = append(globalLoggers, logger)
+	globalLoggers = append(globalLoggers, loggers)
 	db.globalLoggerIdx = uint(len(globalLoggers) - 1)
 	globalLoggersLock.Unlock()
 
@@ -71,7 +68,7 @@ func (db *db) open(basePath string, logger *log.Logger) error {
 		}
 
 		globalLoggersLock.Lock()
-		globalLoggers[db.globalLoggerIdx] = nil
+		globalLoggers[db.globalLoggerIdx] = [logLevelCount]*log.Logger{nil, nil, nil, nil, nil}
 		globalLoggersLock.Unlock()
 
 		return ErrorDatabase{int(cerr), "open failed (" + errstr + ")"}
@@ -83,7 +80,7 @@ func (db *db) open(basePath string, logger *log.Logger) error {
 func (db *db) close() {
 	C.ZTLF_DB_Close(db.cdb)
 	globalLoggersLock.Lock()
-	globalLoggers[db.globalLoggerIdx] = nil
+	globalLoggers[db.globalLoggerIdx] = [logLevelCount]*log.Logger{nil, nil, nil, nil, nil}
 	globalLoggersLock.Unlock()
 }
 
@@ -270,7 +267,8 @@ func (db *db) getAllByOwner(owner []byte, f func(uint64, uint64) bool) error {
 	results := C.ZTLF_DB_GetAllByOwner(db.cdb, unsafe.Pointer(&owner[0]))
 	if uintptr(unsafe.Pointer(results)) != 0 {
 		for i := C.long(0); i < results.count; i++ {
-			if !f(uint64(results.records[i].doff), uint64(results.records[i].dlen)) {
+			rec := (*C.struct_ZTLF_RecordIndex)(unsafe.Pointer(uintptr(unsafe.Pointer(&results.records[0])) + (uintptr(i) * unsafe.Sizeof(results.records[0]))))
+			if !f(uint64(rec.doff), uint64(rec.dlen)) {
 				break
 			}
 		}

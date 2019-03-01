@@ -42,7 +42,7 @@ const (
 // This callback handles logger output from the C parts of LF. Right now that's mostly just db.c, so this is here,
 // but it could in theory take log output from other code.
 //export ztlfLogOutputCCallback
-func ztlfLogOutputCCallback(level int, srcFile unsafe.Pointer, srcLine int, msg unsafe.Pointer, loggerArg unsafe.Pointer) {
+func ztlfLogOutputCCallback(level C.int, srcFile unsafe.Pointer, srcLine C.int, msg unsafe.Pointer, loggerArg unsafe.Pointer) {
 	srcFileStr := "<unknown file>"
 	if uintptr(srcFile) != 0 {
 		srcFileStr = C.GoString((*C.char)(srcFile))
@@ -51,30 +51,32 @@ func ztlfLogOutputCCallback(level int, srcFile unsafe.Pointer, srcLine int, msg 
 	msgStr = C.GoString((*C.char)(msg))
 
 	larg := uint(uintptr(loggerArg))
-	var logger *log.Logger
 
 	globalLoggersLock.Lock()
+	defer globalLoggersLock.Unlock()
 
+	if level >= logLevelCount || level < 0 {
+		return
+	}
+	var logger *log.Logger
 	if larg < uint(len(globalLoggers)) {
-		logger = globalLoggers[larg]
+		logger = globalLoggers[larg][level]
 	}
 	if logger == nil {
-		logger = globalDefaultLogger
+		return
 	}
 
-	switch level {
+	switch int(level) {
 	//case logLevelNormal:
 	default:
 		logger.Println(msgStr)
 	case LogLevelWarning:
-		logger.Printf("WARNING [%s:%d] %s\n", srcFileStr, srcLine, msgStr)
+		logger.Printf("WARNING: %s\n", msgStr)
 	case LogLevelFatal:
-		logger.Printf("FATAL [%s:%d] %s\n", srcFileStr, srcLine, msgStr)
+		logger.Printf("FATAL: %s\n", msgStr)
 	case LogLevelTrace:
 		logger.Printf("TRACE [%s:%d] %s\n", srcFileStr, srcLine, msgStr)
 	case LogLevelVerbose:
 		logger.Println(msgStr)
 	}
-
-	globalLoggersLock.Unlock()
 }

@@ -625,8 +625,6 @@ void ZTLF_DB_Close(struct ZTLF_DB *db)
 	pthread_rwlock_wrlock(&db->gfLock);
 	pthread_mutex_lock(&db->dbLock);
 
-	ZTLF_L_trace("closing database at %s",db->path);
-
 	if (db->dbc) {
 		if (db->sSetConfig)                           sqlite3_finalize(db->sSetConfig);
 		if (db->sGetConfig)                           sqlite3_finalize(db->sGetConfig);
@@ -680,8 +678,6 @@ void ZTLF_DB_Close(struct ZTLF_DB *db)
 		pthread_mutex_destroy(&db->graphNodeLocks[i]);
 	pthread_rwlock_destroy(&db->gfLock);
 	pthread_rwlock_destroy(&db->dfLock);
-
-	ZTLF_L_trace("database shutdown successful!");
 }
 
 struct _ZTLF_DB_GetMatching_follow
@@ -1127,6 +1123,9 @@ struct ZTLF_RecordList *ZTLF_DB_GetAllByOwner(struct ZTLF_DB *db,const void *own
 			r = (struct ZTLF_RecordList *)nr;
 		}
 	}
+
+	pthread_mutex_unlock(&db->dbLock);
+	return r;
 
 query_error:
 	pthread_mutex_unlock(&db->dbLock);

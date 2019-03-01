@@ -140,7 +140,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 	}
 
 	n.log[LogLevelNormal].Printf("listening on %d for HTTP, %d for LF P2P", httpPort, p2pPort)
-	err = n.db.open(basePath, logger)
+	err = n.db.open(basePath, n.log)
 	if err != nil {
 		n.httpTCPListener.Close()
 		n.p2pTCPListener.Close()
@@ -201,7 +201,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 			if gr != nil && err == nil {
 				rv, _ := gr.GetValue(nil)
 				if len(rv) > 0 {
-					n.log[LogLevelNormal].Printf("applying genesis record: %x", *gr.Hash())
+					n.log[LogLevelNormal].Printf("applying genesis configuration update from record %x", *gr.Hash())
 					n.genesisParameters.Update(rv)
 				}
 			}
