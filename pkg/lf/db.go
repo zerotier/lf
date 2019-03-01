@@ -194,6 +194,20 @@ func (db *db) getLinks(count uint) (uint, []byte, error) {
 	return lc, lbuf[0 : 32*lc], nil
 }
 
+func (db *db) getLinks2(count uint) ([][]byte, error) {
+	_, l, err := db.getLinks(count)
+	if err != nil {
+		return nil, err
+	}
+	var ll [][]byte
+	for i := 0; (i + 32) <= len(l); i += 32 {
+		var tmp [32]byte
+		copy(tmp[:], l[i:i+32])
+		ll = append(ll, tmp[:])
+	}
+	return ll, nil
+}
+
 // stats returns some basic statistics about this database.
 func (db *db) stats() (recordCount, dataSize uint64) {
 	C.ZTLF_DB_Stats(db.cdb, (*C.uint64_t)(unsafe.Pointer(&recordCount)), (*C.uint64_t)(unsafe.Pointer(&dataSize)))

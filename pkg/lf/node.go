@@ -15,8 +15,8 @@ import (
 	"crypto/elliptic"
 	secrand "crypto/rand"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"io/ioutil"
 	"log"
@@ -73,6 +73,7 @@ type Node struct {
 	linkKeyPubX        *big.Int                   // X coordinate of P-384 public key
 	linkKeyPubY        *big.Int                   // Y coordinate of P-384 public key
 	linkKeyPub         []byte                     // Point compressed P-384 public key
+	owner              *Owner                     // Owner for commentary and/or "mining" records
 	genesisParameters  GenesisParameters          // Genesis configuration for this node's network
 	genesisOwner       []byte                     // Owner of genesis record(s)
 	peers              map[string]*peer           // Currently connected peers by address
@@ -84,6 +85,12 @@ type Node struct {
 	backgroundThreadWG sync.WaitGroup             // Wait group for background goroutines
 	startTime          uint64                     // Time node was started in seconds since epoch
 	shutdown           uintptr                    // Set to non-zero to signal all background goroutines to exit
+}
+
+type linkKeyJSON struct {
+	Private Blob
+	PublicX Blob
+	PublicY Blob
 }
 
 // NewNode creates and starts a node.
@@ -103,9 +110,38 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 		n.log[i] = nullLogger
 	}
 
-	priv, px, py, err := elliptic.GenerateKey(elliptic.P384(), secrand.Reader)
-	if err != nil {
-		return nil, err
+	var priv []byte
+	var px, py *big.Int
+	lkfn := path.Join(basePath, "link-p384.secret")
+	lkd, _ := ioutil.ReadFile(lkfn)
+	if len(lkd) > 0 {
+		var lkj linkKeyJSON
+		err = json.Unmarshal(lkd, &lkj)
+		if err != nil {
+			err = nil
+		} else {
+			priv = lkj.Private
+			px = new(big.Int).SetBytes(lkj.PublicX)
+			py = new(big.Int).SetBytes(lkj.PublicY)
+		}
+	}
+	if px == nil || py == nil || !elliptic.P384().IsOnCurve(px, py) || len(priv) == 0 {
+		priv, px, py, err = elliptic.GenerateKey(elliptic.P384(), secrand.Reader)
+		if err != nil {
+			return nil, err
+		}
+		var lkj linkKeyJSON
+		lkj.Private = priv
+		lkj.PublicX = px.Bytes()
+		lkj.PublicY = py.Bytes()
+		lkd, err = json.Marshal(&lkj)
+		if err != nil {
+			return nil, err
+		}
+		err = ioutil.WriteFile(lkfn, lkd, 0600)
+		if err != nil {
+			return nil, err
+		}
 	}
 	n.linkKeyPriv = priv
 	n.linkKeyPubX = px
@@ -113,6 +149,27 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 	n.linkKeyPub, err = ECCCompressPublicKey(elliptic.P384(), px, py)
 	if err != nil {
 		return nil, err
+	}
+
+	ofn := path.Join(basePath, "owner-ed25519.secret")
+	ownerBytes, _ := ioutil.ReadFile(ofn)
+	if len(ownerBytes) > 0 {
+		n.owner, err = NewOwnerFromPrivateBytes(ownerBytes)
+		if err != nil {
+			n.owner = nil
+			err = nil
+		}
+	}
+	if n.owner == nil {
+		n.owner, err = NewOwner(OwnerTypeEd25519)
+		if err != nil {
+			return nil, err
+		}
+		ownerBytes = n.owner.PrivateBytes()
+		err = ioutil.WriteFile(ofn, ownerBytes, 0600)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	n.peers = make(map[string]*peer)
@@ -140,6 +197,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 	}
 
 	n.log[LogLevelNormal].Printf("listening on %d for HTTP, %d for LF P2P", httpPort, p2pPort)
+
 	err = n.db.open(basePath, n.log)
 	if err != nil {
 		n.httpTCPListener.Close()
@@ -258,10 +316,24 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 	go func() {
 		defer n.backgroundThreadWG.Done()
 		for atomic.LoadUintptr(&n.shutdown) == 0 {
-			time.Sleep(time.Millisecond * 10)
-
-			linkCount, links, _ := n.db.getLinks(n.genesisParameters.RecordMinLinks)
-			fmt.Printf("%d %x\n", linkCount, links)
+			time.Sleep(time.Millisecond * 100)
+			if n.genesisParameters.RecordMinLinks > 0 {
+				links, err := n.db.getLinks2(n.genesisParameters.RecordMinLinks)
+				if err == nil && uint(len(links)) >= n.genesisParameters.RecordMinLinks {
+					workAlgorithm := RecordWorkAlgorithmNone
+					if n.genesisParameters.WorkRequired {
+						workAlgorithm = RecordWorkAlgorithmWharrgarbl
+					}
+					rec, err := NewRecord(nil, links, nil, nil, nil, nil, TimeSec(), workAlgorithm, n.owner)
+					if err == nil {
+						n.AddRecord(rec)
+					} else {
+						n.log[LogLevelWarning].Printf("WARNING: error creating record: %s", err.Error())
+					}
+				} else {
+					n.log[LogLevelWarning].Printf("WARNING: database error getting links or %d links not available", n.genesisParameters.RecordMinLinks)
+				}
+			}
 		}
 	}()
 
@@ -384,6 +456,8 @@ func (n *Node) AddRecord(r *Record) error {
 	if n.db.haveSynchronizedWithID(rid[:], r.Owner) {
 		reputation = dbRecordReputationFlagCollidesWithSynchronizedID
 	}
+
+	n.log[LogLevelTrace].Printf("TRACE: new record: %x", *rhash)
 
 	// Add record to database, aborting if this generates some kind of error.
 	err = n.db.putRecord(r, reputation)

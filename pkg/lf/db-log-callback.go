@@ -75,7 +75,7 @@ func ztlfLogOutputCCallback(level C.int, srcFile unsafe.Pointer, srcLine C.int, 
 	case LogLevelFatal:
 		logger.Printf("FATAL: %s\n", msgStr)
 	case LogLevelTrace:
-		logger.Printf("TRACE [%s:%d] %s\n", srcFileStr, srcLine, msgStr)
+		logger.Printf("TRACE (C %s:%d): %s\n", srcFileStr, srcLine, msgStr)
 	case LogLevelVerbose:
 		logger.Println(msgStr)
 	}
