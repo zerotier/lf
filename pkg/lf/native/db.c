@@ -223,6 +223,8 @@ int ZTLF_DB_Open(struct ZTLF_DB *db,const char *path,char *errbuf,unsigned int e
 	     "SELECT (doff + dlen) FROM record ORDER BY doff DESC LIMIT 1");
 	S(db->sGetAllRecords,
 	     "SELECT goff,hash FROM record ORDER BY hash ASC");
+	S(db->sGetAllByOwner,
+	     "SELECT r.doff,r.dlen FROM record AS r WHERE r.owner = ? AND NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) AND NOT EXISTS (SELECT gp.record_goff FROM graph_pending AS gp WHERE gp.record_goff = r.goff) AND r.reputation = 0 ORDER BY r.ts ASC");
 	S(db->sGetLinkCandidates,
 	     "SELECT r.goff,r.hash FROM record AS r WHERE NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) AND NOT EXISTS (SELECT gp.record_goff FROM graph_pending AS gp WHERE gp.record_goff = r.goff) AND r.reputation = 0 ORDER BY ts DESC");
 	S(db->sGetRecordByHash,
@@ -634,6 +636,7 @@ void ZTLF_DB_Close(struct ZTLF_DB *db)
 		if (db->sGetRecordCount)                      sqlite3_finalize(db->sGetRecordCount);
 		if (db->sGetDataSize)                         sqlite3_finalize(db->sGetDataSize);
 		if (db->sGetAllRecords)                       sqlite3_finalize(db->sGetAllRecords);
+		if (db->sGetAllByOwner)                       sqlite3_finalize(db->sGetAllByOwner);
 		if (db->sGetLinkCandidates)                   sqlite3_finalize(db->sGetLinkCandidates);
 		if (db->sGetRecordByHash)                     sqlite3_finalize(db->sGetRecordByHash);
 		if (db->sGetMaxRecordDoff)                    sqlite3_finalize(db->sGetMaxRecordDoff);
@@ -982,6 +985,9 @@ struct ZTLF_QueryResults *ZTLF_DB_Query(struct ZTLF_DB *db,const void **sel,cons
 	pthread_mutex_lock(&db->dbLock);
 	pthread_rwlock_rdlock(&db->gfLock);
 
+	if (!r)
+		goto query_error;
+
 	sqlite3_reset(db->sQueryClearRecordSet);
 	if (sqlite3_step(db->sQueryClearRecordSet) != SQLITE_DONE) {
 		ZTLF_L_warning("database error clearing query record ID cache: %s",sqlite3_errmsg(db->dbc));
@@ -1093,6 +1099,37 @@ query_error:
 	pthread_rwlock_unlock(&db->gfLock);
 	pthread_mutex_unlock(&db->dbLock);
 
+	free(r);
+	return NULL;
+}
+
+struct ZTLF_RecordList *ZTLF_DB_GetAllByOwner(struct ZTLF_DB *db,const void *owner)
+{
+	long rcap = 64;
+	struct ZTLF_RecordList *r = (struct ZTLF_RecordList *)malloc(sizeof(struct ZTLF_RecordList) + (sizeof(struct ZTLF_RecordIndex) * rcap));
+
+	pthread_mutex_lock(&db->dbLock);
+	if (!r)
+		goto query_error;
+
+	r->count = 0;
+
+	sqlite3_reset(db->sGetAllByOwner);
+	sqlite3_bind_blob(db->sGetAllByOwner,1,owner,32,SQLITE_STATIC);
+	while (sqlite3_step(db->sGetAllByOwner) == SQLITE_ROW) {
+		r->records[r->count].doff = (uint64_t)sqlite3_column_int64(db->sGetAllByOwner,0);
+		r->records[r->count].dlen = (uint64_t)sqlite3_column_int64(db->sGetAllByOwner,1);
+		++r->count;
+		if (r->count >= rcap) {
+			void *const nr = realloc(r,sizeof(struct ZTLF_RecordList) + (sizeof(struct ZTLF_RecordIndex) * (rcap *= 2)));
+			if (!nr)
+				goto query_error;
+			r = (struct ZTLF_RecordList *)nr;
+		}
+	}
+
+query_error:
+	pthread_mutex_unlock(&db->dbLock);
 	free(r);
 	return NULL;
 }

@@ -46,7 +46,7 @@ var (
 	globalLoggersLock   sync.Mutex
 )
 
-func (db *db) open(path string, logger *log.Logger) error {
+func (db *db) open(basePath string, logger *log.Logger) error {
 	var errbuf [2048]byte
 	db.logger = logger
 	db.cdb = new(C.struct_ZTLF_DB)
@@ -56,7 +56,7 @@ func (db *db) open(path string, logger *log.Logger) error {
 	db.globalLoggerIdx = uint(len(globalLoggers) - 1)
 	globalLoggersLock.Unlock()
 
-	cerr := C.ZTLF_DB_Open_fromGo(db.cdb, C.CString(path), (*C.char)(unsafe.Pointer(&errbuf[0])), 2047, C.uintptr_t(db.globalLoggerIdx))
+	cerr := C.ZTLF_DB_Open_fromGo(db.cdb, C.CString(basePath), (*C.char)(unsafe.Pointer(&errbuf[0])), 2047, C.uintptr_t(db.globalLoggerIdx))
 	if cerr != 0 {
 		errstr := "unknown or I/O level error " + strconv.FormatInt(int64(cerr), 10)
 		if cerr > 0 {
@@ -260,6 +260,22 @@ func (db *db) query(selectorRanges [][2][]byte, f func(uint64, uint64, uint64, u
 		C.free(unsafe.Pointer(cresults))
 	}
 
+	return nil
+}
+
+func (db *db) getAllByOwner(owner []byte, f func(uint64, uint64) bool) error {
+	if len(owner) == 0 {
+		return nil
+	}
+	results := C.ZTLF_DB_GetAllByOwner(db.cdb, unsafe.Pointer(&owner[0]))
+	if uintptr(unsafe.Pointer(results)) != 0 {
+		for i := C.long(0); i < results.count; i++ {
+			if !f(uint64(results.records[i].doff), uint64(results.records[i].dlen)) {
+				break
+			}
+		}
+		C.free(unsafe.Pointer(results))
+	}
 	return nil
 }
 

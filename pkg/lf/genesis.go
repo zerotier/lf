@@ -9,10 +9,13 @@ package lf
 
 import (
 	"encoding/json"
+	"strings"
 )
 
 // GenesisParameters is the payload (JSON encoded) of the first RecordMinLinks records in a global data store.
 type GenesisParameters struct {
+	initialized bool
+
 	Name                       string   `json:",omitempty"` // Name of this LF network / data store
 	Contact                    string   `json:",omitempty"` // Contact info for this network (may be empty)
 	Comment                    string   `json:",omitempty"` // Optional comment
@@ -20,12 +23,77 @@ type GenesisParameters struct {
 	CertificateRequired        bool     `json:""`           // Is a certificate required? (must be false if there are no CAs, obviously)
 	WorkRequired               bool     `json:""`           // Is proof of work required?
 	LinkKey                    Blob256  `json:""`           // Static 32-byte key used to ensure that nodes in this network only connect to one another
-	TimestampFloor             uint64   `json:""`           // Floor for network record timestamps
+	TimestampFloor             uint64   `json:""`           // Floor for network record timestamps (seconds)
 	RecordMinLinks             uint     `json:""`           // Minimum number of links required for non-genesis records
 	RecordMaxValueSize         uint     `json:""`           // Maximum size of record values
 	RecordMaxSize              uint     `json:""`           // Maximum size of records (up to the RecordMaxSize constant)
 	RecordMaxForwardTimeDrift  uint     `json:""`           // Maximum number of seconds in the future a record can be timestamped
 	AmendableFields            []string `json:",omitempty"` // List of json field names that the genesis owner can change by posting non-empty records
+}
+
+// Update updates these GenesisParameters from a JSON encoded parameter set.
+// This handles the initial update and then constraining later updated by AmendableFields and which fields are present.
+func (gp *GenesisParameters) Update(jsonValue []byte) error {
+	if len(jsonValue) == 0 {
+		return nil
+	}
+
+	updFields := make(map[string]*json.RawMessage)
+	err := json.Unmarshal(jsonValue, &updFields)
+	if err != nil {
+		return err
+	}
+	var ngp GenesisParameters
+	err = json.Unmarshal(jsonValue, &ngp)
+	if err != nil {
+		return err
+	}
+
+	afields := gp.AmendableFields
+	for k := range updFields {
+		skip := gp.initialized
+		if skip {
+			for _, af := range afields {
+				if strings.EqualFold(af, k) {
+					skip = false
+					break
+				}
+			}
+		}
+		if !skip {
+			switch strings.ToLower(k) {
+			case "name":
+				gp.Name = ngp.Name
+			case "contact":
+				gp.Contact = ngp.Contact
+			case "comment":
+				gp.Comment = ngp.Comment
+			case "rootcertificateauthorities":
+				gp.RootCertificateAuthorities = ngp.RootCertificateAuthorities
+			case "certificaterequired":
+				gp.CertificateRequired = ngp.CertificateRequired
+			case "workrequired":
+				gp.WorkRequired = ngp.WorkRequired
+			case "linkkey":
+				gp.LinkKey = ngp.LinkKey
+			case "timestampfloor":
+				gp.TimestampFloor = ngp.TimestampFloor
+			case "recordminlinks":
+				gp.RecordMinLinks = ngp.RecordMinLinks
+			case "recordmaxvaluesize":
+				gp.RecordMaxValueSize = ngp.RecordMaxValueSize
+			case "recordmaxsize":
+				gp.RecordMaxSize = ngp.RecordMaxSize
+			case "recordmaxforwardtimedrift":
+				gp.RecordMaxForwardTimeDrift = ngp.RecordMaxForwardTimeDrift
+			case "amendablefields":
+				gp.AmendableFields = ngp.AmendableFields
+			}
+		}
+	}
+	gp.initialized = true
+
+	return nil
 }
 
 // CreateGenesisRecords creates a set of genesis records for a new LF data store.

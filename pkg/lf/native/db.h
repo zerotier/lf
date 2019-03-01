@@ -41,9 +41,6 @@ ZTLF_PACKED_STRUCT(struct ZTLF_DB_GraphNode
 /* Big enough for the largest NIST ECC curve, can be increased if needed. */
 #define ZTLF_DB_QUERY_MAX_OWNER_SIZE 72
 
-/**
- * Structure that holds a result of ZTLF_Query()
- */
 struct ZTLF_QueryResult
 {
 	uint64_t ts;
@@ -55,13 +52,22 @@ struct ZTLF_QueryResult
 	uint8_t owner[ZTLF_DB_QUERY_MAX_OWNER_SIZE];
 };
 
-/**
- * Structure that holds an array of query results.
- */
 struct ZTLF_QueryResults
 {
 	long count;
-	struct ZTLF_QueryResult results[1]; /* this is actually variable size, but Go doesn't support [] so compensate in C code by allocating capacity minus one */
+	struct ZTLF_QueryResult results[1]; /* this is actually variable size, but Go doesn't support [] */
+};
+
+struct ZTLF_RecordIndex
+{
+	uint64_t doff;
+	uint64_t dlen;
+};
+
+struct ZTLF_RecordList
+{
+	long count;
+	struct ZTLF_RecordIndex records[1]; /* this is actually variable size, but Go doesn't support [] */
 };
 
 #define ZTLF_DB_MAX_GRAPH_NODE_SIZE (sizeof(struct ZTLF_DB_GraphNode) + (256 * sizeof(int64_t)))
@@ -89,6 +95,7 @@ struct ZTLF_DB
 	sqlite3_stmt *sGetRecordCount;
 	sqlite3_stmt *sGetDataSize;
 	sqlite3_stmt *sGetAllRecords;
+	sqlite3_stmt *sGetAllByOwner;
 	sqlite3_stmt *sGetLinkCandidates;
 	sqlite3_stmt *sGetRecordByHash;
 	sqlite3_stmt *sGetMaxRecordDoff;
@@ -158,6 +165,8 @@ int ZTLF_DB_PutRecord(
 	const unsigned int linkCount);
 
 struct ZTLF_QueryResults *ZTLF_DB_Query(struct ZTLF_DB *db,const void **sel,const unsigned int *selSize,const unsigned int selCount);
+
+struct ZTLF_RecordList *ZTLF_DB_GetAllByOwner(struct ZTLF_DB *db,const void *owner);
 
 /* Gets the data offset and data length of a record by its hash (returns length, sets doff). */
 unsigned int ZTLF_DB_GetByHash(struct ZTLF_DB *db,const void *hash,uint64_t *doff);

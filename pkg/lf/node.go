@@ -15,6 +15,7 @@ import (
 	"crypto/elliptic"
 	secrand "crypto/rand"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -22,6 +23,8 @@ import (
 	"math/big"
 	"net"
 	"net/http"
+	"os"
+	"path"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -71,6 +74,7 @@ type Node struct {
 	linkKeyPubY        *big.Int                   // Y coordinate of P-384 public key
 	linkKeyPub         []byte                     // Point compressed P-384 public key
 	genesisParameters  GenesisParameters          // Genesis configuration for this node's network
+	genesisOwner       []byte                     // Owner of genesis record(s)
 	peers              map[string]*peer           // Currently connected peers by address
 	peersLock          sync.RWMutex               //
 	httpTCPListener    *net.TCPListener           //
@@ -83,7 +87,7 @@ type Node struct {
 }
 
 // NewNode creates and starts a node.
-func NewNode(path string, p2pPort int, httpPort int, logger *log.Logger, logLevel int) (n *Node, err error) {
+func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, logLevel int) (n *Node, err error) {
 	n = new(Node)
 
 	if logger == nil {
@@ -135,12 +139,75 @@ func NewNode(path string, p2pPort int, httpPort int, logger *log.Logger, logLeve
 		return nil, err
 	}
 
-	err = n.db.open(path, logger)
+	n.log[LogLevelNormal].Printf("listening on %d for HTTP, %d for LF P2P", httpPort, p2pPort)
+	err = n.db.open(basePath, logger)
 	if err != nil {
 		n.httpTCPListener.Close()
 		n.p2pTCPListener.Close()
 		return nil, err
 	}
+
+	var genesisReader io.Reader
+	genesisFile, err := os.Open(path.Join(basePath, "genesis.lf"))
+	if err == nil && genesisFile != nil {
+		n.log[LogLevelNormal].Print("found genesis.lf, using alternative genesis records instead of compiled-in default")
+		genesisReader = genesisFile
+	} else {
+		genesisReader = bytes.NewReader(SolGenesisRecords)
+	}
+	for {
+		var r Record
+		err := r.UnmarshalFrom(genesisReader)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			n.httpTCPListener.Close()
+			n.p2pTCPListener.Close()
+			return nil, err
+		}
+
+		if len(n.genesisOwner) == 0 {
+			n.genesisOwner = r.Owner
+		}
+
+		if bytes.Equal(n.genesisOwner, r.Owner) { // sanity check
+			rh := r.Hash()
+			if !n.db.hasRecord(rh[:]) {
+				n.log[LogLevelNormal].Printf("genesis record %x not found in database, initializing", *rh)
+				err = n.db.putRecord(&r, 0)
+				if err != nil {
+					n.httpTCPListener.Close()
+					n.p2pTCPListener.Close()
+					return nil, err
+				}
+			}
+		}
+	}
+	if genesisFile != nil {
+		genesisFile.Close()
+	}
+	if len(n.genesisOwner) == 0 {
+		n.httpTCPListener.Close()
+		n.p2pTCPListener.Close()
+		return nil, errors.New("no default genesis records found; database cannot be initialized and/or genesis record lineage cannot be determined")
+	}
+
+	n.log[LogLevelNormal].Printf("loading genesis records for genesis owner %x", n.genesisOwner)
+	n.db.getAllByOwner(n.genesisOwner, func(doff, dlen uint64) bool {
+		rdata, _ := n.db.getDataByOffset(doff, uint(dlen), nil)
+		if len(rdata) > 0 {
+			gr, err := NewRecordFromBytes(rdata)
+			if gr != nil && err == nil {
+				rv, _ := gr.GetValue(nil)
+				if len(rv) > 0 {
+					n.log[LogLevelNormal].Printf("applying genesis record: %x", *gr.Hash())
+					n.genesisParameters.Update(rv)
+				}
+			}
+		}
+		return true
+	})
 
 	n.backgroundThreadWG.Add(1)
 	go func() {

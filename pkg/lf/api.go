@@ -27,6 +27,9 @@ var apiVersionStr = strconv.FormatInt(int64(APIVersion), 10)
 // APIMaxResponseSize is a sanity limit on the maximum size of a response from the LF HTTP API (can be increased)
 const APIMaxResponseSize = 4194304
 
+// APIMaxLinks is the maximum number of links that will be returned by /links.
+const APIMaxLinks = 2048
+
 //////////////////////////////////////////////////////////////////////////////
 
 // APIStatusPeer (response) contains information about a connected peer.
@@ -450,12 +453,13 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 			desired := n.genesisParameters.RecordMinLinks
 			desiredStr := req.URL.Query().Get("count")
 			if len(desiredStr) > 0 {
-				tmp, _ := strconv.ParseUint(desiredStr, 10, 64)
+				tmp, _ := strconv.ParseInt(desiredStr, 10, 64)
+				if tmp <= 0 {
+					tmp = 1
+				}
 				desired = uint(tmp)
 			}
-			if desired == 0 {
-				desired = 1
-			} else if desired > 2048 {
+			if desired > 2048 {
 				desired = 2048
 			}
 			_, links, _ := n.db.getLinks(desired)

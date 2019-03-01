@@ -304,7 +304,7 @@ func WharrgarblVerify(work []byte, in []byte) uint32 {
 // WharrgarblGetDifficulty extracts the difficulty from a work result without performing any verification.
 func WharrgarblGetDifficulty(work []byte) uint32 {
 	if len(work) == WharrgarblOutputSize {
-		return binary.BigEndian.Uint32(work[16:20]) // difficulty is appended as last 4 bytes
+		return binary.BigEndian.Uint32(work[10:14]) // difficulty is appended as last 4 bytes
 	}
 	return 0
 }
