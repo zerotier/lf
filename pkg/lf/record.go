@@ -654,10 +654,13 @@ func NewRecordStart(value []byte, links [][]byte, maskingKey []byte, plainTextSe
 
 // NewRecordDoWork is a convenience method for doing the work to add to a record.
 // This can obviously be a time and memory intensive function.
-func NewRecordDoWork(workHash []byte, workBillableBytes uint, workAlgorithm byte) (work []byte, err error) {
+func NewRecordDoWork(workHash []byte, workBillableBytes uint, workAlgorithm byte, workCostOverride uint32) (work []byte, err error) {
 	if workAlgorithm != RecordWorkAlgorithmNone {
 		if workAlgorithm == RecordWorkAlgorithmWharrgarbl {
-			w, iter := Wharrgarbl(workHash, recordWharrgarblCost(workBillableBytes), recordWharrgarblMemory)
+			if workCostOverride == 0 {
+				workCostOverride = recordWharrgarblCost(workBillableBytes)
+			}
+			w, iter := Wharrgarbl(workHash, workCostOverride, recordWharrgarblMemory)
 			if iter == 0 {
 				err = ErrorWharrgarblFailed
 				return
@@ -699,14 +702,14 @@ func NewRecordComplete(incompleteRecord *Record, signingHash []byte, owner *Owne
 
 // NewRecord is a shortcut to running all incremental record creation functions.
 // Obviously this is time and memory intensive due to proof of work required to "pay" for this record.
-func NewRecord(value []byte, links [][]byte, maskingKey []byte, plainTextSelectorNames [][]byte, selectorOrdinals [][]byte, certificateRecordHash []byte, ts uint64, workAlgorithm byte, owner *Owner) (r *Record, err error) {
+func NewRecord(value []byte, links [][]byte, maskingKey []byte, plainTextSelectorNames [][]byte, selectorOrdinals [][]byte, certificateRecordHash []byte, ts uint64, workAlgorithm byte, workCostOverride uint32, owner *Owner) (r *Record, err error) {
 	var wh, sh [32]byte
 	var wb uint
 	r, wh, wb, err = NewRecordStart(value, links, maskingKey, plainTextSelectorNames, selectorOrdinals, owner.Bytes(), certificateRecordHash, ts)
 	if err != nil {
 		return
 	}
-	w, err := NewRecordDoWork(wh[:], wb, workAlgorithm)
+	w, err := NewRecordDoWork(wh[:], wb, workAlgorithm, workCostOverride)
 	if err != nil {
 		return
 	}

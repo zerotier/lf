@@ -317,7 +317,7 @@ func (m *APINew) execute(workAlgorithm byte) (*Record, *APIError) {
 	for i := range m.Links {
 		links[i] = m.Links[i][:]
 	}
-	rec, err := NewRecord(m.Value, links, m.MaskingKey, sel, selord, nil, ts, workAlgorithm, owner)
+	rec, err := NewRecord(m.Value, links, m.MaskingKey, sel, selord, nil, ts, workAlgorithm, 0, owner)
 	if err != nil {
 		return nil, &APIError{Code: http.StatusBadRequest, Message: "record generation failed: " + err.Error()}
 	}

@@ -185,7 +185,7 @@ func TestCore(out io.Writer) bool {
 			fmt.Fprintf(out, "FAILED (create owner): %s\n", err.Error())
 			return false
 		}
-		rec, err := NewRecord(testValue[:], testLinks, []byte("test"), [][]byte{[]byte("test0")}, [][]byte{[]byte("0000")}, nil, uint64(k), RecordWorkAlgorithmNone, owner)
+		rec, err := NewRecord(testValue[:], testLinks, []byte("test"), [][]byte{[]byte("test0")}, [][]byte{[]byte("0000")}, nil, uint64(k), RecordWorkAlgorithmNone, 0, owner)
 		if err != nil {
 			fmt.Fprintf(out, "FAILED (create record): %s\n", err.Error())
 			return false
@@ -224,7 +224,7 @@ func TestCore(out io.Writer) bool {
 		fmt.Fprintf(out, "FAILED (create owner): %s\n", err.Error())
 		return false
 	}
-	rec, err := NewRecord(testValue[:], testLinks, []byte("test"), [][]byte{[]byte("full record test")}, [][]byte{[]byte("0000")}, nil, TimeSec(), RecordWorkAlgorithmWharrgarbl, owner)
+	rec, err := NewRecord(testValue[:], testLinks, []byte("test"), [][]byte{[]byte("full record test")}, [][]byte{[]byte("0000")}, nil, TimeSec(), RecordWorkAlgorithmWharrgarbl, 0, owner)
 	if err != nil {
 		fmt.Fprintf(out, "FAILED (new record creation): %s\n", err.Error())
 		return false
@@ -253,18 +253,9 @@ func TestWharrgarbl(out io.Writer) bool {
 		fmt.Fprintf(out, "  %5d: cost: %.8x score: %.8x\n", s, recordWharrgarblCost(s), recordWharrgarblScore(recordWharrgarblCost(s)))
 	}
 
-	// Uncomment this part to see how long it takes to compute Wharrgarbl at max difficulty.
-	/*
-		fmt.Fprintf(out, "Computing Wharrgarbl with max difficulty... ")
-		startTime = TimeMs()
-		_, iterations = Wharrgarbl(junk[:], 0xffffffff, recordWharrgarblMemory)
-		runTime = (TimeMs() - startTime)
-		fmt.Fprintf(out, "%d milliseconds %d iterations\n", runTime, iterations)
-	*/
-
 	fmt.Fprintf(out, "Testing and benchmarking Wharrgarbl proof of work algorithm...\n")
 	Wharrgarbl(junk[:], 1, recordWharrgarblMemory) // run once before benchmarking for 'warm up'
-	for rs := uint(256); rs <= 2048; rs += 256 {
+	for rs := uint(256); rs <= 4096; rs += 256 {
 		secrand.Read(junk[:])
 		diff := recordWharrgarblCost(rs)
 		iterations = 0
@@ -352,7 +343,7 @@ func TestDatabase(testBasePath string, out io.Writer) bool {
 		ts++
 		sel := []byte("test-owner-number-" + strconv.FormatInt(int64(ri%testDatabaseOwners), 10))
 		value := []byte(strconv.FormatUint(ts, 10))
-		records[ri], err = NewRecord(value, links, []byte("test"), [][]byte{sel}, [][]byte{[]byte("0000")}, nil, ts, RecordWorkAlgorithmNone, owners[ri%testDatabaseOwners])
+		records[ri], err = NewRecord(value, links, []byte("test"), [][]byte{sel}, [][]byte{[]byte("0000")}, nil, ts, RecordWorkAlgorithmNone, 0, owners[ri%testDatabaseOwners])
 		if err != nil {
 			fmt.Fprintf(out, "FAILED: %s\n", err.Error())
 			return false

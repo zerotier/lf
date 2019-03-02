@@ -324,7 +324,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 					if n.genesisParameters.WorkRequired {
 						workAlgorithm = RecordWorkAlgorithmWharrgarbl
 					}
-					rec, err := NewRecord(nil, links, nil, nil, nil, nil, TimeSec(), workAlgorithm, n.owner)
+					rec, err := NewRecord(nil, links, nil, nil, nil, nil, TimeSec(), workAlgorithm, 0, n.owner)
 					if err == nil {
 						n.AddRecord(rec)
 					} else {
