@@ -274,6 +274,7 @@ func (db *db) query(selectorRanges [][2][]byte, f func(uint64, uint64, uint64, u
 	return nil
 }
 
+// getAllByOwner gets all (complete) records owned by a given owner key.
 func (db *db) getAllByOwner(owner []byte, f func(uint64, uint64) bool) error {
 	if len(owner) == 0 {
 		return nil
@@ -291,6 +292,7 @@ func (db *db) getAllByOwner(owner []byte, f func(uint64, uint64) bool) error {
 	return nil
 }
 
+// haveSynchronizedWithID returns true if a fully synchronized record exists other than one owned by the supplied 'not owner'.
 func (db *db) haveSynchronizedWithID(id []byte, notOwner []byte) bool {
 	if len(id) != 32 || len(notOwner) == 0 {
 		return false

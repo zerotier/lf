@@ -13,6 +13,7 @@ import (
 	"crypto/elliptic"
 	secrand "crypto/rand"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -57,6 +58,7 @@ func TestCore(out io.Writer) bool {
 		fmt.Fprintf(out, "FAILED\n")
 		return false
 	}
+
 	fmt.Fprintf(out, "Testing Blob serialize/deserialize... ")
 	for i := 1; i < 1024; i++ {
 		var bb Blob
@@ -79,6 +81,18 @@ func TestCore(out io.Writer) bool {
 		}
 	}
 	fmt.Fprintf(out, "OK\n")
+
+	fmt.Fprintf(out, "Testing Shandwich256... ")
+	t0 := Shandwich256(testStr)
+	t1h := NewShandwich256()
+	t1h.Write(testStr)
+	t1 := t1h.Sum(nil)
+	if bytes.Equal(t0[:], t1) && hex.EncodeToString(t0[:]) == "fcb43f704eb65e06be713636021d4168e9b355f9a8df24e14177f7ddc1105fea" {
+		fmt.Fprintf(out, "OK\n")
+	} else {
+		fmt.Fprintf(out, "FAILED %x\n", t0)
+		return false
+	}
 
 	curves := []elliptic.Curve{elliptic.P384(), elliptic.P521(), ECCCurveBrainpoolP160T1}
 	for ci := range curves {

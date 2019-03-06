@@ -41,6 +41,8 @@ ZTLF_PACKED_STRUCT(struct ZTLF_DB_GraphNode
 /* Big enough for the largest NIST ECC curve, can be increased if needed. */
 #define ZTLF_DB_QUERY_MAX_OWNER_SIZE 72
 
+struct ZTLF_DB;
+
 struct ZTLF_QueryResult
 {
 	uint64_t ts;
@@ -73,9 +75,11 @@ struct ZTLF_RecordList
 #define ZTLF_DB_MAX_GRAPH_NODE_SIZE (sizeof(struct ZTLF_DB_GraphNode) + (256 * sizeof(int64_t)))
 
 /**
- * Write checkpoints no more often than once per hour.
+ * Callback for when records are fully synchronized
+ * 
+ * Parameters are: database, record hash, data offset, data length, and an arbitrary argument.
  */
-#define ZTLF_DB_MIN_CHECKPOINT_INTERVAL 3600000
+typedef void (*RecordSynchronizedCallback)(struct ZTLF_DB *,const void *,uint64_t,unsigned int,void *);
 
 /**
  * An instance of the LF database (C side)
@@ -84,7 +88,9 @@ struct ZTLF_DB
 {
 	char path[PATH_MAX];
 	LogOutputCallback logger;
+	RecordSynchronizedCallback recordSyncCallback;
 	uintptr_t loggerArg;
+	uintptr_t recordSyncArg;
 
 	sqlite3 *dbc;
 	sqlite3_stmt *sSetConfig;
@@ -101,7 +107,7 @@ struct ZTLF_DB
 	sqlite3_stmt *sGetMaxRecordDoff;
 	sqlite3_stmt *sGetMaxRecordGoff;
 	sqlite3_stmt *sGetRecordGoffByHash;
-	sqlite3_stmt *sGetRecordScoreByGoff;
+	sqlite3_stmt *sGetRecordInfoByGoff;
 	sqlite3_stmt *sGetDanglingLinks;
 	sqlite3_stmt *sDeleteDanglingLinks;
 	sqlite3_stmt *sDeleteWantedHash;
@@ -143,7 +149,13 @@ struct ZTLF_DB
 	volatile bool running;
 };
 
-int ZTLF_DB_Open(struct ZTLF_DB *db,const char *path,char *errbuf,unsigned int errbufSize,LogOutputCallback logger,void *loggerArg);
+int ZTLF_DB_Open(
+	struct ZTLF_DB *db,
+	const char *path,
+	char *errbuf,
+	unsigned int errbufSize,
+	LogOutputCallback logger,
+	void *loggerArg);
 
 void ZTLF_DB_Close(struct ZTLF_DB *db);
 

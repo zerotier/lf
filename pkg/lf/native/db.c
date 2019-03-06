@@ -173,6 +173,8 @@ int ZTLF_DB_Open(struct ZTLF_DB *db,const char *path,char *errbuf,unsigned int e
 	strncpy(db->path,path,PATH_MAX-1);
 	db->logger = logger;
 	db->loggerArg = (uintptr_t)loggerArg;
+	db->recordSyncCallback = NULL;
+	db->recordSyncArg = 0;
 
 	ZTLF_L_trace("opening database at %s",path);
 
@@ -235,8 +237,8 @@ int ZTLF_DB_Open(struct ZTLF_DB *db,const char *path,char *errbuf,unsigned int e
 	     "SELECT MAX(goff) FROM record");
 	S(db->sGetRecordGoffByHash,
 	     "SELECT goff FROM record WHERE hash = ?");
-	S(db->sGetRecordScoreByGoff,
-	     "SELECT score FROM record WHERE goff = ?");
+	S(db->sGetRecordInfoByGoff,
+	     "SELECT doff,dlen,score,hash FROM record WHERE goff = ?");
 	S(db->sGetDanglingLinks,
 	     "SELECT linking_record_goff,linking_record_link_idx FROM dangling_link WHERE hash = ?");
 	S(db->sDeleteDanglingLinks,
@@ -390,19 +392,23 @@ static void *_ZTLF_DB_graphThreadMain(void *arg)
 		} else continue;
 
 		while ((recordQueue.size > 0)&&(db->running)) {
-			const int64_t waitingGoff = recordQueue.v[recordQueue.size-1];
-			--recordQueue.size;
+			const int64_t waitingGoff = recordQueue.v[--recordQueue.size];
 			/* ZTLF_L_trace("graph: adjusting weights for records below graph node %lld",(long long)waitingGoff); */
 
 			/* Get record score and any previously known holes in the graph below this node. */
 			int holeCount = 0;
-			uint64_t score = 0;
+			uint64_t doff = 0,score = 0;
+			unsigned int dlen = 0;
+			uint8_t hash[32];
 			ZTLF_Map128_Clear(&holes);
 			pthread_mutex_lock(&db->dbLock);
-			sqlite3_reset(db->sGetRecordScoreByGoff);
-			sqlite3_bind_int64(db->sGetRecordScoreByGoff,1,waitingGoff);
-			if (sqlite3_step(db->sGetRecordScoreByGoff) == SQLITE_ROW) {
-				score = (uint64_t)sqlite3_column_int64(db->sGetRecordScoreByGoff,0);
+			sqlite3_reset(db->sGetRecordInfoByGoff);
+			sqlite3_bind_int64(db->sGetRecordInfoByGoff,1,waitingGoff);
+			if (sqlite3_step(db->sGetRecordInfoByGoff) == SQLITE_ROW) {
+				doff = (uint64_t)sqlite3_column_int64(db->sGetRecordInfoByGoff,0);
+				dlen = (unsigned int)sqlite3_column_int(db->sGetRecordInfoByGoff,1);
+				score = (uint64_t)sqlite3_column_int64(db->sGetRecordInfoByGoff,2);
+				memcpy(hash,sqlite3_column_blob(db->sGetRecordInfoByGoff,3),32);
 			}
 			sqlite3_reset(db->sGetHoles);
 			sqlite3_bind_int64(db->sGetHoles,1,waitingGoff);
@@ -586,6 +592,9 @@ static void *_ZTLF_DB_graphThreadMain(void *arg)
 				if (sqlite3_step(db->sDeleteCompletedPending) != SQLITE_DONE) {
 					ZTLF_L_warning("graph: error deleting complete pending record %lld",(long long)waitingGoff);
 				}
+
+				if (db->recordSyncCallback)
+					db->recordSyncCallback(db,hash,doff,dlen,(void *)db->recordSyncArg);
 			} else {
 				sqlite3_reset(db->sUpdatePendingHoleCount);
 				sqlite3_bind_int64(db->sUpdatePendingHoleCount,1,(int64_t)holeCount);
@@ -640,7 +649,7 @@ void ZTLF_DB_Close(struct ZTLF_DB *db)
 		if (db->sGetMaxRecordDoff)                    sqlite3_finalize(db->sGetMaxRecordDoff);
 		if (db->sGetMaxRecordGoff)                    sqlite3_finalize(db->sGetMaxRecordGoff);
 		if (db->sGetRecordGoffByHash)                 sqlite3_finalize(db->sGetRecordGoffByHash);
-		if (db->sGetRecordScoreByGoff)                sqlite3_finalize(db->sGetRecordScoreByGoff);
+		if (db->sGetRecordInfoByGoff)                 sqlite3_finalize(db->sGetRecordInfoByGoff);
 		if (db->sGetDanglingLinks)                    sqlite3_finalize(db->sGetDanglingLinks);
 		if (db->sDeleteDanglingLinks)                 sqlite3_finalize(db->sDeleteDanglingLinks);
 		if (db->sDeleteWantedHash)                    sqlite3_finalize(db->sDeleteWantedHash);
