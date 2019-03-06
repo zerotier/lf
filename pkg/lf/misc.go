@@ -51,8 +51,7 @@ func (mr byteAndArrayReader) ReadByte() (byte, error) {
 
 func writeUVarint(out io.Writer, v uint64) (int, error) {
 	var tmp [10]byte
-	l := binary.PutUvarint(tmp[:], v)
-	return out.Write(tmp[0:l])
+	return out.Write(tmp[0:binary.PutUvarint(tmp[:], v)])
 }
 
 // integerSqrtRounded computes the rounded integer square root of a 32-bit unsigned int.

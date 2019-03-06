@@ -151,8 +151,8 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 		return nil, err
 	}
 
-	ofn := path.Join(basePath, "owner-ed25519.secret")
-	ownerBytes, _ := ioutil.ReadFile(ofn)
+	ownerFileName := path.Join(basePath, "owner-ed25519.secret")
+	ownerBytes, _ := ioutil.ReadFile(ownerFileName)
 	if len(ownerBytes) > 0 {
 		n.owner, err = NewOwnerFromPrivateBytes(ownerBytes)
 		if err != nil {
@@ -166,7 +166,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 			return nil, err
 		}
 		ownerBytes = n.owner.PrivateBytes()
-		err = ioutil.WriteFile(ofn, ownerBytes, 0600)
+		err = ioutil.WriteFile(ownerFileName, ownerBytes, 0600)
 		if err != nil {
 			return nil, err
 		}
@@ -196,7 +196,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 		return nil, err
 	}
 
-	n.log[LogLevelNormal].Printf("listening on %d for HTTP, %d for LF P2P", httpPort, p2pPort)
+	n.log[LogLevelNormal].Printf("listening on %d for HTTP and %d for LF P2P", httpPort, p2pPort)
 
 	err = n.db.open(basePath, n.log)
 	if err != nil {
@@ -206,11 +206,13 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 	}
 
 	var genesisReader io.Reader
-	genesisFile, err := os.Open(path.Join(basePath, "genesis.lf"))
+	genesisPath := path.Join(basePath, "genesis.lf")
+	genesisFile, err := os.Open(genesisPath)
 	if err == nil && genesisFile != nil {
-		n.log[LogLevelNormal].Print("found genesis.lf, using alternative genesis records instead of compiled-in default")
+		n.log[LogLevelNormal].Print("loading and checking initial genesis records from genesis.lf")
 		genesisReader = genesisFile
 	} else {
+		n.log[LogLevelNormal].Print("loading and checking initial genesis records from internal defaults (no genesis.lf found)")
 		genesisReader = bytes.NewReader(SolGenesisRecords)
 	}
 	for {
@@ -242,7 +244,9 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 			}
 		}
 	}
-	if genesisFile != nil {
+	if genesisFile == nil {
+		ioutil.WriteFile(genesisPath, SolGenesisRecords, 0644)
+	} else {
 		genesisFile.Close()
 	}
 	if len(n.genesisOwner) == 0 {
@@ -251,7 +255,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 		return nil, errors.New("no default genesis records found; database cannot be initialized and/or genesis record lineage cannot be determined")
 	}
 
-	n.log[LogLevelNormal].Printf("loading genesis records for genesis owner %x", n.genesisOwner)
+	n.log[LogLevelNormal].Printf("loading genesis records from genesis owner %x", n.genesisOwner)
 	n.db.getAllByOwner(n.genesisOwner, func(doff, dlen uint64) bool {
 		rdata, _ := n.db.getDataByOffset(doff, uint(dlen), nil)
 		if len(rdata) > 0 {

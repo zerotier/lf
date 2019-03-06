@@ -194,6 +194,8 @@ func (db *db) getLinks(count uint) (uint, []byte, error) {
 	return lc, lbuf[0 : 32*lc], nil
 }
 
+// getLinks2 is like getLinks but returns a slice of slices instead of one slice with all the link IDs concatenated.
+// This slice of slices is just a slice of slices of the original concatenated array.
 func (db *db) getLinks2(count uint) ([][]byte, error) {
 	_, l, err := db.getLinks(count)
 	if err != nil {
@@ -201,9 +203,7 @@ func (db *db) getLinks2(count uint) ([][]byte, error) {
 	}
 	var ll [][]byte
 	for i := 0; (i + 32) <= len(l); i += 32 {
-		var tmp [32]byte
-		copy(tmp[:], l[i:i+32])
-		ll = append(ll, tmp[:])
+		ll = append(ll, l[i:i+32])
 	}
 	return ll, nil
 }
