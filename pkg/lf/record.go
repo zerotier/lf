@@ -63,7 +63,7 @@ func (rb *recordBody) unmarshalFrom(r io.Reader) error {
 	}
 	if l > 0 {
 		if l > RecordMaxSize {
-			return ErrorRecordInvalid
+			return ErrRecordInvalid
 		}
 		rb.Value = make([]byte, uint(l))
 		_, err = io.ReadFull(&rr, rb.Value)
@@ -80,7 +80,7 @@ func (rb *recordBody) unmarshalFrom(r io.Reader) error {
 	}
 	if l > 0 {
 		if l > RecordMaxSize {
-			return ErrorRecordInvalid
+			return ErrRecordInvalid
 		}
 		rb.Owner = make([]byte, uint(l))
 		_, err = io.ReadFull(&rr, rb.Owner)
@@ -109,7 +109,7 @@ func (rb *recordBody) unmarshalFrom(r io.Reader) error {
 	if l > 0 {
 		l *= 32
 		if l > RecordMaxSize {
-			return ErrorRecordInvalid
+			return ErrRecordInvalid
 		}
 		rb.Links = make([]byte, uint(l))
 		_, err = io.ReadFull(&rr, rb.Links)
@@ -233,13 +233,13 @@ func (rb *recordBody) GetValue(maskingKey []byte) ([]byte, error) {
 			return nil, err
 		}
 		if crc16(uncompressedValue) != binary.BigEndian.Uint16(unmaskedValue[1:3]) {
-			return nil, ErrorIncorrectKey
+			return nil, ErrIncorrectKey
 		}
 		return uncompressedValue, nil
 	}
 
 	if crc16(unmaskedValue[3:]) != binary.BigEndian.Uint16(unmaskedValue[1:3]) {
-		return nil, ErrorIncorrectKey
+		return nil, ErrIncorrectKey
 	}
 	return unmaskedValue[3:], nil
 }
@@ -280,10 +280,10 @@ func (r *Record) UnmarshalFrom(rdr io.Reader) error {
 		if deadLen >= 5 {
 			io.CopyN(ioutil.Discard, &rr, int64(deadLen-5))
 		}
-		return ErrorRecordMarkedIgnore
+		return ErrRecordMarkedIgnore
 	}
 	if hdrb != 0 { // right now header byte must be 0 for valid records -- could be used later for types or flags
-		return ErrorRecordInvalid
+		return ErrRecordInvalid
 	}
 
 	if err = r.recordBody.unmarshalFrom(&rr); err != nil {
@@ -295,7 +295,7 @@ func (r *Record) UnmarshalFrom(rdr io.Reader) error {
 		return err
 	}
 	if selCount > (RecordMaxSize / 64) {
-		return ErrorRecordInvalid
+		return ErrRecordInvalid
 	}
 	r.Selectors = make([]Selector, uint(selCount))
 	for i := 0; i < len(r.Selectors); i++ {
@@ -316,7 +316,7 @@ func (r *Record) UnmarshalFrom(rdr io.Reader) error {
 		}
 		r.Work = work[:]
 	} else if walg != RecordWorkAlgorithmNone {
-		return ErrorRecordUnsupportedAlgorithm
+		return ErrRecordUnsupportedAlgorithm
 	}
 	r.WorkAlgorithm = walg
 
@@ -325,7 +325,7 @@ func (r *Record) UnmarshalFrom(rdr io.Reader) error {
 		return err
 	}
 	if siglen > RecordMaxSize {
-		return ErrorRecordInvalid
+		return ErrRecordInvalid
 	}
 	r.Signature = make([]byte, uint(siglen))
 	if _, err = io.ReadFull(&rr, r.Signature); err != nil {
@@ -480,7 +480,7 @@ func (r *Record) Validate() (err error) {
 	}()
 
 	if len(r.recordBody.Owner) == 0 {
-		return ErrorRecordOwnerSignatureCheckFailed
+		return ErrRecordOwnerSignatureCheckFailed
 	}
 
 	selectorClaimSigningHash := r.recordBody.signingHash()
@@ -499,15 +499,15 @@ func (r *Record) Validate() (err error) {
 	case RecordWorkAlgorithmNone:
 	case RecordWorkAlgorithmWharrgarbl:
 		if WharrgarblVerify(r.Work, workHash[:]) < recordWharrgarblCost(workBillableBytes) {
-			return ErrorRecordInsufficientWork
+			return ErrRecordInsufficientWork
 		}
 	default:
-		return ErrorRecordInsufficientWork
+		return ErrRecordInsufficientWork
 	}
 
 	owner, err := NewOwnerFromBytes(r.recordBody.Owner)
 	if err != nil {
-		return ErrorRecordOwnerSignatureCheckFailed
+		return ErrRecordOwnerSignatureCheckFailed
 	}
 	finalHash := sha3.New256()
 	finalHash.Write(workHash[:])
@@ -515,7 +515,7 @@ func (r *Record) Validate() (err error) {
 	finalHash.Write([]byte{r.WorkAlgorithm})
 	var hb [32]byte
 	if !owner.Verify(finalHash.Sum(hb[:0]), r.Signature) {
-		return ErrorRecordOwnerSignatureCheckFailed
+		return ErrRecordOwnerSignatureCheckFailed
 	}
 
 	return nil
@@ -565,7 +565,7 @@ func recordWharrgarblScore(cost uint32) uint32 {
 // and NewRecordComplete. This is useful of record creation needs to be split among systems or participants.
 func NewRecordStart(value []byte, links [][]byte, maskingKey []byte, plainTextSelectorNames [][]byte, selectorOrdinals [][]byte, ownerPublic, certificateRecordHash []byte, ts uint64) (r *Record, workHash [32]byte, workBillableBytes uint, err error) {
 	if len(value) > RecordMaxSize {
-		err = ErrorInvalidParameter
+		err = ErrInvalidParameter
 		return
 	}
 
@@ -662,12 +662,12 @@ func NewRecordDoWork(workHash []byte, workBillableBytes uint, workAlgorithm byte
 			}
 			w, iter := Wharrgarbl(workHash, workCostOverride, recordWharrgarblMemory)
 			if iter == 0 {
-				err = ErrorWharrgarblFailed
+				err = ErrWharrgarblFailed
 				return
 			}
 			work = w[:]
 		} else {
-			err = ErrorInvalidParameter
+			err = ErrInvalidParameter
 		}
 	}
 	return
@@ -695,7 +695,7 @@ func NewRecordComplete(incompleteRecord *Record, signingHash []byte, owner *Owne
 	r.hash = nil
 	r.id = nil
 	if r.SizeBytes() > RecordMaxSize {
-		return nil, ErrorRecordTooLarge
+		return nil, ErrRecordTooLarge
 	}
 	return
 }

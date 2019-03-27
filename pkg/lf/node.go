@@ -417,7 +417,7 @@ func (n *Node) Connect(ip net.IP, port int, publicKey []byte, statusCallback fun
 		if n.peers[ta.String()] != nil {
 			n.peersLock.RUnlock()
 			if statusCallback != nil {
-				statusCallback(ErrorAlreadyConnected)
+				statusCallback(ErrAlreadyConnected)
 			}
 			return
 		}
@@ -446,7 +446,7 @@ func (n *Node) Connect(ip net.IP, port int, publicKey []byte, statusCallback fun
 // If the record is a duplicate this returns ErrorDuplicateRecord.
 func (n *Node) AddRecord(r *Record) error {
 	if r == nil {
-		return ErrorInvalidParameter
+		return ErrInvalidParameter
 	}
 
 	rdata := r.Bytes()
@@ -454,34 +454,34 @@ func (n *Node) AddRecord(r *Record) error {
 
 	// Check to see if we already have this record.
 	if n.db.hasRecord(rhash[:]) {
-		return ErrorDuplicateRecord
+		return ErrDuplicateRecord
 	}
 
 	// Check various record constraints such as sizes, timestamp, etc. This is done first
 	// because these checks are simple and fast.
 	if len(rdata) > RecordMaxSize || uint(len(rdata)) > n.genesisParameters.RecordMaxSize {
-		return ErrorRecordTooLarge
+		return ErrRecordTooLarge
 	}
 	if uint(len(r.Value)) > n.genesisParameters.RecordMaxValueSize {
-		return ErrorRecordValueTooLarge
+		return ErrRecordValueTooLarge
 	}
 	if r.LinkCount() < n.genesisParameters.RecordMinLinks {
-		return ErrorRecordInsufficientLinks
+		return ErrRecordInsufficientLinks
 	}
 	if r.Timestamp > (TimeSec() + uint64(n.genesisParameters.RecordMaxForwardTimeDrift)) {
-		return ErrorRecordViolatesSpecialRelativity
+		return ErrRecordViolatesSpecialRelativity
 	}
 	if r.Timestamp < n.genesisParameters.TimestampFloor {
-		return ErrorRecordTooOld
+		return ErrRecordTooOld
 	}
 	if r.WorkAlgorithm == RecordWorkAlgorithmNone && n.genesisParameters.WorkRequired {
-		return ErrorRecordInsufficientWork
+		return ErrRecordInsufficientWork
 	}
 	if len(r.Certificate) > 0 && len(n.genesisParameters.RootCertificateAuthorities) == 0 { // don't let people shove crap into cert field if it's not used
-		return ErrorRecordCertificateInvalid
+		return ErrRecordCertificateInvalid
 	}
 	if len(r.Certificate) == 0 && n.genesisParameters.CertificateRequired {
-		return ErrorRecordCertificateRequired
+		return ErrRecordCertificateRequired
 	}
 
 	// Validate record's internal structure and check signatures and work.

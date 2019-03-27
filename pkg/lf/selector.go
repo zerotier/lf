@@ -126,7 +126,7 @@ func (s *Selector) unmarshalFrom(in io.Reader) error {
 		return err
 	}
 	if l > RecordMaxSize {
-		return ErrorRecordTooLarge
+		return ErrRecordTooLarge
 	}
 	s.Ordinal = make([]byte, int(l))
 	_, err = io.ReadFull(&br, s.Ordinal)
@@ -138,7 +138,7 @@ func (s *Selector) unmarshalFrom(in io.Reader) error {
 		return err
 	}
 	if t != SelectorTypeBP160 {
-		return ErrorUnsupportedType
+		return ErrUnsupportedType
 	}
 	_, err = io.ReadFull(&br, s.Claim[:])
 	return err

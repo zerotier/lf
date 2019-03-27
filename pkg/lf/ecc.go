@@ -46,7 +46,7 @@ func ECCCompressPublicKey(curve elliptic.Curve, kx, ky *big.Int) ([]byte, error)
 	bits := curve.Params().BitSize
 	x2 := make([]byte, (bits/8)+(bits%8)+1)
 	if len(x) >= len(x2) {
-		return nil, ErrorInvalidPublicKey
+		return nil, ErrInvalidPublicKey
 	}
 	copy(x2[len(x2)-len(x):], x)
 	x = x2
@@ -59,7 +59,7 @@ func ECCCompressPublicKey(curve elliptic.Curve, kx, ky *big.Int) ([]byte, error)
 // ignored and therefore can be used to store curve or other type IDs.
 func ECCDecompressPublicKey(c elliptic.Curve, data []byte) (*big.Int, *big.Int, error) {
 	if len(data) < 2 {
-		return nil, nil, ErrorInvalidPublicKey
+		return nil, nil, ErrInvalidPublicKey
 	}
 	var x, y, a, ax big.Int
 	params := c.Params()
@@ -73,7 +73,7 @@ func ECCDecompressPublicKey(c elliptic.Curve, data []byte) (*big.Int, *big.Int, 
 	y.Add(&y, params.B)
 	y.Mod(&y, params.P)
 	if y.ModSqrt(&y, params.P) == nil {
-		return nil, nil, ErrorInvalidPublicKey
+		return nil, nil, ErrInvalidPublicKey
 	}
 	if y.Bit(0) != uint(data[0]&1) { // even or odd?
 		y.Sub(params.P, &y)
@@ -85,7 +85,7 @@ func ECCDecompressPublicKey(c elliptic.Curve, data []byte) (*big.Int, *big.Int, 
 // This is just a simple wrapper function for clarity and brevity.
 func ECDHAgree(c elliptic.Curve, pubX, pubY *big.Int, priv []byte) ([32]byte, error) {
 	if !c.IsOnCurve(pubX, pubY) {
-		return [32]byte{}, ErrorInvalidPublicKey
+		return [32]byte{}, ErrInvalidPublicKey
 	}
 	x, _ := c.ScalarMult(pubX, pubY, priv)
 	return sha3.Sum256(x.Bytes()), nil

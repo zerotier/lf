@@ -9,67 +9,67 @@ package lf
 
 import "fmt"
 
-// Error indicates a general LF error such as an invalid parameter or state.
-type Error string
+// Err indicates a general LF error such as an invalid parameter or state.
+type Err string
 
-func (e Error) Error() string { return (string)(e) }
+func (e Err) Error() string { return (string)(e) }
 
-// ErrorRecord indicates an error related to an invalid record or a record failing a check.
-type ErrorRecord string
+// ErrRecord indicates an error related to an invalid record or a record failing a check.
+type ErrRecord string
 
-func (e ErrorRecord) Error() string { return (string)(e) }
+func (e ErrRecord) Error() string { return (string)(e) }
 
-// ErrorTrappedPanic indicates a panic trapped by recover() and returned as an error.
-type ErrorTrappedPanic struct {
-	PanicError interface{}
+// ErrTrappedPanic indicates a panic trapped by recover() and returned as an error.
+type ErrTrappedPanic struct {
+	PanicErr interface{}
 }
 
-func (e ErrorTrappedPanic) Error() string {
-	return fmt.Sprintf("trapped unexpected panic: %v", e.PanicError)
+func (e ErrTrappedPanic) Error() string {
+	return fmt.Sprintf("trapped unexpected panic: %v", e.PanicErr)
 }
 
-// ErrorDatabase contains information about a database related problem.
-type ErrorDatabase struct {
-	// ErrorCode is the error code returned by the C database module.
-	ErrorCode int
+// ErrDatabase contains information about a database related problem.
+type ErrDatabase struct {
+	// ErrCode is the error code returned by the C database module.
+	ErrCode int
 
-	// ErrorMessage is an error message supplied by the C code or by Go (optional)
-	ErrorMessage string
+	// ErrMessage is an error message supplied by the C code or by Go (optional)
+	ErrMessage string
 }
 
-func (e ErrorDatabase) Error() string {
-	return fmt.Sprintf("database error: %d (%s)", e.ErrorCode, e.ErrorMessage)
+func (e ErrDatabase) Error() string {
+	return fmt.Sprintf("database error: %d (%s)", e.ErrCode, e.ErrMessage)
 }
 
 // General errors
 const (
-	ErrorInvalidPublicKey   Error = "invalid public key"
-	ErrorInvalidPrivateKey  Error = "invalid private key"
-	ErrorInvalidParameter   Error = "invalid parameter"
-	ErrorUnsupportedType    Error = "unsupported type"
-	ErrorUnsupportedCurve   Error = "unsupported ECC curve (for this purpose)"
-	ErrorOutOfRange         Error = "parameter out of range"
-	ErrorWharrgarblFailed   Error = "Wharrgarbl proof of work algorithm failed (out of memory?)"
-	ErrorIO                 Error = "I/O error"
-	ErrorIncorrectKey       Error = "incorrect key"
-	ErrorAlreadyConnected   Error = "already connected"
-	ErrorDuplicateRecord    Error = "duplicate record"
-	ErrorPrivateKeyRequired Error = "private key required"
+	ErrInvalidPublicKey   Err = "invalid public key"
+	ErrInvalidPrivateKey  Err = "invalid private key"
+	ErrInvalidParameter   Err = "invalid parameter"
+	ErrUnsupportedType    Err = "unsupported type"
+	ErrUnsupportedCurve   Err = "unsupported ECC curve (for this purpose)"
+	ErrOutOfRange         Err = "parameter out of range"
+	ErrWharrgarblFailed   Err = "Wharrgarbl proof of work algorithm failed (out of memory?)"
+	ErrIO                 Err = "I/O error"
+	ErrIncorrectKey       Err = "incorrect key"
+	ErrAlreadyConnected   Err = "already connected"
+	ErrDuplicateRecord    Err = "duplicate record"
+	ErrPrivateKeyRequired Err = "private key required"
 )
 
-// Errors indicating that a record is invalid
+// Errs indicating that a record is invalid
 const (
-	ErrorRecordInvalid                   ErrorRecord = "record invalid"
-	ErrorRecordOwnerSignatureCheckFailed ErrorRecord = "owner signature check failed"
-	ErrorRecordSelectorClaimCheckFailed  ErrorRecord = "selector claim check failed"
-	ErrorRecordInsufficientWork          ErrorRecord = "insufficient work to pay for this record"
-	ErrorRecordInsufficientLinks         ErrorRecord = "insufficient links"
-	ErrorRecordUnsupportedAlgorithm      ErrorRecord = "unsupported algorithm or type"
-	ErrorRecordTooLarge                  ErrorRecord = "record too large"
-	ErrorRecordValueTooLarge             ErrorRecord = "record value too large"
-	ErrorRecordViolatesSpecialRelativity ErrorRecord = "record timestamp too far in the future"
-	ErrorRecordTooOld                    ErrorRecord = "record older than network timestamp floor"
-	ErrorRecordCertificateInvalid        ErrorRecord = "certificate invalid"
-	ErrorRecordCertificateRequired       ErrorRecord = "certificate required"
-	ErrorRecordMarkedIgnore              ErrorRecord = "record marked 'ignore' in file or stream"
+	ErrRecordInvalid                   ErrRecord = "record invalid"
+	ErrRecordOwnerSignatureCheckFailed ErrRecord = "owner signature check failed"
+	ErrRecordSelectorClaimCheckFailed  ErrRecord = "selector claim check failed"
+	ErrRecordInsufficientWork          ErrRecord = "insufficient work to pay for this record"
+	ErrRecordInsufficientLinks         ErrRecord = "insufficient links"
+	ErrRecordUnsupportedAlgorithm      ErrRecord = "unsupported algorithm or type"
+	ErrRecordTooLarge                  ErrRecord = "record too large"
+	ErrRecordValueTooLarge             ErrRecord = "record value too large"
+	ErrRecordViolatesSpecialRelativity ErrRecord = "record timestamp too far in the future"
+	ErrRecordTooOld                    ErrRecord = "record older than network timestamp floor"
+	ErrRecordCertificateInvalid        ErrRecord = "certificate invalid"
+	ErrRecordCertificateRequired       ErrRecord = "certificate required"
+	ErrRecordMarkedIgnore              ErrRecord = "record marked 'ignore' in file or stream"
 )

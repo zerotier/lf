@@ -58,7 +58,7 @@ func newOwnerIntl(ownerType int, prng io.Reader) (*Owner, error) {
 			privateECDSA: priv,
 		}, nil
 	}
-	return nil, ErrorInvalidParameter
+	return nil, ErrInvalidParameter
 }
 
 // NewOwnerFromSeed creates a new owner whose key pair is generated using deterministic randomness from the given seed.
@@ -83,14 +83,14 @@ func NewOwnerFromBytes(publicBytes []byte) (*Owner, error) {
 	if o.Type() != OwnerTypeNil {
 		return o, nil
 	}
-	return nil, ErrorInvalidParameter
+	return nil, ErrInvalidParameter
 }
 
 // NewOwnerFromPrivateBytes creates a new Owner object from a set of private key bytes.
 // The public key is included of course.
 func NewOwnerFromPrivateBytes(privateBytes []byte) (*Owner, error) {
 	if len(privateBytes) == 0 {
-		return nil, ErrorInvalidParameter
+		return nil, ErrInvalidParameter
 	}
 	switch privateBytes[0] {
 	case OwnerTypeEd25519:
@@ -101,14 +101,14 @@ func NewOwnerFromPrivateBytes(privateBytes []byte) (*Owner, error) {
 				privateECDSA: nil,
 			}, nil
 		}
-		return nil, ErrorInvalidParameter
+		return nil, ErrInvalidParameter
 	case OwnerTypeNistP384:
 		priv, err := x509.ParseECPrivateKey(privateBytes[1:])
 		if err != nil {
 			return nil, err
 		}
 		if priv.Curve.Params().Name != "P-384" {
-			return nil, ErrorUnsupportedCurve
+			return nil, ErrUnsupportedCurve
 		}
 		pub, err := ECDSACompressPublicKey(&priv.PublicKey)
 		if err != nil {
@@ -120,7 +120,7 @@ func NewOwnerFromPrivateBytes(privateBytes []byte) (*Owner, error) {
 			privateECDSA: priv,
 		}, nil
 	}
-	return nil, ErrorInvalidParameter
+	return nil, ErrInvalidParameter
 }
 
 // Type returns this owner's type.
@@ -154,12 +154,12 @@ func (o *Owner) PrivateBytes() []byte {
 // ErrorPrivateKeyRequired is returned if the private key is not present or invalid.
 func (o *Owner) Sign(hash []byte) ([]byte, error) {
 	if len(o.privateBytes) == 0 {
-		return nil, ErrorPrivateKeyRequired
+		return nil, ErrPrivateKeyRequired
 	}
 	switch o.privateBytes[0] {
 	case OwnerTypeEd25519:
 		if len(o.privateBytes) != 65 {
-			return nil, ErrorInvalidParameter
+			return nil, ErrInvalidParameter
 		}
 		return ed25519.Sign(o.privateBytes[1:], hash), nil
 	case OwnerTypeNistP384:
@@ -169,13 +169,13 @@ func (o *Owner) Sign(hash []byte) ([]byte, error) {
 				return nil, err
 			}
 			if priv.Curve.Params().Name != "P-384" {
-				return nil, ErrorUnsupportedCurve
+				return nil, ErrUnsupportedCurve
 			}
 			o.privateECDSA = priv
 			return ECDSASign(priv, hash)
 		}
 	}
-	return nil, ErrorPrivateKeyRequired
+	return nil, ErrPrivateKeyRequired
 }
 
 // Verify verifies a message hash and a signature against this owner's public key.

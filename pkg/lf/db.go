@@ -17,7 +17,6 @@ package lf
 import "C"
 
 import (
-	"fmt"
 	"log"
 	"strconv"
 	"sync"
@@ -80,7 +79,7 @@ func (db *db) open(basePath string, loggers [logLevelCount]*log.Logger, syncCall
 		globalLoggers[db.globalLoggerIdx] = [logLevelCount]*log.Logger{nil, nil, nil, nil, nil}
 		globalLoggersLock.Unlock()
 
-		return ErrorDatabase{int(cerr), "open failed (" + errstr + ")"}
+		return ErrDatabase{int(cerr), "open failed (" + errstr + ")"}
 	}
 
 	return nil
@@ -101,11 +100,11 @@ func (db *db) close() {
 // putRecord adds a valid record to the database.
 func (db *db) putRecord(r *Record, reputation int) error {
 	if len(r.recordBody.Owner) == 0 {
-		return ErrorRecordInvalid
+		return ErrRecordInvalid
 	}
 	rdata := r.Bytes()
 	if len(rdata) == 0 {
-		return ErrorRecordInvalid
+		return ErrRecordInvalid
 	}
 	rhash := r.Hash()
 	rid := r.ID()
@@ -148,7 +147,7 @@ func (db *db) putRecord(r *Record, reputation int) error {
 		C.uint(r.recordBody.LinkCount()))
 
 	if cerr != 0 {
-		return ErrorDatabase{int(cerr), "record add failed (" + strconv.Itoa(int(cerr)) + ")"}
+		return ErrDatabase{int(cerr), "record add failed (" + strconv.Itoa(int(cerr)) + ")"}
 	}
 	return nil
 }
@@ -156,7 +155,7 @@ func (db *db) putRecord(r *Record, reputation int) error {
 // getDataByHash gets record data by hash and appends it to 'buf', returning bytes appended and buffer.
 func (db *db) getDataByHash(h []byte, buf []byte) (int, []byte, error) {
 	if len(h) != 32 {
-		return 0, buf, ErrorInvalidParameter
+		return 0, buf, ErrInvalidParameter
 	}
 
 	var doff uint64
@@ -170,7 +169,7 @@ func (db *db) getDataByHash(h []byte, buf []byte) (int, []byte, error) {
 	ok := int(C.ZTLF_DB_GetRecordData(db.cdb, C.uint64_t(doff), unsafe.Pointer(&(buf[startPos])), C.uint(dlen)))
 	if ok == 0 {
 		buf = buf[0:startPos]
-		return 0, buf, ErrorIO
+		return 0, buf, ErrIO
 	}
 
 	return dlen, buf, nil
@@ -183,7 +182,7 @@ func (db *db) getDataByOffset(doff uint64, dlen uint, buf []byte) ([]byte, error
 	ok := int(C.ZTLF_DB_GetRecordData(db.cdb, C.uint64_t(doff), unsafe.Pointer(&(buf[startPos])), C.uint(dlen)))
 	if ok == 0 {
 		buf = buf[0:startPos]
-		return buf, ErrorIO
+		return buf, ErrIO
 	}
 	return buf, nil
 }
@@ -253,7 +252,7 @@ func (db *db) query(selectorRanges [][2][]byte, f func(uint64, uint64, uint64, u
 	selSizes := make([]C.uint, len(selectorRanges)*2)
 	for i := 0; i < len(selectorRanges); i++ {
 		if len(selectorRanges[i][0]) == 0 || len(selectorRanges[i][1]) == 0 {
-			return ErrorInvalidParameter
+			return ErrInvalidParameter
 		}
 		ii := i * 2
 		sel[ii] = unsafe.Pointer(&selectorRanges[i][0][0])
@@ -314,6 +313,7 @@ func (db *db) haveSynchronizedWithID(id []byte, notOwner []byte) bool {
 	return (C.ZTLF_DB_HaveSynchronizedWithID(db.cdb, unsafe.Pointer(&id[0]), unsafe.Pointer(&notOwner[0]), C.uint(len(notOwner))) != 0)
 }
 
+/*
 func (db *db) getConfig(key string) []byte {
 	var tmp [dbMaxConfigValueSize]byte
 	l := C.ZTLF_DB_GetConfig(db.cdb, C.CString(key), unsafe.Pointer(&tmp[0]), C.uint(dbMaxConfigValueSize))
@@ -337,3 +337,4 @@ func (db *db) setConfig(key string, value []byte) error {
 	}
 	return nil
 }
+*/
