@@ -55,7 +55,7 @@ const (
 	DefaultP2PPort = 9908
 )
 
-var nullLogger = log.New(ioutil.Discard, "", log.LstdFlags)
+var nullLogger = log.New(ioutil.Discard, "", 0)
 
 type peer struct {
 	c               *net.TCPConn        // TCP connection to this peer
@@ -84,7 +84,7 @@ type Node struct {
 	db                 db                         //
 	backgroundThreadWG sync.WaitGroup             // Wait group for background goroutines
 	startTime          uint64                     // Time node was started in seconds since epoch
-	shutdown           uintptr                    // Set to non-zero to signal all background goroutines to exit
+	shutdown           uint32                     // Set to non-zero to signal all background goroutines to exit
 }
 
 type linkKeyJSON struct {
@@ -196,9 +196,40 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 		return nil, err
 	}
 
-	n.log[LogLevelNormal].Printf("listening on %d for HTTP and %d for LF P2P", httpPort, p2pPort)
+	n.log[LogLevelNormal].Printf("listening on port %d for HTTP and %d for LF P2P", httpPort, p2pPort)
 
-	err = n.db.open(basePath, n.log)
+	err = n.db.open(basePath, n.log, func(doff uint64, dlen uint, hash *[32]byte) {
+		if atomic.LoadUint32(&n.shutdown) == 0 {
+			n.backgroundThreadWG.Add(1)
+			go func() {
+				defer func() {
+					e := recover()
+					if e != nil {
+						n.log[LogLevelWarning].Printf("WARNING: unexpected panic replicating synchronized record: %v", e)
+					}
+					n.backgroundThreadWG.Done()
+				}()
+
+				var msg [33]byte
+				msg[0] = p2pProtoMessageTypeHaveRecords
+				copy(msg[1:], hash[:])
+
+				n.peersLock.RLock()
+				if len(n.peers) > 0 {
+					n.log[LogLevelVerbose].Printf("record %x fully synchronized, announcing to %d peers", *hash, len(n.peers))
+					for _, p := range n.peers {
+						p.hasRecordsLock.Lock()
+						_, hasRecord := p.hasRecords[*hash]
+						p.hasRecordsLock.Unlock()
+						if !hasRecord {
+							p.send(msg[:])
+						}
+					}
+				}
+				n.peersLock.RUnlock()
+			}()
+		}
+	})
 	if err != nil {
 		n.httpTCPListener.Close()
 		n.p2pTCPListener.Close()
@@ -270,11 +301,16 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 		}
 		return true
 	})
+	if len(n.genesisParameters.AmendableFields) > 0 {
+		n.log[LogLevelNormal].Printf("network '%s' permits changes to configuration fields %v by owner %x", n.genesisParameters.Name, n.genesisParameters.AmendableFields, n.genesisOwner)
+	} else {
+		n.log[LogLevelNormal].Printf("network '%s' genesis configuration is immutable (via any in-band mechanism)", n.genesisParameters.Name)
+	}
 
 	n.backgroundThreadWG.Add(1)
 	go func() {
 		defer n.backgroundThreadWG.Done()
-		for atomic.LoadUintptr(&n.shutdown) == 0 {
+		for atomic.LoadUint32(&n.shutdown) == 0 {
 			c, _ := n.p2pTCPListener.AcceptTCP()
 			if c != nil {
 				n.backgroundThreadWG.Add(1)
@@ -294,7 +330,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 	go func() {
 		defer n.backgroundThreadWG.Done()
 		var lastCleanedPeerHasRecords uint64
-		for atomic.LoadUintptr(&n.shutdown) == 0 {
+		for atomic.LoadUint32(&n.shutdown) == 0 {
 			time.Sleep(time.Millisecond * 250)
 			now := TimeMs()
 
@@ -319,7 +355,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 	n.backgroundThreadWG.Add(1)
 	go func() {
 		defer n.backgroundThreadWG.Done()
-		for atomic.LoadUintptr(&n.shutdown) == 0 {
+		for atomic.LoadUint32(&n.shutdown) == 0 {
 			time.Sleep(time.Millisecond * 100)
 			if n.genesisParameters.RecordMinLinks > 0 {
 				links, err := n.db.getLinks2(n.genesisParameters.RecordMinLinks)
@@ -348,14 +384,15 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 
 // Stop terminates the running node. No methods should be called after this.
 func (n *Node) Stop() {
-	atomic.StoreUintptr(&n.shutdown, 1)
+	atomic.StoreUint32(&n.shutdown, 1)
 	n.httpServer.Close()
 	n.p2pTCPListener.Close()
-	n.peersLock.RLock()
+	n.peersLock.Lock()
 	for _, p := range n.peers {
 		p.c.Close()
 	}
-	n.peersLock.RUnlock()
+	n.peers = make(map[string]*peer)
+	n.peersLock.Unlock()
 	n.backgroundThreadWG.Wait()
 	n.db.close()
 	WharrgarblFreeMemory()
@@ -387,7 +424,7 @@ func (n *Node) Connect(ip net.IP, port int, publicKey []byte, statusCallback fun
 		n.peersLock.RUnlock()
 
 		c, err := net.DialTCP("tcp", nil, &ta)
-		if atomic.LoadUintptr(&n.shutdown) == 0 {
+		if atomic.LoadUint32(&n.shutdown) == 0 {
 			if err == nil {
 				n.backgroundThreadWG.Add(1)
 				go p2pConnectionHandler(n, c, publicKey, false)
@@ -469,32 +506,6 @@ func (n *Node) AddRecord(r *Record) error {
 		return err
 	}
 
-	/*
-		// Announce that we have this record to connected peers that haven't informed us that
-		// they have it or sent it to us. If they don't have it they will request it.
-		n.backgroundThreadWG.Add(1)
-		go func() {
-			defer func() {
-				n.backgroundThreadWG.Done()
-			}()
-
-			msg := make([]byte, 1, 33)
-			msg[0] = p2pProtoMessageTypeHaveRecords
-			msg = append(msg, rhash[:]...)
-
-			n.peersLock.RLock()
-			for _, p := range n.peers {
-				p.hasRecordsLock.Lock()
-				_, hasRecord := p.hasRecords[*rhash]
-				p.hasRecordsLock.Unlock()
-				if !hasRecord {
-					p.send(msg)
-				}
-			}
-			n.peersLock.RUnlock()
-		}()
-	*/
-
 	return nil
 }
 
@@ -536,7 +547,7 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inb
 	defer func() {
 		e := recover()
 		if e != nil {
-			n.log[LogLevelNormal].Printf("P2P connection to %s closed: caught panic: %v", peerAddressStr, e)
+			n.log[LogLevelWarning].Printf("WARNING: P2P connection to %s closed: caught panic: %v", peerAddressStr, e)
 		}
 
 		n.peersLock.Lock()
@@ -546,9 +557,10 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inb
 		n.backgroundThreadWG.Done()
 	}()
 
-	tcpAddr := c.RemoteAddr().(*net.TCPAddr)
-	if tcpAddr == nil { // sanity check against core library code changes
-		panic("nil TCP RemoteAddr")
+	tcpAddr, tcpAddrOk := c.RemoteAddr().(*net.TCPAddr)
+	if tcpAddr == nil || !tcpAddrOk { // sanity check against core library code changes
+		n.log[LogLevelWarning].Print("WARNING: P2P connection RemoteAddr() did not return a TCPAddr object")
+		return
 	}
 
 	c.SetKeepAlivePeriod(time.Second * 30)
@@ -563,7 +575,7 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inb
 	copy(helloMessage[2:], n.linkKeyPub)
 	_, err := c.Write(helloMessage)
 	if err != nil {
-		n.log[LogLevelNormal].Printf("P2P connection to %s closed: unable to write hello message", peerAddressStr)
+		n.log[LogLevelNormal].Printf("P2P connection to %s closed: %s", peerAddressStr, err.Error())
 		return
 	}
 
@@ -572,7 +584,7 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inb
 		n.log[LogLevelNormal].Printf("P2P connection to %s closed: %s", peerAddressStr, err.Error())
 		return
 	}
-	if helloMessage[0] != p2pProtoModeAES256GCMECCP384 || helloMessage[0] == 0 {
+	if helloMessage[0] != p2pProtoModeAES256GCMECCP384 || helloMessage[1] == 0 {
 		n.log[LogLevelNormal].Printf("P2P connection to %s closed: protocol mode not supported or invalid key length", peerAddressStr)
 		return
 	}
@@ -584,7 +596,7 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inb
 		return
 	}
 	if bytes.Equal(rpk, n.linkKeyPub) {
-		n.log[LogLevelNormal].Printf("P2P connection to %s closed: detected connection to self!", peerAddressStr)
+		n.log[LogLevelNormal].Printf("P2P connection to %s closed: other side has same link key! connected to self or link key stolen or accidentally duplicated.", peerAddressStr)
 		return
 	}
 	if len(expectedPublicKey) > 0 && !bytes.Equal(expectedPublicKey, rpk) {
@@ -601,7 +613,7 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inb
 	n.peersLock.Lock()
 	for _, p2 := range n.peers {
 		if bytes.Equal(p2.remotePublicKey, rpk) {
-			n.log[LogLevelNormal].Printf("P2P connection to %s closed: redundant connection to already linked peer", peerAddressStr)
+			n.log[LogLevelNormal].Printf("P2P connection to %s closed: closing redundant link (peer has same link key).", peerAddressStr)
 			n.peersLock.Unlock()
 			return
 		}
@@ -625,13 +637,15 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inb
 		}
 	}
 
+	n.log[LogLevelNormal].Printf("P2P connection established to %s / %x", peerAddressStr, p.remotePublicKey)
+
 	aesCipher, _ := aes.NewCipher(remoteShared[:])
 	p.cryptor, _ = cipher.NewGCM(aesCipher)
 
 	var msgIv [12]byte
 	var msgbuf []byte
 	announced := false
-	for atomic.LoadUintptr(&n.shutdown) == 0 {
+	for atomic.LoadUint32(&n.shutdown) == 0 {
 		// Read 12-byte GCM IV
 		_, err = io.ReadFull(reader, msgIv[:])
 		if err != nil {
@@ -665,7 +679,7 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inb
 			break
 		}
 
-		if atomic.LoadUintptr(&n.shutdown) != 0 {
+		if atomic.LoadUint32(&n.shutdown) != 0 {
 			break
 		}
 

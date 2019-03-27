@@ -12,7 +12,8 @@ package lf
 // #include "./native/db.h"
 // #include "./native/db.c"
 // extern void ztlfLogOutputCCallback(int,const char *,int,const char *,void *);
-// static inline int ZTLF_DB_Open_fromGo(struct ZTLF_DB *db,const char *path,char *errbuf,unsigned int errbufSize,uintptr_t loggerArg) { return ZTLF_DB_Open(db,path,errbuf,errbufSize,&ztlfLogOutputCCallback,(void *)loggerArg); }
+// extern void ztlfSyncCCallback(struct ZTLF_DB *db,const void *,uint64_t,unsigned int,void *);
+// static inline int ZTLF_DB_Open_fromGo(struct ZTLF_DB *db,const char *path,char *errbuf,unsigned int errbufSize,uintptr_t loggerArg,uintptr_t syncCallbackArg) { return ZTLF_DB_Open(db,path,errbuf,errbufSize,&ztlfLogOutputCCallback,(void *)loggerArg,&ztlfSyncCCallback,(void *)syncCallbackArg); }
 import "C"
 
 import (
@@ -32,18 +33,21 @@ const (
 
 // DB is an instance of the LF database that stores records and manages record weights and linkages.
 type db struct {
-	log             [logLevelCount]*log.Logger
-	globalLoggerIdx uint
-	cdb             *C.struct_ZTLF_DB
+	log                   [logLevelCount]*log.Logger
+	globalLoggerIdx       uint
+	globalSyncCallbackIdx uint
+	cdb                   *C.struct_ZTLF_DB
 }
 
 // Global variables that store logger instances for use by the callback in db-log-callback.go.
 var (
-	globalLoggers     [][logLevelCount]*log.Logger
-	globalLoggersLock sync.Mutex
+	globalLoggers           [][logLevelCount]*log.Logger
+	globalLoggersLock       sync.Mutex
+	globalSyncCallbacks     []func(uint64, uint, *[32]byte)
+	globalSyncCallbacksLock sync.RWMutex
 )
 
-func (db *db) open(basePath string, loggers [logLevelCount]*log.Logger) error {
+func (db *db) open(basePath string, loggers [logLevelCount]*log.Logger, syncCallback func(uint64, uint, *[32]byte)) error {
 	var errbuf [2048]byte
 	db.log = loggers
 	db.cdb = new(C.struct_ZTLF_DB)
@@ -53,7 +57,12 @@ func (db *db) open(basePath string, loggers [logLevelCount]*log.Logger) error {
 	db.globalLoggerIdx = uint(len(globalLoggers) - 1)
 	globalLoggersLock.Unlock()
 
-	cerr := C.ZTLF_DB_Open_fromGo(db.cdb, C.CString(basePath), (*C.char)(unsafe.Pointer(&errbuf[0])), 2047, C.uintptr_t(db.globalLoggerIdx))
+	globalSyncCallbacksLock.Lock()
+	globalSyncCallbacks = append(globalSyncCallbacks, syncCallback)
+	db.globalSyncCallbackIdx = uint(len(globalSyncCallbacks) - 1)
+	globalSyncCallbacksLock.Unlock()
+
+	cerr := C.ZTLF_DB_Open_fromGo(db.cdb, C.CString(basePath), (*C.char)(unsafe.Pointer(&errbuf[0])), 2047, C.uintptr_t(db.globalLoggerIdx), C.uintptr_t(db.globalSyncCallbackIdx))
 	if cerr != 0 {
 		errstr := "unknown or I/O level error " + strconv.FormatInt(int64(cerr), 10)
 		if cerr > 0 {
@@ -79,9 +88,14 @@ func (db *db) open(basePath string, loggers [logLevelCount]*log.Logger) error {
 
 func (db *db) close() {
 	C.ZTLF_DB_Close(db.cdb)
+
 	globalLoggersLock.Lock()
 	globalLoggers[db.globalLoggerIdx] = [logLevelCount]*log.Logger{nil, nil, nil, nil, nil}
 	globalLoggersLock.Unlock()
+
+	globalSyncCallbacksLock.Lock()
+	globalSyncCallbacks[db.globalSyncCallbackIdx] = nil
+	globalSyncCallbacksLock.Unlock()
 }
 
 // putRecord adds a valid record to the database.

@@ -300,15 +300,15 @@ const testDatabaseOwners = 16
 // TestDatabase tests the database using a large set of randomly generated records.
 func TestDatabase(testBasePath string, out io.Writer) bool {
 	var err error
-	var db [testDatabaseInstances]db
+	var dbs [testDatabaseInstances]db
 
 	testBasePath = path.Join(testBasePath, strconv.FormatInt(int64(os.Getpid()), 10))
 
 	fmt.Fprintf(out, "Creating and opening %d databases in \"%s\"... ", testDatabaseInstances, testBasePath)
-	for i := range db {
+	for i := range dbs {
 		p := path.Join(testBasePath, strconv.FormatInt(int64(i), 10))
 		os.MkdirAll(p, 0755)
-		err = db[i].open(p, [logLevelCount]*log.Logger{nil, nil, nil, nil, nil})
+		err = dbs[i].open(p, [logLevelCount]*log.Logger{nil, nil, nil, nil, nil}, func(doff uint64, dlen uint, hash *[32]byte) {})
 		if err != nil {
 			fmt.Fprintf(out, "FAILED: %s\n", err.Error())
 			return false
@@ -317,8 +317,8 @@ func TestDatabase(testBasePath string, out io.Writer) bool {
 	fmt.Fprintf(out, "OK\n")
 
 	defer func() {
-		for i := range db {
-			db[i].close()
+		for i := range dbs {
+			dbs[i].close()
 		}
 	}()
 
@@ -380,7 +380,7 @@ func TestDatabase(testBasePath string, out io.Writer) bool {
 			}
 		}
 		for ri := 0; ri < testDatabaseRecords; ri++ {
-			err = db[dbi].putRecord(records[ri], 0)
+			err = dbs[dbi].putRecord(records[ri], 0)
 			if err != nil {
 				fmt.Fprintf(out, "  #%d FAILED: %s\n", dbi, err.Error())
 				return false
@@ -391,7 +391,7 @@ func TestDatabase(testBasePath string, out io.Writer) bool {
 
 	fmt.Fprintf(out, "Waiting for graph traversal and weight reconciliation...")
 	for dbi := 0; dbi < testDatabaseInstances; dbi++ {
-		for db[dbi].hasPending() {
+		for dbs[dbi].hasPending() {
 			time.Sleep(time.Second / 2)
 		}
 		fmt.Fprintf(out, " %d", dbi)
@@ -401,7 +401,7 @@ func TestDatabase(testBasePath string, out io.Writer) bool {
 	fmt.Fprintf(out, "Checking database CRC64s...\n")
 	var c64s [testDatabaseInstances]uint64
 	for dbi := 0; dbi < testDatabaseInstances; dbi++ {
-		c64s[dbi] = db[dbi].crc64()
+		c64s[dbi] = dbs[dbi].crc64()
 		if dbi == 0 || c64s[dbi-1] == c64s[dbi] {
 			fmt.Fprintf(out, "  OK %.16x\n", c64s[dbi])
 		} else {
@@ -413,5 +413,3 @@ func TestDatabase(testBasePath string, out io.Writer) bool {
 
 	return true
 }
-
-//////////////////////////////////////////////////////////////////////////////

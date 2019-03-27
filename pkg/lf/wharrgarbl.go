@@ -158,12 +158,11 @@ func wharrgarblWorkerFunc(mmoCipher0, mmoCipher1 cipher.Block, runNonce, diff64 
 	var iter uint64
 
 	// Generate an initial 40-bit collider.
-
 	thisCollider := uint64(rand.Uint32()) ^ (uint64(rand.Uint32()&0x3f) << 32)
 	for *done == 0 {
 		iter++
-		thisCollider++
 
+		thisCollider++
 		collisionHashIn[3] = byte(thisCollider >> 32)
 		collisionHashIn[4] = byte(thisCollider >> 24)
 		collisionHashIn[5] = byte(thisCollider >> 16)

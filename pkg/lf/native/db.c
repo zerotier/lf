@@ -35,7 +35,7 @@ static void *_ZTLF_DB_graphThreadMain(void *arg);
  *   goff                     offset of graph node in memory mapped graph file (unique key)
  *   ts                       record timestamp
  *   score                    score of this record (alone, not with weight from links)
- *   reputation               flag for records that are suspect for any reason
+ *   reputation               bit mask indicating if record is suspect/disqualified (zero means good)
  *   link_count               number of links from this record (actual links are in graph node)
  *   selector_count           number of selectors for this record
  *   hash                     shandwich256(record data) (unique key)
@@ -161,7 +161,15 @@ static void *_ZTLF_DB_graphThreadMain(void *arg);
 #undef S
 #define S(v,s) if ((e = sqlite3_prepare_v3(db->dbc,(statement = (s)),-1,SQLITE_PREPARE_PERSISTENT,&(v),NULL)) != SQLITE_OK) goto exit_with_error
 
-int ZTLF_DB_Open(struct ZTLF_DB *db,const char *path,char *errbuf,unsigned int errbufSize,LogOutputCallback logger,void *loggerArg)
+int ZTLF_DB_Open(
+	struct ZTLF_DB *db,
+	const char *path,
+	char *errbuf,
+	unsigned int errbufSize,
+	LogOutputCallback logger,
+	void *loggerArg,
+	RecordSynchronizedCallback recordSync,
+	void *recordSyncArg)
 {
 	char tmp[PATH_MAX];
 	int e = 0;
@@ -173,8 +181,8 @@ int ZTLF_DB_Open(struct ZTLF_DB *db,const char *path,char *errbuf,unsigned int e
 	strncpy(db->path,path,PATH_MAX-1);
 	db->logger = logger;
 	db->loggerArg = (uintptr_t)loggerArg;
-	db->recordSyncCallback = NULL;
-	db->recordSyncArg = 0;
+	db->recordSyncCallback = recordSync;
+	db->recordSyncArg = (uintptr_t)recordSyncArg;
 
 	ZTLF_L_trace("opening database at %s",path);
 
@@ -592,7 +600,6 @@ static void *_ZTLF_DB_graphThreadMain(void *arg)
 				if (sqlite3_step(db->sDeleteCompletedPending) != SQLITE_DONE) {
 					ZTLF_L_warning("graph: error deleting complete pending record %lld",(long long)waitingGoff);
 				}
-
 				if (db->recordSyncCallback)
 					db->recordSyncCallback(db,hash,doff,dlen,(void *)db->recordSyncArg);
 			} else {

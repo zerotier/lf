@@ -155,7 +155,9 @@ int ZTLF_DB_Open(
 	char *errbuf,
 	unsigned int errbufSize,
 	LogOutputCallback logger,
-	void *loggerArg);
+	void *loggerArg,
+	RecordSynchronizedCallback recordSync,
+	void *recordSyncArg);
 
 void ZTLF_DB_Close(struct ZTLF_DB *db);
 
