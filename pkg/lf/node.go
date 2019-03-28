@@ -68,7 +68,7 @@ type peer struct {
 
 // Node is an instance of a full LF node.
 type Node struct {
-	log                [logLevelCount]*log.Logger //
+	log                [logLevelCount]*log.Logger // Pointers to loggers for each log level (inoperative levels point to a discard logger)
 	linkKeyPriv        []byte                     // P-384 private key
 	linkKeyPubX        *big.Int                   // X coordinate of P-384 public key
 	linkKeyPubY        *big.Int                   // Y coordinate of P-384 public key

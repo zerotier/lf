@@ -104,7 +104,7 @@ type countingWriter uint
 // Write implements io.Writer
 func (cr *countingWriter) Write(b []byte) (n int, err error) {
 	n = len(b)
-	*cr = countingWriter(uint(*cr) + uint(n))
+	*cr += countingWriter(n)
 	return
 }
 

@@ -25,6 +25,8 @@ import (
 //#include <string.h>
 import "C"
 
+const wharrgarblStaticTableSize = 2097152
+
 // Wharrgarbl holds a global pointer to memory allocated via external C malloc().
 // There's not much point in allocating this on demand since this uses all cores
 // anyway so one at a time is about the best you can do. There is also a static
@@ -34,7 +36,7 @@ var (
 	wharrgarblMemorySize             uint
 	wharrgarblMemoryEntries          uintptr
 	wharrgarblMemoryLock             sync.Mutex
-	wharrgarblStaticTable            [4194304]uint64
+	wharrgarblStaticTable            [wharrgarblStaticTableSize]uint64
 	wharrgarblStaticTableInitialized = false
 )
 
@@ -218,9 +220,9 @@ func Wharrgarbl(in []byte, difficulty uint32, minMemorySize uint) (out [Wharrgar
 	defer wharrgarblMemoryLock.Unlock()
 
 	if !wharrgarblStaticTableInitialized {
-		wharrgarblStaticTableMem := (*[4194304 * 8]byte)(unsafe.Pointer(&wharrgarblStaticTable[0]))
-		copy(wharrgarblStaticTableMem[:], []byte("WharrrrRRRRgarbl!"))
-		for i := 0; i < 4; i++ {
+		wharrgarblStaticTableMem := (*[wharrgarblStaticTableSize * 8]byte)(unsafe.Pointer(&wharrgarblStaticTable[0]))
+		copy(wharrgarblStaticTableMem[:], []byte("My hovercraft is full of eels.")) // arbitrary initial constant, rest of memory will be 0
+		for i := 0; i < 8; i++ {
 			wharrgarblStaticTableKey := sha256.Sum256(wharrgarblStaticTableMem[:])
 			wharrgarblStaticTableAes, _ := aes.NewCipher(wharrgarblStaticTableKey[:])
 			cfb := cipher.NewCFBEncrypter(wharrgarblStaticTableAes, wharrgarblStaticTableKey[0:16])

@@ -12,13 +12,14 @@
 #include "mappedfile.h"
 
 /**
- * A memory mapped 96-bit unsigned integer that is striped across three files.
+ * A memory mapped 96-bit unsigned integer array that is striped across three files.
  * 
  * The purpose of this is to store weights. Weights are constantly increased, causing
  * their least significant 32 bits to change frequently and more significant parts to
  * change much less often. Striping this across files dramatically decreases unnecessary
  * bytes written to disk by writing less frequently modified parts of the total weight
- * much less often.
+ * much less often. It trades a bit of extra CPU and read overhead for a large decrease
+ * in write IOPs, and reads are generally much faster than writes (and don't wear SSDs).
  */
 struct ZTLF_SUInt96
 {
