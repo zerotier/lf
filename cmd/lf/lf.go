@@ -123,28 +123,31 @@ not already exist.
 
 //////////////////////////////////////////////////////////////////////////////
 
-func doNodeStart(cfg *Config, basePath string, jsonOutput bool, nodeURL string, verboseOutput bool, args []string) {
-	signal.Notify(osSignalChannel, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGUSR1, syscall.SIGUSR2)
+func doNodeStart(cfg *Config, basePath string, jsonOutput bool, urlOverride string, verboseOutput bool, args []string) {
+	signal.Notify(osSignalChannel, syscall.SIGTERM, syscall.SIGQUIT)
 	stdoutLogger := log.New(os.Stdout, "", log.LstdFlags)
-	_, err := lf.NewNode(basePath, lf.DefaultP2PPort, lf.DefaultHTTPPort, stdoutLogger, lf.LogLevelTrace)
+	node, err := lf.NewNode(basePath, lf.DefaultP2PPort, lf.DefaultHTTPPort, stdoutLogger, lf.LogLevelTrace)
 	if err != nil {
 		fmt.Printf("ERROR: unable to start node: %s\n", err.Error())
 		os.Exit(-1)
 		return
 	}
-	_ = <-osSignalChannel
+	for {
+		_ = <-osSignalChannel
+		node.Stop()
+	}
 }
 
-func doProxyStart(cfg *Config, basePath string, jsonOutput bool, nodeURL string, verboseOutput bool, args []string) {
+func doProxyStart(cfg *Config, basePath string, jsonOutput bool, urlOverride string, verboseOutput bool, args []string) {
 }
 
-func doUse(cfg *Config, basePath string, jsonOutput bool, nodeURL string, verboseOutput bool, args []string) {
+func doUse(cfg *Config, basePath string, jsonOutput bool, urlOverride string, verboseOutput bool, args []string) {
 }
 
-func doDrop(cfg *Config, basePath string, jsonOutput bool, nodeURL string, verboseOutput bool, args []string) {
+func doDrop(cfg *Config, basePath string, jsonOutput bool, urlOverride string, verboseOutput bool, args []string) {
 }
 
-func doSet(cfg *Config, basePath string, jsonOutput bool, nodeURL string, verboseOutput bool, args []string) {
+func doSet(cfg *Config, basePath string, jsonOutput bool, urlOverride string, verboseOutput bool, args []string) {
 	setOpts := flag.NewFlagSet("set", flag.ContinueOnError)
 	owner := setOpts.String("owner", "", "")
 	valueIsFile := setOpts.Bool("file", false, "")
@@ -194,7 +197,7 @@ func doSet(cfg *Config, basePath string, jsonOutput bool, nodeURL string, verbos
 		Value:           value,
 		Timestamp:       &ts,
 	}
-	rec, err := req.Run(nodeURL)
+	rec, err := req.Run(urlOverride)
 
 	if err != nil {
 		fmt.Printf("ERROR: %s\n", err.Error())
@@ -202,7 +205,7 @@ func doSet(cfg *Config, basePath string, jsonOutput bool, nodeURL string, verbos
 	fmt.Printf("%#v\n", rec)
 }
 
-func doOwner(cfg *Config, basePath string, jsonOutput bool, nodeURL string, verboseOutput bool, args []string) {
+func doOwner(cfg *Config, basePath string, jsonOutput bool, urlOverride string, verboseOutput bool, args []string) {
 	if len(args) == 0 {
 		printHelp("")
 		return
@@ -307,7 +310,7 @@ func doOwner(cfg *Config, basePath string, jsonOutput bool, nodeURL string, verb
 	}
 }
 
-func doMakeGenesis(cfg *Config, basePath string, jsonOutput bool, nodeURL string, verboseOutput bool, args []string) {
+func doMakeGenesis(cfg *Config, basePath string, jsonOutput bool, urlOverride string, verboseOutput bool, args []string) {
 	var nwKey [32]byte
 	secrand.Read(nwKey[:])
 	g := lf.GenesisParameters{
@@ -386,13 +389,6 @@ func main() {
 		return
 	}
 
-	var nodeURL string
-	if len(*urlOverride) > 0 {
-		nodeURL = *urlOverride
-	} else {
-		nodeURL = "http://127.0.0.1:9980"
-	}
-
 	switch args[1] {
 
 	case "help":
@@ -431,25 +427,25 @@ func main() {
 		}
 
 	case "node-start":
-		doNodeStart(&cfg, *basePath, *jsonOutput, nodeURL, *verboseOutput, cmdArgs)
+		doNodeStart(&cfg, *basePath, *jsonOutput, *urlOverride, *verboseOutput, cmdArgs)
 
 	case "proxy-start":
-		doProxyStart(&cfg, *basePath, *jsonOutput, nodeURL, *verboseOutput, cmdArgs)
+		doProxyStart(&cfg, *basePath, *jsonOutput, *urlOverride, *verboseOutput, cmdArgs)
 
 	case "use":
-		doUse(&cfg, *basePath, *jsonOutput, nodeURL, *verboseOutput, cmdArgs)
+		doUse(&cfg, *basePath, *jsonOutput, *urlOverride, *verboseOutput, cmdArgs)
 
 	case "drop":
-		doDrop(&cfg, *basePath, *jsonOutput, nodeURL, *verboseOutput, cmdArgs)
+		doDrop(&cfg, *basePath, *jsonOutput, *urlOverride, *verboseOutput, cmdArgs)
 
 	case "set":
-		doSet(&cfg, *basePath, *jsonOutput, nodeURL, *verboseOutput, cmdArgs)
+		doSet(&cfg, *basePath, *jsonOutput, *urlOverride, *verboseOutput, cmdArgs)
 
 	case "owner":
-		doOwner(&cfg, *basePath, *jsonOutput, nodeURL, *verboseOutput, cmdArgs)
+		doOwner(&cfg, *basePath, *jsonOutput, *urlOverride, *verboseOutput, cmdArgs)
 
 	case "makegenesis":
-		doMakeGenesis(&cfg, *basePath, *jsonOutput, nodeURL, *verboseOutput, cmdArgs)
+		doMakeGenesis(&cfg, *basePath, *jsonOutput, *urlOverride, *verboseOutput, cmdArgs)
 
 	default:
 		printHelp("")
