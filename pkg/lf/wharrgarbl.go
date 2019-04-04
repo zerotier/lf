@@ -10,7 +10,6 @@ package lf
 import (
 	"crypto/aes"
 	"crypto/cipher"
-	"crypto/sha256"
 	"encoding/binary"
 	"math/rand"
 	"runtime"
@@ -25,134 +24,47 @@ import (
 //#include <string.h>
 import "C"
 
-const wharrgarblStaticTableSize = 2097152
-
 // Wharrgarbl holds a global pointer to memory allocated via external C malloc().
 // There's not much point in allocating this on demand since this uses all cores
-// anyway so one at a time is about the best you can do. There is also a static
-// table that is locked by the same lock and is initialized at first use.
+// anyway so one at a time is about the best you can do.
 var (
-	wharrgarblMemoryPtr              unsafe.Pointer
-	wharrgarblMemorySize             uint
-	wharrgarblMemoryEntries          uintptr
-	wharrgarblMemoryLock             sync.Mutex
-	wharrgarblStaticTable            [wharrgarblStaticTableSize]uint64
-	wharrgarblStaticTableInitialized = false
+	wharrgarblMemoryPtr     unsafe.Pointer
+	wharrgarblMemorySize    uint
+	wharrgarblMemoryEntries uintptr
+	wharrgarblMemoryLock    sync.Mutex
 )
 
 // WharrgarblOutputSize is the size of Wharrgarbl's result in bytes.
 const WharrgarblOutputSize = 14
 
-// wharrgarblMMOHash is a simple 24X Matyas-Meyer-Oseas single block hash function with a 32MB static table requirement.
-// This takes two AES ciphers as arguments. They are initialized in Wharrgarbl from the hash of
-// the input on which PoW is being computed. Differently initialized block ciphers for single-block
-// MMO make it a keyed hash, so each Wharrgarbl input results in a different search space. This
-// then computes 24 iterations of single-block MMO perturbed from a 32MB lookup table and alternating
-// between the two ciphers.
+// wharrgarblMMOHash is a multiple (48) iteration single block Matyas-Meyer-Oseas hash.
+// It's not used for things like signatures or authentication, just as a cryptographic
+// random function for Wharrgarbl collision search proof of work.
 func wharrgarblMMOHash(mmoCipher0, mmoCipher1 cipher.Block, in *[16]byte) uint64 {
-	var tmp0, tmp1 [2]uint64
-	tmp0s := ((*[16]byte)(unsafe.Pointer(&tmp0)))[:]
-	tmp1s := ((*[16]byte)(unsafe.Pointer(&tmp1)))[:]
+	var tmp [4]uint64
+	tmp0 := (*[16]byte)(unsafe.Pointer(&tmp[0]))[:]
+	tmp1 := (*[16]byte)(unsafe.Pointer(&tmp[2]))[:]
 
-	mmoCipher0.Encrypt(tmp0s, in[:])
+	mmoCipher0.Encrypt(tmp0, in[:])
 	for i := 0; i < 16; i++ {
-		tmp0s[i] ^= in[i]
+		tmp0[i] ^= in[i]
 	}
-	tmp0[1] ^= wharrgarblStaticTable[uint(tmp0[0])%wharrgarblStaticTableSize]
 
-	mmoCipher1.Encrypt(tmp1s, tmp0s)
-	tmp1[0] ^= tmp0[0]
-	tmp1[1] ^= tmp0[1] ^ wharrgarblStaticTable[uint(tmp0[0])%wharrgarblStaticTableSize]
+	mmoCipher1.Encrypt(tmp1, tmp0)
+	tmp[2] ^= tmp[0]
+	tmp[3] ^= tmp[1]
 
-	mmoCipher0.Encrypt(tmp0s, tmp1s)
-	tmp0[0] ^= tmp1[0]
-	tmp0[1] ^= tmp1[1] ^ wharrgarblStaticTable[uint(tmp0[0])%wharrgarblStaticTableSize]
+	for k := 0; k < 46; k++ {
+		mmoCipher0.Encrypt(tmp0, tmp1)
+		tmp[0] ^= tmp[2]
+		tmp[1] ^= tmp[3]
 
-	mmoCipher1.Encrypt(tmp1s, tmp0s)
-	tmp1[0] ^= tmp0[0]
-	tmp1[1] ^= tmp0[1] ^ wharrgarblStaticTable[uint(tmp0[0])%wharrgarblStaticTableSize]
+		mmoCipher1.Encrypt(tmp1, tmp0)
+		tmp[2] ^= tmp[0]
+		tmp[3] ^= tmp[1]
+	}
 
-	mmoCipher0.Encrypt(tmp0s, tmp1s)
-	tmp0[0] ^= tmp1[0]
-	tmp0[1] ^= tmp1[1] ^ wharrgarblStaticTable[uint(tmp0[0])%wharrgarblStaticTableSize]
-
-	mmoCipher1.Encrypt(tmp1s, tmp0s)
-	tmp1[0] ^= tmp0[0]
-	tmp1[1] ^= tmp0[1] ^ wharrgarblStaticTable[uint(tmp0[0])%wharrgarblStaticTableSize]
-
-	mmoCipher0.Encrypt(tmp0s, tmp1s)
-	tmp0[0] ^= tmp1[0]
-	tmp0[1] ^= tmp1[1] ^ wharrgarblStaticTable[uint(tmp0[0])%wharrgarblStaticTableSize]
-
-	mmoCipher1.Encrypt(tmp1s, tmp0s)
-	tmp1[0] ^= tmp0[0]
-	tmp1[1] ^= tmp0[1] ^ wharrgarblStaticTable[uint(tmp0[0])%wharrgarblStaticTableSize]
-
-	mmoCipher0.Encrypt(tmp0s, tmp1s)
-	tmp0[0] ^= tmp1[0]
-	tmp0[1] ^= tmp1[1] ^ wharrgarblStaticTable[uint(tmp0[0])%wharrgarblStaticTableSize]
-
-	mmoCipher1.Encrypt(tmp1s, tmp0s)
-	tmp1[0] ^= tmp0[0]
-	tmp1[1] ^= tmp0[1] ^ wharrgarblStaticTable[uint(tmp0[0])%wharrgarblStaticTableSize]
-
-	mmoCipher0.Encrypt(tmp0s, tmp1s)
-	tmp0[0] ^= tmp1[0]
-	tmp0[1] ^= tmp1[1] ^ wharrgarblStaticTable[uint(tmp0[0])%wharrgarblStaticTableSize]
-
-	mmoCipher1.Encrypt(tmp1s, tmp0s)
-	tmp1[0] ^= tmp0[0]
-	tmp1[1] ^= tmp0[1] ^ wharrgarblStaticTable[uint(tmp0[0])%wharrgarblStaticTableSize]
-
-	mmoCipher0.Encrypt(tmp0s, tmp1s)
-	tmp0[0] ^= tmp1[0]
-	tmp0[1] ^= tmp1[1] ^ wharrgarblStaticTable[uint(tmp0[0])%wharrgarblStaticTableSize]
-
-	mmoCipher1.Encrypt(tmp1s, tmp0s)
-	tmp1[0] ^= tmp0[0]
-	tmp1[1] ^= tmp0[1] ^ wharrgarblStaticTable[uint(tmp0[0])%wharrgarblStaticTableSize]
-
-	mmoCipher0.Encrypt(tmp0s, tmp1s)
-	tmp0[0] ^= tmp1[0]
-	tmp0[1] ^= tmp1[1] ^ wharrgarblStaticTable[uint(tmp0[0])%wharrgarblStaticTableSize]
-
-	mmoCipher1.Encrypt(tmp1s, tmp0s)
-	tmp1[0] ^= tmp0[0]
-	tmp1[1] ^= tmp0[1] ^ wharrgarblStaticTable[uint(tmp0[0])%wharrgarblStaticTableSize]
-
-	mmoCipher0.Encrypt(tmp0s, tmp1s)
-	tmp0[0] ^= tmp1[0]
-	tmp0[1] ^= tmp1[1] ^ wharrgarblStaticTable[uint(tmp0[0])%wharrgarblStaticTableSize]
-
-	mmoCipher1.Encrypt(tmp1s, tmp0s)
-	tmp1[0] ^= tmp0[0]
-	tmp1[1] ^= tmp0[1] ^ wharrgarblStaticTable[uint(tmp0[0])%wharrgarblStaticTableSize]
-
-	mmoCipher0.Encrypt(tmp0s, tmp1s)
-	tmp0[0] ^= tmp1[0]
-	tmp0[1] ^= tmp1[1] ^ wharrgarblStaticTable[uint(tmp0[0])%wharrgarblStaticTableSize]
-
-	mmoCipher1.Encrypt(tmp1s, tmp0s)
-	tmp1[0] ^= tmp0[0]
-	tmp1[1] ^= tmp0[1] ^ wharrgarblStaticTable[uint(tmp0[0])%wharrgarblStaticTableSize]
-
-	mmoCipher0.Encrypt(tmp0s, tmp1s)
-	tmp0[0] ^= tmp1[0]
-	tmp0[1] ^= tmp1[1] ^ wharrgarblStaticTable[uint(tmp0[0])%wharrgarblStaticTableSize]
-
-	mmoCipher1.Encrypt(tmp1s, tmp0s)
-	tmp1[0] ^= tmp0[0]
-	tmp1[1] ^= tmp0[1] ^ wharrgarblStaticTable[uint(tmp0[0])%wharrgarblStaticTableSize]
-
-	mmoCipher0.Encrypt(tmp0s, tmp1s)
-	tmp0[0] ^= tmp1[0]
-	tmp0[1] ^= tmp1[1] ^ wharrgarblStaticTable[uint(tmp0[0])%wharrgarblStaticTableSize]
-
-	mmoCipher1.Encrypt(tmp1s, tmp0s)
-	tmp1[0] ^= tmp0[0]
-	tmp1[1] ^= tmp0[1] ^ wharrgarblStaticTable[uint(tmp0[0])%wharrgarblStaticTableSize]
-
-	return tmp1[0] ^ tmp1[1]
+	return binary.BigEndian.Uint64(tmp1[0:8]) ^ binary.BigEndian.Uint64(tmp1[8:16])
 }
 
 func wharrgarblWorkerFunc(mmoCipher0, mmoCipher1 cipher.Block, runNonce, diff64 uint64, iterations *uint64, done *uint32, outLock *sync.Mutex, out []byte, doneWG *sync.WaitGroup) {
@@ -219,18 +131,6 @@ func Wharrgarbl(in []byte, difficulty uint32, minMemorySize uint) (out [Wharrgar
 	wharrgarblMemoryLock.Lock()
 	defer wharrgarblMemoryLock.Unlock()
 
-	if !wharrgarblStaticTableInitialized {
-		wharrgarblStaticTableMem := (*[wharrgarblStaticTableSize * 8]byte)(unsafe.Pointer(&wharrgarblStaticTable[0]))
-		copy(wharrgarblStaticTableMem[:], []byte("My hovercraft is full of eels.")) // arbitrary initial constant, rest of memory will be 0
-		for i := 0; i < 8; i++ {
-			wharrgarblStaticTableKey := sha256.Sum256(wharrgarblStaticTableMem[:])
-			wharrgarblStaticTableAes, _ := aes.NewCipher(wharrgarblStaticTableKey[:])
-			cfb := cipher.NewCFBEncrypter(wharrgarblStaticTableAes, wharrgarblStaticTableKey[0:16])
-			cfb.XORKeyStream(wharrgarblStaticTableMem[:], wharrgarblStaticTableMem[:])
-		}
-		wharrgarblStaticTableInitialized = true
-	}
-
 	if minMemorySize < 1048576 {
 		minMemorySize = 1048576
 	}
@@ -247,9 +147,9 @@ func Wharrgarbl(in []byte, difficulty uint32, minMemorySize uint) (out [Wharrgar
 		wharrgarblMemoryEntries = uintptr(minMemorySize / 8)
 	}
 
-	inHashed := sha3.Sum256(in)
-	mmoCipher0, _ := aes.NewCipher(inHashed[0:16])
-	mmoCipher1, _ := aes.NewCipher(inHashed[16:32])
+	inHashed := sha3.Sum512(in)
+	mmoCipher0, _ := aes.NewCipher(inHashed[0:32])
+	mmoCipher1, _ := aes.NewCipher(inHashed[32:64])
 	diff64 := (uint64(difficulty) << 28) | 0x000000000fffffff
 	runNonce := rand.Uint64() // a nonce that randomizes indexes in the collision table to facilitate re-use without clearing
 
@@ -276,9 +176,9 @@ func WharrgarblVerify(work []byte, in []byte) uint32 {
 	}
 
 	var collisionHashIn [16]byte
-	inHashed := sha3.Sum256(in)
-	mmoCipher0, _ := aes.NewCipher(inHashed[0:16])
-	mmoCipher1, _ := aes.NewCipher(inHashed[16:32])
+	inHashed := sha3.Sum512(in)
+	mmoCipher0, _ := aes.NewCipher(inHashed[0:32])
+	mmoCipher1, _ := aes.NewCipher(inHashed[32:64])
 
 	var colliders [2]uint64
 	colliders[0] = (uint64(work[0]) << 32) | (uint64(work[1]) << 24) | (uint64(work[2]) << 16) | (uint64(work[3]) << 8) | uint64(work[4])
