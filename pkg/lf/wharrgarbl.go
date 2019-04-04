@@ -58,99 +58,99 @@ func wharrgarblMMOHash(mmoCipher0, mmoCipher1 cipher.Block, in *[16]byte) uint64
 	for i := 0; i < 16; i++ {
 		tmp0s[i] ^= in[i]
 	}
-	tmp0[1] ^= wharrgarblStaticTable[uint(tmp0[0])%4194304]
+	tmp0[1] ^= wharrgarblStaticTable[uint(tmp0[0])%wharrgarblStaticTableSize]
 
 	mmoCipher1.Encrypt(tmp1s, tmp0s)
 	tmp1[0] ^= tmp0[0]
-	tmp1[1] ^= tmp0[1] ^ wharrgarblStaticTable[uint(tmp0[0])%4194304]
+	tmp1[1] ^= tmp0[1] ^ wharrgarblStaticTable[uint(tmp0[0])%wharrgarblStaticTableSize]
 
 	mmoCipher0.Encrypt(tmp0s, tmp1s)
 	tmp0[0] ^= tmp1[0]
-	tmp0[1] ^= tmp1[1] ^ wharrgarblStaticTable[uint(tmp0[0])%4194304]
+	tmp0[1] ^= tmp1[1] ^ wharrgarblStaticTable[uint(tmp0[0])%wharrgarblStaticTableSize]
 
 	mmoCipher1.Encrypt(tmp1s, tmp0s)
 	tmp1[0] ^= tmp0[0]
-	tmp1[1] ^= tmp0[1] ^ wharrgarblStaticTable[uint(tmp0[0])%4194304]
+	tmp1[1] ^= tmp0[1] ^ wharrgarblStaticTable[uint(tmp0[0])%wharrgarblStaticTableSize]
 
 	mmoCipher0.Encrypt(tmp0s, tmp1s)
 	tmp0[0] ^= tmp1[0]
-	tmp0[1] ^= tmp1[1] ^ wharrgarblStaticTable[uint(tmp0[0])%4194304]
+	tmp0[1] ^= tmp1[1] ^ wharrgarblStaticTable[uint(tmp0[0])%wharrgarblStaticTableSize]
 
 	mmoCipher1.Encrypt(tmp1s, tmp0s)
 	tmp1[0] ^= tmp0[0]
-	tmp1[1] ^= tmp0[1] ^ wharrgarblStaticTable[uint(tmp0[0])%4194304]
+	tmp1[1] ^= tmp0[1] ^ wharrgarblStaticTable[uint(tmp0[0])%wharrgarblStaticTableSize]
 
 	mmoCipher0.Encrypt(tmp0s, tmp1s)
 	tmp0[0] ^= tmp1[0]
-	tmp0[1] ^= tmp1[1] ^ wharrgarblStaticTable[uint(tmp0[0])%4194304]
+	tmp0[1] ^= tmp1[1] ^ wharrgarblStaticTable[uint(tmp0[0])%wharrgarblStaticTableSize]
 
 	mmoCipher1.Encrypt(tmp1s, tmp0s)
 	tmp1[0] ^= tmp0[0]
-	tmp1[1] ^= tmp0[1] ^ wharrgarblStaticTable[uint(tmp0[0])%4194304]
+	tmp1[1] ^= tmp0[1] ^ wharrgarblStaticTable[uint(tmp0[0])%wharrgarblStaticTableSize]
 
 	mmoCipher0.Encrypt(tmp0s, tmp1s)
 	tmp0[0] ^= tmp1[0]
-	tmp0[1] ^= tmp1[1] ^ wharrgarblStaticTable[uint(tmp0[0])%4194304]
+	tmp0[1] ^= tmp1[1] ^ wharrgarblStaticTable[uint(tmp0[0])%wharrgarblStaticTableSize]
 
 	mmoCipher1.Encrypt(tmp1s, tmp0s)
 	tmp1[0] ^= tmp0[0]
-	tmp1[1] ^= tmp0[1] ^ wharrgarblStaticTable[uint(tmp0[0])%4194304]
+	tmp1[1] ^= tmp0[1] ^ wharrgarblStaticTable[uint(tmp0[0])%wharrgarblStaticTableSize]
 
 	mmoCipher0.Encrypt(tmp0s, tmp1s)
 	tmp0[0] ^= tmp1[0]
-	tmp0[1] ^= tmp1[1] ^ wharrgarblStaticTable[uint(tmp0[0])%4194304]
+	tmp0[1] ^= tmp1[1] ^ wharrgarblStaticTable[uint(tmp0[0])%wharrgarblStaticTableSize]
 
 	mmoCipher1.Encrypt(tmp1s, tmp0s)
 	tmp1[0] ^= tmp0[0]
-	tmp1[1] ^= tmp0[1] ^ wharrgarblStaticTable[uint(tmp0[0])%4194304]
+	tmp1[1] ^= tmp0[1] ^ wharrgarblStaticTable[uint(tmp0[0])%wharrgarblStaticTableSize]
 
 	mmoCipher0.Encrypt(tmp0s, tmp1s)
 	tmp0[0] ^= tmp1[0]
-	tmp0[1] ^= tmp1[1] ^ wharrgarblStaticTable[uint(tmp0[0])%4194304]
+	tmp0[1] ^= tmp1[1] ^ wharrgarblStaticTable[uint(tmp0[0])%wharrgarblStaticTableSize]
 
 	mmoCipher1.Encrypt(tmp1s, tmp0s)
 	tmp1[0] ^= tmp0[0]
-	tmp1[1] ^= tmp0[1] ^ wharrgarblStaticTable[uint(tmp0[0])%4194304]
+	tmp1[1] ^= tmp0[1] ^ wharrgarblStaticTable[uint(tmp0[0])%wharrgarblStaticTableSize]
 
 	mmoCipher0.Encrypt(tmp0s, tmp1s)
 	tmp0[0] ^= tmp1[0]
-	tmp0[1] ^= tmp1[1] ^ wharrgarblStaticTable[uint(tmp0[0])%4194304]
+	tmp0[1] ^= tmp1[1] ^ wharrgarblStaticTable[uint(tmp0[0])%wharrgarblStaticTableSize]
 
 	mmoCipher1.Encrypt(tmp1s, tmp0s)
 	tmp1[0] ^= tmp0[0]
-	tmp1[1] ^= tmp0[1] ^ wharrgarblStaticTable[uint(tmp0[0])%4194304]
+	tmp1[1] ^= tmp0[1] ^ wharrgarblStaticTable[uint(tmp0[0])%wharrgarblStaticTableSize]
 
 	mmoCipher0.Encrypt(tmp0s, tmp1s)
 	tmp0[0] ^= tmp1[0]
-	tmp0[1] ^= tmp1[1] ^ wharrgarblStaticTable[uint(tmp0[0])%4194304]
+	tmp0[1] ^= tmp1[1] ^ wharrgarblStaticTable[uint(tmp0[0])%wharrgarblStaticTableSize]
 
 	mmoCipher1.Encrypt(tmp1s, tmp0s)
 	tmp1[0] ^= tmp0[0]
-	tmp1[1] ^= tmp0[1] ^ wharrgarblStaticTable[uint(tmp0[0])%4194304]
+	tmp1[1] ^= tmp0[1] ^ wharrgarblStaticTable[uint(tmp0[0])%wharrgarblStaticTableSize]
 
 	mmoCipher0.Encrypt(tmp0s, tmp1s)
 	tmp0[0] ^= tmp1[0]
-	tmp0[1] ^= tmp1[1] ^ wharrgarblStaticTable[uint(tmp0[0])%4194304]
+	tmp0[1] ^= tmp1[1] ^ wharrgarblStaticTable[uint(tmp0[0])%wharrgarblStaticTableSize]
 
 	mmoCipher1.Encrypt(tmp1s, tmp0s)
 	tmp1[0] ^= tmp0[0]
-	tmp1[1] ^= tmp0[1] ^ wharrgarblStaticTable[uint(tmp0[0])%4194304]
+	tmp1[1] ^= tmp0[1] ^ wharrgarblStaticTable[uint(tmp0[0])%wharrgarblStaticTableSize]
 
 	mmoCipher0.Encrypt(tmp0s, tmp1s)
 	tmp0[0] ^= tmp1[0]
-	tmp0[1] ^= tmp1[1] ^ wharrgarblStaticTable[uint(tmp0[0])%4194304]
+	tmp0[1] ^= tmp1[1] ^ wharrgarblStaticTable[uint(tmp0[0])%wharrgarblStaticTableSize]
 
 	mmoCipher1.Encrypt(tmp1s, tmp0s)
 	tmp1[0] ^= tmp0[0]
-	tmp1[1] ^= tmp0[1] ^ wharrgarblStaticTable[uint(tmp0[0])%4194304]
+	tmp1[1] ^= tmp0[1] ^ wharrgarblStaticTable[uint(tmp0[0])%wharrgarblStaticTableSize]
 
 	mmoCipher0.Encrypt(tmp0s, tmp1s)
 	tmp0[0] ^= tmp1[0]
-	tmp0[1] ^= tmp1[1] ^ wharrgarblStaticTable[uint(tmp0[0])%4194304]
+	tmp0[1] ^= tmp1[1] ^ wharrgarblStaticTable[uint(tmp0[0])%wharrgarblStaticTableSize]
 
 	mmoCipher1.Encrypt(tmp1s, tmp0s)
 	tmp1[0] ^= tmp0[0]
-	tmp1[1] ^= tmp0[1] ^ wharrgarblStaticTable[uint(tmp0[0])%4194304]
+	tmp1[1] ^= tmp0[1] ^ wharrgarblStaticTable[uint(tmp0[0])%wharrgarblStaticTableSize]
 
 	return tmp1[0] ^ tmp1[1]
 }

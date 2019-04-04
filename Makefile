@@ -3,7 +3,7 @@
 all: lf
 
 lf: FORCE
-	go build -a cmd/lf/*.go
+	go build -o lf -a cmd/lf/*.go
 
 clean:	FORCE
 	rm -rf lf lf-db-test
