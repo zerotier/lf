@@ -37,7 +37,7 @@ var (
 // WharrgarblOutputSize is the size of Wharrgarbl's result in bytes.
 const WharrgarblOutputSize = 14
 
-// wharrgarblMMOHash is a multiple (48) iteration single block Matyas-Meyer-Oseas hash.
+// wharrgarblMMOHash is a multiple (64) iteration single block Matyas-Meyer-Oseas hash.
 // It's not used for things like signatures or authentication, just as a cryptographic
 // random function for Wharrgarbl collision search proof of work. It takes two keyed
 // ciphers for MMO where these are keyed by the Wharrgarbl input, making each Wharrgarbl
@@ -56,7 +56,7 @@ func wharrgarblMMOHash(mmoCipher0, mmoCipher1 cipher.Block, in *[16]byte) uint64
 	tmp[2] ^= tmp[0]
 	tmp[3] ^= tmp[1]
 
-	for k := 0; k < 46; k++ {
+	for k := 0; k < 62; k++ {
 		mmoCipher0.Encrypt(tmp0, tmp1)
 		tmp[0] ^= tmp[2]
 		tmp[1] ^= tmp[3]

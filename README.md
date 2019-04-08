@@ -28,11 +28,9 @@ First type `make godeps` to "go get" the project's Go dependencies. Then type `m
 
 ## Internals
 
-*This section is under construction.*
-
 ## Credits
 
-LF was written by [Adam Ierymenko](mailto:adam.ierymenko@zerotier.com). Work on LF was supported by the sorts of people who want highly secure distributed networks that lack single points of failure.
+LF was written by [Adam Ierymenko](mailto:adam.ierymenko@zerotier.com) of ZeroTier, Inc. Work on LF was supported by the sorts of people who want highly secure distributed networks that lack single points of failure.
 
 (c)2018-2019 [ZeroTier, Inc.](https://www.zerotier.com/) 
 MIT License
