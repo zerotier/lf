@@ -37,14 +37,13 @@ var (
 // WharrgarblOutputSize is the size of Wharrgarbl's result in bytes.
 const WharrgarblOutputSize = 14
 
-// wharrgarblMMOHash is a multiple (64) iteration single block Matyas-Meyer-Oseas hash.
+// wharrgarblMMOHash is a multiple (48) iteration single block Matyas-Meyer-Oseas hash.
 // It's not used for things like signatures or authentication, just as a cryptographic
 // random function for Wharrgarbl collision search proof of work. It takes two keyed
 // ciphers for MMO where these are keyed by the Wharrgarbl input, making each Wharrgarbl
 // PoW search unique in terms of the random function searched.
-func wharrgarblMMOHash(mmoCipher0, mmoCipher1 cipher.Block, in *[16]byte) uint64 {
-	var tmp [4]uint64 // two 16-byte buffers that can be XORed via fast 64-bit XOR
-	tmp0 := (*[16]byte)(unsafe.Pointer(&tmp[0]))[:]
+func wharrgarblMMOHash(mmoCipher0, mmoCipher1 cipher.Block, tmp *[4]uint64, in *[16]byte) uint64 {
+	tmp0 := (*[16]byte)(unsafe.Pointer(tmp))[:]
 	tmp1 := (*[16]byte)(unsafe.Pointer(&tmp[2]))[:]
 
 	mmoCipher0.Encrypt(tmp0, in[:])
@@ -56,7 +55,7 @@ func wharrgarblMMOHash(mmoCipher0, mmoCipher1 cipher.Block, in *[16]byte) uint64
 	tmp[2] ^= tmp[0]
 	tmp[3] ^= tmp[1]
 
-	for k := 0; k < 62; k++ {
+	for k := 0; k < 46; k++ {
 		mmoCipher0.Encrypt(tmp0, tmp1)
 		tmp[0] ^= tmp[2]
 		tmp[1] ^= tmp[3]
@@ -72,10 +71,11 @@ func wharrgarblMMOHash(mmoCipher0, mmoCipher1 cipher.Block, in *[16]byte) uint64
 func wharrgarblWorkerFunc(mmoCipher0, mmoCipher1 cipher.Block, runNonce, diff64 uint64, iterations *uint64, done *uint32, outLock *sync.Mutex, out []byte, doneWG *sync.WaitGroup) {
 	var collisionHashIn [16]byte
 	var iter uint64
+	var tmp [4]uint64
 
 	// Generate an initial 40-bit collider.
 	thisCollider := uint64(rand.Uint32()) ^ (uint64(rand.Uint32()&0x3f) << 32)
-	for *done == 0 {
+	for atomic.LoadUint32(done) == 0 {
 		iter++
 
 		thisCollider++
@@ -84,7 +84,7 @@ func wharrgarblWorkerFunc(mmoCipher0, mmoCipher1 cipher.Block, runNonce, diff64 
 		collisionHashIn[5] = byte(thisCollider >> 16)
 		collisionHashIn[6] = byte(thisCollider >> 8)
 		collisionHashIn[7] = byte(thisCollider)
-		thisCollision := wharrgarblMMOHash(mmoCipher0, mmoCipher1, &collisionHashIn) % diff64
+		thisCollision := wharrgarblMMOHash(mmoCipher0, mmoCipher1, &tmp, &collisionHashIn) % diff64
 
 		// The collision table contains 64-bit entries indexed by collision. These contain
 		// the collider (least significant 40 bits) and 24 bits of the other collision. We
@@ -102,7 +102,7 @@ func wharrgarblWorkerFunc(mmoCipher0, mmoCipher1 cipher.Block, runNonce, diff64 
 				collisionHashIn[5] = byte(otherCollider >> 16)
 				collisionHashIn[6] = byte(otherCollider >> 8)
 				collisionHashIn[7] = byte(otherCollider)
-				if (wharrgarblMMOHash(mmoCipher0, mmoCipher1, &collisionHashIn) % diff64) == thisCollision {
+				if (wharrgarblMMOHash(mmoCipher0, mmoCipher1, &tmp, &collisionHashIn) % diff64) == thisCollision {
 					atomic.StoreUint32(done, 1)
 					outLock.Lock()
 					out[0] = byte(thisCollider >> 32)
@@ -193,9 +193,10 @@ func WharrgarblVerify(work []byte, in []byte) uint32 {
 
 	diff64 := (uint64(difficulty) << 28) | 0x000000000fffffff
 	var collisions [2]uint64
+	var tmp [4]uint64
 	for i := 0; i < 2; i++ {
 		binary.BigEndian.PutUint64(collisionHashIn[0:8], colliders[i])
-		collisions[i] = wharrgarblMMOHash(mmoCipher0, mmoCipher1, &collisionHashIn) % diff64
+		collisions[i] = wharrgarblMMOHash(mmoCipher0, mmoCipher1, &tmp, &collisionHashIn) % diff64
 	}
 
 	if collisions[0] == collisions[1] {
