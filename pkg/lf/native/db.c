@@ -35,7 +35,6 @@ static void *_ZTLF_DB_graphThreadMain(void *arg);
  *   goff                     offset of graph node in memory mapped graph file (unique key)
  *   ts                       record timestamp
  *   score                    score of this record (alone, not with weight from links)
- *   reputation               bit mask indicating if record is suspect/disqualified (zero means good)
  *   link_count               number of links from this record (actual links are in graph node)
  *   selector_count           number of selectors for this record
  *   hash                     shandwich256(record data) (unique key)
@@ -99,7 +98,6 @@ static void *_ZTLF_DB_graphThreadMain(void *arg);
 "goff INTEGER NOT NULL," \
 "ts INTEGER NOT NULL," \
 "score INTEGER NOT NULL," \
-"reputation INTEGER NOT NULL," \
 "link_count INTEGER NOT NULL," \
 "selector_count INTEGER NOT NULL," \
 "hash BLOB NOT NULL," \
@@ -111,7 +109,7 @@ static void *_ZTLF_DB_graphThreadMain(void *arg);
 "CREATE UNIQUE INDEX IF NOT EXISTS record_hash ON record(hash);\n" \
 "CREATE INDEX IF NOT EXISTS record_id ON record(id);\n" \
 "CREATE INDEX IF NOT EXISTS record_ts ON record(ts);\n" \
-"CREATE INDEX IF NOT EXISTS record_doff_reputation_selector_count_owner_id_ts ON record(doff,reputation,selector_count,owner,id,ts);\n" \
+"CREATE INDEX IF NOT EXISTS record_doff_selector_count_owner_id_ts ON record(doff,selector_count,owner,id,ts);\n" \
 \
 "CREATE TABLE IF NOT EXISTS selector (" \
 "sel BLOB NOT NULL," \
@@ -224,7 +222,7 @@ int ZTLF_DB_Open(
 	S(db->sGetConfig,
 	     "SELECT \"v\" FROM config WHERE \"k\" = ?");
 	S(db->sAddRecord,
-	     "INSERT INTO record (doff,dlen,goff,ts,score,reputation,link_count,selector_count,hash,id,owner) VALUES (?,?,?,?,?,?,?,?,?,?,?)");
+	     "INSERT INTO record (doff,dlen,goff,ts,score,link_count,selector_count,hash,id,owner) VALUES (?,?,?,?,?,?,?,?,?,?)");
 	S(db->sAddSelector,
 	     "INSERT OR IGNORE INTO selector (sel,record_doff) VALUES (?,?)");
 	S(db->sGetRecordCount,
@@ -234,9 +232,9 @@ int ZTLF_DB_Open(
 	S(db->sGetAllRecords,
 	     "SELECT goff,hash FROM record ORDER BY hash ASC");
 	S(db->sGetAllByOwner,
-	     "SELECT r.doff,r.dlen FROM record AS r WHERE r.owner = ? AND NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) AND NOT EXISTS (SELECT gp.record_goff FROM graph_pending AS gp WHERE gp.record_goff = r.goff) AND r.reputation = 0 ORDER BY r.ts ASC");
+	     "SELECT r.doff,r.dlen FROM record AS r WHERE r.owner = ? AND NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) AND NOT EXISTS (SELECT gp.record_goff FROM graph_pending AS gp WHERE gp.record_goff = r.goff) ORDER BY r.ts ASC");
 	S(db->sGetLinkCandidates,
-	     "SELECT r.goff,r.hash FROM record AS r WHERE NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) AND NOT EXISTS (SELECT gp.record_goff FROM graph_pending AS gp WHERE gp.record_goff = r.goff) AND r.reputation = 0 ORDER BY ts DESC");
+	     "SELECT r.goff,r.hash FROM record AS r WHERE NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) AND NOT EXISTS (SELECT gp.record_goff FROM graph_pending AS gp WHERE gp.record_goff = r.goff) ORDER BY ts DESC");
 	S(db->sGetRecordByHash,
 	     "SELECT doff,dlen FROM record WHERE hash = ?");
 	S(db->sGetMaxRecordDoff,
@@ -274,7 +272,7 @@ int ZTLF_DB_Open(
 	S(db->sGetAnyPending,
 	     "SELECT gp.record_goff FROM graph_pending AS gp WHERE NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = gp.record_goff) LIMIT 1");
 	S(db->sGetHaveSynchronizedWithID,
-	     "SELECT COUNT(1) FROM record AS r WHERE r.id = ? AND r.owner != ? AND NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) AND NOT EXISTS (SELECT gp.record_goff FROM graph_pending AS gp WHERE gp.record_goff = r.goff) AND r.reputation = 0");
+	     "SELECT COUNT(1) FROM record AS r WHERE r.id = ? AND r.owner != ? AND NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) AND NOT EXISTS (SELECT gp.record_goff FROM graph_pending AS gp WHERE gp.record_goff = r.goff)");
 	S(db->sQueryClearRecordSet,
 	     "DELETE FROM tmp.rs");
 	S(db->sQueryOrSelectorRange,
@@ -282,7 +280,7 @@ int ZTLF_DB_Open(
 	S(db->sQueryAndSelectorRange,
 	     "DELETE FROM tmp.rs WHERE \"i\" NOT IN (SELECT record_doff FROM selector WHERE sel BETWEEN ? AND ?)");
 	S(db->sQueryGetResults,
-	     "SELECT r.doff,r.dlen,r.goff,r.ts,r.id,r.owner FROM record AS r,tmp.rs AS rs WHERE r.doff = rs.i AND r.reputation = 0 AND r.selector_count = ? AND NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) AND NOT EXISTS (SELECT gp.record_goff FROM graph_pending AS gp WHERE gp.record_goff = r.goff) ORDER BY r.owner,r.id,r.ts");
+	     "SELECT r.doff,r.dlen,r.goff,r.ts,r.id,r.owner FROM record AS r,tmp.rs AS rs WHERE r.doff = rs.i AND r.selector_count = ? AND NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) AND NOT EXISTS (SELECT gp.record_goff FROM graph_pending AS gp WHERE gp.record_goff = r.goff) ORDER BY r.owner,r.id,r.ts");
 
 	/* Open and memory map graph and data files. */
 	snprintf(tmp,sizeof(tmp),"%s" ZTLF_PATH_SEPARATOR "graph.bin",path);
@@ -783,7 +781,6 @@ int ZTLF_DB_PutRecord(
 	const void *id,
 	const uint64_t ts,
 	const uint32_t score,
-	const int reputation,
 	const void **sel,
 	const unsigned int *selSize,
 	const unsigned int selCount,
@@ -863,12 +860,11 @@ int ZTLF_DB_PutRecord(
 	sqlite3_bind_int64(db->sAddRecord,3,goff);
 	sqlite3_bind_int64(db->sAddRecord,4,(sqlite3_int64)ts);
 	sqlite3_bind_int64(db->sAddRecord,5,(sqlite3_int64)score);
-	sqlite3_bind_int(db->sAddRecord,6,reputation);
-	sqlite3_bind_int(db->sAddRecord,7,(int)linkCount);
-	sqlite3_bind_int(db->sAddRecord,8,(int)selCount);
-	sqlite3_bind_blob(db->sAddRecord,9,hash,32,SQLITE_STATIC);
-	sqlite3_bind_blob(db->sAddRecord,10,id,32,SQLITE_STATIC);
-	sqlite3_bind_blob(db->sAddRecord,11,owner,ownerSize,SQLITE_STATIC);
+	sqlite3_bind_int(db->sAddRecord,6,(int)linkCount);
+	sqlite3_bind_int(db->sAddRecord,7,(int)selCount);
+	sqlite3_bind_blob(db->sAddRecord,8,hash,32,SQLITE_STATIC);
+	sqlite3_bind_blob(db->sAddRecord,9,id,32,SQLITE_STATIC);
+	sqlite3_bind_blob(db->sAddRecord,10,owner,ownerSize,SQLITE_STATIC);
 	if ((e = sqlite3_step(db->sAddRecord)) != SQLITE_DONE) {
 		result = ZTLF_POS(e);
 		goto exit_putRecord;

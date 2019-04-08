@@ -266,7 +266,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 			rh := r.Hash()
 			if !n.db.hasRecord(rh[:]) {
 				n.log[LogLevelNormal].Printf("genesis record %x not found in database, initializing", *rh)
-				err = n.db.putRecord(&r, 0)
+				err = n.db.putRecord(&r)
 				if err != nil {
 					n.httpTCPListener.Close()
 					n.p2pTCPListener.Close()
@@ -490,18 +490,10 @@ func (n *Node) AddRecord(r *Record) error {
 		return err
 	}
 
-	// Check to see if there's another fully synchronized and reputation=0 record with the
-	// same ID. If so, flag this one.
-	reputation := 0
-	rid := r.ID()
-	if n.db.haveSynchronizedWithID(rid[:], r.Owner) {
-		reputation = dbRecordReputationFlagCollidesWithSynchronizedID
-	}
-
 	n.log[LogLevelTrace].Printf("TRACE: new record: %x", *rhash)
 
 	// Add record to database, aborting if this generates some kind of error.
-	err = n.db.putRecord(r, reputation)
+	err = n.db.putRecord(r)
 	if err != nil {
 		return err
 	}

@@ -98,7 +98,7 @@ func (db *db) close() {
 }
 
 // putRecord adds a valid record to the database.
-func (db *db) putRecord(r *Record, reputation int) error {
+func (db *db) putRecord(r *Record) error {
 	if len(r.recordBody.Owner) == 0 {
 		return ErrRecordInvalid
 	}
@@ -139,7 +139,6 @@ func (db *db) putRecord(r *Record, reputation int) error {
 		unsafe.Pointer(rid),
 		C.uint64_t(r.recordBody.Timestamp),
 		C.uint32_t(r.Score()),
-		C.int(reputation),
 		(*unsafe.Pointer)(sptr),
 		(*C.uint)(ssptr),
 		C.uint(len(selectors)),

@@ -171,7 +171,6 @@ int ZTLF_DB_PutRecord(
 	const void *id,
 	const uint64_t ts,
 	const uint32_t score,
-	const int reputation,
 	const void **sel,
 	const unsigned int *selSize,
 	const unsigned int selCount,
