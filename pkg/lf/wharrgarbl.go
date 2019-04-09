@@ -58,6 +58,8 @@ func internalWharrgarblHash(cipher0, cipher1 cipher.Block, tmp []byte, in *[16]b
 	tmp[14] ^= in[14] ^ internalWharrgarblTable[(uint32(tmp[14])|uint32(tmp[15])<<16|uint32(tmp[0])<<8|uint32(tmp[1])<<24)%internalWharrgarblTableSize]
 	tmp[15] ^= in[15] ^ internalWharrgarblTable[(uint32(tmp[15])|uint32(tmp[0])<<16|uint32(tmp[1])<<8|uint32(tmp[2])<<24)%internalWharrgarblTableSize]
 
+	inner := binary.BigEndian.Uint64(tmp[0:8])
+
 	cipher1.Encrypt(tmp, tmp)
 
 	tmp[0] ^= in[0] ^ internalWharrgarblTable[(uint32(tmp[0])|uint32(tmp[1])<<16|uint32(tmp[2])<<8|uint32(tmp[3])<<24)%internalWharrgarblTableSize]
@@ -77,7 +79,7 @@ func internalWharrgarblHash(cipher0, cipher1 cipher.Block, tmp []byte, in *[16]b
 	tmp[14] ^= in[14] ^ internalWharrgarblTable[(uint32(tmp[14])|uint32(tmp[15])<<16|uint32(tmp[0])<<8|uint32(tmp[1])<<24)%internalWharrgarblTableSize]
 	tmp[15] ^= in[15] ^ internalWharrgarblTable[(uint32(tmp[15])|uint32(tmp[0])<<16|uint32(tmp[1])<<8|uint32(tmp[2])<<24)%internalWharrgarblTableSize]
 
-	return binary.BigEndian.Uint64(tmp[0:8]) + binary.BigEndian.Uint64(tmp[8:16])
+	return binary.BigEndian.Uint64(tmp[0:8]) ^ inner
 }
 
 // NewWharrgarblr creates a new Wharrgarbl instance with the given memory size (for memory/speed tradeoff).
@@ -121,11 +123,12 @@ func (wg *Wharrgarblr) internalWorkerFunc(mmoCipher0, mmoCipher1 cipher.Block, r
 	ctlen := uint(len(ct))
 
 	// Generate an initial 40-bit collider.
-	thisCollider := uint64(rand.Uint32()) ^ (uint64(rand.Uint32()&0x3f) << 32)
+	thisCollider := rand.Uint64() + rand.Uint64()
 	for atomic.LoadUint32(&wg.done) == 0 {
 		iter++
 
 		thisCollider++
+		thisCollider &= 0xffffffffff
 		collisionHashIn[3] = byte(thisCollider >> 32)
 		collisionHashIn[4] = byte(thisCollider >> 24)
 		collisionHashIn[5] = byte(thisCollider >> 16)
