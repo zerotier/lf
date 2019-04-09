@@ -81,6 +81,7 @@ type Node struct {
 	httpTCPListener    *net.TCPListener           //
 	httpServer         *http.Server               //
 	p2pTCPListener     *net.TCPListener           //
+	wg                 *Wharrgarblr               // Work function, created if genesis parameters indicate one
 	db                 db                         //
 	backgroundThreadWG sync.WaitGroup             // Wait group for background goroutines
 	startTime          uint64                     // Time node was started in seconds since epoch
@@ -360,11 +361,14 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 			if n.genesisParameters.RecordMinLinks > 0 {
 				links, err := n.db.getLinks2(n.genesisParameters.RecordMinLinks)
 				if err == nil && uint(len(links)) >= n.genesisParameters.RecordMinLinks {
-					workAlgorithm := RecordWorkAlgorithmNone
 					if n.genesisParameters.WorkRequired {
-						workAlgorithm = RecordWorkAlgorithmWharrgarbl
+						if n.wg == nil {
+							n.wg = NewWharrgarblr(RecordDefaultWharrgarblMemory)
+						}
+					} else {
+						n.wg = nil
 					}
-					rec, err := NewRecord(nil, links, nil, nil, nil, nil, TimeSec(), workAlgorithm, 0, n.owner)
+					rec, err := NewRecord(nil, links, nil, nil, nil, nil, TimeSec(), n.wg, 0, n.owner)
 					if err == nil {
 						n.AddRecord(rec)
 					} else {
@@ -395,7 +399,6 @@ func (n *Node) Stop() {
 	n.peersLock.Unlock()
 	n.backgroundThreadWG.Wait()
 	n.db.close()
-	WharrgarblFreeMemory()
 }
 
 // Connect attempts to establish a peer-to-peer connection to a remote node.

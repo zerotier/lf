@@ -114,8 +114,13 @@ func CreateGenesisRecords(genesisOwnerType int, genesisParameters *GenesisParame
 	}
 	now := TimeSec()
 
+	var wg *Wharrgarblr
+	if genesisParameters.WorkRequired {
+		wg = NewWharrgarblr(RecordDefaultWharrgarblMemory)
+	}
+
 	// Create the very first genesis record, which contains the genesis configuration structure in JSON format.
-	r, err := NewRecord(gpjson, nil, nil, nil, nil, nil, now, RecordWorkAlgorithmWharrgarbl, 0, genesisOwner)
+	r, err := NewRecord(gpjson, nil, nil, nil, nil, nil, now, wg, 0, genesisOwner)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -124,7 +129,7 @@ func CreateGenesisRecords(genesisOwnerType int, genesisParameters *GenesisParame
 
 	// Subsequent genesis records are empty and just exist so real records can satisfy their minimum link requirement.
 	for i := uint(1); i < genesisParameters.RecordMinLinks; i++ {
-		r, err := NewRecord(nil, links, nil, nil, nil, nil, now+uint64(i), RecordWorkAlgorithmWharrgarbl, 0, genesisOwner)
+		r, err := NewRecord(nil, links, nil, nil, nil, nil, now+uint64(i), wg, 0, genesisOwner)
 		if err != nil {
 			return nil, nil, err
 		}

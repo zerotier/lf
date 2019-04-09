@@ -10,72 +10,119 @@ package lf
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/sha512"
 	"encoding/binary"
 	"math/rand"
 	"runtime"
 	"sync"
 	"sync/atomic"
-	"unsafe"
 
 	"golang.org/x/crypto/sha3"
 )
 
-//#include <stdlib.h>
-//#include <string.h>
-import "C"
+const internalWharrgarblTableSize = 67108864
 
-// Wharrgarbl holds a global pointer to memory allocated via external C malloc().
-// There's not much point in allocating this on demand since this uses all cores
-// anyway so one at a time is about the best you can do.
-var (
-	wharrgarblMemoryPtr     unsafe.Pointer
-	wharrgarblMemorySize    uint
-	wharrgarblMemoryEntries uintptr
-	wharrgarblMemoryLock    sync.Mutex
-)
+var internalWharrgarblTable *[internalWharrgarblTableSize]byte
+var internalWharrgarblTableLock sync.RWMutex
 
 // WharrgarblOutputSize is the size of Wharrgarbl's result in bytes.
 const WharrgarblOutputSize = 14
 
-// wharrgarblMMOHash is a multiple (48) iteration single block Matyas-Meyer-Oseas hash.
-// It's not used for things like signatures or authentication, just as a cryptographic
-// random function for Wharrgarbl collision search proof of work. It takes two keyed
-// ciphers for MMO where these are keyed by the Wharrgarbl input, making each Wharrgarbl
-// PoW search unique in terms of the random function searched.
-func wharrgarblMMOHash(mmoCipher0, mmoCipher1 cipher.Block, tmp *[4]uint64, in *[16]byte) uint64 {
-	tmp0 := (*[16]byte)(unsafe.Pointer(tmp))[:]
-	tmp1 := (*[16]byte)(unsafe.Pointer(&tmp[2]))[:]
-
-	mmoCipher0.Encrypt(tmp0, in[:])
-	for i := 0; i < 16; i++ {
-		tmp0[i] ^= in[i]
-	}
-
-	mmoCipher1.Encrypt(tmp1, tmp0)
-	tmp[2] ^= tmp[0]
-	tmp[3] ^= tmp[1]
-
-	for k := 0; k < 46; k++ {
-		mmoCipher0.Encrypt(tmp0, tmp1)
-		tmp[0] ^= tmp[2]
-		tmp[1] ^= tmp[3]
-
-		mmoCipher1.Encrypt(tmp1, tmp0)
-		tmp[2] ^= tmp[0]
-		tmp[3] ^= tmp[1]
-	}
-
-	return binary.BigEndian.Uint64(tmp1[0:8]) ^ binary.BigEndian.Uint64(tmp1[8:16])
+// Wharrgarblr is an instance of the Wharrgarbl proof of work function.
+type Wharrgarblr struct {
+	memory []uint64
+	lock   sync.Mutex
+	done   uint32
 }
 
-func wharrgarblWorkerFunc(mmoCipher0, mmoCipher1 cipher.Block, runNonce, diff64 uint64, iterations *uint64, done *uint32, outLock *sync.Mutex, out []byte, doneWG *sync.WaitGroup) {
+// internalWharrgarblHash is a Matyer-Meyer-Oseas-like keyed single block hash used as a search target for collision search.
+func internalWharrgarblHash(cipher0, cipher1 cipher.Block, tmp []byte, in *[16]byte) uint64 {
+	_ = tmp[15]
+
+	cipher0.Encrypt(tmp, in[:])
+
+	tmp[0] ^= in[0] ^ internalWharrgarblTable[(uint32(tmp[0])|uint32(tmp[1])<<16|uint32(tmp[2])<<8|uint32(tmp[3])<<24)%internalWharrgarblTableSize]
+	tmp[1] ^= in[1] ^ internalWharrgarblTable[(uint32(tmp[1])|uint32(tmp[2])<<16|uint32(tmp[3])<<8|uint32(tmp[4])<<24)%internalWharrgarblTableSize]
+	tmp[2] ^= in[2] ^ internalWharrgarblTable[(uint32(tmp[2])|uint32(tmp[3])<<16|uint32(tmp[4])<<8|uint32(tmp[5])<<24)%internalWharrgarblTableSize]
+	tmp[3] ^= in[3] ^ internalWharrgarblTable[(uint32(tmp[3])|uint32(tmp[4])<<16|uint32(tmp[5])<<8|uint32(tmp[6])<<24)%internalWharrgarblTableSize]
+	tmp[4] ^= in[4] ^ internalWharrgarblTable[(uint32(tmp[4])|uint32(tmp[5])<<16|uint32(tmp[6])<<8|uint32(tmp[7])<<24)%internalWharrgarblTableSize]
+	tmp[5] ^= in[5] ^ internalWharrgarblTable[(uint32(tmp[5])|uint32(tmp[6])<<16|uint32(tmp[7])<<8|uint32(tmp[8])<<24)%internalWharrgarblTableSize]
+	tmp[6] ^= in[6] ^ internalWharrgarblTable[(uint32(tmp[6])|uint32(tmp[7])<<16|uint32(tmp[8])<<8|uint32(tmp[9])<<24)%internalWharrgarblTableSize]
+	tmp[7] ^= in[7] ^ internalWharrgarblTable[(uint32(tmp[7])|uint32(tmp[8])<<16|uint32(tmp[9])<<8|uint32(tmp[10])<<24)%internalWharrgarblTableSize]
+	tmp[8] ^= in[8] ^ internalWharrgarblTable[(uint32(tmp[8])|uint32(tmp[9])<<16|uint32(tmp[10])<<8|uint32(tmp[11])<<24)%internalWharrgarblTableSize]
+	tmp[9] ^= in[9] ^ internalWharrgarblTable[(uint32(tmp[9])|uint32(tmp[10])<<16|uint32(tmp[11])<<8|uint32(tmp[12])<<24)%internalWharrgarblTableSize]
+	tmp[10] ^= in[10] ^ internalWharrgarblTable[(uint32(tmp[10])|uint32(tmp[11])<<16|uint32(tmp[12])<<8|uint32(tmp[13])<<24)%internalWharrgarblTableSize]
+	tmp[11] ^= in[11] ^ internalWharrgarblTable[(uint32(tmp[11])|uint32(tmp[12])<<16|uint32(tmp[13])<<8|uint32(tmp[14])<<24)%internalWharrgarblTableSize]
+	tmp[12] ^= in[12] ^ internalWharrgarblTable[(uint32(tmp[12])|uint32(tmp[13])<<16|uint32(tmp[14])<<8|uint32(tmp[15])<<24)%internalWharrgarblTableSize]
+	tmp[13] ^= in[13] ^ internalWharrgarblTable[(uint32(tmp[13])|uint32(tmp[14])<<16|uint32(tmp[15])<<8|uint32(tmp[0])<<24)%internalWharrgarblTableSize]
+	tmp[14] ^= in[14] ^ internalWharrgarblTable[(uint32(tmp[14])|uint32(tmp[15])<<16|uint32(tmp[0])<<8|uint32(tmp[1])<<24)%internalWharrgarblTableSize]
+	tmp[15] ^= in[15] ^ internalWharrgarblTable[(uint32(tmp[15])|uint32(tmp[0])<<16|uint32(tmp[1])<<8|uint32(tmp[2])<<24)%internalWharrgarblTableSize]
+
+	cipher1.Encrypt(tmp, tmp)
+
+	tmp[0] ^= in[0] ^ internalWharrgarblTable[(uint32(tmp[0])|uint32(tmp[1])<<16|uint32(tmp[2])<<8|uint32(tmp[3])<<24)%internalWharrgarblTableSize]
+	tmp[1] ^= in[1] ^ internalWharrgarblTable[(uint32(tmp[1])|uint32(tmp[2])<<16|uint32(tmp[3])<<8|uint32(tmp[4])<<24)%internalWharrgarblTableSize]
+	tmp[2] ^= in[2] ^ internalWharrgarblTable[(uint32(tmp[2])|uint32(tmp[3])<<16|uint32(tmp[4])<<8|uint32(tmp[5])<<24)%internalWharrgarblTableSize]
+	tmp[3] ^= in[3] ^ internalWharrgarblTable[(uint32(tmp[3])|uint32(tmp[4])<<16|uint32(tmp[5])<<8|uint32(tmp[6])<<24)%internalWharrgarblTableSize]
+	tmp[4] ^= in[4] ^ internalWharrgarblTable[(uint32(tmp[4])|uint32(tmp[5])<<16|uint32(tmp[6])<<8|uint32(tmp[7])<<24)%internalWharrgarblTableSize]
+	tmp[5] ^= in[5] ^ internalWharrgarblTable[(uint32(tmp[5])|uint32(tmp[6])<<16|uint32(tmp[7])<<8|uint32(tmp[8])<<24)%internalWharrgarblTableSize]
+	tmp[6] ^= in[6] ^ internalWharrgarblTable[(uint32(tmp[6])|uint32(tmp[7])<<16|uint32(tmp[8])<<8|uint32(tmp[9])<<24)%internalWharrgarblTableSize]
+	tmp[7] ^= in[7] ^ internalWharrgarblTable[(uint32(tmp[7])|uint32(tmp[8])<<16|uint32(tmp[9])<<8|uint32(tmp[10])<<24)%internalWharrgarblTableSize]
+	tmp[8] ^= in[8] ^ internalWharrgarblTable[(uint32(tmp[8])|uint32(tmp[9])<<16|uint32(tmp[10])<<8|uint32(tmp[11])<<24)%internalWharrgarblTableSize]
+	tmp[9] ^= in[9] ^ internalWharrgarblTable[(uint32(tmp[9])|uint32(tmp[10])<<16|uint32(tmp[11])<<8|uint32(tmp[12])<<24)%internalWharrgarblTableSize]
+	tmp[10] ^= in[10] ^ internalWharrgarblTable[(uint32(tmp[10])|uint32(tmp[11])<<16|uint32(tmp[12])<<8|uint32(tmp[13])<<24)%internalWharrgarblTableSize]
+	tmp[11] ^= in[11] ^ internalWharrgarblTable[(uint32(tmp[11])|uint32(tmp[12])<<16|uint32(tmp[13])<<8|uint32(tmp[14])<<24)%internalWharrgarblTableSize]
+	tmp[12] ^= in[12] ^ internalWharrgarblTable[(uint32(tmp[12])|uint32(tmp[13])<<16|uint32(tmp[14])<<8|uint32(tmp[15])<<24)%internalWharrgarblTableSize]
+	tmp[13] ^= in[13] ^ internalWharrgarblTable[(uint32(tmp[13])|uint32(tmp[14])<<16|uint32(tmp[15])<<8|uint32(tmp[0])<<24)%internalWharrgarblTableSize]
+	tmp[14] ^= in[14] ^ internalWharrgarblTable[(uint32(tmp[14])|uint32(tmp[15])<<16|uint32(tmp[0])<<8|uint32(tmp[1])<<24)%internalWharrgarblTableSize]
+	tmp[15] ^= in[15] ^ internalWharrgarblTable[(uint32(tmp[15])|uint32(tmp[0])<<16|uint32(tmp[1])<<8|uint32(tmp[2])<<24)%internalWharrgarblTableSize]
+
+	return binary.BigEndian.Uint64(tmp[0:8]) + binary.BigEndian.Uint64(tmp[8:16])
+}
+
+// NewWharrgarblr creates a new Wharrgarbl instance with the given memory size (for memory/speed tradeoff).
+func NewWharrgarblr(memorySize uint) (wg *Wharrgarblr) {
+	wg = new(Wharrgarblr)
+	if memorySize < 1048576 {
+		memorySize = 1048576
+	}
+	wg.memory = make([]uint64, memorySize/8)
+
+	internalWharrgarblTableLock.RLock()
+	if internalWharrgarblTable != nil {
+		internalWharrgarblTableLock.RUnlock()
+		return
+	}
+	internalWharrgarblTableLock.RUnlock()
+	internalWharrgarblTableLock.Lock()
+	if internalWharrgarblTable != nil {
+		internalWharrgarblTableLock.Unlock()
+		return
+	}
+	internalWharrgarblTable = new([internalWharrgarblTableSize]byte)
+	copy(internalWharrgarblTable[:], []byte("My hovercraft is full of eels!"))
+	for i := 0; i < 4; i++ {
+		h := sha512.Sum512(internalWharrgarblTable[:])
+		aes, _ := aes.NewCipher(h[0:32])
+		c := cipher.NewCFBEncrypter(aes, h[32:48])
+		c.XORKeyStream(internalWharrgarblTable[:], internalWharrgarblTable[:])
+	}
+	internalWharrgarblTableLock.Unlock()
+
+	return
+}
+
+func (wg *Wharrgarblr) internalWorkerFunc(mmoCipher0, mmoCipher1 cipher.Block, runNonce, diff64 uint64, iterations *uint64, outLock *sync.Mutex, out []byte, doneWG *sync.WaitGroup) {
 	var collisionHashIn [16]byte
+	var tmpm [16]byte
 	var iter uint64
-	var tmp [4]uint64
+	tmp := tmpm[:]
+	ct := wg.memory
+	ctlen := uint(len(ct))
 
 	// Generate an initial 40-bit collider.
 	thisCollider := uint64(rand.Uint32()) ^ (uint64(rand.Uint32()&0x3f) << 32)
-	for atomic.LoadUint32(done) == 0 {
+	for atomic.LoadUint32(&wg.done) == 0 {
 		iter++
 
 		thisCollider++
@@ -84,13 +131,13 @@ func wharrgarblWorkerFunc(mmoCipher0, mmoCipher1 cipher.Block, runNonce, diff64 
 		collisionHashIn[5] = byte(thisCollider >> 16)
 		collisionHashIn[6] = byte(thisCollider >> 8)
 		collisionHashIn[7] = byte(thisCollider)
-		thisCollision := wharrgarblMMOHash(mmoCipher0, mmoCipher1, &tmp, &collisionHashIn) % diff64
+		thisCollision := internalWharrgarblHash(mmoCipher0, mmoCipher1, tmp, &collisionHashIn) % diff64
 
 		// The collision table contains 64-bit entries indexed by collision. These contain
 		// the collider (least significant 40 bits) and 24 bits of the other collision. We
 		// then recompute the full collision for the other collider to verify since there's
 		// a 1/2^24 chance of a false positive.
-		collisionTableEntry := (*uint64)(unsafe.Pointer(uintptr(wharrgarblMemoryPtr) + (uintptr(thisCollision^runNonce)%wharrgarblMemoryEntries)<<3))
+		collisionTableEntry := &ct[uint(thisCollision^runNonce)%ctlen]
 
 		collisionTableEntryCurrent := *collisionTableEntry
 		thisCollision24 := uint32(thisCollision) & 0x00ffffff
@@ -102,8 +149,8 @@ func wharrgarblWorkerFunc(mmoCipher0, mmoCipher1 cipher.Block, runNonce, diff64 
 				collisionHashIn[5] = byte(otherCollider >> 16)
 				collisionHashIn[6] = byte(otherCollider >> 8)
 				collisionHashIn[7] = byte(otherCollider)
-				if (wharrgarblMMOHash(mmoCipher0, mmoCipher1, &tmp, &collisionHashIn) % diff64) == thisCollision {
-					atomic.StoreUint32(done, 1)
+				if (internalWharrgarblHash(mmoCipher0, mmoCipher1, tmp, &collisionHashIn) % diff64) == thisCollision {
+					atomic.StoreUint32(&wg.done, 1)
 					outLock.Lock()
 					out[0] = byte(thisCollider >> 32)
 					out[1] = byte(thisCollider >> 24)
@@ -129,25 +176,11 @@ func wharrgarblWorkerFunc(mmoCipher0, mmoCipher1 cipher.Block, runNonce, diff64 
 }
 
 // Wharrgarbl computes a proof of work from an input challenge.
-func Wharrgarbl(in []byte, difficulty uint32, minMemorySize uint) (out [WharrgarblOutputSize]byte, iterations uint64) {
-	wharrgarblMemoryLock.Lock()
-	defer wharrgarblMemoryLock.Unlock()
-
-	if minMemorySize < 1048576 {
-		minMemorySize = 1048576
-	}
-	if wharrgarblMemorySize < minMemorySize {
-		if wharrgarblMemorySize > 0 {
-			C.free(wharrgarblMemoryPtr)
-		}
-		wharrgarblMemoryPtr = C.valloc(C.ulong(minMemorySize))
-		if uintptr(wharrgarblMemoryPtr) == 0 {
-			panic("out of memory (external malloc)")
-		}
-		C.memset(wharrgarblMemoryPtr, 0, C.ulong(minMemorySize))
-		wharrgarblMemorySize = minMemorySize
-		wharrgarblMemoryEntries = uintptr(minMemorySize / 8)
-	}
+func (wg *Wharrgarblr) compute(in []byte, difficulty uint32) (out [WharrgarblOutputSize]byte, iterations uint64) {
+	wg.lock.Lock()
+	internalWharrgarblTableLock.RLock()
+	defer wg.lock.Unlock()
+	defer internalWharrgarblTableLock.RUnlock()
 
 	inHashed := sha3.Sum512(in)
 	mmoCipher0, _ := aes.NewCipher(inHashed[0:32])
@@ -156,14 +189,14 @@ func Wharrgarbl(in []byte, difficulty uint32, minMemorySize uint) (out [Wharrgar
 	runNonce := rand.Uint64() // a nonce that randomizes indexes in the collision table to facilitate re-use without clearing
 
 	var outLock sync.Mutex
-	var done uint32
 	var doneWG sync.WaitGroup
 	cpus := runtime.NumCPU()
 	doneWG.Add(cpus)
+	atomic.StoreUint32(&wg.done, 0)
 	for c := 1; c < cpus; c++ {
-		go wharrgarblWorkerFunc(mmoCipher0, mmoCipher1, runNonce, diff64, &iterations, &done, &outLock, out[:], &doneWG)
+		go wg.internalWorkerFunc(mmoCipher0, mmoCipher1, runNonce, diff64, &iterations, &outLock, out[:], &doneWG)
 	}
-	wharrgarblWorkerFunc(mmoCipher0, mmoCipher1, runNonce, diff64, &iterations, &done, &outLock, out[:], &doneWG)
+	wg.internalWorkerFunc(mmoCipher0, mmoCipher1, runNonce, diff64, &iterations, &outLock, out[:], &doneWG)
 	doneWG.Wait()
 
 	binary.BigEndian.PutUint32(out[10:14], difficulty)
@@ -193,10 +226,10 @@ func WharrgarblVerify(work []byte, in []byte) uint32 {
 
 	diff64 := (uint64(difficulty) << 28) | 0x000000000fffffff
 	var collisions [2]uint64
-	var tmp [4]uint64
+	var tmp [16]byte
 	for i := 0; i < 2; i++ {
 		binary.BigEndian.PutUint64(collisionHashIn[0:8], colliders[i])
-		collisions[i] = wharrgarblMMOHash(mmoCipher0, mmoCipher1, &tmp, &collisionHashIn) % diff64
+		collisions[i] = internalWharrgarblHash(mmoCipher0, mmoCipher1, tmp[:], &collisionHashIn) % diff64
 	}
 
 	if collisions[0] == collisions[1] {
@@ -211,16 +244,4 @@ func WharrgarblGetDifficulty(work []byte) uint32 {
 		return binary.BigEndian.Uint32(work[10:14]) // difficulty is appended as last 4 bytes
 	}
 	return 0
-}
-
-// WharrgarblFreeMemory frees the global memory arena if it is allocated.
-// It will automatically be re-allocated if needed.
-func WharrgarblFreeMemory() {
-	wharrgarblMemoryLock.Lock()
-	defer wharrgarblMemoryLock.Unlock()
-	if wharrgarblMemorySize > 0 {
-		C.free(wharrgarblMemoryPtr)
-		wharrgarblMemorySize = 0
-		wharrgarblMemoryEntries = 0
-	}
 }

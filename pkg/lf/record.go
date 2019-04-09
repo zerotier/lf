@@ -29,8 +29,8 @@ var (
 
 const recordBodyFlagHasCertificate byte = 0x01
 
-// recordWharrgarblMemory is the default amount of memory to use for Wharrgarbl momentum-type PoW.
-const recordWharrgarblMemory = 1024 * 1024 * 512
+// RecordDefaultWharrgarblMemory is the default amount of memory to use for Wharrgarbl momentum-type PoW.
+const RecordDefaultWharrgarblMemory = 1024 * 1024 * 512
 
 // RecordMaxSize is a global maximum record size (binary serialized length).
 // This is more or less a sanity limit to prevent malloc overflow attacks and similar things.
@@ -654,21 +654,17 @@ func NewRecordStart(value []byte, links [][]byte, maskingKey []byte, plainTextSe
 
 // NewRecordDoWork is a convenience method for doing the work to add to a record.
 // This can obviously be a time and memory intensive function.
-func NewRecordDoWork(workHash []byte, workBillableBytes uint, workAlgorithm byte, workCostOverride uint32) (work []byte, err error) {
-	if workAlgorithm != RecordWorkAlgorithmNone {
-		if workAlgorithm == RecordWorkAlgorithmWharrgarbl {
-			if workCostOverride == 0 {
-				workCostOverride = recordWharrgarblCost(workBillableBytes)
-			}
-			w, iter := Wharrgarbl(workHash, workCostOverride, recordWharrgarblMemory)
-			if iter == 0 {
-				err = ErrWharrgarblFailed
-				return
-			}
-			work = w[:]
-		} else {
-			err = ErrInvalidParameter
+func NewRecordDoWork(workHash []byte, workBillableBytes uint, workFunction *Wharrgarblr, workCostOverride uint32) (work []byte, err error) {
+	if workFunction != nil {
+		if workCostOverride == 0 {
+			workCostOverride = recordWharrgarblCost(workBillableBytes)
 		}
+		w, iter := workFunction.compute(workHash, workCostOverride)
+		if iter == 0 {
+			err = ErrWharrgarblFailed
+			return
+		}
+		work = w[:]
 	}
 	return
 }
@@ -702,16 +698,20 @@ func NewRecordComplete(incompleteRecord *Record, signingHash []byte, owner *Owne
 
 // NewRecord is a shortcut to running all incremental record creation functions.
 // Obviously this is time and memory intensive due to proof of work required to "pay" for this record.
-func NewRecord(value []byte, links [][]byte, maskingKey []byte, plainTextSelectorNames [][]byte, selectorOrdinals [][]byte, certificateRecordHash []byte, ts uint64, workAlgorithm byte, workCostOverride uint32, owner *Owner) (r *Record, err error) {
+func NewRecord(value []byte, links [][]byte, maskingKey []byte, plainTextSelectorNames [][]byte, selectorOrdinals [][]byte, certificateRecordHash []byte, ts uint64, workFunction *Wharrgarblr, workCostOverride uint32, owner *Owner) (r *Record, err error) {
 	var wh, sh [32]byte
 	var wb uint
 	r, wh, wb, err = NewRecordStart(value, links, maskingKey, plainTextSelectorNames, selectorOrdinals, owner.Bytes(), certificateRecordHash, ts)
 	if err != nil {
 		return
 	}
-	w, err := NewRecordDoWork(wh[:], wb, workAlgorithm, workCostOverride)
+	w, err := NewRecordDoWork(wh[:], wb, workFunction, workCostOverride)
 	if err != nil {
 		return
+	}
+	workAlgorithm := RecordWorkAlgorithmNone
+	if workFunction != nil {
+		workAlgorithm = RecordWorkAlgorithmWharrgarbl
 	}
 	r, sh, err = NewRecordAddWork(r, wh[:], w, workAlgorithm)
 	if err != nil {

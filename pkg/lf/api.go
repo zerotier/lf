@@ -282,7 +282,7 @@ func (m *APINew) Run(url string) (*Record, error) {
 	return &rec, nil
 }
 
-func (m *APINew) execute(workAlgorithm byte) (*Record, *APIError) {
+func (m *APINew) execute(workFunction *Wharrgarblr) (*Record, *APIError) {
 	var err error
 	var owner *Owner
 	if len(m.OwnerPrivateKey) > 0 {
@@ -317,7 +317,7 @@ func (m *APINew) execute(workAlgorithm byte) (*Record, *APIError) {
 	for i := range m.Links {
 		links[i] = m.Links[i][:]
 	}
-	rec, err := NewRecord(m.Value, links, m.MaskingKey, sel, selord, nil, ts, workAlgorithm, 0, owner)
+	rec, err := NewRecord(m.Value, links, m.MaskingKey, sel, selord, nil, ts, workFunction, 0, owner)
 	if err != nil {
 		return nil, &APIError{Code: http.StatusBadRequest, Message: "record generation failed: " + err.Error()}
 	}
@@ -399,11 +399,14 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 			if apiIsTrusted(n, req) {
 				var m APINew
 				if apiReadObj(out, req, &m) == nil {
-					workAlgorithm := RecordWorkAlgorithmNone
 					if n.genesisParameters.WorkRequired {
-						workAlgorithm = RecordWorkAlgorithmWharrgarbl
+						if n.wg == nil {
+							n.wg = NewWharrgarblr(RecordDefaultWharrgarblMemory)
+						}
+					} else {
+						n.wg = nil
 					}
-					rec, apiError := m.execute(workAlgorithm)
+					rec, apiError := m.execute(n.wg)
 					if apiError != nil {
 						apiSendObj(out, req, apiError.Code, apiError)
 					} else {

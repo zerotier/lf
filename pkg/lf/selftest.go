@@ -199,7 +199,7 @@ func TestCore(out io.Writer) bool {
 			fmt.Fprintf(out, "FAILED (create owner): %s\n", err.Error())
 			return false
 		}
-		rec, err := NewRecord(testValue[:], testLinks, []byte("test"), [][]byte{[]byte("test0")}, [][]byte{[]byte("0000")}, nil, uint64(k), RecordWorkAlgorithmNone, 0, owner)
+		rec, err := NewRecord(testValue[:], testLinks, []byte("test"), [][]byte{[]byte("test0")}, [][]byte{[]byte("0000")}, nil, uint64(k), nil, 0, owner)
 		if err != nil {
 			fmt.Fprintf(out, "FAILED (create record): %s\n", err.Error())
 			return false
@@ -238,7 +238,8 @@ func TestCore(out io.Writer) bool {
 		fmt.Fprintf(out, "FAILED (create owner): %s\n", err.Error())
 		return false
 	}
-	rec, err := NewRecord(testValue[:], testLinks, []byte("test"), [][]byte{[]byte("full record test")}, [][]byte{[]byte("0000")}, nil, TimeSec(), RecordWorkAlgorithmWharrgarbl, 0, owner)
+	wg := NewWharrgarblr(RecordDefaultWharrgarblMemory)
+	rec, err := NewRecord(testValue[:], testLinks, []byte("test"), [][]byte{[]byte("full record test")}, [][]byte{[]byte("0000")}, nil, TimeSec(), wg, 0, owner)
 	if err != nil {
 		fmt.Fprintf(out, "FAILED (new record creation): %s\n", err.Error())
 		return false
@@ -268,7 +269,7 @@ func TestWharrgarbl(out io.Writer) bool {
 	}
 
 	fmt.Fprintf(out, "Testing and benchmarking Wharrgarbl proof of work algorithm...\n")
-	Wharrgarbl(junk[:], 1, recordWharrgarblMemory) // run once before benchmarking for 'warm up'
+	wg := NewWharrgarblr(RecordDefaultWharrgarblMemory)
 	for rs := uint(256); rs <= 4096; rs += 256 {
 		secrand.Read(junk[:])
 		diff := recordWharrgarblCost(rs)
@@ -276,7 +277,7 @@ func TestWharrgarbl(out io.Writer) bool {
 		startTime = TimeMs()
 		for k := 0; k < testWharrgarblSamples; k++ {
 			var ii uint64
-			wout, ii = Wharrgarbl(junk[:], diff, recordWharrgarblMemory)
+			wout, ii = wg.compute(junk[:], diff)
 			iterations += ii
 		}
 		runTime = (TimeMs() - startTime) / uint64(testWharrgarblSamples)
@@ -357,7 +358,7 @@ func TestDatabase(testBasePath string, out io.Writer) bool {
 		ts++
 		sel := []byte("test-owner-number-" + strconv.FormatInt(int64(ri%testDatabaseOwners), 10))
 		value := []byte(strconv.FormatUint(ts, 10))
-		records[ri], err = NewRecord(value, links, []byte("test"), [][]byte{sel}, [][]byte{[]byte("0000")}, nil, ts, RecordWorkAlgorithmNone, 0, owners[ri%testDatabaseOwners])
+		records[ri], err = NewRecord(value, links, []byte("test"), [][]byte{sel}, [][]byte{[]byte("0000")}, nil, ts, nil, 0, owners[ri%testDatabaseOwners])
 		if err != nil {
 			fmt.Fprintf(out, "FAILED: %s\n", err.Error())
 			return false
