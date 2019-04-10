@@ -16,8 +16,6 @@ import (
 	"runtime"
 	"sync"
 	"sync/atomic"
-
-	"golang.org/x/crypto/sha3"
 )
 
 const internalWharrgarblTableSize = 67108864
@@ -36,48 +34,34 @@ type Wharrgarblr struct {
 }
 
 // internalWharrgarblHash is a Matyer-Meyer-Oseas-like keyed single block hash used as a search target for collision search.
+// It also relies on a huge table to impose a random memory seek requirement. This makes GPU or ASIC acceleration a
+// lot more challenging and likely less fruitful.
 func internalWharrgarblHash(cipher0, cipher1 cipher.Block, tmp []byte, in *[16]byte) uint64 {
 	_ = tmp[15]
 
 	cipher0.Encrypt(tmp, in[:])
 
-	tmp[0] ^= in[0] ^ internalWharrgarblTable[(uint32(tmp[0])|uint32(tmp[1])<<16|uint32(tmp[2])<<8|uint32(tmp[3])<<24)%internalWharrgarblTableSize]
-	tmp[1] ^= in[1] ^ internalWharrgarblTable[(uint32(tmp[1])|uint32(tmp[2])<<16|uint32(tmp[3])<<8|uint32(tmp[4])<<24)%internalWharrgarblTableSize]
-	tmp[2] ^= in[2] ^ internalWharrgarblTable[(uint32(tmp[2])|uint32(tmp[3])<<16|uint32(tmp[4])<<8|uint32(tmp[5])<<24)%internalWharrgarblTableSize]
-	tmp[3] ^= in[3] ^ internalWharrgarblTable[(uint32(tmp[3])|uint32(tmp[4])<<16|uint32(tmp[5])<<8|uint32(tmp[6])<<24)%internalWharrgarblTableSize]
-	tmp[4] ^= in[4] ^ internalWharrgarblTable[(uint32(tmp[4])|uint32(tmp[5])<<16|uint32(tmp[6])<<8|uint32(tmp[7])<<24)%internalWharrgarblTableSize]
-	tmp[5] ^= in[5] ^ internalWharrgarblTable[(uint32(tmp[5])|uint32(tmp[6])<<16|uint32(tmp[7])<<8|uint32(tmp[8])<<24)%internalWharrgarblTableSize]
-	tmp[6] ^= in[6] ^ internalWharrgarblTable[(uint32(tmp[6])|uint32(tmp[7])<<16|uint32(tmp[8])<<8|uint32(tmp[9])<<24)%internalWharrgarblTableSize]
-	tmp[7] ^= in[7] ^ internalWharrgarblTable[(uint32(tmp[7])|uint32(tmp[8])<<16|uint32(tmp[9])<<8|uint32(tmp[10])<<24)%internalWharrgarblTableSize]
-	tmp[8] ^= in[8] ^ internalWharrgarblTable[(uint32(tmp[8])|uint32(tmp[9])<<16|uint32(tmp[10])<<8|uint32(tmp[11])<<24)%internalWharrgarblTableSize]
-	tmp[9] ^= in[9] ^ internalWharrgarblTable[(uint32(tmp[9])|uint32(tmp[10])<<16|uint32(tmp[11])<<8|uint32(tmp[12])<<24)%internalWharrgarblTableSize]
-	tmp[10] ^= in[10] ^ internalWharrgarblTable[(uint32(tmp[10])|uint32(tmp[11])<<16|uint32(tmp[12])<<8|uint32(tmp[13])<<24)%internalWharrgarblTableSize]
-	tmp[11] ^= in[11] ^ internalWharrgarblTable[(uint32(tmp[11])|uint32(tmp[12])<<16|uint32(tmp[13])<<8|uint32(tmp[14])<<24)%internalWharrgarblTableSize]
-	tmp[12] ^= in[12] ^ internalWharrgarblTable[(uint32(tmp[12])|uint32(tmp[13])<<16|uint32(tmp[14])<<8|uint32(tmp[15])<<24)%internalWharrgarblTableSize]
-	tmp[13] ^= in[13] ^ internalWharrgarblTable[(uint32(tmp[13])|uint32(tmp[14])<<16|uint32(tmp[15])<<8|uint32(tmp[0])<<24)%internalWharrgarblTableSize]
-	tmp[14] ^= in[14] ^ internalWharrgarblTable[(uint32(tmp[14])|uint32(tmp[15])<<16|uint32(tmp[0])<<8|uint32(tmp[1])<<24)%internalWharrgarblTableSize]
-	tmp[15] ^= in[15] ^ internalWharrgarblTable[(uint32(tmp[15])|uint32(tmp[0])<<16|uint32(tmp[1])<<8|uint32(tmp[2])<<24)%internalWharrgarblTableSize]
+	// We start with [1] so every one of these after the first is data dependent on the previous.
+	tmp[1] ^= in[0] + internalWharrgarblTable[(uint32(tmp[0])|uint32(tmp[1])<<16|uint32(tmp[2])<<8|uint32(tmp[3])<<24)%internalWharrgarblTableSize]
+	tmp[2] ^= in[1] - internalWharrgarblTable[(uint32(tmp[1])|uint32(tmp[2])<<16|uint32(tmp[3])<<8|uint32(tmp[4])<<24)%internalWharrgarblTableSize]
+	tmp[3] ^= in[2] + internalWharrgarblTable[(uint32(tmp[2])|uint32(tmp[3])<<16|uint32(tmp[4])<<8|uint32(tmp[5])<<24)%internalWharrgarblTableSize]
+	tmp[4] ^= in[3] - internalWharrgarblTable[(uint32(tmp[3])|uint32(tmp[4])<<16|uint32(tmp[5])<<8|uint32(tmp[6])<<24)%internalWharrgarblTableSize]
+	tmp[5] ^= in[4] + internalWharrgarblTable[(uint32(tmp[4])|uint32(tmp[5])<<16|uint32(tmp[6])<<8|uint32(tmp[7])<<24)%internalWharrgarblTableSize]
+	tmp[6] ^= in[5] - internalWharrgarblTable[(uint32(tmp[5])|uint32(tmp[6])<<16|uint32(tmp[7])<<8|uint32(tmp[8])<<24)%internalWharrgarblTableSize]
+	tmp[7] ^= in[6] + internalWharrgarblTable[(uint32(tmp[6])|uint32(tmp[7])<<16|uint32(tmp[8])<<8|uint32(tmp[9])<<24)%internalWharrgarblTableSize]
+	tmp[8] ^= in[7] - internalWharrgarblTable[(uint32(tmp[7])|uint32(tmp[8])<<16|uint32(tmp[9])<<8|uint32(tmp[10])<<24)%internalWharrgarblTableSize]
+	tmp[9] ^= in[8] + internalWharrgarblTable[(uint32(tmp[8])|uint32(tmp[9])<<16|uint32(tmp[10])<<8|uint32(tmp[11])<<24)%internalWharrgarblTableSize]
+	tmp[10] ^= in[9] - internalWharrgarblTable[(uint32(tmp[9])|uint32(tmp[10])<<16|uint32(tmp[11])<<8|uint32(tmp[12])<<24)%internalWharrgarblTableSize]
+	tmp[11] ^= in[10] + internalWharrgarblTable[(uint32(tmp[10])|uint32(tmp[11])<<16|uint32(tmp[12])<<8|uint32(tmp[13])<<24)%internalWharrgarblTableSize]
+	tmp[12] ^= in[11] - internalWharrgarblTable[(uint32(tmp[11])|uint32(tmp[12])<<16|uint32(tmp[13])<<8|uint32(tmp[14])<<24)%internalWharrgarblTableSize]
+	tmp[13] ^= in[12] + internalWharrgarblTable[(uint32(tmp[12])|uint32(tmp[13])<<16|uint32(tmp[14])<<8|uint32(tmp[15])<<24)%internalWharrgarblTableSize]
+	tmp[14] ^= in[13] - internalWharrgarblTable[(uint32(tmp[13])|uint32(tmp[14])<<16|uint32(tmp[15])<<8|uint32(tmp[0])<<24)%internalWharrgarblTableSize]
+	tmp[15] ^= in[14] + internalWharrgarblTable[(uint32(tmp[14])|uint32(tmp[15])<<16|uint32(tmp[0])<<8|uint32(tmp[1])<<24)%internalWharrgarblTableSize]
+	tmp[0] ^= in[15] - internalWharrgarblTable[(uint32(tmp[15])|uint32(tmp[0])<<16|uint32(tmp[1])<<8|uint32(tmp[2])<<24)%internalWharrgarblTableSize]
 
 	inner := binary.BigEndian.Uint64(tmp[0:8])
 
 	cipher1.Encrypt(tmp, tmp)
-
-	tmp[0] ^= in[0] ^ internalWharrgarblTable[(uint32(tmp[0])|uint32(tmp[1])<<16|uint32(tmp[2])<<8|uint32(tmp[3])<<24)%internalWharrgarblTableSize]
-	tmp[1] ^= in[1] ^ internalWharrgarblTable[(uint32(tmp[1])|uint32(tmp[2])<<16|uint32(tmp[3])<<8|uint32(tmp[4])<<24)%internalWharrgarblTableSize]
-	tmp[2] ^= in[2] ^ internalWharrgarblTable[(uint32(tmp[2])|uint32(tmp[3])<<16|uint32(tmp[4])<<8|uint32(tmp[5])<<24)%internalWharrgarblTableSize]
-	tmp[3] ^= in[3] ^ internalWharrgarblTable[(uint32(tmp[3])|uint32(tmp[4])<<16|uint32(tmp[5])<<8|uint32(tmp[6])<<24)%internalWharrgarblTableSize]
-	tmp[4] ^= in[4] ^ internalWharrgarblTable[(uint32(tmp[4])|uint32(tmp[5])<<16|uint32(tmp[6])<<8|uint32(tmp[7])<<24)%internalWharrgarblTableSize]
-	tmp[5] ^= in[5] ^ internalWharrgarblTable[(uint32(tmp[5])|uint32(tmp[6])<<16|uint32(tmp[7])<<8|uint32(tmp[8])<<24)%internalWharrgarblTableSize]
-	tmp[6] ^= in[6] ^ internalWharrgarblTable[(uint32(tmp[6])|uint32(tmp[7])<<16|uint32(tmp[8])<<8|uint32(tmp[9])<<24)%internalWharrgarblTableSize]
-	tmp[7] ^= in[7] ^ internalWharrgarblTable[(uint32(tmp[7])|uint32(tmp[8])<<16|uint32(tmp[9])<<8|uint32(tmp[10])<<24)%internalWharrgarblTableSize]
-	tmp[8] ^= in[8] ^ internalWharrgarblTable[(uint32(tmp[8])|uint32(tmp[9])<<16|uint32(tmp[10])<<8|uint32(tmp[11])<<24)%internalWharrgarblTableSize]
-	tmp[9] ^= in[9] ^ internalWharrgarblTable[(uint32(tmp[9])|uint32(tmp[10])<<16|uint32(tmp[11])<<8|uint32(tmp[12])<<24)%internalWharrgarblTableSize]
-	tmp[10] ^= in[10] ^ internalWharrgarblTable[(uint32(tmp[10])|uint32(tmp[11])<<16|uint32(tmp[12])<<8|uint32(tmp[13])<<24)%internalWharrgarblTableSize]
-	tmp[11] ^= in[11] ^ internalWharrgarblTable[(uint32(tmp[11])|uint32(tmp[12])<<16|uint32(tmp[13])<<8|uint32(tmp[14])<<24)%internalWharrgarblTableSize]
-	tmp[12] ^= in[12] ^ internalWharrgarblTable[(uint32(tmp[12])|uint32(tmp[13])<<16|uint32(tmp[14])<<8|uint32(tmp[15])<<24)%internalWharrgarblTableSize]
-	tmp[13] ^= in[13] ^ internalWharrgarblTable[(uint32(tmp[13])|uint32(tmp[14])<<16|uint32(tmp[15])<<8|uint32(tmp[0])<<24)%internalWharrgarblTableSize]
-	tmp[14] ^= in[14] ^ internalWharrgarblTable[(uint32(tmp[14])|uint32(tmp[15])<<16|uint32(tmp[0])<<8|uint32(tmp[1])<<24)%internalWharrgarblTableSize]
-	tmp[15] ^= in[15] ^ internalWharrgarblTable[(uint32(tmp[15])|uint32(tmp[0])<<16|uint32(tmp[1])<<8|uint32(tmp[2])<<24)%internalWharrgarblTableSize]
 
 	return binary.BigEndian.Uint64(tmp[0:8]) ^ inner
 }
@@ -103,10 +87,11 @@ func NewWharrgarblr(memorySize uint) (wg *Wharrgarblr) {
 	}
 	internalWharrgarblTable = new([internalWharrgarblTableSize]byte)
 	copy(internalWharrgarblTable[:], []byte("My hovercraft is full of eels!"))
-	for i := 0; i < 4; i++ {
+	for i := 0; i < 2; i++ {
 		h := sha512.Sum512(internalWharrgarblTable[:])
 		aes, _ := aes.NewCipher(h[0:32])
 		c := cipher.NewCFBEncrypter(aes, h[32:48])
+		c.XORKeyStream(internalWharrgarblTable[:], internalWharrgarblTable[:])
 		c.XORKeyStream(internalWharrgarblTable[:], internalWharrgarblTable[:])
 	}
 	internalWharrgarblTableLock.Unlock()
@@ -121,9 +106,10 @@ func (wg *Wharrgarblr) internalWorkerFunc(mmoCipher0, mmoCipher1 cipher.Block, r
 	tmp := tmpm[:]
 	ct := wg.memory
 	ctlen := uint(len(ct))
+	_ = ct[ctlen-1]
 
 	// Generate an initial 40-bit collider.
-	thisCollider := rand.Uint64() + rand.Uint64()
+	thisCollider := rand.Uint64()
 	for atomic.LoadUint32(&wg.done) == 0 {
 		iter++
 
@@ -178,14 +164,14 @@ func (wg *Wharrgarblr) internalWorkerFunc(mmoCipher0, mmoCipher1 cipher.Block, r
 	doneWG.Done()
 }
 
-// Wharrgarbl computes a proof of work from an input challenge.
-func (wg *Wharrgarblr) compute(in []byte, difficulty uint32) (out [WharrgarblOutputSize]byte, iterations uint64) {
+// Compute computes Wharrgarbl PoW using this instance.
+func (wg *Wharrgarblr) Compute(in []byte, difficulty uint32) (out [WharrgarblOutputSize]byte, iterations uint64) {
 	wg.lock.Lock()
 	internalWharrgarblTableLock.RLock()
 	defer wg.lock.Unlock()
 	defer internalWharrgarblTableLock.RUnlock()
 
-	inHashed := sha3.Sum512(in)
+	inHashed := sha512.Sum512(in)
 	mmoCipher0, _ := aes.NewCipher(inHashed[0:32])
 	mmoCipher1, _ := aes.NewCipher(inHashed[32:64])
 	diff64 := (uint64(difficulty) << 28) | 0x000000000fffffff
@@ -207,6 +193,11 @@ func (wg *Wharrgarblr) compute(in []byte, difficulty uint32) (out [WharrgarblOut
 	return
 }
 
+// Abort aborts a Compute() currently in process (results of Compute() are undefined).
+func (wg *Wharrgarblr) Abort() {
+	atomic.StoreUint32(&wg.done, 1)
+}
+
 // WharrgarblVerify checks whether work is valid for the provided input, returning the difficulty used or 0 if work is not valid.
 func WharrgarblVerify(work []byte, in []byte) uint32 {
 	if len(work) != WharrgarblOutputSize {
@@ -214,7 +205,7 @@ func WharrgarblVerify(work []byte, in []byte) uint32 {
 	}
 
 	var collisionHashIn [16]byte
-	inHashed := sha3.Sum512(in)
+	inHashed := sha512.Sum512(in)
 	mmoCipher0, _ := aes.NewCipher(inHashed[0:32])
 	mmoCipher1, _ := aes.NewCipher(inHashed[32:64])
 

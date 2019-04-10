@@ -277,7 +277,7 @@ func TestWharrgarbl(out io.Writer) bool {
 		startTime = TimeMs()
 		for k := 0; k < testWharrgarblSamples; k++ {
 			var ii uint64
-			wout, ii = wg.compute(junk[:], diff)
+			wout, ii = wg.Compute(junk[:], diff)
 			iterations += ii
 		}
 		runTime = (TimeMs() - startTime) / uint64(testWharrgarblSamples)

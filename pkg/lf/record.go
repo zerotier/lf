@@ -659,7 +659,7 @@ func NewRecordDoWork(workHash []byte, workBillableBytes uint, workFunction *Whar
 		if workCostOverride == 0 {
 			workCostOverride = recordWharrgarblCost(workBillableBytes)
 		}
-		w, iter := workFunction.compute(workHash, workCostOverride)
+		w, iter := workFunction.Compute(workHash, workCostOverride)
 		if iter == 0 {
 			err = ErrWharrgarblFailed
 			return
