@@ -138,7 +138,6 @@ func (wg *Wharrgarblr) internalWorkerFunc(mmoCipher0, mmoCipher1 cipher.Block, r
 	ctlen := uint(len(ct))
 	_ = ct[ctlen-1]
 
-	// Generate an initial 40-bit collider.
 	thisCollider := rand.Uint64()
 	for atomic.LoadUint32(&wg.done) == 0 {
 		iter++
