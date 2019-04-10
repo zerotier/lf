@@ -41,23 +41,53 @@ func internalWharrgarblHash(cipher0, cipher1 cipher.Block, tmp []byte, in *[16]b
 
 	cipher0.Encrypt(tmp, in[:])
 
-	// We start with [1] so every one of these after the first is data dependent on the previous.
-	tmp[1] ^= in[0] + internalWharrgarblTable[(uint32(tmp[0])|uint32(tmp[1])<<16|uint32(tmp[2])<<8|uint32(tmp[3])<<24)%internalWharrgarblTableSize]
-	tmp[2] ^= in[1] - internalWharrgarblTable[(uint32(tmp[1])|uint32(tmp[2])<<16|uint32(tmp[3])<<8|uint32(tmp[4])<<24)%internalWharrgarblTableSize]
-	tmp[3] ^= in[2] + internalWharrgarblTable[(uint32(tmp[2])|uint32(tmp[3])<<16|uint32(tmp[4])<<8|uint32(tmp[5])<<24)%internalWharrgarblTableSize]
-	tmp[4] ^= in[3] - internalWharrgarblTable[(uint32(tmp[3])|uint32(tmp[4])<<16|uint32(tmp[5])<<8|uint32(tmp[6])<<24)%internalWharrgarblTableSize]
-	tmp[5] ^= in[4] + internalWharrgarblTable[(uint32(tmp[4])|uint32(tmp[5])<<16|uint32(tmp[6])<<8|uint32(tmp[7])<<24)%internalWharrgarblTableSize]
-	tmp[6] ^= in[5] - internalWharrgarblTable[(uint32(tmp[5])|uint32(tmp[6])<<16|uint32(tmp[7])<<8|uint32(tmp[8])<<24)%internalWharrgarblTableSize]
-	tmp[7] ^= in[6] + internalWharrgarblTable[(uint32(tmp[6])|uint32(tmp[7])<<16|uint32(tmp[8])<<8|uint32(tmp[9])<<24)%internalWharrgarblTableSize]
-	tmp[8] ^= in[7] - internalWharrgarblTable[(uint32(tmp[7])|uint32(tmp[8])<<16|uint32(tmp[9])<<8|uint32(tmp[10])<<24)%internalWharrgarblTableSize]
-	tmp[9] ^= in[8] + internalWharrgarblTable[(uint32(tmp[8])|uint32(tmp[9])<<16|uint32(tmp[10])<<8|uint32(tmp[11])<<24)%internalWharrgarblTableSize]
-	tmp[10] ^= in[9] - internalWharrgarblTable[(uint32(tmp[9])|uint32(tmp[10])<<16|uint32(tmp[11])<<8|uint32(tmp[12])<<24)%internalWharrgarblTableSize]
-	tmp[11] ^= in[10] + internalWharrgarblTable[(uint32(tmp[10])|uint32(tmp[11])<<16|uint32(tmp[12])<<8|uint32(tmp[13])<<24)%internalWharrgarblTableSize]
-	tmp[12] ^= in[11] - internalWharrgarblTable[(uint32(tmp[11])|uint32(tmp[12])<<16|uint32(tmp[13])<<8|uint32(tmp[14])<<24)%internalWharrgarblTableSize]
-	tmp[13] ^= in[12] + internalWharrgarblTable[(uint32(tmp[12])|uint32(tmp[13])<<16|uint32(tmp[14])<<8|uint32(tmp[15])<<24)%internalWharrgarblTableSize]
-	tmp[14] ^= in[13] - internalWharrgarblTable[(uint32(tmp[13])|uint32(tmp[14])<<16|uint32(tmp[15])<<8|uint32(tmp[0])<<24)%internalWharrgarblTableSize]
-	tmp[15] ^= in[14] + internalWharrgarblTable[(uint32(tmp[14])|uint32(tmp[15])<<16|uint32(tmp[0])<<8|uint32(tmp[1])<<24)%internalWharrgarblTableSize]
-	tmp[0] ^= in[15] - internalWharrgarblTable[(uint32(tmp[15])|uint32(tmp[0])<<16|uint32(tmp[1])<<8|uint32(tmp[2])<<24)%internalWharrgarblTableSize]
+	tidx := uint(binary.BigEndian.Uint32(tmp[12:16]))
+	tmp[0] ^= in[0] + internalWharrgarblTable[tidx%internalWharrgarblTableSize]
+	tidx <<= 1
+	tidx += uint(tmp[0])
+	tmp[1] ^= in[1] + internalWharrgarblTable[tidx%internalWharrgarblTableSize]
+	tidx <<= 1
+	tidx += uint(tmp[1])
+	tmp[2] ^= in[2] + internalWharrgarblTable[tidx%internalWharrgarblTableSize]
+	tidx <<= 1
+	tidx += uint(tmp[2])
+	tmp[3] ^= in[3] + internalWharrgarblTable[tidx%internalWharrgarblTableSize]
+	tidx <<= 1
+	tidx += uint(tmp[3])
+	tmp[4] ^= in[4] + internalWharrgarblTable[tidx%internalWharrgarblTableSize]
+	tidx <<= 1
+	tidx += uint(tmp[4])
+	tmp[5] ^= in[5] + internalWharrgarblTable[tidx%internalWharrgarblTableSize]
+	tidx <<= 1
+	tidx += uint(tmp[5])
+	tmp[6] ^= in[6] + internalWharrgarblTable[tidx%internalWharrgarblTableSize]
+	tidx <<= 1
+	tidx += uint(tmp[6])
+	tmp[7] ^= in[7] + internalWharrgarblTable[tidx%internalWharrgarblTableSize]
+	tidx <<= 1
+	tidx += uint(tmp[7])
+	tmp[8] ^= in[8] + internalWharrgarblTable[tidx%internalWharrgarblTableSize]
+	tidx <<= 1
+	tidx += uint(tmp[8])
+	tmp[9] ^= in[9] + internalWharrgarblTable[tidx%internalWharrgarblTableSize]
+	tidx <<= 1
+	tidx += uint(tmp[9])
+	tmp[10] ^= in[10] + internalWharrgarblTable[tidx%internalWharrgarblTableSize]
+	tidx <<= 1
+	tidx += uint(tmp[10])
+	tmp[11] ^= in[11] + internalWharrgarblTable[tidx%internalWharrgarblTableSize]
+	tidx <<= 1
+	tidx += uint(tmp[11])
+	tmp[12] ^= in[12] + internalWharrgarblTable[tidx%internalWharrgarblTableSize]
+	tidx <<= 1
+	tidx += uint(tmp[12])
+	tmp[13] ^= in[13] + internalWharrgarblTable[tidx%internalWharrgarblTableSize]
+	tidx <<= 1
+	tidx += uint(tmp[13])
+	tmp[14] ^= in[14] + internalWharrgarblTable[tidx%internalWharrgarblTableSize]
+	tidx <<= 1
+	tidx += uint(tmp[14])
+	tmp[15] ^= in[15] + internalWharrgarblTable[tidx%internalWharrgarblTableSize]
 
 	inner := binary.BigEndian.Uint64(tmp[0:8])
 
@@ -100,8 +130,8 @@ func NewWharrgarblr(memorySize uint) (wg *Wharrgarblr) {
 }
 
 func (wg *Wharrgarblr) internalWorkerFunc(mmoCipher0, mmoCipher1 cipher.Block, runNonce, diff64 uint64, iterations *uint64, outLock *sync.Mutex, out []byte, doneWG *sync.WaitGroup) {
-	var collisionHashIn [16]byte
 	var tmpm [16]byte
+	var collisionHashIn [16]byte
 	var iter uint64
 	tmp := tmpm[:]
 	ct := wg.memory
