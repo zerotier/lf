@@ -28,9 +28,10 @@ const WharrgarblOutputSize = 14
 
 // Wharrgarblr is an instance of the Wharrgarbl proof of work function.
 type Wharrgarblr struct {
-	memory []uint64
-	lock   sync.Mutex
-	done   uint32
+	memory      []uint64
+	lock        sync.Mutex
+	threadCount uint
+	done        uint32
 }
 
 // internalWharrgarblHash is a Matyer-Meyer-Oseas-like keyed single block hash used as a search target for collision search.
@@ -41,53 +42,162 @@ func internalWharrgarblHash(cipher0, cipher1 cipher.Block, tmp []byte, in *[16]b
 
 	cipher0.Encrypt(tmp, in[:])
 
-	tidx := uint(binary.BigEndian.Uint32(tmp[12:16]))
-	tmp[0] ^= in[0] + internalWharrgarblTable[tidx%internalWharrgarblTableSize]
-	tidx <<= 1
-	tidx += uint(tmp[0])
-	tmp[1] ^= in[1] + internalWharrgarblTable[tidx%internalWharrgarblTableSize]
-	tidx <<= 1
-	tidx += uint(tmp[1])
-	tmp[2] ^= in[2] + internalWharrgarblTable[tidx%internalWharrgarblTableSize]
-	tidx <<= 1
-	tidx += uint(tmp[2])
-	tmp[3] ^= in[3] + internalWharrgarblTable[tidx%internalWharrgarblTableSize]
-	tidx <<= 1
-	tidx += uint(tmp[3])
-	tmp[4] ^= in[4] + internalWharrgarblTable[tidx%internalWharrgarblTableSize]
-	tidx <<= 1
-	tidx += uint(tmp[4])
-	tmp[5] ^= in[5] + internalWharrgarblTable[tidx%internalWharrgarblTableSize]
-	tidx <<= 1
-	tidx += uint(tmp[5])
-	tmp[6] ^= in[6] + internalWharrgarblTable[tidx%internalWharrgarblTableSize]
-	tidx <<= 1
-	tidx += uint(tmp[6])
-	tmp[7] ^= in[7] + internalWharrgarblTable[tidx%internalWharrgarblTableSize]
-	tidx <<= 1
-	tidx += uint(tmp[7])
-	tmp[8] ^= in[8] + internalWharrgarblTable[tidx%internalWharrgarblTableSize]
-	tidx <<= 1
-	tidx += uint(tmp[8])
-	tmp[9] ^= in[9] + internalWharrgarblTable[tidx%internalWharrgarblTableSize]
-	tidx <<= 1
-	tidx += uint(tmp[9])
-	tmp[10] ^= in[10] + internalWharrgarblTable[tidx%internalWharrgarblTableSize]
-	tidx <<= 1
-	tidx += uint(tmp[10])
-	tmp[11] ^= in[11] + internalWharrgarblTable[tidx%internalWharrgarblTableSize]
-	tidx <<= 1
-	tidx += uint(tmp[11])
-	tmp[12] ^= in[12] + internalWharrgarblTable[tidx%internalWharrgarblTableSize]
-	tidx <<= 1
-	tidx += uint(tmp[12])
-	tmp[13] ^= in[13] + internalWharrgarblTable[tidx%internalWharrgarblTableSize]
-	tidx <<= 1
-	tidx += uint(tmp[13])
-	tmp[14] ^= in[14] + internalWharrgarblTable[tidx%internalWharrgarblTableSize]
-	tidx <<= 1
-	tidx += uint(tmp[14])
-	tmp[15] ^= in[15] + internalWharrgarblTable[tidx%internalWharrgarblTableSize]
+	// This inner transform makes use of a simple xorshift PRNG to randomize
+	// memory access. See: https://en.wikipedia.org/wiki/Xorshift#xorshift*
+	x := binary.BigEndian.Uint64(tmp[8:16])
+	xorShift64StarState := x
+
+	tmp[0] ^= in[0] + internalWharrgarblTable[x%internalWharrgarblTableSize]
+
+	//x = xorShift64StarState
+	x ^= x >> 12
+	x ^= x << 25
+	x ^= x >> 27
+	xorShift64StarState = x
+	x *= 0x2545f4914f6cdd1d
+	x += uint64(tmp[0])
+
+	tmp[1] ^= in[1] - internalWharrgarblTable[x%internalWharrgarblTableSize]
+
+	x = xorShift64StarState
+	x ^= x >> 12
+	x ^= x << 25
+	x ^= x >> 27
+	xorShift64StarState = x
+	x *= 0x2545f4914f6cdd1d
+	x += uint64(tmp[1])
+
+	tmp[2] ^= in[2] + internalWharrgarblTable[x%internalWharrgarblTableSize]
+
+	x = xorShift64StarState
+	x ^= x >> 12
+	x ^= x << 25
+	x ^= x >> 27
+	xorShift64StarState = x
+	x *= 0x2545f4914f6cdd1d
+	x += uint64(tmp[2])
+
+	tmp[3] ^= in[3] - internalWharrgarblTable[x%internalWharrgarblTableSize]
+
+	x = xorShift64StarState
+	x ^= x >> 12
+	x ^= x << 25
+	x ^= x >> 27
+	xorShift64StarState = x
+	x *= 0x2545f4914f6cdd1d
+	x += uint64(tmp[3])
+
+	tmp[4] ^= in[4] + internalWharrgarblTable[x%internalWharrgarblTableSize]
+
+	x = xorShift64StarState
+	x ^= x >> 12
+	x ^= x << 25
+	x ^= x >> 27
+	xorShift64StarState = x
+	x *= 0x2545f4914f6cdd1d
+	x += uint64(tmp[4])
+
+	tmp[5] ^= in[5] - internalWharrgarblTable[x%internalWharrgarblTableSize]
+
+	x = xorShift64StarState
+	x ^= x >> 12
+	x ^= x << 25
+	x ^= x >> 27
+	xorShift64StarState = x
+	x *= 0x2545f4914f6cdd1d
+	x += uint64(tmp[5])
+
+	tmp[6] ^= in[6] + internalWharrgarblTable[x%internalWharrgarblTableSize]
+
+	x = xorShift64StarState
+	x ^= x >> 12
+	x ^= x << 25
+	x ^= x >> 27
+	xorShift64StarState = x
+	x *= 0x2545f4914f6cdd1d
+	x += uint64(tmp[6])
+
+	tmp[7] ^= in[7] - internalWharrgarblTable[x%internalWharrgarblTableSize]
+
+	x = xorShift64StarState
+	x ^= x >> 12
+	x ^= x << 25
+	x ^= x >> 27
+	xorShift64StarState = x
+	x *= 0x2545f4914f6cdd1d
+	x += uint64(tmp[7])
+
+	tmp[8] ^= in[8] + internalWharrgarblTable[x%internalWharrgarblTableSize]
+
+	x = xorShift64StarState
+	x ^= x >> 12
+	x ^= x << 25
+	x ^= x >> 27
+	xorShift64StarState = x
+	x *= 0x2545f4914f6cdd1d
+	x += uint64(tmp[8])
+
+	tmp[9] ^= in[9] - internalWharrgarblTable[x%internalWharrgarblTableSize]
+
+	x = xorShift64StarState
+	x ^= x >> 12
+	x ^= x << 25
+	x ^= x >> 27
+	xorShift64StarState = x
+	x *= 0x2545f4914f6cdd1d
+	x += uint64(tmp[9])
+
+	tmp[10] ^= in[10] + internalWharrgarblTable[x%internalWharrgarblTableSize]
+
+	x = xorShift64StarState
+	x ^= x >> 12
+	x ^= x << 25
+	x ^= x >> 27
+	xorShift64StarState = x
+	x *= 0x2545f4914f6cdd1d
+	x += uint64(tmp[10])
+
+	tmp[11] ^= in[11] - internalWharrgarblTable[x%internalWharrgarblTableSize]
+
+	x = xorShift64StarState
+	x ^= x >> 12
+	x ^= x << 25
+	x ^= x >> 27
+	xorShift64StarState = x
+	x *= 0x2545f4914f6cdd1d
+	x += uint64(tmp[11])
+
+	tmp[12] ^= in[12] + internalWharrgarblTable[x%internalWharrgarblTableSize]
+
+	x = xorShift64StarState
+	x ^= x >> 12
+	x ^= x << 25
+	x ^= x >> 27
+	xorShift64StarState = x
+	x *= 0x2545f4914f6cdd1d
+	x += uint64(tmp[12])
+
+	tmp[13] ^= in[13] - internalWharrgarblTable[x%internalWharrgarblTableSize]
+
+	x = xorShift64StarState
+	x ^= x >> 12
+	x ^= x << 25
+	x ^= x >> 27
+	xorShift64StarState = x
+	x *= 0x2545f4914f6cdd1d
+	x += uint64(tmp[13])
+
+	tmp[14] ^= in[14] + internalWharrgarblTable[x%internalWharrgarblTableSize]
+
+	x = xorShift64StarState
+	x ^= x >> 12
+	x ^= x << 25
+	x ^= x >> 27
+	xorShift64StarState = x
+	x *= 0x2545f4914f6cdd1d
+	x += uint64(tmp[14])
+
+	tmp[15] ^= in[15] - internalWharrgarblTable[x%internalWharrgarblTableSize]
 
 	inner := binary.BigEndian.Uint64(tmp[0:8])
 
@@ -97,12 +207,15 @@ func internalWharrgarblHash(cipher0, cipher1 cipher.Block, tmp []byte, in *[16]b
 }
 
 // NewWharrgarblr creates a new Wharrgarbl instance with the given memory size (for memory/speed tradeoff).
-func NewWharrgarblr(memorySize uint) (wg *Wharrgarblr) {
+// If thread count is 0 the reported CPU/core count of the system is used.
+func NewWharrgarblr(memorySize uint, threadCount uint) (wg *Wharrgarblr) {
 	wg = new(Wharrgarblr)
+
 	if memorySize < 1048576 {
 		memorySize = 1048576
 	}
 	wg.memory = make([]uint64, memorySize/8)
+	wg.SetThreadCount(threadCount)
 
 	internalWharrgarblTableLock.RLock()
 	if internalWharrgarblTable != nil {
@@ -121,6 +234,7 @@ func NewWharrgarblr(memorySize uint) (wg *Wharrgarblr) {
 		h := sha512.Sum512(internalWharrgarblTable[:])
 		aes, _ := aes.NewCipher(h[0:32])
 		c := cipher.NewCFBEncrypter(aes, h[32:48])
+		c.XORKeyStream(internalWharrgarblTable[:], internalWharrgarblTable[:])
 		c.XORKeyStream(internalWharrgarblTable[:], internalWharrgarblTable[:])
 		c.XORKeyStream(internalWharrgarblTable[:], internalWharrgarblTable[:])
 	}
@@ -208,10 +322,9 @@ func (wg *Wharrgarblr) Compute(in []byte, difficulty uint32) (out [WharrgarblOut
 
 	var outLock sync.Mutex
 	var doneWG sync.WaitGroup
-	cpus := runtime.NumCPU()
-	doneWG.Add(cpus)
+	doneWG.Add(int(wg.threadCount))
 	atomic.StoreUint32(&wg.done, 0)
-	for c := 1; c < cpus; c++ {
+	for c := uint(1); c < wg.threadCount; c++ {
 		go wg.internalWorkerFunc(mmoCipher0, mmoCipher1, runNonce, diff64, &iterations, &outLock, out[:], &doneWG)
 	}
 	wg.internalWorkerFunc(mmoCipher0, mmoCipher1, runNonce, diff64, &iterations, &outLock, out[:], &doneWG)
@@ -225,6 +338,15 @@ func (wg *Wharrgarblr) Compute(in []byte, difficulty uint32) (out [WharrgarblOut
 // Abort aborts a Compute() currently in process (results of Compute() are undefined).
 func (wg *Wharrgarblr) Abort() {
 	atomic.StoreUint32(&wg.done, 1)
+}
+
+// SetThreadCount sets the thread count for subsequent calls to Compute() (use 0 for system thread count).
+func (wg *Wharrgarblr) SetThreadCount(threadCount uint) {
+	if threadCount == 0 {
+		wg.threadCount = uint(runtime.NumCPU())
+	} else {
+		wg.threadCount = threadCount
+	}
 }
 
 // WharrgarblVerify checks whether work is valid for the provided input, returning the difficulty used or 0 if work is not valid.

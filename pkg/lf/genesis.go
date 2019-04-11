@@ -116,7 +116,7 @@ func CreateGenesisRecords(genesisOwnerType int, genesisParameters *GenesisParame
 
 	var wg *Wharrgarblr
 	if genesisParameters.WorkRequired {
-		wg = NewWharrgarblr(RecordDefaultWharrgarblMemory)
+		wg = NewWharrgarblr(RecordDefaultWharrgarblMemory, 0)
 	}
 
 	// Create the very first genesis record, which contains the genesis configuration structure in JSON format.

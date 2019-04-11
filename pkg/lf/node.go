@@ -364,7 +364,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 				if err == nil && uint(len(links)) >= n.genesisParameters.RecordMinLinks {
 					if n.genesisParameters.WorkRequired {
 						if backgroundWorkFunction == nil {
-							backgroundWorkFunction = NewWharrgarblr(RecordDefaultWharrgarblMemory)
+							backgroundWorkFunction = NewWharrgarblr(RecordDefaultWharrgarblMemory, 0)
 						}
 					} else {
 						backgroundWorkFunction = nil

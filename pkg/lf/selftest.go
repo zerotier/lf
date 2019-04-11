@@ -238,7 +238,7 @@ func TestCore(out io.Writer) bool {
 		fmt.Fprintf(out, "FAILED (create owner): %s\n", err.Error())
 		return false
 	}
-	wg := NewWharrgarblr(RecordDefaultWharrgarblMemory)
+	wg := NewWharrgarblr(RecordDefaultWharrgarblMemory, 0)
 	rec, err := NewRecord(testValue[:], testLinks, []byte("test"), [][]byte{[]byte("full record test")}, [][]byte{[]byte("0000")}, nil, TimeSec(), wg, 0, owner)
 	if err != nil {
 		fmt.Fprintf(out, "FAILED (new record creation): %s\n", err.Error())
@@ -269,7 +269,7 @@ func TestWharrgarbl(out io.Writer) bool {
 	}
 
 	fmt.Fprintf(out, "Testing and benchmarking Wharrgarbl proof of work algorithm...\n")
-	wg := NewWharrgarblr(RecordDefaultWharrgarblMemory)
+	wg := NewWharrgarblr(RecordDefaultWharrgarblMemory, 0)
 	for rs := uint(256); rs <= 4096; rs += 256 {
 		secrand.Read(junk[:])
 		diff := recordWharrgarblCost(rs)

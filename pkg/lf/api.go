@@ -401,7 +401,7 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 				if apiReadObj(out, req, &m) == nil {
 					if n.genesisParameters.WorkRequired {
 						if n.wg == nil {
-							n.wg = NewWharrgarblr(RecordDefaultWharrgarblMemory)
+							n.wg = NewWharrgarblr(RecordDefaultWharrgarblMemory, 0)
 						}
 					} else {
 						n.wg = nil
