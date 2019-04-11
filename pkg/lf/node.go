@@ -356,19 +356,20 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 	n.backgroundThreadWG.Add(1)
 	go func() {
 		defer n.backgroundThreadWG.Done()
+		var backgroundWorkFunction *Wharrgarblr
 		for atomic.LoadUint32(&n.shutdown) == 0 {
 			time.Sleep(time.Millisecond * 100)
 			if n.genesisParameters.RecordMinLinks > 0 {
 				links, err := n.db.getLinks2(n.genesisParameters.RecordMinLinks)
 				if err == nil && uint(len(links)) >= n.genesisParameters.RecordMinLinks {
 					if n.genesisParameters.WorkRequired {
-						if n.wg == nil {
-							n.wg = NewWharrgarblr(RecordDefaultWharrgarblMemory)
+						if backgroundWorkFunction == nil {
+							backgroundWorkFunction = NewWharrgarblr(RecordDefaultWharrgarblMemory)
 						}
 					} else {
-						n.wg = nil
+						backgroundWorkFunction = nil
 					}
-					rec, err := NewRecord(nil, links, nil, nil, nil, nil, TimeSec(), n.wg, 0, n.owner)
+					rec, err := NewRecord(nil, links, nil, nil, nil, nil, TimeSec(), backgroundWorkFunction, 0, n.owner)
 					if err == nil {
 						n.AddRecord(rec)
 					} else {

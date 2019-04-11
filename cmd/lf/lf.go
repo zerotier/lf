@@ -406,7 +406,7 @@ func main() {
 		if len(cmdArgs) == 1 {
 			test = cmdArgs[0]
 		} else {
-			printHelp("selftest")
+			test = "core"
 		}
 		switch test {
 		case "all":
