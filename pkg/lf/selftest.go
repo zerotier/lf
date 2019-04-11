@@ -9,6 +9,7 @@ package lf
 
 import (
 	"bytes"
+	"crypto/aes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	secrand "crypto/rand"
@@ -263,15 +264,32 @@ func TestWharrgarbl(out io.Writer) bool {
 	var junk [32]byte
 	var wout [WharrgarblOutputSize]byte
 
+	// Have to do this here to generate the table
+	wg := NewWharrgarblr(RecordDefaultWharrgarblMemory, 0)
+
+	junk = sha256.Sum256([]byte("asdfasdf"))
+	tc0, _ := aes.NewCipher(junk[:])
+	tc1, _ := aes.NewCipher(junk[:])
+	var testIn [16]byte
+	for i := 0; i < 16; i++ {
+		testIn[i] = byte(i)
+	}
+	th := internalWharrgarblHash(tc0, tc1, make([]byte, 16), &testIn)
+	fmt.Fprintf(out, "Testing Wharrgarbl hash function... %.16x ", th)
+	if th == 0x330dd6d0b1379e6f {
+		fmt.Fprintf(out, "OK\n")
+	} else {
+		fmt.Fprintf(out, "FAILED\n")
+		return false
+	}
+
 	fmt.Fprintf(out, "Wharrgarbl cost and score:\n")
 	for s := uint(1); s <= RecordMaxSize; s *= 2 {
 		fmt.Fprintf(out, "  %5d: cost: %.8x score: %.8x\n", s, recordWharrgarblCost(s), recordWharrgarblScore(recordWharrgarblCost(s)))
 	}
 
 	fmt.Fprintf(out, "Testing and benchmarking Wharrgarbl proof of work algorithm...\n")
-	wg := NewWharrgarblr(RecordDefaultWharrgarblMemory, 0)
 	for rs := uint(256); rs <= 4096; rs += 256 {
-		secrand.Read(junk[:])
 		diff := recordWharrgarblCost(rs)
 		iterations = 0
 		startTime = TimeMs()
