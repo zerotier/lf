@@ -199,11 +199,164 @@ func internalWharrgarblHash(cipher0, cipher1 cipher.Block, tmp []byte, in *[16]b
 
 	tmp[15] ^= in[15] - internalWharrgarblTable[x%internalWharrgarblTableSize]
 
-	inner := binary.BigEndian.Uint64(tmp[0:8])
+	inner0 := binary.BigEndian.Uint64(tmp[0:8])
+	inner1 := binary.BigEndian.Uint64(tmp[8:16])
 
 	cipher1.Encrypt(tmp, tmp)
 
-	return binary.BigEndian.Uint64(tmp[0:8]) ^ inner
+	tmp[0] ^= in[0] + internalWharrgarblTable[x%internalWharrgarblTableSize]
+
+	x = xorShift64StarState
+	x ^= x >> 12
+	x ^= x << 25
+	x ^= x >> 27
+	xorShift64StarState = x
+	x *= 0x2545f4914f6cdd1d
+	x += uint64(tmp[0])
+
+	tmp[1] ^= in[1] - internalWharrgarblTable[x%internalWharrgarblTableSize]
+
+	x = xorShift64StarState
+	x ^= x >> 12
+	x ^= x << 25
+	x ^= x >> 27
+	xorShift64StarState = x
+	x *= 0x2545f4914f6cdd1d
+	x += uint64(tmp[1])
+
+	tmp[2] ^= in[2] + internalWharrgarblTable[x%internalWharrgarblTableSize]
+
+	x = xorShift64StarState
+	x ^= x >> 12
+	x ^= x << 25
+	x ^= x >> 27
+	xorShift64StarState = x
+	x *= 0x2545f4914f6cdd1d
+	x += uint64(tmp[2])
+
+	tmp[3] ^= in[3] - internalWharrgarblTable[x%internalWharrgarblTableSize]
+
+	x = xorShift64StarState
+	x ^= x >> 12
+	x ^= x << 25
+	x ^= x >> 27
+	xorShift64StarState = x
+	x *= 0x2545f4914f6cdd1d
+	x += uint64(tmp[3])
+
+	tmp[4] ^= in[4] + internalWharrgarblTable[x%internalWharrgarblTableSize]
+
+	x = xorShift64StarState
+	x ^= x >> 12
+	x ^= x << 25
+	x ^= x >> 27
+	xorShift64StarState = x
+	x *= 0x2545f4914f6cdd1d
+	x += uint64(tmp[4])
+
+	tmp[5] ^= in[5] - internalWharrgarblTable[x%internalWharrgarblTableSize]
+
+	x = xorShift64StarState
+	x ^= x >> 12
+	x ^= x << 25
+	x ^= x >> 27
+	xorShift64StarState = x
+	x *= 0x2545f4914f6cdd1d
+	x += uint64(tmp[5])
+
+	tmp[6] ^= in[6] + internalWharrgarblTable[x%internalWharrgarblTableSize]
+
+	x = xorShift64StarState
+	x ^= x >> 12
+	x ^= x << 25
+	x ^= x >> 27
+	xorShift64StarState = x
+	x *= 0x2545f4914f6cdd1d
+	x += uint64(tmp[6])
+
+	tmp[7] ^= in[7] - internalWharrgarblTable[x%internalWharrgarblTableSize]
+
+	x = xorShift64StarState
+	x ^= x >> 12
+	x ^= x << 25
+	x ^= x >> 27
+	xorShift64StarState = x
+	x *= 0x2545f4914f6cdd1d
+	x += uint64(tmp[7])
+
+	tmp[8] ^= in[8] + internalWharrgarblTable[x%internalWharrgarblTableSize]
+
+	x = xorShift64StarState
+	x ^= x >> 12
+	x ^= x << 25
+	x ^= x >> 27
+	xorShift64StarState = x
+	x *= 0x2545f4914f6cdd1d
+	x += uint64(tmp[8])
+
+	tmp[9] ^= in[9] - internalWharrgarblTable[x%internalWharrgarblTableSize]
+
+	x = xorShift64StarState
+	x ^= x >> 12
+	x ^= x << 25
+	x ^= x >> 27
+	xorShift64StarState = x
+	x *= 0x2545f4914f6cdd1d
+	x += uint64(tmp[9])
+
+	tmp[10] ^= in[10] + internalWharrgarblTable[x%internalWharrgarblTableSize]
+
+	x = xorShift64StarState
+	x ^= x >> 12
+	x ^= x << 25
+	x ^= x >> 27
+	xorShift64StarState = x
+	x *= 0x2545f4914f6cdd1d
+	x += uint64(tmp[10])
+
+	tmp[11] ^= in[11] - internalWharrgarblTable[x%internalWharrgarblTableSize]
+
+	x = xorShift64StarState
+	x ^= x >> 12
+	x ^= x << 25
+	x ^= x >> 27
+	xorShift64StarState = x
+	x *= 0x2545f4914f6cdd1d
+	x += uint64(tmp[11])
+
+	tmp[12] ^= in[12] + internalWharrgarblTable[x%internalWharrgarblTableSize]
+
+	x = xorShift64StarState
+	x ^= x >> 12
+	x ^= x << 25
+	x ^= x >> 27
+	xorShift64StarState = x
+	x *= 0x2545f4914f6cdd1d
+	x += uint64(tmp[12])
+
+	tmp[13] ^= in[13] - internalWharrgarblTable[x%internalWharrgarblTableSize]
+
+	x = xorShift64StarState
+	x ^= x >> 12
+	x ^= x << 25
+	x ^= x >> 27
+	xorShift64StarState = x
+	x *= 0x2545f4914f6cdd1d
+	x += uint64(tmp[13])
+
+	tmp[14] ^= in[14] + internalWharrgarblTable[x%internalWharrgarblTableSize]
+
+	x = xorShift64StarState
+	x ^= x >> 12
+	x ^= x << 25
+	x ^= x >> 27
+	xorShift64StarState = x
+	x *= 0x2545f4914f6cdd1d
+	x += uint64(tmp[14])
+
+	tmp[15] ^= in[15] - internalWharrgarblTable[x%internalWharrgarblTableSize]
+
+	return binary.BigEndian.Uint64(tmp[0:8]) ^ binary.BigEndian.Uint64(tmp[8:16]) ^ inner0 ^ inner1
 }
 
 // NewWharrgarblr creates a new Wharrgarbl instance with the given memory size (for memory/speed tradeoff).
