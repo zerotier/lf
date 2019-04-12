@@ -18,10 +18,11 @@ import (
 	"sync/atomic"
 )
 
-const internalWharrgarblTableSize = 67108864
+// wharrgarblTableSize is the size of the static table used by wharrgarblHash
+const wharrgarblTableSize = 134217728
 
-var internalWharrgarblTable *[internalWharrgarblTableSize]byte
-var internalWharrgarblTableLock sync.RWMutex
+var wharrgarblTable *[wharrgarblTableSize]byte
+var wharrgarblTableLock sync.RWMutex
 
 // WharrgarblOutputSize is the size of Wharrgarbl's result in bytes.
 const WharrgarblOutputSize = 14
@@ -34,20 +35,21 @@ type Wharrgarblr struct {
 	done        uint32
 }
 
-// internalWharrgarblHash is a Matyer-Meyer-Oseas-like keyed single block hash used as a search target for collision search.
-// It also relies on a huge table to impose a random memory seek requirement. This makes GPU or ASIC acceleration a
-// lot more challenging and likely less fruitful.
-func internalWharrgarblHash(cipher0, cipher1 cipher.Block, tmp []byte, in *[16]byte) uint64 {
+// wharrgarblHash is a loosely Matyer-Meyer-Oseas-like keyed 64-bit single block hash.
+// This is only used for Wharrgarbl, not as a hash for authentication or other "harder" security needs.
+func wharrgarblHash(cipher0, cipher1 cipher.Block, tmp []byte, in *[16]byte) uint64 {
 	_ = tmp[15]
 
 	cipher0.Encrypt(tmp, in[:])
 
-	// This inner transform makes use of a simple xorshift PRNG to randomize
-	// memory access. See: https://en.wikipedia.org/wiki/Xorshift#xorshift*
-	x := binary.BigEndian.Uint64(tmp[8:16])
+	x := binary.BigEndian.Uint64(tmp[0:8]) + binary.BigEndian.Uint64(tmp[8:16])
 	xorShift64StarState := x
 
-	tmp[0] ^= in[0] + internalWharrgarblTable[x%internalWharrgarblTableSize]
+	cipher0.Encrypt(tmp, tmp)
+
+	////////////////////////////////////////////////////////////////////////////
+
+	tmp[0] ^= in[0] + wharrgarblTable[x%wharrgarblTableSize]
 
 	//x = xorShift64StarState
 	x ^= x >> 12
@@ -57,7 +59,7 @@ func internalWharrgarblHash(cipher0, cipher1 cipher.Block, tmp []byte, in *[16]b
 	x *= 0x2545f4914f6cdd1d
 	x += uint64(tmp[0])
 
-	tmp[1] ^= in[1] - internalWharrgarblTable[x%internalWharrgarblTableSize]
+	tmp[1] ^= in[1] - wharrgarblTable[x%wharrgarblTableSize]
 
 	x = xorShift64StarState
 	x ^= x >> 12
@@ -67,7 +69,7 @@ func internalWharrgarblHash(cipher0, cipher1 cipher.Block, tmp []byte, in *[16]b
 	x *= 0x2545f4914f6cdd1d
 	x += uint64(tmp[1])
 
-	tmp[2] ^= in[2] + internalWharrgarblTable[x%internalWharrgarblTableSize]
+	tmp[2] ^= in[2] + wharrgarblTable[x%wharrgarblTableSize]
 
 	x = xorShift64StarState
 	x ^= x >> 12
@@ -77,7 +79,7 @@ func internalWharrgarblHash(cipher0, cipher1 cipher.Block, tmp []byte, in *[16]b
 	x *= 0x2545f4914f6cdd1d
 	x += uint64(tmp[2])
 
-	tmp[3] ^= in[3] - internalWharrgarblTable[x%internalWharrgarblTableSize]
+	tmp[3] ^= in[3] - wharrgarblTable[x%wharrgarblTableSize]
 
 	x = xorShift64StarState
 	x ^= x >> 12
@@ -87,7 +89,7 @@ func internalWharrgarblHash(cipher0, cipher1 cipher.Block, tmp []byte, in *[16]b
 	x *= 0x2545f4914f6cdd1d
 	x += uint64(tmp[3])
 
-	tmp[4] ^= in[4] + internalWharrgarblTable[x%internalWharrgarblTableSize]
+	tmp[4] ^= in[4] + wharrgarblTable[x%wharrgarblTableSize]
 
 	x = xorShift64StarState
 	x ^= x >> 12
@@ -97,7 +99,7 @@ func internalWharrgarblHash(cipher0, cipher1 cipher.Block, tmp []byte, in *[16]b
 	x *= 0x2545f4914f6cdd1d
 	x += uint64(tmp[4])
 
-	tmp[5] ^= in[5] - internalWharrgarblTable[x%internalWharrgarblTableSize]
+	tmp[5] ^= in[5] - wharrgarblTable[x%wharrgarblTableSize]
 
 	x = xorShift64StarState
 	x ^= x >> 12
@@ -107,7 +109,7 @@ func internalWharrgarblHash(cipher0, cipher1 cipher.Block, tmp []byte, in *[16]b
 	x *= 0x2545f4914f6cdd1d
 	x += uint64(tmp[5])
 
-	tmp[6] ^= in[6] + internalWharrgarblTable[x%internalWharrgarblTableSize]
+	tmp[6] ^= in[6] + wharrgarblTable[x%wharrgarblTableSize]
 
 	x = xorShift64StarState
 	x ^= x >> 12
@@ -117,7 +119,7 @@ func internalWharrgarblHash(cipher0, cipher1 cipher.Block, tmp []byte, in *[16]b
 	x *= 0x2545f4914f6cdd1d
 	x += uint64(tmp[6])
 
-	tmp[7] ^= in[7] - internalWharrgarblTable[x%internalWharrgarblTableSize]
+	tmp[7] ^= in[7] - wharrgarblTable[x%wharrgarblTableSize]
 
 	x = xorShift64StarState
 	x ^= x >> 12
@@ -127,7 +129,7 @@ func internalWharrgarblHash(cipher0, cipher1 cipher.Block, tmp []byte, in *[16]b
 	x *= 0x2545f4914f6cdd1d
 	x += uint64(tmp[7])
 
-	tmp[8] ^= in[8] + internalWharrgarblTable[x%internalWharrgarblTableSize]
+	tmp[8] ^= in[8] + wharrgarblTable[x%wharrgarblTableSize]
 
 	x = xorShift64StarState
 	x ^= x >> 12
@@ -137,7 +139,7 @@ func internalWharrgarblHash(cipher0, cipher1 cipher.Block, tmp []byte, in *[16]b
 	x *= 0x2545f4914f6cdd1d
 	x += uint64(tmp[8])
 
-	tmp[9] ^= in[9] - internalWharrgarblTable[x%internalWharrgarblTableSize]
+	tmp[9] ^= in[9] - wharrgarblTable[x%wharrgarblTableSize]
 
 	x = xorShift64StarState
 	x ^= x >> 12
@@ -147,7 +149,7 @@ func internalWharrgarblHash(cipher0, cipher1 cipher.Block, tmp []byte, in *[16]b
 	x *= 0x2545f4914f6cdd1d
 	x += uint64(tmp[9])
 
-	tmp[10] ^= in[10] + internalWharrgarblTable[x%internalWharrgarblTableSize]
+	tmp[10] ^= in[10] + wharrgarblTable[x%wharrgarblTableSize]
 
 	x = xorShift64StarState
 	x ^= x >> 12
@@ -157,7 +159,7 @@ func internalWharrgarblHash(cipher0, cipher1 cipher.Block, tmp []byte, in *[16]b
 	x *= 0x2545f4914f6cdd1d
 	x += uint64(tmp[10])
 
-	tmp[11] ^= in[11] - internalWharrgarblTable[x%internalWharrgarblTableSize]
+	tmp[11] ^= in[11] - wharrgarblTable[x%wharrgarblTableSize]
 
 	x = xorShift64StarState
 	x ^= x >> 12
@@ -167,7 +169,7 @@ func internalWharrgarblHash(cipher0, cipher1 cipher.Block, tmp []byte, in *[16]b
 	x *= 0x2545f4914f6cdd1d
 	x += uint64(tmp[11])
 
-	tmp[12] ^= in[12] + internalWharrgarblTable[x%internalWharrgarblTableSize]
+	tmp[12] ^= in[12] + wharrgarblTable[x%wharrgarblTableSize]
 
 	x = xorShift64StarState
 	x ^= x >> 12
@@ -177,7 +179,7 @@ func internalWharrgarblHash(cipher0, cipher1 cipher.Block, tmp []byte, in *[16]b
 	x *= 0x2545f4914f6cdd1d
 	x += uint64(tmp[12])
 
-	tmp[13] ^= in[13] - internalWharrgarblTable[x%internalWharrgarblTableSize]
+	tmp[13] ^= in[13] - wharrgarblTable[x%wharrgarblTableSize]
 
 	x = xorShift64StarState
 	x ^= x >> 12
@@ -187,7 +189,7 @@ func internalWharrgarblHash(cipher0, cipher1 cipher.Block, tmp []byte, in *[16]b
 	x *= 0x2545f4914f6cdd1d
 	x += uint64(tmp[13])
 
-	tmp[14] ^= in[14] + internalWharrgarblTable[x%internalWharrgarblTableSize]
+	tmp[14] ^= in[14] + wharrgarblTable[x%wharrgarblTableSize]
 
 	x = xorShift64StarState
 	x ^= x >> 12
@@ -197,14 +199,19 @@ func internalWharrgarblHash(cipher0, cipher1 cipher.Block, tmp []byte, in *[16]b
 	x *= 0x2545f4914f6cdd1d
 	x += uint64(tmp[14])
 
-	tmp[15] ^= in[15] - internalWharrgarblTable[x%internalWharrgarblTableSize]
+	tmp[15] ^= in[15] - wharrgarblTable[x%wharrgarblTableSize]
 
-	inner0 := binary.BigEndian.Uint64(tmp[0:8])
-	inner1 := binary.BigEndian.Uint64(tmp[8:16])
+	////////////////////////////////////////////////////////////////////////////
 
 	cipher1.Encrypt(tmp, tmp)
 
-	tmp[0] ^= in[0] + internalWharrgarblTable[x%internalWharrgarblTableSize]
+	inner := binary.BigEndian.Uint64(tmp[0:8]) + binary.BigEndian.Uint64(tmp[8:16])
+
+	cipher1.Encrypt(tmp, tmp)
+
+	////////////////////////////////////////////////////////////////////////////
+
+	tmp[0] ^= in[0] + wharrgarblTable[x%wharrgarblTableSize]
 
 	x = xorShift64StarState
 	x ^= x >> 12
@@ -214,7 +221,7 @@ func internalWharrgarblHash(cipher0, cipher1 cipher.Block, tmp []byte, in *[16]b
 	x *= 0x2545f4914f6cdd1d
 	x += uint64(tmp[0])
 
-	tmp[1] ^= in[1] - internalWharrgarblTable[x%internalWharrgarblTableSize]
+	tmp[1] ^= in[1] - wharrgarblTable[x%wharrgarblTableSize]
 
 	x = xorShift64StarState
 	x ^= x >> 12
@@ -224,7 +231,7 @@ func internalWharrgarblHash(cipher0, cipher1 cipher.Block, tmp []byte, in *[16]b
 	x *= 0x2545f4914f6cdd1d
 	x += uint64(tmp[1])
 
-	tmp[2] ^= in[2] + internalWharrgarblTable[x%internalWharrgarblTableSize]
+	tmp[2] ^= in[2] + wharrgarblTable[x%wharrgarblTableSize]
 
 	x = xorShift64StarState
 	x ^= x >> 12
@@ -234,7 +241,7 @@ func internalWharrgarblHash(cipher0, cipher1 cipher.Block, tmp []byte, in *[16]b
 	x *= 0x2545f4914f6cdd1d
 	x += uint64(tmp[2])
 
-	tmp[3] ^= in[3] - internalWharrgarblTable[x%internalWharrgarblTableSize]
+	tmp[3] ^= in[3] - wharrgarblTable[x%wharrgarblTableSize]
 
 	x = xorShift64StarState
 	x ^= x >> 12
@@ -244,7 +251,7 @@ func internalWharrgarblHash(cipher0, cipher1 cipher.Block, tmp []byte, in *[16]b
 	x *= 0x2545f4914f6cdd1d
 	x += uint64(tmp[3])
 
-	tmp[4] ^= in[4] + internalWharrgarblTable[x%internalWharrgarblTableSize]
+	tmp[4] ^= in[4] + wharrgarblTable[x%wharrgarblTableSize]
 
 	x = xorShift64StarState
 	x ^= x >> 12
@@ -254,7 +261,7 @@ func internalWharrgarblHash(cipher0, cipher1 cipher.Block, tmp []byte, in *[16]b
 	x *= 0x2545f4914f6cdd1d
 	x += uint64(tmp[4])
 
-	tmp[5] ^= in[5] - internalWharrgarblTable[x%internalWharrgarblTableSize]
+	tmp[5] ^= in[5] - wharrgarblTable[x%wharrgarblTableSize]
 
 	x = xorShift64StarState
 	x ^= x >> 12
@@ -264,7 +271,7 @@ func internalWharrgarblHash(cipher0, cipher1 cipher.Block, tmp []byte, in *[16]b
 	x *= 0x2545f4914f6cdd1d
 	x += uint64(tmp[5])
 
-	tmp[6] ^= in[6] + internalWharrgarblTable[x%internalWharrgarblTableSize]
+	tmp[6] ^= in[6] + wharrgarblTable[x%wharrgarblTableSize]
 
 	x = xorShift64StarState
 	x ^= x >> 12
@@ -274,7 +281,7 @@ func internalWharrgarblHash(cipher0, cipher1 cipher.Block, tmp []byte, in *[16]b
 	x *= 0x2545f4914f6cdd1d
 	x += uint64(tmp[6])
 
-	tmp[7] ^= in[7] - internalWharrgarblTable[x%internalWharrgarblTableSize]
+	tmp[7] ^= in[7] - wharrgarblTable[x%wharrgarblTableSize]
 
 	x = xorShift64StarState
 	x ^= x >> 12
@@ -284,7 +291,7 @@ func internalWharrgarblHash(cipher0, cipher1 cipher.Block, tmp []byte, in *[16]b
 	x *= 0x2545f4914f6cdd1d
 	x += uint64(tmp[7])
 
-	tmp[8] ^= in[8] + internalWharrgarblTable[x%internalWharrgarblTableSize]
+	tmp[8] ^= in[8] + wharrgarblTable[x%wharrgarblTableSize]
 
 	x = xorShift64StarState
 	x ^= x >> 12
@@ -294,7 +301,7 @@ func internalWharrgarblHash(cipher0, cipher1 cipher.Block, tmp []byte, in *[16]b
 	x *= 0x2545f4914f6cdd1d
 	x += uint64(tmp[8])
 
-	tmp[9] ^= in[9] - internalWharrgarblTable[x%internalWharrgarblTableSize]
+	tmp[9] ^= in[9] - wharrgarblTable[x%wharrgarblTableSize]
 
 	x = xorShift64StarState
 	x ^= x >> 12
@@ -304,7 +311,7 @@ func internalWharrgarblHash(cipher0, cipher1 cipher.Block, tmp []byte, in *[16]b
 	x *= 0x2545f4914f6cdd1d
 	x += uint64(tmp[9])
 
-	tmp[10] ^= in[10] + internalWharrgarblTable[x%internalWharrgarblTableSize]
+	tmp[10] ^= in[10] + wharrgarblTable[x%wharrgarblTableSize]
 
 	x = xorShift64StarState
 	x ^= x >> 12
@@ -314,7 +321,7 @@ func internalWharrgarblHash(cipher0, cipher1 cipher.Block, tmp []byte, in *[16]b
 	x *= 0x2545f4914f6cdd1d
 	x += uint64(tmp[10])
 
-	tmp[11] ^= in[11] - internalWharrgarblTable[x%internalWharrgarblTableSize]
+	tmp[11] ^= in[11] - wharrgarblTable[x%wharrgarblTableSize]
 
 	x = xorShift64StarState
 	x ^= x >> 12
@@ -324,7 +331,7 @@ func internalWharrgarblHash(cipher0, cipher1 cipher.Block, tmp []byte, in *[16]b
 	x *= 0x2545f4914f6cdd1d
 	x += uint64(tmp[11])
 
-	tmp[12] ^= in[12] + internalWharrgarblTable[x%internalWharrgarblTableSize]
+	tmp[12] ^= in[12] + wharrgarblTable[x%wharrgarblTableSize]
 
 	x = xorShift64StarState
 	x ^= x >> 12
@@ -334,7 +341,7 @@ func internalWharrgarblHash(cipher0, cipher1 cipher.Block, tmp []byte, in *[16]b
 	x *= 0x2545f4914f6cdd1d
 	x += uint64(tmp[12])
 
-	tmp[13] ^= in[13] - internalWharrgarblTable[x%internalWharrgarblTableSize]
+	tmp[13] ^= in[13] - wharrgarblTable[x%wharrgarblTableSize]
 
 	x = xorShift64StarState
 	x ^= x >> 12
@@ -344,7 +351,7 @@ func internalWharrgarblHash(cipher0, cipher1 cipher.Block, tmp []byte, in *[16]b
 	x *= 0x2545f4914f6cdd1d
 	x += uint64(tmp[13])
 
-	tmp[14] ^= in[14] + internalWharrgarblTable[x%internalWharrgarblTableSize]
+	tmp[14] ^= in[14] + wharrgarblTable[x%wharrgarblTableSize]
 
 	x = xorShift64StarState
 	x ^= x >> 12
@@ -354,9 +361,11 @@ func internalWharrgarblHash(cipher0, cipher1 cipher.Block, tmp []byte, in *[16]b
 	x *= 0x2545f4914f6cdd1d
 	x += uint64(tmp[14])
 
-	tmp[15] ^= in[15] - internalWharrgarblTable[x%internalWharrgarblTableSize]
+	tmp[15] ^= in[15] - wharrgarblTable[x%wharrgarblTableSize]
 
-	return binary.BigEndian.Uint64(tmp[0:8]) ^ binary.BigEndian.Uint64(tmp[8:16]) ^ inner0 ^ inner1
+	////////////////////////////////////////////////////////////////////////////
+
+	return (binary.BigEndian.Uint64(tmp[0:8]) + binary.BigEndian.Uint64(tmp[8:16])) ^ inner
 }
 
 // NewWharrgarblr creates a new Wharrgarbl instance with the given memory size (for memory/speed tradeoff).
@@ -370,28 +379,29 @@ func NewWharrgarblr(memorySize uint, threadCount uint) (wg *Wharrgarblr) {
 	wg.memory = make([]uint64, memorySize/8)
 	wg.SetThreadCount(threadCount)
 
-	internalWharrgarblTableLock.RLock()
-	if internalWharrgarblTable != nil {
-		internalWharrgarblTableLock.RUnlock()
+	// Initialize wharrgarblTable if it's not initialized already
+	wharrgarblTableLock.RLock()
+	if wharrgarblTable != nil {
+		wharrgarblTableLock.RUnlock()
 		return
 	}
-	internalWharrgarblTableLock.RUnlock()
-	internalWharrgarblTableLock.Lock()
-	if internalWharrgarblTable != nil {
-		internalWharrgarblTableLock.Unlock()
+	wharrgarblTableLock.RUnlock()
+	wharrgarblTableLock.Lock()
+	if wharrgarblTable != nil {
+		wharrgarblTableLock.Unlock()
 		return
 	}
-	internalWharrgarblTable = new([internalWharrgarblTableSize]byte)
-	copy(internalWharrgarblTable[:], []byte("My hovercraft is full of eels!"))
-	for i := 0; i < 2; i++ {
-		h := sha512.Sum512(internalWharrgarblTable[:])
+	wharrgarblTable = new([wharrgarblTableSize]byte)
+	copy(wharrgarblTable[:], []byte("My hovercraft is full of eels!"))
+	for i := 0; i < 4; i++ {
+		h := sha512.Sum512(wharrgarblTable[:])
 		aes, _ := aes.NewCipher(h[0:32])
 		c := cipher.NewCFBEncrypter(aes, h[32:48])
-		c.XORKeyStream(internalWharrgarblTable[:], internalWharrgarblTable[:])
-		c.XORKeyStream(internalWharrgarblTable[:], internalWharrgarblTable[:])
-		c.XORKeyStream(internalWharrgarblTable[:], internalWharrgarblTable[:])
+		for k := 0; k < 4; k++ {
+			c.XORKeyStream(wharrgarblTable[:], wharrgarblTable[:])
+		}
 	}
-	internalWharrgarblTableLock.Unlock()
+	wharrgarblTableLock.Unlock()
 
 	return
 }
@@ -408,6 +418,9 @@ func (wg *Wharrgarblr) internalWorkerFunc(mmoCipher0, mmoCipher1 cipher.Block, r
 	thisCollider := rand.Uint64()
 	for atomic.LoadUint32(&wg.done) == 0 {
 		iter++
+		if (iter & 0xffffff) == 0 {
+			runtime.Gosched()
+		}
 
 		thisCollider++
 		thisCollider &= 0xffffffffff
@@ -416,7 +429,7 @@ func (wg *Wharrgarblr) internalWorkerFunc(mmoCipher0, mmoCipher1 cipher.Block, r
 		collisionHashIn[5] = byte(thisCollider >> 16)
 		collisionHashIn[6] = byte(thisCollider >> 8)
 		collisionHashIn[7] = byte(thisCollider)
-		thisCollision := internalWharrgarblHash(mmoCipher0, mmoCipher1, tmp, &collisionHashIn) % diff64
+		thisCollision := wharrgarblHash(mmoCipher0, mmoCipher1, tmp, &collisionHashIn) % diff64
 
 		// The collision table contains 64-bit entries indexed by collision. These contain
 		// the collider (least significant 40 bits) and 24 bits of the other collision. We
@@ -434,7 +447,7 @@ func (wg *Wharrgarblr) internalWorkerFunc(mmoCipher0, mmoCipher1 cipher.Block, r
 				collisionHashIn[5] = byte(otherCollider >> 16)
 				collisionHashIn[6] = byte(otherCollider >> 8)
 				collisionHashIn[7] = byte(otherCollider)
-				if (internalWharrgarblHash(mmoCipher0, mmoCipher1, tmp, &collisionHashIn) % diff64) == thisCollision {
+				if (wharrgarblHash(mmoCipher0, mmoCipher1, tmp, &collisionHashIn) % diff64) == thisCollision {
 					atomic.StoreUint32(&wg.done, 1)
 					outLock.Lock()
 					out[0] = byte(thisCollider >> 32)
@@ -463,9 +476,9 @@ func (wg *Wharrgarblr) internalWorkerFunc(mmoCipher0, mmoCipher1 cipher.Block, r
 // Compute computes Wharrgarbl PoW using this instance.
 func (wg *Wharrgarblr) Compute(in []byte, difficulty uint32) (out [WharrgarblOutputSize]byte, iterations uint64) {
 	wg.lock.Lock()
-	internalWharrgarblTableLock.RLock()
+	wharrgarblTableLock.RLock()
 	defer wg.lock.Unlock()
-	defer internalWharrgarblTableLock.RUnlock()
+	defer wharrgarblTableLock.RUnlock()
 
 	inHashed := sha512.Sum512(in)
 	mmoCipher0, _ := aes.NewCipher(inHashed[0:32])
@@ -527,7 +540,7 @@ func WharrgarblVerify(work []byte, in []byte) uint32 {
 	var tmp [16]byte
 	for i := 0; i < 2; i++ {
 		binary.BigEndian.PutUint64(collisionHashIn[0:8], colliders[i])
-		collisions[i] = internalWharrgarblHash(mmoCipher0, mmoCipher1, tmp[:], &collisionHashIn) % diff64
+		collisions[i] = wharrgarblHash(mmoCipher0, mmoCipher1, tmp[:], &collisionHashIn) % diff64
 	}
 
 	if collisions[0] == collisions[1] {

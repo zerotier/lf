@@ -274,9 +274,9 @@ func TestWharrgarbl(out io.Writer) bool {
 	for i := 0; i < 16; i++ {
 		testIn[i] = byte(i)
 	}
-	th := internalWharrgarblHash(tc0, tc1, make([]byte, 16), &testIn)
-	fmt.Fprintf(out, "Testing Wharrgarbl hash function... %.16x ", th)
-	if th == 0xdd4156e219af8bb3 {
+	th := wharrgarblHash(tc0, tc1, make([]byte, 16), &testIn)
+	fmt.Fprintf(out, "Testing Wharrgarbl keyed 64-bit hash function... %.16x ", th)
+	if th == 0xed251e466b2d525e {
 		fmt.Fprintf(out, "OK\n")
 	} else {
 		fmt.Fprintf(out, "FAILED\n")
