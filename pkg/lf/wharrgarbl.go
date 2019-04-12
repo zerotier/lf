@@ -530,6 +530,9 @@ func wharrgarblHash(cipher0, cipher1 cipher.Block, tmp []byte, in *[16]byte) uin
 	////////////////////////////////////////////////////////////////////////////
 
 	cipher1.Encrypt(tmp, tmp)
+
+	inner ^= binary.BigEndian.Uint64(tmp[0:8]) + binary.BigEndian.Uint64(tmp[8:16])
+
 	cipher0.Encrypt(tmp, tmp)
 
 	return (binary.BigEndian.Uint64(tmp[0:8]) + binary.BigEndian.Uint64(tmp[8:16])) ^ inner
@@ -642,6 +645,7 @@ func (wg *Wharrgarblr) internalWorkerFunc(mmoCipher0, mmoCipher1 cipher.Block, r
 
 // Compute computes Wharrgarbl PoW using this instance.
 // It returns a proof of work and how many total search iterations were required to find it.
+// A single Wharrgarblr can only Compute one PoW at a time and uses all its threads to do so.
 func (wg *Wharrgarblr) Compute(in []byte, difficulty uint32) (out [WharrgarblOutputSize]byte, iterations uint64) {
 	wg.lock.Lock()
 	wharrgarblTableLock.RLock()
@@ -669,7 +673,7 @@ func (wg *Wharrgarblr) Compute(in []byte, difficulty uint32) (out [WharrgarblOut
 	return
 }
 
-// Abort aborts a Compute() currently in process.
+// Abort aborts the current Compute() currently in process.
 // The return values of Compute() after this call are undefined and should be thrown away.
 func (wg *Wharrgarblr) Abort() {
 	atomic.StoreUint32(&wg.done, 1)
