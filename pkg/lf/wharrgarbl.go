@@ -207,7 +207,7 @@ func wharrgarblHash(cipher0, cipher1 cipher.Block, tmp []byte, in *[16]byte) uin
 
 	cipher1.Encrypt(tmp, tmp)
 
-	inner := binary.BigEndian.Uint64(tmp[0:8]) + binary.BigEndian.Uint64(tmp[8:16])
+	y := binary.BigEndian.Uint64(tmp[0:8]) + binary.BigEndian.Uint64(tmp[8:16])
 
 	cipher1.Encrypt(tmp, tmp)
 
@@ -369,7 +369,7 @@ func wharrgarblHash(cipher0, cipher1 cipher.Block, tmp []byte, in *[16]byte) uin
 
 	cipher0.Encrypt(tmp, tmp)
 
-	inner ^= binary.BigEndian.Uint64(tmp[0:8]) + binary.BigEndian.Uint64(tmp[8:16])
+	y ^= binary.BigEndian.Uint64(tmp[0:8]) + binary.BigEndian.Uint64(tmp[8:16])
 
 	cipher1.Encrypt(tmp, tmp)
 
@@ -531,11 +531,11 @@ func wharrgarblHash(cipher0, cipher1 cipher.Block, tmp []byte, in *[16]byte) uin
 
 	cipher1.Encrypt(tmp, tmp)
 
-	inner ^= binary.BigEndian.Uint64(tmp[0:8]) + binary.BigEndian.Uint64(tmp[8:16])
+	y ^= binary.BigEndian.Uint64(tmp[0:8]) + binary.BigEndian.Uint64(tmp[8:16])
 
 	cipher0.Encrypt(tmp, tmp)
 
-	return (binary.BigEndian.Uint64(tmp[0:8]) + binary.BigEndian.Uint64(tmp[8:16])) ^ inner
+	return (binary.BigEndian.Uint64(tmp[0:8]) + binary.BigEndian.Uint64(tmp[8:16])) ^ y
 }
 
 // NewWharrgarblr creates a new Wharrgarbl instance with the given memory size (for memory/speed tradeoff).
@@ -588,7 +588,7 @@ func (wg *Wharrgarblr) internalWorkerFunc(mmoCipher0, mmoCipher1 cipher.Block, r
 	thisCollider := rand.Uint64()
 	for atomic.LoadUint32(&wg.done) == 0 {
 		iter++
-		if (iter & 0xffff) == 0 {
+		if (iter & 0xff) == 0 {
 			runtime.Gosched() // this might not be necessary but doesn't seem to hurt and probably makes this coexist better on nodes
 		}
 
