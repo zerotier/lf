@@ -267,6 +267,7 @@ func TestWharrgarbl(out io.Writer) bool {
 	// Have to do this here to generate the table
 	wg := NewWharrgarblr(RecordDefaultWharrgarblMemory, 0)
 
+	// Test Wharrgarbl's internal collision hash to make sure it's generating consistent results across platforms
 	junk = sha256.Sum256([]byte("asdfasdf"))
 	tc0, _ := aes.NewCipher(junk[:])
 	tc1, _ := aes.NewCipher(junk[:])
@@ -276,7 +277,7 @@ func TestWharrgarbl(out io.Writer) bool {
 	}
 	th := wharrgarblHash(tc0, tc1, make([]byte, 16), &testIn)
 	fmt.Fprintf(out, "Testing Wharrgarbl keyed 64-bit hash function... %.16x ", th)
-	if th == 0xed251e466b2d525e {
+	if th == 0xe2541c4ebaf60516 {
 		fmt.Fprintf(out, "OK\n")
 	} else {
 		fmt.Fprintf(out, "FAILED\n")

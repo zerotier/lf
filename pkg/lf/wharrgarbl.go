@@ -40,6 +40,8 @@ type Wharrgarblr struct {
 func wharrgarblHash(cipher0, cipher1 cipher.Block, tmp []byte, in *[16]byte) uint64 {
 	_ = tmp[15]
 
+	////////////////////////////////////////////////////////////////////////////
+
 	cipher0.Encrypt(tmp, in[:])
 
 	x := binary.BigEndian.Uint64(tmp[0:8]) + binary.BigEndian.Uint64(tmp[8:16])
@@ -365,6 +367,171 @@ func wharrgarblHash(cipher0, cipher1 cipher.Block, tmp []byte, in *[16]byte) uin
 
 	////////////////////////////////////////////////////////////////////////////
 
+	cipher0.Encrypt(tmp, tmp)
+
+	inner ^= binary.BigEndian.Uint64(tmp[0:8]) + binary.BigEndian.Uint64(tmp[8:16])
+
+	cipher1.Encrypt(tmp, tmp)
+
+	////////////////////////////////////////////////////////////////////////////
+
+	tmp[0] ^= in[0] + wharrgarblTable[x%wharrgarblTableSize]
+
+	x = xorShift64StarState
+	x ^= x >> 12
+	x ^= x << 25
+	x ^= x >> 27
+	xorShift64StarState = x
+	x *= 0x2545f4914f6cdd1d
+	x += uint64(tmp[0])
+
+	tmp[1] ^= in[1] - wharrgarblTable[x%wharrgarblTableSize]
+
+	x = xorShift64StarState
+	x ^= x >> 12
+	x ^= x << 25
+	x ^= x >> 27
+	xorShift64StarState = x
+	x *= 0x2545f4914f6cdd1d
+	x += uint64(tmp[1])
+
+	tmp[2] ^= in[2] + wharrgarblTable[x%wharrgarblTableSize]
+
+	x = xorShift64StarState
+	x ^= x >> 12
+	x ^= x << 25
+	x ^= x >> 27
+	xorShift64StarState = x
+	x *= 0x2545f4914f6cdd1d
+	x += uint64(tmp[2])
+
+	tmp[3] ^= in[3] - wharrgarblTable[x%wharrgarblTableSize]
+
+	x = xorShift64StarState
+	x ^= x >> 12
+	x ^= x << 25
+	x ^= x >> 27
+	xorShift64StarState = x
+	x *= 0x2545f4914f6cdd1d
+	x += uint64(tmp[3])
+
+	tmp[4] ^= in[4] + wharrgarblTable[x%wharrgarblTableSize]
+
+	x = xorShift64StarState
+	x ^= x >> 12
+	x ^= x << 25
+	x ^= x >> 27
+	xorShift64StarState = x
+	x *= 0x2545f4914f6cdd1d
+	x += uint64(tmp[4])
+
+	tmp[5] ^= in[5] - wharrgarblTable[x%wharrgarblTableSize]
+
+	x = xorShift64StarState
+	x ^= x >> 12
+	x ^= x << 25
+	x ^= x >> 27
+	xorShift64StarState = x
+	x *= 0x2545f4914f6cdd1d
+	x += uint64(tmp[5])
+
+	tmp[6] ^= in[6] + wharrgarblTable[x%wharrgarblTableSize]
+
+	x = xorShift64StarState
+	x ^= x >> 12
+	x ^= x << 25
+	x ^= x >> 27
+	xorShift64StarState = x
+	x *= 0x2545f4914f6cdd1d
+	x += uint64(tmp[6])
+
+	tmp[7] ^= in[7] - wharrgarblTable[x%wharrgarblTableSize]
+
+	x = xorShift64StarState
+	x ^= x >> 12
+	x ^= x << 25
+	x ^= x >> 27
+	xorShift64StarState = x
+	x *= 0x2545f4914f6cdd1d
+	x += uint64(tmp[7])
+
+	tmp[8] ^= in[8] + wharrgarblTable[x%wharrgarblTableSize]
+
+	x = xorShift64StarState
+	x ^= x >> 12
+	x ^= x << 25
+	x ^= x >> 27
+	xorShift64StarState = x
+	x *= 0x2545f4914f6cdd1d
+	x += uint64(tmp[8])
+
+	tmp[9] ^= in[9] - wharrgarblTable[x%wharrgarblTableSize]
+
+	x = xorShift64StarState
+	x ^= x >> 12
+	x ^= x << 25
+	x ^= x >> 27
+	xorShift64StarState = x
+	x *= 0x2545f4914f6cdd1d
+	x += uint64(tmp[9])
+
+	tmp[10] ^= in[10] + wharrgarblTable[x%wharrgarblTableSize]
+
+	x = xorShift64StarState
+	x ^= x >> 12
+	x ^= x << 25
+	x ^= x >> 27
+	xorShift64StarState = x
+	x *= 0x2545f4914f6cdd1d
+	x += uint64(tmp[10])
+
+	tmp[11] ^= in[11] - wharrgarblTable[x%wharrgarblTableSize]
+
+	x = xorShift64StarState
+	x ^= x >> 12
+	x ^= x << 25
+	x ^= x >> 27
+	xorShift64StarState = x
+	x *= 0x2545f4914f6cdd1d
+	x += uint64(tmp[11])
+
+	tmp[12] ^= in[12] + wharrgarblTable[x%wharrgarblTableSize]
+
+	x = xorShift64StarState
+	x ^= x >> 12
+	x ^= x << 25
+	x ^= x >> 27
+	xorShift64StarState = x
+	x *= 0x2545f4914f6cdd1d
+	x += uint64(tmp[12])
+
+	tmp[13] ^= in[13] - wharrgarblTable[x%wharrgarblTableSize]
+
+	x = xorShift64StarState
+	x ^= x >> 12
+	x ^= x << 25
+	x ^= x >> 27
+	xorShift64StarState = x
+	x *= 0x2545f4914f6cdd1d
+	x += uint64(tmp[13])
+
+	tmp[14] ^= in[14] + wharrgarblTable[x%wharrgarblTableSize]
+
+	x = xorShift64StarState
+	x ^= x >> 12
+	x ^= x << 25
+	x ^= x >> 27
+	xorShift64StarState = x
+	x *= 0x2545f4914f6cdd1d
+	x += uint64(tmp[14])
+
+	tmp[15] ^= in[15] - wharrgarblTable[x%wharrgarblTableSize]
+
+	////////////////////////////////////////////////////////////////////////////
+
+	cipher1.Encrypt(tmp, tmp)
+	cipher0.Encrypt(tmp, tmp)
+
 	return (binary.BigEndian.Uint64(tmp[0:8]) + binary.BigEndian.Uint64(tmp[8:16])) ^ inner
 }
 
@@ -474,6 +641,7 @@ func (wg *Wharrgarblr) internalWorkerFunc(mmoCipher0, mmoCipher1 cipher.Block, r
 }
 
 // Compute computes Wharrgarbl PoW using this instance.
+// It returns a proof of work and how many total search iterations were required to find it.
 func (wg *Wharrgarblr) Compute(in []byte, difficulty uint32) (out [WharrgarblOutputSize]byte, iterations uint64) {
 	wg.lock.Lock()
 	wharrgarblTableLock.RLock()
@@ -483,8 +651,8 @@ func (wg *Wharrgarblr) Compute(in []byte, difficulty uint32) (out [WharrgarblOut
 	inHashed := sha512.Sum512(in)
 	mmoCipher0, _ := aes.NewCipher(inHashed[0:32])
 	mmoCipher1, _ := aes.NewCipher(inHashed[32:64])
-	diff64 := (uint64(difficulty) << 28) | 0x000000000fffffff
-	runNonce := rand.Uint64() // a nonce that randomizes indexes in the collision table to facilitate re-use without clearing
+	diff64 := (uint64(difficulty) << 28) | 0x000000000fffffff // 64-bit modulus for collision search
+	runNonce := rand.Uint64()                                 // nonce that randomizes table entries to permit table re-use without memory zeroing
 
 	var outLock sync.Mutex
 	var doneWG sync.WaitGroup
@@ -501,7 +669,8 @@ func (wg *Wharrgarblr) Compute(in []byte, difficulty uint32) (out [WharrgarblOut
 	return
 }
 
-// Abort aborts a Compute() currently in process (results of Compute() are undefined).
+// Abort aborts a Compute() currently in process.
+// The return values of Compute() after this call are undefined and should be thrown away.
 func (wg *Wharrgarblr) Abort() {
 	atomic.StoreUint32(&wg.done, 1)
 }
