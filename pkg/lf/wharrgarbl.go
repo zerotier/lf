@@ -418,8 +418,8 @@ func (wg *Wharrgarblr) internalWorkerFunc(mmoCipher0, mmoCipher1 cipher.Block, r
 	thisCollider := rand.Uint64()
 	for atomic.LoadUint32(&wg.done) == 0 {
 		iter++
-		if (iter & 0xffffff) == 0 {
-			runtime.Gosched()
+		if (iter & 0xffff) == 0 {
+			runtime.Gosched() // this might not be necessary but doesn't seem to hurt and probably makes this coexist better on nodes
 		}
 
 		thisCollider++
