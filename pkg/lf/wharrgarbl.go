@@ -35,7 +35,7 @@ type Wharrgarblr struct {
 	done        uint32
 }
 
-// wharrgarblHash is a loosely Matyer-Meyer-Oseas-like keyed 64-bit single block hash.
+// wharrgarblHash is a loosely Matyer-Meyer-Oseas inspired keyed 64-bit single block hash.
 // This is only used for Wharrgarbl, not as a hash for authentication or other "harder" security needs.
 func wharrgarblHash(cipher0, cipher1 cipher.Block, tmp []byte, in *[16]byte) uint64 {
 	_ = tmp[15]
@@ -536,6 +536,168 @@ func wharrgarblHash(cipher0, cipher1 cipher.Block, tmp []byte, in *[16]byte) uin
 
 	cipher0.Encrypt(tmp, tmp)
 
+	////////////////////////////////////////////////////////////////////////////
+
+	tmp[0] ^= in[0] + wharrgarblTable[x%wharrgarblTableSize]
+
+	x = xorShift64StarState
+	x ^= x >> 12
+	x ^= x << 25
+	x ^= x >> 27
+	xorShift64StarState = x
+	x *= xorShift64Const
+	x += uint64(tmp[0])
+
+	tmp[1] ^= in[1] - wharrgarblTable[x%wharrgarblTableSize]
+
+	x = xorShift64StarState
+	x ^= x >> 12
+	x ^= x << 25
+	x ^= x >> 27
+	xorShift64StarState = x
+	x *= xorShift64Const
+	x += uint64(tmp[1])
+
+	tmp[2] ^= in[2] + wharrgarblTable[x%wharrgarblTableSize]
+
+	x = xorShift64StarState
+	x ^= x >> 12
+	x ^= x << 25
+	x ^= x >> 27
+	xorShift64StarState = x
+	x *= xorShift64Const
+	x += uint64(tmp[2])
+
+	tmp[3] ^= in[3] - wharrgarblTable[x%wharrgarblTableSize]
+
+	x = xorShift64StarState
+	x ^= x >> 12
+	x ^= x << 25
+	x ^= x >> 27
+	xorShift64StarState = x
+	x *= xorShift64Const
+	x += uint64(tmp[3])
+
+	tmp[4] ^= in[4] + wharrgarblTable[x%wharrgarblTableSize]
+
+	x = xorShift64StarState
+	x ^= x >> 12
+	x ^= x << 25
+	x ^= x >> 27
+	xorShift64StarState = x
+	x *= xorShift64Const
+	x += uint64(tmp[4])
+
+	tmp[5] ^= in[5] - wharrgarblTable[x%wharrgarblTableSize]
+
+	x = xorShift64StarState
+	x ^= x >> 12
+	x ^= x << 25
+	x ^= x >> 27
+	xorShift64StarState = x
+	x *= xorShift64Const
+	x += uint64(tmp[5])
+
+	tmp[6] ^= in[6] + wharrgarblTable[x%wharrgarblTableSize]
+
+	x = xorShift64StarState
+	x ^= x >> 12
+	x ^= x << 25
+	x ^= x >> 27
+	xorShift64StarState = x
+	x *= xorShift64Const
+	x += uint64(tmp[6])
+
+	tmp[7] ^= in[7] - wharrgarblTable[x%wharrgarblTableSize]
+
+	x = xorShift64StarState
+	x ^= x >> 12
+	x ^= x << 25
+	x ^= x >> 27
+	xorShift64StarState = x
+	x *= xorShift64Const
+	x += uint64(tmp[7])
+
+	tmp[8] ^= in[8] + wharrgarblTable[x%wharrgarblTableSize]
+
+	x = xorShift64StarState
+	x ^= x >> 12
+	x ^= x << 25
+	x ^= x >> 27
+	xorShift64StarState = x
+	x *= xorShift64Const
+	x += uint64(tmp[8])
+
+	tmp[9] ^= in[9] - wharrgarblTable[x%wharrgarblTableSize]
+
+	x = xorShift64StarState
+	x ^= x >> 12
+	x ^= x << 25
+	x ^= x >> 27
+	xorShift64StarState = x
+	x *= xorShift64Const
+	x += uint64(tmp[9])
+
+	tmp[10] ^= in[10] + wharrgarblTable[x%wharrgarblTableSize]
+
+	x = xorShift64StarState
+	x ^= x >> 12
+	x ^= x << 25
+	x ^= x >> 27
+	xorShift64StarState = x
+	x *= xorShift64Const
+	x += uint64(tmp[10])
+
+	tmp[11] ^= in[11] - wharrgarblTable[x%wharrgarblTableSize]
+
+	x = xorShift64StarState
+	x ^= x >> 12
+	x ^= x << 25
+	x ^= x >> 27
+	xorShift64StarState = x
+	x *= xorShift64Const
+	x += uint64(tmp[11])
+
+	tmp[12] ^= in[12] + wharrgarblTable[x%wharrgarblTableSize]
+
+	x = xorShift64StarState
+	x ^= x >> 12
+	x ^= x << 25
+	x ^= x >> 27
+	xorShift64StarState = x
+	x *= xorShift64Const
+	x += uint64(tmp[12])
+
+	tmp[13] ^= in[13] - wharrgarblTable[x%wharrgarblTableSize]
+
+	x = xorShift64StarState
+	x ^= x >> 12
+	x ^= x << 25
+	x ^= x >> 27
+	xorShift64StarState = x
+	x *= xorShift64Const
+	x += uint64(tmp[13])
+
+	tmp[14] ^= in[14] + wharrgarblTable[x%wharrgarblTableSize]
+
+	x = xorShift64StarState
+	x ^= x >> 12
+	x ^= x << 25
+	x ^= x >> 27
+	xorShift64StarState = x
+	x *= xorShift64Const
+	x += uint64(tmp[14])
+
+	tmp[15] ^= in[15] - wharrgarblTable[x%wharrgarblTableSize]
+
+	////////////////////////////////////////////////////////////////////////////
+
+	cipher0.Encrypt(tmp, tmp)
+
+	y ^= binary.BigEndian.Uint64(tmp[0:8]) + binary.BigEndian.Uint64(tmp[8:16])
+
+	cipher1.Encrypt(tmp, tmp)
+
 	return (binary.BigEndian.Uint64(tmp[0:8]) + binary.BigEndian.Uint64(tmp[8:16])) ^ y
 }
 
@@ -563,12 +725,12 @@ func NewWharrgarblr(memorySize uint, threadCount uint) (wg *Wharrgarblr) {
 		return
 	}
 	wharrgarblTable = new([wharrgarblTableSize]byte)
-	copy(wharrgarblTable[:], []byte("My hovercraft is full of eels!"))
-	for i := 0; i < 4; i++ {
+	copy(wharrgarblTable[:], []byte("My hovercraft is full of eels!")) // magic seed for expanding table
+	for i := 0; i < 2; i++ {
 		h := sha512.Sum512(wharrgarblTable[:])
 		aes, _ := aes.NewCipher(h[0:32])
 		c := cipher.NewCFBEncrypter(aes, h[32:48])
-		for k := 0; k < 4; k++ {
+		for k := 0; k < 8; k++ {
 			c.XORKeyStream(wharrgarblTable[:], wharrgarblTable[:])
 		}
 	}
