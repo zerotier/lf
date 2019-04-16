@@ -260,7 +260,7 @@ func TestCore(out io.Writer) bool {
 // TestWharrgarbl tests and runs benchmarks on the Wharrgarbl proof of work.
 func TestWharrgarbl(out io.Writer) bool {
 	var startTime, iterations, runTime uint64
-	testWharrgarblSamples := 25
+	testWharrgarblSamples := 16
 	var junk [32]byte
 	var wout [WharrgarblOutputSize]byte
 
@@ -277,7 +277,7 @@ func TestWharrgarbl(out io.Writer) bool {
 	}
 	th := wharrgarblHash(tc0, tc1, make([]byte, 16), &testIn)
 	fmt.Fprintf(out, "Testing Wharrgarbl keyed 64-bit hash function... %.16x ", th)
-	if th == 0xa03cb5c8debd5fd8 {
+	if th == 0x3ccaa40b839e0f72 {
 		fmt.Fprintf(out, "OK\n")
 	} else {
 		fmt.Fprintf(out, "FAILED\n")
