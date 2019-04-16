@@ -63,6 +63,7 @@ Usage: lf [-global options] <command> [-command options] [...]
 Global options:
   -path <path>                              Override default (` + lfDefaultPath + `)
   -use <url>                                Use this node/proxy URL
+  -owner <owner>                            Use this owner instead of default
   -verbose                                  Generate verbose output to stderr
   -json                                     Output raw JSON for API queries
 `)
@@ -80,9 +81,9 @@ func printHelp(cmd string) {
 		case "selftest":
 			fmt.Print(`
 The 'selftest' command can run the following tests:
-  core                                      Test core functions and data types
-  wharrgarbl                                Test and benchmark work function
-  database                                  Test database and graph algorithms
+  core                                    Test core functions and data types
+  wharrgarbl                              Test and benchmark work function
+  database                                Test database and graph algorithms
 
 Use 'all' to run all tests.
 `)
@@ -93,22 +94,20 @@ Use 'all' to run all tests.
 
 	fmt.Print(`
 Commands:
-  help                                      Display help about a command
-  version                                   Display version information
-  selftest [test name]                      Show tests or run an internal test
-  node-start                                Start a full node
-  proxy-start                               Start a proxy
-  use <url>                                 Add a node URL for client/proxy
-  drop <url>                                Remove a node URL for client/proxy
-  set [-options] [name[#ord]] [...] <value> Set a new entry
-      [-owner <owner>]                      - Use this specific owner
-      [-file]                               - Value is a file, not a literal
-  owner <operation> [...]                   Owner management commands
-        list                                - List owners
-        new <name>                          - Create a new owner
-        default <name>                      - Set default owner
-        delete <name>                       - Delete an owner (PERMANENT)
-        rename <old name> <new name>        - Rename an owner
+  help                                    Display help about a command
+  version                                 Display version information
+  selftest [test name]                    Show tests or run an internal test
+  node-start                              Start a full node
+  proxy-start                             Start a proxy
+  use <url>                               Add a node URL for client/proxy
+  drop <url>                              Remove a node URL for client/proxy
+	set [<selector#ord>] [...] <value>      Set a value in the data store
+  owner <operation> [...]                 Owner management commands
+        list                              - List owners
+        new <name>                        - Create a new owner
+        default <name>                    - Set default owner
+        delete <name>                     - Delete an owner (PERMANENT)
+        rename <old name> <new name>      - Rename an owner
 
 Configuration and other data is stored in LF's home directory. The default
 location for the current user on this system is:
@@ -147,18 +146,13 @@ func doUse(cfg *Config, basePath string, jsonOutput bool, urlOverride string, ve
 func doDrop(cfg *Config, basePath string, jsonOutput bool, urlOverride string, verboseOutput bool, args []string) {
 }
 
-func doSet(cfg *Config, basePath string, jsonOutput bool, urlOverride string, verboseOutput bool, args []string) {
-	setOpts := flag.NewFlagSet("set", flag.ContinueOnError)
-	owner := setOpts.String("owner", "", "")
-	valueIsFile := setOpts.Bool("file", false, "")
-	err := setOpts.Parse(args)
-	if err != nil {
+func doSet(cfg *Config, owner *ConfigOwner, basePath string, jsonOutput bool, urlOverride string, verboseOutput bool, args []string) {
+	if len(args) < 1 {
 		printHelp("")
 		return
 	}
-	args = setOpts.Args()
-	if len(args) < 1 {
-		printHelp("")
+	if owner == nil {
+		fmt.Printf("ERROR: no owners specified and no default owner\n")
 		return
 	}
 
@@ -179,20 +173,13 @@ func doSet(cfg *Config, basePath string, jsonOutput bool, urlOverride string, ve
 		})
 	}
 
-	cfgOwner := cfg.Owners[*owner]
-	if cfgOwner == nil {
-		fmt.Printf("ERROR: owner '%s' not found.\n", *owner)
-	}
-
 	value := []byte(args[len(args)-1])
-	if *valueIsFile {
-	}
 
 	ts := lf.TimeSec()
 	req := lf.APINew{
 		Selectors:       selectors,
 		MaskingKey:      nil,
-		OwnerPrivateKey: cfgOwner.OwnerPrivate,
+		OwnerPrivateKey: owner.OwnerPrivate,
 		Links:           nil,
 		Value:           value,
 		Timestamp:       &ts,
@@ -361,6 +348,7 @@ func main() {
 	globalOpts := flag.NewFlagSet("global", flag.ContinueOnError)
 	basePath := globalOpts.String("path", lfDefaultPath, "")
 	urlOverride := globalOpts.String("url", "", "")
+	ownerOverride := globalOpts.String("owner", "", "")
 	verboseOutput := globalOpts.Bool("verbose", false, "")
 	jsonOutput := globalOpts.Bool("json", false, "")
 	err := globalOpts.Parse(os.Args)
@@ -387,6 +375,22 @@ func main() {
 		fmt.Printf("ERROR: cannot read or parse %s: %s\n", cfgPath, err.Error())
 		os.Exit(-1)
 		return
+	}
+
+	var owner *ConfigOwner
+	if len(*ownerOverride) > 0 {
+		owner = cfg.Owners[*ownerOverride]
+		if owner == nil {
+			fmt.Printf("ERROR: owner '%s' not found\n", *ownerOverride)
+			os.Exit(-1)
+			return
+		}
+	}
+	for _, o := range cfg.Owners {
+		if o.Default {
+			owner = o
+			break
+		}
 	}
 
 	switch args[1] {
@@ -439,7 +443,7 @@ func main() {
 		doDrop(&cfg, *basePath, *jsonOutput, *urlOverride, *verboseOutput, cmdArgs)
 
 	case "set":
-		doSet(&cfg, *basePath, *jsonOutput, *urlOverride, *verboseOutput, cmdArgs)
+		doSet(&cfg, owner, *basePath, *jsonOutput, *urlOverride, *verboseOutput, cmdArgs)
 
 	case "owner":
 		doOwner(&cfg, *basePath, *jsonOutput, *urlOverride, *verboseOutput, cmdArgs)
