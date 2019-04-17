@@ -146,7 +146,7 @@ func doUse(cfg *Config, basePath string, jsonOutput bool, urlOverride string, ve
 func doDrop(cfg *Config, basePath string, jsonOutput bool, urlOverride string, verboseOutput bool, args []string) {
 }
 
-func doSet(cfg *Config, owner *ConfigOwner, basePath string, jsonOutput bool, urlOverride string, verboseOutput bool, args []string) {
+func doSet(cfg *Config, owner *ConfigOwner, basePath string, jsonOutput bool, urlOverride string, maskKey string, verboseOutput bool, args []string) {
 	if len(args) < 1 {
 		printHelp("")
 		return
@@ -154,6 +154,11 @@ func doSet(cfg *Config, owner *ConfigOwner, basePath string, jsonOutput bool, ur
 	if owner == nil {
 		fmt.Printf("ERROR: no owners specified and no default owner\n")
 		return
+	}
+
+	var mk lf.Blob
+	if len(maskKey) > 0 {
+		mk = []byte(maskKey)
 	}
 
 	var selectors []lf.APINewSelector
@@ -178,7 +183,7 @@ func doSet(cfg *Config, owner *ConfigOwner, basePath string, jsonOutput bool, ur
 	ts := lf.TimeSec()
 	req := lf.APINew{
 		Selectors:       selectors,
-		MaskingKey:      nil,
+		MaskingKey:      mk,
 		OwnerPrivateKey: owner.OwnerPrivate,
 		Links:           nil,
 		Value:           value,
@@ -349,6 +354,7 @@ func main() {
 	basePath := globalOpts.String("path", lfDefaultPath, "")
 	urlOverride := globalOpts.String("url", "", "")
 	ownerOverride := globalOpts.String("owner", "", "")
+	maskKey := globalOpts.String("mask", "", "")
 	verboseOutput := globalOpts.Bool("verbose", false, "")
 	jsonOutput := globalOpts.Bool("json", false, "")
 	err := globalOpts.Parse(os.Args)
@@ -443,7 +449,7 @@ func main() {
 		doDrop(&cfg, *basePath, *jsonOutput, *urlOverride, *verboseOutput, cmdArgs)
 
 	case "set":
-		doSet(&cfg, owner, *basePath, *jsonOutput, *urlOverride, *verboseOutput, cmdArgs)
+		doSet(&cfg, owner, *basePath, *jsonOutput, *urlOverride, *maskKey, *verboseOutput, cmdArgs)
 
 	case "owner":
 		doOwner(&cfg, *basePath, *jsonOutput, *urlOverride, *verboseOutput, cmdArgs)

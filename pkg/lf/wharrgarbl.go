@@ -27,10 +27,10 @@ const wharrgarblTableMask = 0x7ffffff
 var wharrgarblTable *[wharrgarblTableSize]byte
 var wharrgarblTableLock sync.RWMutex
 
-// WharrgarblOutputSize is the size of Wharrgarbl's result in bytes.
+// WharrgarblOutputSize is the size of Wharrgarbl's result in bytes
 const WharrgarblOutputSize = 14
 
-// Wharrgarblr is an instance of the Wharrgarbl proof of work function.
+// Wharrgarblr is an instance of the Wharrgarbl proof of work function
 type Wharrgarblr struct {
 	memory      []uint64
 	lock        sync.Mutex
@@ -42,6 +42,7 @@ type Wharrgarblr struct {
 // This is only used for Wharrgarbl, not as a hash for authentication or other "harder" security needs.
 func wharrgarblHash(cipher0, cipher1 cipher.Block, tmp []byte, in *[16]byte) uint64 {
 	_ = tmp[15]
+	_ = wharrgarblTable[wharrgarblTableSize-1]
 
 	////////////////////////////////////////////////////////////////////////////
 
