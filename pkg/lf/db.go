@@ -17,6 +17,7 @@ package lf
 import "C"
 
 import (
+	"fmt"
 	"log"
 	"strconv"
 	"sync"
@@ -75,9 +76,7 @@ func (db *db) open(basePath string, loggers [logLevelCount]*log.Logger, syncCall
 			}
 		}
 
-		globalLoggersLock.Lock()
-		globalLoggers[db.globalLoggerIdx] = [logLevelCount]*log.Logger{nil, nil, nil, nil, nil}
-		globalLoggersLock.Unlock()
+		db.close()
 
 		return ErrDatabase{int(cerr), "open failed (" + errstr + ")"}
 	}
@@ -86,14 +85,21 @@ func (db *db) open(basePath string, loggers [logLevelCount]*log.Logger, syncCall
 }
 
 func (db *db) close() {
-	C.ZTLF_DB_Close(db.cdb)
+	if db.cdb != nil {
+		C.ZTLF_DB_Close(db.cdb)
+	}
+	db.cdb = nil
 
 	globalLoggersLock.Lock()
-	globalLoggers[db.globalLoggerIdx] = [logLevelCount]*log.Logger{nil, nil, nil, nil, nil}
+	if db.globalLoggerIdx < uint(len(globalLoggers)) {
+		globalLoggers[db.globalLoggerIdx] = [logLevelCount]*log.Logger{nil, nil, nil, nil, nil}
+	}
 	globalLoggersLock.Unlock()
 
 	globalSyncCallbacksLock.Lock()
-	globalSyncCallbacks[db.globalSyncCallbackIdx] = nil
+	if db.globalSyncCallbackIdx < uint(len(globalSyncCallbacks)) {
+		globalSyncCallbacks[db.globalSyncCallbackIdx] = nil
+	}
 	globalSyncCallbacksLock.Unlock()
 }
 
@@ -312,7 +318,6 @@ func (db *db) haveSynchronizedWithID(id []byte, notOwner []byte) bool {
 	return (C.ZTLF_DB_HaveSynchronizedWithID(db.cdb, unsafe.Pointer(&id[0]), unsafe.Pointer(&notOwner[0]), C.uint(len(notOwner))) != 0)
 }
 
-/*
 func (db *db) getConfig(key string) []byte {
 	var tmp [dbMaxConfigValueSize]byte
 	l := C.ZTLF_DB_GetConfig(db.cdb, C.CString(key), unsafe.Pointer(&tmp[0]), C.uint(dbMaxConfigValueSize))
@@ -327,7 +332,7 @@ func (db *db) getConfig(key string) []byte {
 func (db *db) setConfig(key string, value []byte) error {
 	if len(value) > 0 {
 		if len(value) > dbMaxConfigValueSize {
-			return ErrorInvalidParameter
+			return ErrInvalidParameter
 		}
 		e := C.ZTLF_DB_SetConfig(db.cdb, C.CString(key), unsafe.Pointer(&value[0]), C.uint(len(value)))
 		if e != 0 {
@@ -336,4 +341,3 @@ func (db *db) setConfig(key string, value []byte) error {
 	}
 	return nil
 }
-*/

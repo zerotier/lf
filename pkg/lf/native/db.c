@@ -211,7 +211,7 @@ int ZTLF_DB_Open(
 #endif
 
 	/* Open database and initialize schema if necessary. */
-	snprintf(tmp,sizeof(tmp),"%s" ZTLF_PATH_SEPARATOR "index.db",path);
+	snprintf(tmp,sizeof(tmp),"%s" ZTLF_PATH_SEPARATOR "node.db",path);
 	if ((e = sqlite3_open_v2(tmp,&db->dbc,SQLITE_OPEN_CREATE|SQLITE_OPEN_READWRITE|SQLITE_OPEN_NOMUTEX,NULL)) != SQLITE_OK)
 		goto exit_with_error;
 	if ((e = sqlite3_exec(db->dbc,(ZTLF_DB_INIT_SQL),NULL,NULL,NULL)) != SQLITE_OK)
@@ -298,7 +298,7 @@ int ZTLF_DB_Open(
 		e = 0;
 		goto exit_with_error;
 	}
-	snprintf(tmp,sizeof(tmp),"%s" ZTLF_PATH_SEPARATOR "weights.bin",path);
+	snprintf(tmp,sizeof(tmp),"%s" ZTLF_PATH_SEPARATOR "weights",path);
 	e = ZTLF_SUint96_Open(&db->wf,tmp);
 	if (e) {
 		errno = e;
