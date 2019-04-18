@@ -8,7 +8,7 @@
 #ifndef ZT_LF_COMMON_H
 #define ZT_LF_COMMON_H
 
-/* Uncommment to trace DB internals */
+/* Uncommment to trace DB internals -- this dumps a LOT of information! */
 /* #define ZTLF_TRACE 1 */
 
 /* Only necessary on some old 32-bit machines which aren't "officially" supported, but do it anyway. */
@@ -40,6 +40,7 @@
 #define PATH_MAX 1024
 #endif
 
+/* TODO: Windows support is not complete, but we have some stubs */
 #if defined(_WIN32) || defined(WIN32) || defined(_WIN64) || defined(WIN64)
 
 #include <WinSock2.h>
@@ -58,14 +59,9 @@
 
 #include <sys/ioctl.h>
 #include <sys/stat.h>
-#include <sys/socket.h>
-#include <sys/select.h>
 #include <sys/mman.h>
-#include <netinet/in.h>
-#include <netinet/tcp.h>
 #include <arpa/inet.h>
 #include <unistd.h>
-#include <signal.h>
 #include <pthread.h>
 #include <sched.h>
 
@@ -79,15 +75,6 @@
 #define ZTLF_EOL "\n"
 
 #endif /* Windows or non-Windows? ------------------------------------- */
-
-/* send flag to selectively invoke non-blocking socket behavior */
-#ifndef MSG_DONTWAIT
-#ifdef MSG_NONBLOCK
-#define MSG_DONTWAIT MSG_NONBLOCK
-#else
-#error Neither MSG_DONTWAIT nor MSG_NONBLOCK exist
-#endif
-#endif
 
 /* Branch optimization macros if supported, otherwise these are no-ops. */
 #if (defined(__GNUC__) && (__GNUC__ >= 3)) || (defined(__INTEL_COMPILER) && (__INTEL_COMPILER >= 800)) || defined(__clang__)
@@ -347,6 +334,7 @@ static inline uint64_t ZTLF_htonll(const uint64_t n)
 #define ZTLF_NEG(e) (((e) <= 0) ? (e) : -(e))
 #define ZTLF_POS(e) (((e) >= 0) ? (e) : -(e))
 
+/* These values must be the same as the log levels in Go code. */
 #define ZTLF_LOG_LEVEL_FATAL 0
 #define ZTLF_LOG_LEVEL_WARNING 1
 #define ZTLF_LOG_LEVEL_NORMAL 2
@@ -382,23 +370,5 @@ static inline void ZTLF_L_func(LogOutputCallback logger,void *loggerArg,int leve
 #endif
 
 #define ZTLF_MALLOC_CHECK(m) if (unlikely(!((m)))) { fprintf(stderr,"malloc() failed!" ZTLF_EOL); fflush(stderr); abort(); }
-
-static inline uint64_t ZTLF_timeMs()
-{
-#ifdef __WINDOWS__
-	FILETIME ft;
-	SYSTEMTIME st;
-	ULARGE_INTEGER tmp;
-	GetSystemTime(&st);
-	SystemTimeToFileTime(&st,&ft);
-	tmp.LowPart = ft.dwLowDateTime;
-	tmp.HighPart = ft.dwHighDateTime;
-	return (uint64_t)( ((tmp.QuadPart - 116444736000000000ULL) / 10000ULL) + st.wMilliseconds );
-#else
-	struct timeval tv;
-	gettimeofday(&tv,(struct timezone *)0);
-	return ( (1000ULL * (uint64_t)tv.tv_sec) + (uint64_t)(tv.tv_usec / 1000) );
-#endif
-}
 
 #endif
