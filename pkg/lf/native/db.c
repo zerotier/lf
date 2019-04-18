@@ -399,7 +399,7 @@ static void *_ZTLF_DB_graphThreadMain(void *arg)
 
 		while ((recordQueue.size > 0)&&(db->running)) {
 			const int64_t waitingGoff = recordQueue.v[--recordQueue.size];
-			/* ZTLF_L_trace("graph: adjusting weights for records below graph node %lld",(long long)waitingGoff); */
+			ZTLF_L_trace("graph: adjusting weights for records below graph node %lld",(long long)waitingGoff);
 
 			/* Get record score and any previously known holes in the graph below this node. */
 			int holeCount = 0;
@@ -423,7 +423,7 @@ static void *_ZTLF_DB_graphThreadMain(void *arg)
 				hk[1] = (uint64_t)sqlite3_column_int(db->sGetHoles,1);
 				ZTLF_Map128_Set(&holes,hk,(void *)1);
 				++holeCount;
-				/* ZTLF_L_trace("graph: graph below %lld previously led to hole at %llu[%llu]",(long long)waitingGoff,(unsigned long long)hk[0],(unsigned long long)hk[1]); */
+				ZTLF_L_trace("graph: graph below %lld previously led to hole at %llu[%llu]",(long long)waitingGoff,(unsigned long long)hk[0],(unsigned long long)hk[1]);
 			}
 			pthread_mutex_unlock(&db->dbLock);
 
@@ -475,7 +475,7 @@ static void *_ZTLF_DB_graphThreadMain(void *arg)
 			 * adjustments, and skipping where the holes were previously. This reconstructs the visited set to
 			 * avoid adjusting weights on previously visited nodes a second time. */
 			if (holeCount > 0) {
-				/* ZTLF_L_trace("graph: node %lld has %d holes, performing no-op pass starting with %lu nodes to regenerate visited node set",waitingGoff,holeCount,graphTraversalQueue.size); */
+				ZTLF_L_trace("graph: node %lld has %d holes, performing no-op pass starting with %lu nodes to regenerate visited node set",waitingGoff,holeCount,graphTraversalQueue.size);
 				for(unsigned long i=0;i<graphTraversalQueue.size;) {
 					const int64_t goff = graphTraversalQueue.v[i++];
 					if (ZTLF_ISet_Put(visited,goff)) {
@@ -524,7 +524,7 @@ static void *_ZTLF_DB_graphThreadMain(void *arg)
 					if (gn) {
 						const int64_t goff = ZTLF_get64_le(gn->linkedRecordGoff[(uintptr_t)ztlfMapKey[1]]);
 						if (goff >= 0) {
-							/* ZTLF_L_trace("graph: hole below %lld at %llu[%u] is now filled with pointer to %lld",(long long)waitingGoff,(unsigned long long)ztlfMapKey[0],(unsigned int)ztlfMapKey[1],(long long)goff); */
+							ZTLF_L_trace("graph: hole below %lld at %llu[%u] is now filled with pointer to %lld",(long long)waitingGoff,(unsigned long long)ztlfMapKey[0],(unsigned int)ztlfMapKey[1],(long long)goff);
 							ZTLF_Vector_i64_Append(&graphTraversalQueue,goff);
 							pthread_mutex_lock(&db->dbLock);
 							sqlite3_reset(db->sDeleteHole);
@@ -630,9 +630,13 @@ void ZTLF_DB_Close(struct ZTLF_DB *db)
 	LogOutputCallback logger = db->logger;
 	void *loggerArg = (void *)db->loggerArg;
 
+	ZTLF_L_trace("internal C database shutting down");
+
 	db->running = false;
 	if (db->graphThreadStarted)
 		pthread_join(db->graphThread,NULL);
+
+	ZTLF_L_trace("graph thread has stopped");
 
 	for(int i=0;i<ZTLF_DB_GRAPH_NODE_LOCK_ARRAY_SIZE;++i)
 		pthread_mutex_lock(&db->graphNodeLocks[i]);
@@ -692,6 +696,8 @@ void ZTLF_DB_Close(struct ZTLF_DB *db)
 		pthread_mutex_destroy(&db->graphNodeLocks[i]);
 	pthread_rwlock_destroy(&db->gfLock);
 	pthread_rwlock_destroy(&db->dfLock);
+
+	ZTLF_L_trace("shutdown complete");
 }
 
 struct _ZTLF_DB_GetMatching_follow

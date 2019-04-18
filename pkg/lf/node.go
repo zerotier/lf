@@ -58,7 +58,7 @@ const (
 	DefaultP2PPort = 9908
 )
 
-var p2pProtoMessageTypeNames = []string{"Nop", "Record", "RequestRecordsByHash", "HaveRecords", "Peer"}
+var p2pProtoMessageNames = []string{"Nop", "Record", "RequestRecordsByHash", "HaveRecords", "Peer"}
 var nullLogger = log.New(ioutil.Discard, "", 0)
 
 // peer represents a single TCP connection to another peer using the LF P2P TCP protocol
@@ -86,26 +86,28 @@ type announcedPeer struct {
 
 // Node is an instance of a full LF node supporting both P2P and HTTP access.
 type Node struct {
-	log                [logLevelCount]*log.Logger // Pointers to loggers for each log level (inoperative levels point to a discard logger)
-	linkKeyPriv        []byte                     // P-384 private key
-	linkKeyPubX        *big.Int                   // X coordinate of P-384 public key
-	linkKeyPubY        *big.Int                   // Y coordinate of P-384 public key
-	linkKeyPub         []byte                     // Point compressed P-384 public key
-	owner              *Owner                     // Owner for commentary and/or "mining" records
-	genesisParameters  GenesisParameters          // Genesis configuration for this node's network
-	genesisOwner       []byte                     // Owner of genesis record(s)
-	announcedPeers     []announcedPeer            // Peers we've received announcements for
-	announcedPeersLock sync.Mutex
-	peers              map[string]*peer // Currently connected peers by address
-	peersLock          sync.RWMutex     //
-	httpTCPListener    *net.TCPListener //
-	httpServer         *http.Server     //
-	p2pTCPListener     *net.TCPListener //
-	wg                 *Wharrgarblr     // Work function, created if genesis parameters indicate one
-	db                 db               //
-	backgroundThreadWG sync.WaitGroup   // Wait group for background goroutines
-	startTime          uint64           // Time node was started in seconds since epoch
-	shutdown           uint32           // Set to non-zero to signal all background goroutines to exit
+	log                      [logLevelCount]*log.Logger // Pointers to loggers for each log level (inoperative levels point to a discard logger)
+	linkKeyPriv              []byte                     // P-384 private key
+	linkKeyPubX              *big.Int                   // X coordinate of P-384 public key
+	linkKeyPubY              *big.Int                   // Y coordinate of P-384 public key
+	linkKeyPub               []byte                     // Point compressed P-384 public key
+	owner                    *Owner                     // Owner for commentary and/or "mining" records
+	genesisParameters        GenesisParameters          // Genesis configuration for this node's network
+	genesisOwner             []byte                     // Owner of genesis record(s)
+	announcedPeers           []announcedPeer            // Peers we've received announcements for
+	announcedPeersLock       sync.Mutex                 //
+	connectionsInStartup     map[*net.TCPConn]bool      // Connections in startup state but not yet in peers[]
+	connectionsInStartupLock sync.Mutex                 //
+	peers                    map[string]*peer           // Currently connected peers by address
+	peersLock                sync.RWMutex               //
+	httpTCPListener          *net.TCPListener           //
+	httpServer               *http.Server               //
+	p2pTCPListener           *net.TCPListener           //
+	wg                       *Wharrgarblr               // Work function, created if genesis parameters indicate one
+	db                       db                         //
+	backgroundThreadWG       sync.WaitGroup             // Wait group for background goroutines
+	startTime                uint64                     // Time node was started in seconds since epoch
+	shutdown                 uint32                     // Set to non-zero to signal all background goroutines to exit
 }
 
 // NewNode creates and starts a node.
@@ -136,19 +138,24 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 		n.log[i] = nullLogger
 	}
 
+	n.connectionsInStartup = make(map[*net.TCPConn]bool)
+	n.peers = make(map[string]*peer)
+
 	// Open node database and other related files
 	err = n.db.open(basePath, n.log, func(doff uint64, dlen uint, hash *[32]byte) {
 		// This is the handler passed to 'db' to be called when records are fully synchronized, meaning
 		// they have all their dependencies met and are ready to be replicated.
 		if atomic.LoadUint32(&n.shutdown) == 0 {
-			n.backgroundThreadWG.Add(1)
 			go func() {
+				if atomic.LoadUint32(&n.shutdown) != 0 {
+					return
+				}
+
 				defer func() {
 					e := recover()
 					if e != nil {
 						n.log[LogLevelWarning].Printf("WARNING: unexpected panic replicating synchronized record: %s", e)
 					}
-					n.backgroundThreadWG.Done()
 				}()
 
 				var msg [33]byte
@@ -166,6 +173,8 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 							p.send(msg[:])
 						}
 					}
+				} else {
+					n.log[LogLevelVerbose].Printf("record %x fully synchronized", *hash)
 				}
 				n.peersLock.RUnlock()
 			}()
@@ -213,8 +222,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 		n.db.setConfig("owner-ed25519.private", n.owner.PrivateBytes())
 	}
 
-	n.peers = make(map[string]*peer)
-
+	// Listen for HTTP connections
 	var ta net.TCPAddr
 	ta.Port = httpPort
 	n.httpTCPListener, err = net.ListenTCP("tcp", &ta)
@@ -230,6 +238,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 	}
 	n.httpServer.SetKeepAlivesEnabled(true)
 
+	// Listen for P2P connections
 	ta.Port = p2pPort
 	n.p2pTCPListener, err = net.ListenTCP("tcp", &ta)
 	if err != nil {
@@ -309,8 +318,14 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 	n.backgroundThreadWG.Add(1)
 	go func() {
 		defer n.backgroundThreadWG.Done()
-		for atomic.LoadUint32(&n.shutdown) == 0 {
+		for atomic.LoadUint32(&n.shutdown) == 0 && n.p2pTCPListener != nil {
 			c, _ := n.p2pTCPListener.AcceptTCP()
+			if atomic.LoadUint32(&n.shutdown) != 0 {
+				if c != nil {
+					c.Close()
+				}
+				break
+			}
 			if c != nil {
 				n.backgroundThreadWG.Add(1)
 				go p2pConnectionHandler(n, c, nil, true)
@@ -323,7 +338,9 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 	go func() {
 		defer n.backgroundThreadWG.Done()
 		n.httpServer.Serve(n.httpTCPListener)
-		n.httpServer.Close()
+		if n.httpServer != nil {
+			n.httpServer.Close()
+		}
 	}()
 
 	// Start background housekeeping thread
@@ -332,7 +349,10 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 		defer n.backgroundThreadWG.Done()
 		var lastCleanedPeerHasRecords, lastCleanedAnnouncedPeers uint64
 		for atomic.LoadUint32(&n.shutdown) == 0 {
-			time.Sleep(time.Second * 10)
+			time.Sleep(time.Second)
+			if atomic.LoadUint32(&n.shutdown) != 0 {
+				break
+			}
 			now := TimeMs()
 
 			// Clean peer "has record" map entries older than 5 minutes.
@@ -392,10 +412,11 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 	n.backgroundThreadWG.Add(1)
 	go func() {
 		defer n.backgroundThreadWG.Done()
+		time.Sleep(5 * time.Second)
 		var backgroundWorkFunction *Wharrgarblr
 		for atomic.LoadUint32(&n.shutdown) == 0 {
 			time.Sleep(time.Millisecond * 100)
-			if n.genesisParameters.RecordMinLinks > 0 {
+			if n.genesisParameters.RecordMinLinks > 0 && atomic.LoadUint32(&n.shutdown) == 0 {
 				links, err := n.db.getLinks2(n.genesisParameters.RecordMinLinks)
 				if err == nil && uint(len(links)) >= n.genesisParameters.RecordMinLinks {
 					if n.genesisParameters.WorkRequired {
@@ -427,40 +448,49 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 // Stop terminates the running node, blocking until all gorountines are done.
 // No methods should be called after this and the Node should be discarded.
 func (n *Node) Stop() {
-	atomic.StoreUint32(&n.shutdown, 1)
-
-	n.peersLock.Lock()
-	if n.peers != nil {
-		for _, p := range n.peers {
-			if p.c != nil {
-				p.c.Close()
+	n.log[LogLevelNormal].Printf("shutting down")
+	if atomic.SwapUint32(&n.shutdown, 1) == 0 {
+		n.connectionsInStartupLock.Lock()
+		if n.connectionsInStartup != nil {
+			for c := range n.connectionsInStartup {
+				c.Close()
 			}
 		}
+		n.connectionsInStartupLock.Unlock()
+
+		n.peersLock.RLock()
+		if n.peers != nil {
+			for _, p := range n.peers {
+				if p.c != nil {
+					p.c.Close()
+				}
+			}
+		}
+		n.peersLock.RUnlock()
+
+		if n.httpServer != nil {
+			n.httpServer.Close()
+		}
+		if n.p2pTCPListener != nil {
+			n.p2pTCPListener.Close()
+		}
+
+		n.backgroundThreadWG.Wait()
+
+		n.httpServer = nil
+		n.httpTCPListener = nil
+		n.p2pTCPListener = nil
+
+		n.connectionsInStartupLock.Lock()
+		n.connectionsInStartup = nil
+		n.connectionsInStartupLock.Unlock()
+
+		n.peersLock.Lock()
 		n.peers = nil
+		n.peersLock.Unlock()
+
+		n.db.close()
 	}
-	n.peersLock.Unlock()
-
-	n.backgroundThreadWG.Wait()
-
-	if n.httpServer != nil {
-		n.httpServer.Close()
-	}
-	n.httpServer = nil
-	if n.httpTCPListener != nil {
-		n.httpTCPListener.Close()
-	}
-	n.httpTCPListener = nil
-
-	if n.p2pTCPListener != nil {
-		n.p2pTCPListener.Close()
-	}
-	n.p2pTCPListener = nil
-
-	n.peersLock.Lock()
-	n.peers = nil
-	n.peersLock.Unlock()
-
-	n.db.close()
 }
 
 // Connect attempts to establish a peer-to-peer connection to a remote node.
@@ -615,8 +645,8 @@ func (p *peer) send(msg []byte) error {
 		return ErrInvalidParameter
 	}
 
-	if int(msg[0]) < len(p2pProtoMessageTypeNames) {
-		p.n.log[LogLevelTrace].Printf("TRACE: P2P >> %s %d %s", p.address, len(msg)-1, p2pProtoMessageTypeNames[msg[0]])
+	if int(msg[0]) < len(p2pProtoMessageNames) {
+		p.n.log[LogLevelTrace].Printf("TRACE: P2P >> %s %d %s", p.address, len(msg)-1, p2pProtoMessageNames[msg[0]])
 	} else {
 		p.n.log[LogLevelTrace].Printf("TRACE: P2P >> %s %d unknown message type %d", p.address, len(msg)-1, msg[0])
 	}
@@ -654,12 +684,20 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inb
 
 		c.Close()
 
+		n.connectionsInStartupLock.Lock()
+		delete(n.connectionsInStartup, c)
+		n.connectionsInStartupLock.Unlock()
+
 		n.peersLock.Lock()
 		delete(n.peers, peerAddressStr)
 		n.peersLock.Unlock()
 
 		n.backgroundThreadWG.Done()
 	}()
+
+	n.connectionsInStartupLock.Lock()
+	n.connectionsInStartup[c] = true
+	n.connectionsInStartupLock.Unlock()
 
 	tcpAddr, tcpAddrOk := c.RemoteAddr().(*net.TCPAddr)
 	if tcpAddr == nil || !tcpAddrOk {
@@ -672,6 +710,7 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inb
 	c.SetKeepAlive(true)
 	c.SetLinger(0)
 	c.SetNoDelay(false)
+	reader := bufio.NewReaderSize(c, 16384)
 
 	// Exchange public keys (prefixed by connection mode and key length)
 	helloMessage := make([]byte, len(n.linkKeyPub)+2)
@@ -683,7 +722,7 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inb
 		n.log[LogLevelNormal].Printf("P2P connection to %s closed: %s", peerAddressStr, err.Error())
 		return
 	}
-	_, err = io.ReadFull(c, helloMessage[0:2])
+	_, err = io.ReadFull(reader, helloMessage[0:2])
 	if err != nil {
 		n.log[LogLevelNormal].Printf("P2P connection to %s closed: %s", peerAddressStr, err.Error())
 		return
@@ -693,7 +732,7 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inb
 		return
 	}
 	rpk := make([]byte, uint(helloMessage[1]))
-	_, err = io.ReadFull(c, rpk)
+	_, err = io.ReadFull(reader, rpk)
 	if err != nil {
 		n.log[LogLevelNormal].Printf("P2P connection to %s closed: %s", peerAddressStr, err.Error())
 		return
@@ -741,7 +780,7 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inb
 		n.log[LogLevelNormal].Printf("P2P connection to %s closed: %s", peerAddressStr, err.Error())
 		return
 	}
-	_, err = io.ReadFull(c, incomingNonce[:])
+	_, err = io.ReadFull(reader, incomingNonce[:])
 	if err != nil {
 		n.log[LogLevelNormal].Printf("P2P connection to %s closed: %s", peerAddressStr, err.Error())
 		return
@@ -789,10 +828,13 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inb
 	n.peers[peerAddressStr] = &p
 	n.peersLock.Unlock()
 
+	n.connectionsInStartupLock.Lock()
+	delete(n.connectionsInStartup, c)
+	n.connectionsInStartupLock.Unlock()
+
 	n.log[LogLevelNormal].Printf("P2P connection established to %s / %x", peerAddressStr, p.remotePublicKey)
 
 	var msgbuf []byte
-	reader := bufio.NewReaderSize(c, 16384)
 	for atomic.LoadUint32(&n.shutdown) == 0 {
 		// Read size of message (varint)
 		msgSize, err := binary.ReadUvarint(reader)
@@ -849,8 +891,8 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inb
 		incomingMessageType := msg[0]
 		msg = msg[1:]
 
-		if int(incomingMessageType) < len(p2pProtoMessageTypeNames) {
-			n.log[LogLevelTrace].Printf("P2P << %s %d %s", peerAddressStr, len(msg), p2pProtoMessageTypeNames[incomingMessageType])
+		if int(incomingMessageType) < len(p2pProtoMessageNames) {
+			n.log[LogLevelTrace].Printf("P2P << %s %d %s", peerAddressStr, len(msg), p2pProtoMessageNames[incomingMessageType])
 		} else {
 			n.log[LogLevelTrace].Printf("P2P << %s %d unknown message type %d", peerAddressStr, len(msg), incomingMessageType)
 		}
@@ -924,13 +966,22 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inb
 					}
 				}
 				if len(ip) > 0 {
+					dupe := false
 					n.announcedPeersLock.Lock()
-					n.announcedPeers = append(n.announcedPeers, announcedPeer{
-						learnedTime: TimeMs(),
-						ip:          ip,
-						port:        int(port),
-						publicKey:   publicKey,
-					})
+					for _, ap := range n.announcedPeers {
+						if bytes.Equal(ap.publicKey, publicKey) && bytes.Equal(ap.ip, ip) && ap.port == int(port) {
+							dupe = true
+							break
+						}
+					}
+					if !dupe {
+						n.announcedPeers = append(n.announcedPeers, announcedPeer{
+							learnedTime: TimeMs(),
+							ip:          ip,
+							port:        int(port),
+							publicKey:   publicKey,
+						})
+					}
 					n.announcedPeersLock.Unlock()
 				}
 			}

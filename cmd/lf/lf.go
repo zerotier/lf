@@ -29,7 +29,6 @@ import (
 
 var (
 	clientConfigFile = "client-config.json"
-	osSignalChannel  = make(chan os.Signal, 16)
 
 	lfDefaultPath = func() string {
 		if os.Getuid() == 0 {
@@ -123,7 +122,8 @@ not already exist.
 //////////////////////////////////////////////////////////////////////////////
 
 func doNodeStart(cfg *Config, basePath string, jsonOutput bool, urlOverride string, verboseOutput bool, args []string) {
-	signal.Notify(osSignalChannel, syscall.SIGTERM, syscall.SIGQUIT)
+	osSignalChannel := make(chan os.Signal, 2)
+	signal.Notify(osSignalChannel, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGINT)
 	stdoutLogger := log.New(os.Stdout, "", log.LstdFlags)
 	node, err := lf.NewNode(basePath, lf.DefaultP2PPort, lf.DefaultHTTPPort, stdoutLogger, lf.LogLevelTrace)
 	if err != nil {
@@ -131,10 +131,8 @@ func doNodeStart(cfg *Config, basePath string, jsonOutput bool, urlOverride stri
 		os.Exit(-1)
 		return
 	}
-	for {
-		_ = <-osSignalChannel
-		node.Stop()
-	}
+	_ = <-osSignalChannel
+	node.Stop()
 }
 
 func doProxyStart(cfg *Config, basePath string, jsonOutput bool, urlOverride string, verboseOutput bool, args []string) {
@@ -470,4 +468,6 @@ func main() {
 			return
 		}
 	}
+
+	os.Exit(0)
 }

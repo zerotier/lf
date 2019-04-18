@@ -16,6 +16,8 @@ func ztlfSyncCCallback(dbp unsafe.Pointer, hash unsafe.Pointer, doff C.uint64_t,
 	}()
 	idx := int(uintptr(arg) & 0x7fffffff)
 	if idx < len(globalSyncCallbacks) && globalSyncCallbacks[idx] != nil {
-		globalSyncCallbacks[idx](uint64(doff), uint(dlen), (*[32]byte)(hash))
+		var hash2 [32]byte
+		copy(hash2[:], ((*[32]byte)(hash))[:]) // make copy since this buffer changes between callbacks
+		globalSyncCallbacks[idx](uint64(doff), uint(dlen), &hash2)
 	}
 }

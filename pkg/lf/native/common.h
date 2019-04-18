@@ -8,6 +8,9 @@
 #ifndef ZT_LF_COMMON_H
 #define ZT_LF_COMMON_H
 
+/* Uncommment to trace DB internals */
+/* #define ZTLF_TRACE 1 */
+
 /* Only necessary on some old 32-bit machines which aren't "officially" supported, but do it anyway. */
 #ifndef _FILE_OFFSET_BITS
 #define _FILE_OFFSET_BITS 64
