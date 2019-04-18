@@ -48,8 +48,8 @@ const (
 	p2pProtoMessageTypeHaveRecords          byte = 3 // one or more 32-byte hashes we have
 	p2pProtoMessageTypePeer                 byte = 4 // <[uint16] port><[byte] type><[4-16] IP>[<public key>]
 
-	// p2pDesiredConnectionCount is how many TCP connections we want to have open (will stop connecting to announced peers after this)
-	p2pDesiredConnectionCount = 32
+	// p2pDesiredConnectionCount is how many P2P TCP connections we want to have open
+	p2pDesiredConnectionCount = 64
 
 	// DefaultHTTPPort is the default LF HTTP API port
 	DefaultHTTPPort = 9980
@@ -103,11 +103,14 @@ type Node struct {
 	httpTCPListener          *net.TCPListener           //
 	httpServer               *http.Server               //
 	p2pTCPListener           *net.TCPListener           //
-	wg                       *Wharrgarblr               // Work function, created if genesis parameters indicate one
+	apiWorkFunction          *Wharrgarblr               // Work function for API call use
+	backgroundWorkFunction   *Wharrgarblr               // Work function for background work addition (if enabled)
+	workFunctionLock         sync.RWMutex               //
 	db                       db                         //
 	backgroundThreadWG       sync.WaitGroup             // Wait group for background goroutines
 	startTime                uint64                     // Time node was started in seconds since epoch
 	shutdown                 uint32                     // Set to non-zero to signal all background goroutines to exit
+	mine                     bool                       // If true, add work to DAG in background
 }
 
 // NewNode creates and starts a node.
@@ -347,7 +350,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 	n.backgroundThreadWG.Add(1)
 	go func() {
 		defer n.backgroundThreadWG.Done()
-		var lastCleanedPeerHasRecords, lastCleanedAnnouncedPeers uint64
+		var lastCleanedPeerHasRecords, lastCleanedAnnouncedPeers, lastAttemptedConnections uint64
 		for atomic.LoadUint32(&n.shutdown) == 0 {
 			time.Sleep(time.Second)
 			if atomic.LoadUint32(&n.shutdown) != 0 {
@@ -372,10 +375,13 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 			}
 
 			// Clean announced peer list of peers we learned about more than 10 minutes ago.
-			if (now - lastCleanedAnnouncedPeers) > 300000 {
+			if (now - lastCleanedAnnouncedPeers) > 120000 {
 				lastCleanedAnnouncedPeers = now
 				var newAP []announcedPeer
 				n.announcedPeersLock.Lock()
+				if len(n.announcedPeers) > 4096 { // sanity check to prevent insanity
+					n.announcedPeers = n.announcedPeers[4096:]
+				}
 				for _, ap := range n.announcedPeers {
 					if (now - ap.learnedTime) < 600000 {
 						newAP = append(newAP, ap)
@@ -386,25 +392,27 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 			}
 
 			// If we don't have enough connections, try to make more to peers we've learned about.
-			n.peersLock.RLock()
-			peerCount := len(n.peers)
-			n.peersLock.RUnlock()
-			n.announcedPeersLock.Lock()
-			for c := peerCount; c < p2pDesiredConnectionCount; c++ {
-				if len(n.announcedPeers) == 0 {
-					break
-				}
-				pidx := rand.Int() % len(n.announcedPeers)
-				ip := n.announcedPeers[pidx].ip
-				port := n.announcedPeers[pidx].port
-				n.Connect(ip, port, n.announcedPeers[pidx].publicKey, func(err error) {
-					if err != nil && err != ErrAlreadyConnected {
-						n.log[LogLevelNormal].Printf("P2P connection to %s:%d failed: %s", ip, port, err.Error())
+			if (now - lastAttemptedConnections) > 10000 {
+				n.peersLock.RLock()
+				peerCount := len(n.peers)
+				n.peersLock.RUnlock()
+				n.announcedPeersLock.Lock()
+				for c := peerCount; c < p2pDesiredConnectionCount; c++ {
+					if len(n.announcedPeers) == 0 {
+						break
 					}
-				})
-				n.announcedPeers = append(n.announcedPeers[:pidx], n.announcedPeers[pidx+1:]...)
+					pidx := rand.Int() % len(n.announcedPeers)
+					ip := n.announcedPeers[pidx].ip
+					port := n.announcedPeers[pidx].port
+					n.Connect(ip, port, n.announcedPeers[pidx].publicKey, func(err error) {
+						if err != nil && err != ErrAlreadyConnected {
+							n.log[LogLevelNormal].Printf("P2P connection to %s:%d failed: %s", ip, port, err.Error())
+						}
+					})
+					n.announcedPeers = append(n.announcedPeers[:pidx], n.announcedPeers[pidx+1:]...)
+				}
+				n.announcedPeersLock.Unlock()
 			}
-			n.announcedPeersLock.Unlock()
 		}
 	}()
 
@@ -412,25 +420,23 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 	n.backgroundThreadWG.Add(1)
 	go func() {
 		defer n.backgroundThreadWG.Done()
-		time.Sleep(5 * time.Second)
-		var backgroundWorkFunction *Wharrgarblr
+		time.Sleep(5 * time.Second) // wait for other stuff to come up
 		for atomic.LoadUint32(&n.shutdown) == 0 {
-			time.Sleep(time.Millisecond * 100)
-			if n.genesisParameters.RecordMinLinks > 0 && atomic.LoadUint32(&n.shutdown) == 0 {
-				links, err := n.db.getLinks2(n.genesisParameters.RecordMinLinks)
-				if err == nil && uint(len(links)) >= n.genesisParameters.RecordMinLinks {
-					if n.genesisParameters.WorkRequired {
-						if backgroundWorkFunction == nil {
-							backgroundWorkFunction = NewWharrgarblr(RecordDefaultWharrgarblMemory, uint(runtime.NumCPU()-1))
+			time.Sleep(time.Millisecond * 500)
+			if n.mine && atomic.LoadUint32(&n.shutdown) == 0 {
+				minLinks := n.genesisParameters.RecordMinLinks
+				if minLinks == 0 {
+					minLinks = 1
+				}
+				links, err := n.db.getLinks2(minLinks)
+				if err == nil && len(links) > 0 {
+					rec, err := NewRecord(nil, links, nil, nil, nil, nil, TimeSec(), n.getBackgroundWorkFunction(), 0, n.owner)
+					if atomic.LoadUint32(&n.shutdown) != 0 {
+						if err == nil {
+							n.AddRecord(rec)
+						} else {
+							n.log[LogLevelWarning].Printf("WARNING: error creating record: %s", err.Error())
 						}
-					} else {
-						backgroundWorkFunction = nil
-					}
-					rec, err := NewRecord(nil, links, nil, nil, nil, nil, TimeSec(), backgroundWorkFunction, 0, n.owner)
-					if err == nil {
-						n.AddRecord(rec)
-					} else {
-						n.log[LogLevelWarning].Printf("WARNING: error creating record: %s", err.Error())
 					}
 				} else {
 					n.log[LogLevelWarning].Printf("WARNING: database error getting links or %d links not available", n.genesisParameters.RecordMinLinks)
@@ -450,6 +456,12 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 func (n *Node) Stop() {
 	n.log[LogLevelNormal].Printf("shutting down")
 	if atomic.SwapUint32(&n.shutdown, 1) == 0 {
+		n.workFunctionLock.RLock()
+		if n.backgroundWorkFunction != nil {
+			n.backgroundWorkFunction.Abort()
+		}
+		n.workFunctionLock.RUnlock()
+
 		n.connectionsInStartupLock.Lock()
 		if n.connectionsInStartup != nil {
 			for c := range n.connectionsInStartup {
@@ -607,6 +619,56 @@ func (n *Node) Peers() (peers []APIStatusPeer) {
 		})
 	}
 	n.peersLock.RUnlock()
+	return
+}
+
+// getAPIWorkFunction gets (creating if needed) the work function for API calls.
+func (n *Node) getAPIWorkFunction() (wf *Wharrgarblr) {
+	n.workFunctionLock.RLock()
+	if n.apiWorkFunction != nil {
+		wf = n.apiWorkFunction
+		n.workFunctionLock.RUnlock()
+		return
+	}
+	n.workFunctionLock.RUnlock()
+
+	if n.genesisParameters.WorkRequired {
+		n.workFunctionLock.Lock()
+		if n.apiWorkFunction != nil {
+			wf = n.apiWorkFunction
+			n.workFunctionLock.Unlock()
+			return
+		}
+		n.apiWorkFunction = NewWharrgarblr(RecordDefaultWharrgarblMemory, runtime.NumCPU())
+		wf = n.apiWorkFunction
+		n.workFunctionLock.Unlock()
+	}
+
+	return
+}
+
+// getBackgroundWorkFunction gets (creating if needed) the work function for background work addition.
+func (n *Node) getBackgroundWorkFunction() (wf *Wharrgarblr) {
+	n.workFunctionLock.RLock()
+	if n.backgroundWorkFunction != nil {
+		wf = n.backgroundWorkFunction
+		n.workFunctionLock.RUnlock()
+		return
+	}
+	n.workFunctionLock.RUnlock()
+
+	if n.genesisParameters.WorkRequired {
+		n.workFunctionLock.Lock()
+		if n.backgroundWorkFunction != nil {
+			wf = n.backgroundWorkFunction
+			n.workFunctionLock.Unlock()
+			return
+		}
+		n.backgroundWorkFunction = NewWharrgarblr(RecordDefaultWharrgarblMemory, runtime.NumCPU()-1) // -1 to leave one thread always for other stuff
+		wf = n.backgroundWorkFunction
+		n.workFunctionLock.Unlock()
+	}
+
 	return
 }
 

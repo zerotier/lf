@@ -311,7 +311,7 @@ func doMakeGenesis(cfg *Config, basePath string, jsonOutput bool, urlOverride st
 		LinkKey:                   nwKey,
 		TimestampFloor:            lf.TimeSec(),
 		RecordMinLinks:            3,
-		RecordMaxValueSize:        1024,
+		RecordMaxValueSize:        4096,
 		RecordMaxSize:             lf.RecordMaxSize,
 		RecordMaxForwardTimeDrift: 15,
 	}
@@ -452,7 +452,7 @@ func main() {
 	case "owner":
 		doOwner(&cfg, *basePath, *jsonOutput, *urlOverride, *verboseOutput, cmdArgs)
 
-	case "makegenesis":
+	case "_makegenesis":
 		doMakeGenesis(&cfg, *basePath, *jsonOutput, *urlOverride, *verboseOutput, cmdArgs)
 
 	default:

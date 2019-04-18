@@ -21,8 +21,8 @@ const SelectorTypeBP160 byte = 0
 
 // Selector is a non-forgeable range queryable identifier for records.
 type Selector struct {
-	Ordinal Blob    // An ordinal value that can be used to perform range queries against selectors
-	Claim   Blob328 // 41-byte brainpoolP160t1 recoverable signature
+	Ordinal Blob     // An ordinal value that can be used to perform range queries against selectors
+	Claim   [41]byte // 41-byte brainpoolP160t1 recoverable signature
 }
 
 func addOrdinalToHash(h *[64]byte, ordinal []byte) {
@@ -146,7 +146,7 @@ func (s *Selector) unmarshalFrom(in io.Reader) error {
 
 // set sets this selector to a given plain text name, ordinal, and record body hash.
 // The hash supplied is the record's body hash. If this selector is not intended for range
-// queries use zero for its ordinal.
+// queries use nil for its ordinal.
 func (s *Selector) set(plainTextName []byte, ord []byte, hash []byte) {
 	s.Ordinal = ord
 

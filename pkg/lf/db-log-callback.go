@@ -10,7 +10,6 @@ package lf
 // Callbacks called from C have to be in a separate file due to cgo linking weirdness.
 
 // #cgo CFLAGS: -O3
-// #cgo LDFLAGS: -lsqlite3
 // #include "./native/db.h"
 import "C"
 
@@ -40,7 +39,7 @@ const (
 )
 
 // This callback handles logger output from the C parts of LF. Right now that's mostly just db.c, so this is here,
-// but it could in theory take log output from other code.
+// but it could in theory take log output from other C code if other C code existed.
 //export ztlfLogOutputCCallback
 func ztlfLogOutputCCallback(level C.int, srcFile unsafe.Pointer, srcLine C.int, msg unsafe.Pointer, loggerArg unsafe.Pointer) {
 	srcFileStr := "<unknown file>"

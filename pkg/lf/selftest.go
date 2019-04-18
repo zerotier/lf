@@ -61,11 +61,11 @@ func TestCore(out io.Writer) bool {
 	}
 
 	fmt.Fprintf(out, "Testing Blob serialize/deserialize... ")
+	var bbbuf [1024]byte
 	for i := 1; i < 1024; i++ {
-		var bb Blob
-		bb = make([]byte, i)
+		bb := bbbuf[0:i]
 		secrand.Read(bb)
-		bj, err := json.Marshal(bb)
+		bj, err := json.Marshal(Blob(bb))
 		if err != nil {
 			fmt.Fprintf(out, "FAILED (marshal %d)\n", i)
 			return false

@@ -107,7 +107,7 @@ type APINew struct {
 	MaskingKey      Blob             `json:",omitempty"` // An arbitrary key used to mask the record's value from those that don't know what they're looking for
 	OwnerPrivateKey Blob             `json:",omitempty"` // Full owner including private key (result of owner PrivateBytes() method)
 	OwnerSeed       Blob             `json:",omitempty"` // Seed to deterministically generate owner (used if ownerprivatekey is missing)
-	Links           []Blob256        `json:",omitempty"` // Links to other records in the DAG
+	Links           [][32]byte       `json:",omitempty"` // Links to other records in the DAG
 	Value           Blob             `json:",omitempty"` // Plain text (unmasked, uncompressed) value for this record
 	Timestamp       *uint64          `json:",omitempty"` // Record timestamp in SECONDS since epoch (server time is used if zero or omitted)
 }
@@ -400,13 +400,13 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 				var m APINew
 				if apiReadObj(out, req, &m) == nil {
 					if n.genesisParameters.WorkRequired {
-						if n.wg == nil {
-							n.wg = NewWharrgarblr(RecordDefaultWharrgarblMemory, 0)
+						if n.apiWorkFunction == nil {
+							n.apiWorkFunction = NewWharrgarblr(RecordDefaultWharrgarblMemory, 0)
 						}
 					} else {
-						n.wg = nil
+						n.apiWorkFunction = nil
 					}
-					rec, apiError := m.execute(n.wg)
+					rec, apiError := m.execute(n.apiWorkFunction)
 					if apiError != nil {
 						apiSendObj(out, req, apiError.Code, apiError)
 					} else {

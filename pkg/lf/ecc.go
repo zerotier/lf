@@ -202,6 +202,7 @@ func ECDSARecover(curve elliptic.Curve, hash, signature []byte) *ecdsa.PublicKey
 	return ecdsaRecoverPublicKey(curve, &r, &s, hash, uint(signature[len(signature)-1]))
 }
 
+// ecdsaRecoverPublicKey contains the actual guts of the ECDSA key recovery from signature algorithm
 func ecdsaRecoverPublicKey(c elliptic.Curve, r, s *big.Int, hash []byte, iter uint) *ecdsa.PublicKey {
 	curve := c.Params()
 	var rx, iterBE, threeX, ry, e, invr, invrS big.Int

@@ -22,7 +22,7 @@ type GenesisParameters struct {
 	RootCertificateAuthorities []Blob   `json:",omitempty"` // X.509 certificates for master CAs for this data store (empty for an unbiased work-only data store)
 	CertificateRequired        bool     `json:""`           // Is a certificate required? (must be false if there are no CAs, obviously)
 	WorkRequired               bool     `json:""`           // Is proof of work required?
-	LinkKey                    Blob256  `json:""`           // Static 32-byte key used to ensure that nodes in this network only connect to one another
+	LinkKey                    [32]byte `json:""`           // Static 32-byte key used to ensure that nodes in this network only connect to one another
 	TimestampFloor             uint64   `json:""`           // Floor for network record timestamps (seconds)
 	RecordMinLinks             uint     `json:""`           // Minimum number of links required for non-genesis records
 	RecordMaxValueSize         uint     `json:""`           // Maximum size of record values
@@ -141,6 +141,9 @@ func CreateGenesisRecords(genesisOwnerType int, genesisParameters *GenesisParame
 }
 
 //////////////////////////////////////////////////////////////////////////////
+
+// A globally shared data store for Earth and its neighbors in the Sol system.
+// Should theoretically be useful up to Kardashev Type II civilization scale.
 
 /*
 {

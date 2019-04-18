@@ -468,7 +468,7 @@ func wharrgarblHash(cipher0, cipher1 cipher.Block, tmp []byte, in *[16]byte) uin
 
 // NewWharrgarblr creates a new Wharrgarbl instance with the given memory size (for memory/speed tradeoff).
 // If thread count is 0 the reported CPU/core count of the system is used.
-func NewWharrgarblr(memorySize uint, threadCount uint) (wg *Wharrgarblr) {
+func NewWharrgarblr(memorySize uint, threadCount int) (wg *Wharrgarblr) {
 	wg = new(Wharrgarblr)
 
 	if memorySize < 1048576 {
@@ -608,11 +608,11 @@ func (wg *Wharrgarblr) Abort() {
 }
 
 // SetThreadCount sets the thread count for subsequent calls to Compute() (use 0 for system thread count).
-func (wg *Wharrgarblr) SetThreadCount(threadCount uint) {
-	if threadCount == 0 {
+func (wg *Wharrgarblr) SetThreadCount(threadCount int) {
+	if threadCount <= 0 {
 		wg.threadCount = uint(runtime.NumCPU())
 	} else {
-		wg.threadCount = threadCount
+		wg.threadCount = uint(threadCount)
 	}
 }
 
