@@ -30,8 +30,8 @@ type APIQueryRange struct {
 // APIQuery (request) describes a query for records in the form of an ordered series of selector ranges.
 type APIQuery struct {
 	Range      []APIQueryRange `json:",omitempty"` // Selectors or selector range(s)
-	MaskingKey Blob            `json:",omitempty"` // Masking key to unmask record value server-side (if non-empty)
-	Before     *uint64         `json:",omitempty"` // If present and non-zero get records only newer than this value (SECONDS since epoch)
+	TimeRange  []uint64        `json:",omitempty"` // If present, constrain record times to after first value (if [1]) or range (if [2])
+	MaskingKey Blob            `json:",omitempty"` // Masking key to unmask record value(s) server-side (if non-empty)
 }
 
 // APIQueryResult (response, part of APIQueryResults) is a single query result.
@@ -76,7 +76,7 @@ func (m *APIQuery) execute(n *Node) (qr []APIQueryResult, err *APIError) {
 			} else if len(mm[i].Range) == 1 {
 				ss := MakeSelectorKey(mm[i].Name, mm[i].Range[0])
 				selectorRanges = append(selectorRanges, [2][]byte{ss[:], ss[:]})
-			} else {
+			} else if len(mm[i].Range) == 2 {
 				ss := MakeSelectorKey(mm[i].Name, mm[i].Range[0])
 				ee := MakeSelectorKey(mm[i].Name, mm[i].Range[1])
 				selectorRanges = append(selectorRanges, [2][]byte{ss[:], ee[:]})
@@ -85,10 +85,20 @@ func (m *APIQuery) execute(n *Node) (qr []APIQueryResult, err *APIError) {
 			// Otherwise we use the sender-supplied key range which keeps names secret.
 			if len(mm[i].KeyRange) == 1 {
 				selectorRanges = append(selectorRanges, [2][]byte{mm[i].KeyRange[0], mm[i].KeyRange[0]})
-			} else {
+			} else if len(mm[i].KeyRange) == 2 {
 				selectorRanges = append(selectorRanges, [2][]byte{mm[i].KeyRange[0], mm[i].KeyRange[1]})
 			}
 		}
+	}
+
+	// Get query timestamp range (or use min..max)
+	tsMin := int64(0)
+	tsMax := int64(9223372036854775807)
+	if len(m.TimeRange) == 1 {
+		tsMin = int64(m.TimeRange[0])
+	} else if len(m.TimeRange) == 2 {
+		tsMin = int64(m.TimeRange[0])
+		tsMax = int64(m.TimeRange[1])
 	}
 
 	// Iterate through results and store them in a temporary map by ID (hash of selector keys). This
@@ -96,7 +106,7 @@ func (m *APIQuery) execute(n *Node) (qr []APIQueryResult, err *APIError) {
 	// time to grab whole records that we don't ultimately return. Note that the C side of this code
 	// handles finding the latest record (max timestamp) by owner/ID combo.
 	bestByID := make(map[[32]byte]*[4]uint64)
-	n.db.query(selectorRanges, func(ts, weightL, weightH, doff, dlen uint64, id *[32]byte, owner []byte) bool {
+	n.db.query(tsMin, tsMax, selectorRanges, func(ts, weightL, weightH, doff, dlen uint64, id *[32]byte, owner []byte) bool {
 		rptr := bestByID[*id]
 		if rptr == nil {
 			bestByID[*id] = &([4]uint64{weightH, weightL, doff, dlen})
@@ -139,7 +149,7 @@ func (m *APIQuery) execute(n *Node) (qr []APIQueryResult, err *APIError) {
 		}
 	}
 
-	// Sort qr[] by selector ordinals.
+	// Sort qr[] by selector ordinal.
 	sort.Slice(qr, func(a, b int) bool {
 		sa := qr[a].Record.Selectors
 		sb := qr[b].Record.Selectors

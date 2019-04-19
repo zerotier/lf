@@ -177,7 +177,7 @@ int ZTLF_DB_PutRecord(
 	const void *links,
 	const unsigned int linkCount);
 
-struct ZTLF_QueryResults *ZTLF_DB_Query(struct ZTLF_DB *db,const void **sel,const unsigned int *selSize,const unsigned int selCount);
+struct ZTLF_QueryResults *ZTLF_DB_Query(struct ZTLF_DB *db,const int64_t tsMin,const int64_t tsMax,const void **sel,const unsigned int *selSize,const unsigned int selCount);
 
 struct ZTLF_RecordList *ZTLF_DB_GetAllByOwner(struct ZTLF_DB *db,const void *owner);
 

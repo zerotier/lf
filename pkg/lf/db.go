@@ -248,7 +248,7 @@ func (db *db) hasPending() bool {
 // results not sorted. The loop is broken if the function returns false. The owner is passed as a pointer to
 // an array that is reused, so a copy must be made if you want to keep it. The arguments to the function are:
 // timestamp, weight (low), weight (high), data offset, data length, id, owner, owner size (bytes).
-func (db *db) query(selectorRanges [][2][]byte, f func(uint64, uint64, uint64, uint64, uint64, *[32]byte, []byte) bool) error {
+func (db *db) query(tsMin, tsMax int64, selectorRanges [][2][]byte, f func(uint64, uint64, uint64, uint64, uint64, *[32]byte, []byte) bool) error {
 	if len(selectorRanges) == 0 {
 		return nil
 	}
@@ -267,7 +267,7 @@ func (db *db) query(selectorRanges [][2][]byte, f func(uint64, uint64, uint64, u
 		selSizes[ii] = C.uint(len(selectorRanges[i][1]))
 	}
 
-	cresults := C.ZTLF_DB_Query(db.cdb, &sel[0], (*C.uint)(unsafe.Pointer(&selSizes[0])), C.uint(len(selectorRanges)))
+	cresults := C.ZTLF_DB_Query(db.cdb, C.int64_t(tsMin), C.int64_t(tsMax), &sel[0], (*C.uint)(unsafe.Pointer(&selSizes[0])), C.uint(len(selectorRanges)))
 	if uintptr(unsafe.Pointer(cresults)) != 0 {
 		var owner [dbMaxOwnerSize]byte
 		var id [32]byte
