@@ -57,7 +57,7 @@ func apiRun(url string, m interface{}) ([]byte, error) {
 	if resp.StatusCode != http.StatusOK {
 		var e APIError
 		if err := json.Unmarshal(body, &e); err != nil {
-			return nil, err
+			return nil, APIError{Code: resp.StatusCode, Message: "error response invalid: " + err.Error()}
 		}
 		return nil, e
 	}

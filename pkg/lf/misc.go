@@ -11,7 +11,6 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"io"
-	"math"
 	"net"
 	"time"
 
@@ -56,28 +55,24 @@ func writeUVarint(out io.Writer, v uint64) (int, error) {
 }
 
 // integerSqrtRounded computes the rounded integer square root of a 32-bit unsigned int.
+// This is used for proof of work calculations since we don't want any inconsisency between nodes regardless of FPU behavior.
 func integerSqrtRounded(op uint32) (res uint32) {
-	// Just doing this is faster on most platforms and if your float sqrt or round are bad enough for this to be
-	// inconsistent with the integer version your platform has personal problems.
-	res = uint32(math.Round(math.Sqrt(float64(op))))
-	/*
-		// Translated from C at https://stackoverflow.com/questions/1100090/looking-for-an-efficient-integer-square-root-algorithm-for-arm-thumb2
-		one := uint32(1 << 30)
-		for one > op {
-			one >>= 2
+	// Translated from C at https://stackoverflow.com/questions/1100090/looking-for-an-efficient-integer-square-root-algorithm-for-arm-thumb2
+	one := uint32(1 << 30)
+	for one > op {
+		one >>= 2
+	}
+	for one != 0 {
+		if op >= (res + one) {
+			op = op - (res + one)
+			res = res + 2*one
 		}
-		for one != 0 {
-			if op >= (res + one) {
-				op = op - (res + one)
-				res = res + 2*one
-			}
-			res >>= 1
-			one >>= 2
-		}
-		if op > res { // rounding
-			res++
-		}
-	*/
+		res >>= 1
+		one >>= 2
+	}
+	if op > res { // rounding
+		res++
+	}
 	return
 }
 
