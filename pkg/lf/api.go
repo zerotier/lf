@@ -15,11 +15,20 @@ import (
 	"io/ioutil"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 )
 
 // APIVersion is the version of the current implementation's REST API
 const APIVersion = 1
+
+const (
+	// APIErrorRecordRejected indicates that a posted record was considered invalid or too suspect to import.
+	APIErrorRecordRejected = -1
+
+	// APIErrorLazy indicates that this proxy or full node will not do proof of work for you.
+	APIErrorLazy = -2
+)
 
 var apiVersionStr = strconv.FormatInt(int64(APIVersion), 10)
 
@@ -36,7 +45,36 @@ type APIError struct {
 }
 
 // Error implements the error interface, making APIError an 'error' in the Go sense.
-func (e APIError) Error() string { return fmt.Sprintf("%d (%s)", e.Code, e.Message) }
+func (e APIError) Error() string {
+	if len(e.Message) > 0 {
+		return fmt.Sprintf("%d (%s)", e.Code, e.Message)
+	}
+	return strconv.FormatInt(int64(e.Code), 10)
+}
+
+// APIPostRecord submits a raw LF record to a node or proxy.
+func APIPostRecord(url string, recordData []byte) error {
+	if strings.HasSuffix(url, "/") {
+		url = url + "post"
+	} else {
+		url = url + "/post"
+	}
+	resp, err := http.Post(url, "application/octet-stream", bytes.NewReader(recordData))
+	if resp.StatusCode == 200 {
+		return nil
+	}
+	body, err := ioutil.ReadAll(&io.LimitedReader{R: resp.Body, N: int64(APIMaxResponseSize)})
+	if err != nil {
+		return APIError{Code: resp.StatusCode}
+	}
+	if len(body) > 0 {
+		var e APIError
+		if err := json.Unmarshal(body, &e); err != nil {
+			return APIError{Code: resp.StatusCode, Message: "error response invalid: " + err.Error()}
+		}
+	}
+	return APIError{Code: resp.StatusCode}
+}
 
 // apiRun contains common code for the Run() methods of API request objects.
 func apiRun(url string, m interface{}) ([]byte, error) {
@@ -83,9 +121,13 @@ func apiSendObj(out http.ResponseWriter, req *http.Request, httpStatusCode int, 
 		out.WriteHeader(httpStatusCode)
 		return nil
 	}
-	j, err := json.Marshal(obj)
-	if err != nil {
-		return err
+	var j []byte
+	var err error
+	if obj != nil {
+		j, err = json.Marshal(obj)
+		if err != nil {
+			return err
+		}
 	}
 	h.Set("Content-Length", strconv.FormatUint(uint64(len(j)), 10))
 	out.WriteHeader(httpStatusCode)
@@ -120,8 +162,6 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 				results, err := m.execute(n)
 				if err != nil {
 					apiSendObj(out, req, err.Code, err)
-				} else if len(results) == 0 {
-					apiSendObj(out, req, http.StatusNotFound, &APIError{Code: http.StatusNotFound, Message: "no results found"})
 				} else {
 					apiSendObj(out, req, http.StatusOK, results)
 				}
@@ -152,14 +192,14 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 					} else {
 						err := n.AddRecord(rec)
 						if err != nil {
-							apiSendObj(out, req, http.StatusBadRequest, &APIError{Code: http.StatusForbidden, Message: "record rejected or record import failed: " + err.Error()})
+							apiSendObj(out, req, http.StatusBadRequest, &APIError{Code: APIErrorRecordRejected, Message: "record rejected or record import failed: " + err.Error()})
 						} else {
-							apiSendObj(out, req, http.StatusOK, rec)
+							apiSendObj(out, req, http.StatusOK, nil)
 						}
 					}
 				}
 			} else {
-				apiSendObj(out, req, http.StatusForbidden, &APIError{Code: http.StatusForbidden, Message: "full record creation only allowed from authorized clients"})
+				apiSendObj(out, req, http.StatusForbidden, &APIError{Code: APIErrorLazy, Message: "full record creation only allowed from authorized clients"})
 			}
 		} else {
 			out.Header().Set("Allow", "POST, PUT")
@@ -174,11 +214,11 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 			var rec Record
 			err := rec.UnmarshalFrom(req.Body)
 			if err != nil {
-				apiSendObj(out, req, http.StatusBadRequest, &APIError{Code: http.StatusForbidden, Message: "record deserialization failed: " + err.Error()})
+				apiSendObj(out, req, http.StatusBadRequest, &APIError{Code: http.StatusBadRequest, Message: "record deserialization failed: " + err.Error()})
 			} else {
 				err = n.AddRecord(&rec)
 				if err != nil {
-					apiSendObj(out, req, http.StatusBadRequest, &APIError{Code: http.StatusForbidden, Message: "record rejected or record import failed: " + err.Error()})
+					apiSendObj(out, req, http.StatusBadRequest, &APIError{Code: APIErrorRecordRejected, Message: "record rejected or record import failed: " + err.Error()})
 				} else {
 					apiSendObj(out, req, http.StatusOK, rec)
 				}
@@ -221,18 +261,21 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 		if req.Method == http.MethodGet || req.Method == http.MethodHead {
 			rc, ds := n.db.stats()
 			now := TimeSec()
-			apiSendObj(out, req, http.StatusOK, &APIStatus{
-				Software:          SoftwareName,
-				Version:           Version,
-				APIVersion:        APIVersion,
-				MinAPIVersion:     APIVersion,
-				MaxAPIVersion:     APIVersion,
-				Uptime:            (now - n.startTime),
-				Clock:             now,
-				DBRecordCount:     rc,
-				DBSize:            ds,
-				Peers:             n.Peers(),
-				GenesisParameters: n.genesisParameters,
+			wa := apiIsTrusted(n, req)
+			apiSendObj(out, req, http.StatusOK, &APIStatusResult{
+				Software:           SoftwareName,
+				Version:            Version,
+				APIVersion:         APIVersion,
+				MinAPIVersion:      APIVersion,
+				MaxAPIVersion:      APIVersion,
+				Uptime:             (now - n.startTime),
+				Clock:              now,
+				DBRecordCount:      rc,
+				DBSize:             ds,
+				Peers:              n.Peers(),
+				GenesisParameters:  n.genesisParameters,
+				NodeWorkAuthorized: wa,
+				WorkAuthorized:     wa,
 			})
 		} else {
 			out.Header().Set("Allow", "GET, HEAD")

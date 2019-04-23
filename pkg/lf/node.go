@@ -445,6 +445,15 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 		}
 	}()
 
+	// Add server's local URL to client config if there aren't any configured URLs.
+	clientConfigPath := path.Join(basePath, ClientConfigName)
+	var cc ClientConfig
+	cc.Load(clientConfigPath)
+	if len(cc.Urls) == 0 {
+		cc.Urls = []string{fmt.Sprintf("http://127.0.0.1:%d", httpPort)}
+		cc.Save(clientConfigPath)
+	}
+
 	n.startTime = TimeSec()
 	initOk = true
 

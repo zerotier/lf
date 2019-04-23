@@ -45,11 +45,11 @@ const RecordWorkAlgorithmWharrgarbl byte = 1
 // recordBody represents the main body of a record including its value, owner public keys, etc.
 // It's included as part of Record but separated since in record construction we want to treat it as a separate element.
 type recordBody struct {
-	Value       Blob   `json:",omitempty"` // Record value (possibly masked and/or compressed, use GetValue() to get)
-	Owner       Blob   `json:",omitempty"` // Owner of this record (owner public bytes)
-	Certificate Blob   `json:",omitempty"` // Hash (256-bit) of exact record containing certificate for this owner (if CAs are enabled)
-	Links       Blob   `json:",omitempty"` // Links to previous records' hashes (size is a multiple of 32 bytes, link count is size / 32)
-	Timestamp   uint64 ``                  // Timestamp (and revision ID) in SECONDS since Unix epoch
+	Value       Blob       `json:",omitempty"` // Record value (possibly masked and/or compressed, use GetValue() to get)
+	Owner       ShortBlob  `json:",omitempty"` // Owner of this record (owner public bytes)
+	Certificate ShortBlob  `json:",omitempty"` // Hash (256-bit) of exact record containing certificate for this owner (if CAs are enabled)
+	Links       [][32]byte `json:",omitempty"` // Links to previous records' hashes
+	Timestamp   uint64     ``                  // Timestamp (and revision ID) in SECONDS since Unix epoch
 }
 
 func (rb *recordBody) unmarshalFrom(r io.Reader) error {
@@ -107,12 +107,13 @@ func (rb *recordBody) unmarshalFrom(r io.Reader) error {
 		return err
 	}
 	if l > 0 {
-		l *= 32
-		if l > RecordMaxSize {
+		if (l * 32) > RecordMaxSize {
 			return ErrRecordInvalid
 		}
-		rb.Links = make([]byte, uint(l))
-		_, err = io.ReadFull(&rr, rb.Links)
+		rb.Links = make([][32]byte, uint(l))
+		for i := 0; i < len(rb.Links); i++ {
+			_, err = io.ReadFull(&rr, rb.Links[i][:])
+		}
 	} else {
 		rb.Links = nil
 	}
@@ -155,17 +156,13 @@ func (rb *recordBody) marshalTo(w io.Writer) error {
 		}
 	}
 
-	if len(rb.Links) >= 32 {
-		linkCount := len(rb.Links) / 32
-		if _, err := writeUVarint(w, uint64(linkCount)); err != nil {
+	linkCount := len(rb.Links)
+	if _, err := writeUVarint(w, uint64(linkCount)); err != nil {
+		return err
+	}
+	for i := 0; i < linkCount; i++ {
+		if _, err := w.Write(rb.Links[i][:]); err != nil {
 			return err
-		}
-		if _, err := w.Write(rb.Links[0 : linkCount*32]); err != nil {
-			return err
-		}
-	} else {
-		if _, err := w.Write(b1_0); err != nil {
-			return nil
 		}
 	}
 
@@ -193,7 +190,9 @@ func (rb *recordBody) signingHash() (sum [32]byte) {
 	h.Write(b1_0)
 	h.Write(rb.Certificate)
 	h.Write(b1_0)
-	h.Write(rb.Links)
+	for i := 0; i < len(rb.Links); i++ {
+		h.Write(rb.Links[i][:])
+	}
 	h.Write(b1_0)
 	binary.BigEndian.PutUint64(vh[0:8], rb.Timestamp) // this just re-uses vh[] as a temp buffer
 	h.Write(vh[0:8])
@@ -250,9 +249,9 @@ type Record struct {
 	recordBody
 
 	Selectors     []Selector `json:",omitempty"` // Things that can be used to find the record
-	Work          Blob       `json:",omitempty"` // Proof of work computed on sha3-256(Body Signing Hash | Selectors) with work cost based on size of body and selectors
+	Work          ShortBlob  `json:",omitempty"` // Proof of work computed on sha3-256(Body Signing Hash | Selectors) with work cost based on size of body and selectors
 	WorkAlgorithm byte       ``                  // Proof of work algorithm
-	Signature     Blob       `json:",omitempty"` // Signature of sha3-256(sha3-256(Body Signing Hash | Selectors) | Work | WorkAlgorithm)
+	Signature     ShortBlob  `json:",omitempty"` // Signature of sha3-256(sha3-256(Body Signing Hash | Selectors) | Work | WorkAlgorithm)
 
 	selectorKeys [][]byte  // Cached selector keys
 	data         []byte    // Cached raw data
@@ -563,7 +562,7 @@ func recordWharrgarblScore(cost uint32) uint32 {
 // NewRecordStart creates an incomplete record with its body and selectors filled out but no work or final signature.
 // This can be used to do the first step of a three-phase record creation process with the next two phases being NewRecordAddWork
 // and NewRecordComplete. This is useful of record creation needs to be split among systems or participants.
-func NewRecordStart(value []byte, links [][]byte, maskingKey []byte, plainTextSelectorNames [][]byte, selectorOrdinals [][]byte, ownerPublic, certificateRecordHash []byte, ts uint64) (r *Record, workHash [32]byte, workBillableBytes uint, err error) {
+func NewRecordStart(value []byte, links [][32]byte, maskingKey []byte, plainTextSelectorNames [][]byte, selectorOrdinals [][]byte, ownerPublic, certificateRecordHash []byte, ts uint64) (r *Record, workHash [32]byte, workBillableBytes uint, err error) {
 	if len(value) > RecordMaxSize {
 		err = ErrInvalidParameter
 		return
@@ -625,12 +624,14 @@ func NewRecordStart(value []byte, links [][]byte, maskingKey []byte, plainTextSe
 		copy(cert[:], certificateRecordHash)
 		r.recordBody.Certificate = cert[:]
 	}
+
 	if len(links) > 0 {
-		r.recordBody.Links = make([]byte, 0, 32*len(links))
+		r.recordBody.Links = make([][32]byte, 0, len(links))
 		for i := 0; i < len(links); i++ {
-			r.recordBody.Links = append(r.recordBody.Links, links[i]...)
+			r.recordBody.Links = append(r.recordBody.Links, links[i])
 		}
 	}
+
 	r.recordBody.Timestamp = ts
 
 	workBillableBytes = r.recordBody.sizeBytes()
@@ -698,7 +699,7 @@ func NewRecordComplete(incompleteRecord *Record, signingHash []byte, owner *Owne
 
 // NewRecord is a shortcut to running all incremental record creation functions.
 // Obviously this is time and memory intensive due to proof of work required to "pay" for this record.
-func NewRecord(value []byte, links [][]byte, maskingKey []byte, plainTextSelectorNames [][]byte, selectorOrdinals [][]byte, certificateRecordHash []byte, ts uint64, workFunction *Wharrgarblr, workCostOverride uint32, owner *Owner) (r *Record, err error) {
+func NewRecord(value []byte, links [][32]byte, maskingKey []byte, plainTextSelectorNames [][]byte, selectorOrdinals [][]byte, certificateRecordHash []byte, ts uint64, workFunction *Wharrgarblr, workCostOverride uint32, owner *Owner) (r *Record, err error) {
 	var wh, sh [32]byte
 	var wb uint
 	r, wh, wb, err = NewRecordStart(value, links, maskingKey, plainTextSelectorNames, selectorOrdinals, owner.Bytes(), certificateRecordHash, ts)

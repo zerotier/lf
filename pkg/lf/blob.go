@@ -2,6 +2,7 @@ package lf
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 )
 
@@ -61,17 +62,51 @@ func (b Blob) MarshalJSON() ([]byte, error) {
 	return []byte(s.String()), nil
 }
 
-// UnmarshalJSON unmarshals this blob from a JSON array, string, or base64 string prefixed by a backspace (ascii 8, string "\b").
+// UnmarshalJSON unmarshals this blob from a JSON binary-escaped string or array
 func (b *Blob) UnmarshalJSON(j []byte) error {
 	var str string
 	err := json.Unmarshal(j, &str)
 	if err != nil {
+		var bb []byte
+		if json.Unmarshal(j, &bb) == nil {
+			*b = bb
+			return nil
+		}
 		return err
 	}
 	bb := make([]byte, 0, len(str))
 	for _, r := range str {
-		bb = append(bb, byte(r&0xff))
+		bb = append(bb, byte(r&0xff)) // must do it this way to avoid UTF8-decoding a binary string
 	}
 	*b = bb
 	return nil
+}
+
+// ShortBlob is a byte array that JSON serializes to an int array.
+type ShortBlob []byte
+
+// MarshalJSON returns this blob as a JSON object.
+func (b ShortBlob) MarshalJSON() ([]byte, error) {
+	var sb strings.Builder
+	sb.Grow(len(b) * 3)
+	sb.WriteRune('[')
+	for i := 0; i < len(b); i++ {
+		if i != 0 {
+			sb.WriteRune(',')
+		}
+		sb.WriteString(strconv.FormatUint(uint64(b[i]), 10))
+	}
+	sb.WriteRune(']')
+	return []byte(sb.String()), nil
+}
+
+// UnmarshalJSON unmarshals this blob from a JSON array or string
+func (b *ShortBlob) UnmarshalJSON(j []byte) error {
+	var bl Blob
+	err := bl.UnmarshalJSON(j)
+	if err == nil {
+		*b = ([]byte)(bl)
+		return nil
+	}
+	return err
 }

@@ -200,11 +200,11 @@ func TestCore(out io.Writer) bool {
 
 	fmt.Fprintf(out, "Testing Record marshal/unmarshal... ")
 	for k := 0; k < 32; k++ {
-		var testLinks [][]byte
+		var testLinks [][32]byte
 		for i := 0; i < 3; i++ {
 			var tmp [32]byte
 			secrand.Read(tmp[:])
-			testLinks = append(testLinks, tmp[:])
+			testLinks = append(testLinks, tmp)
 		}
 		var testValue [32]byte
 		secrand.Read(testValue[:])
@@ -239,11 +239,11 @@ func TestCore(out io.Writer) bool {
 	fmt.Fprintf(out, "OK\n")
 
 	fmt.Fprintf(out, "Testing Record will full proof of work (generate, verify)... ")
-	var testLinks [][]byte
+	var testLinks [][32]byte
 	for i := 0; i < 3; i++ {
 		var tmp [32]byte
 		secrand.Read(tmp[:])
-		testLinks = append(testLinks, tmp[:])
+		testLinks = append(testLinks, tmp)
 	}
 	var testValue [32]byte
 	secrand.Read(testValue[:])
@@ -382,9 +382,9 @@ func TestDatabase(testBasePath string, out io.Writer) bool {
 				}
 			}
 		}
-		var links [][]byte
+		var links [][32]byte
 		for i := range linkTo {
-			links = append(links, records[linkTo[i]].Hash()[:])
+			links = append(links, *(records[linkTo[i]].Hash()))
 		}
 
 		ts++

@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strings"
 )
 
 // APIQueryRange (request, part of APIQuery) specifies a selector or selector range.
@@ -49,6 +50,11 @@ type APIQueryResults []APIQueryResult
 
 // Run executes this API query against a remote LF node or proxy
 func (m *APIQuery) Run(url string) (*APIQueryResult, error) {
+	if strings.HasSuffix(url, "/") {
+		url = url + "query"
+	} else {
+		url = url + "/query"
+	}
 	body, err := apiRun(url, m.Range)
 	if err != nil {
 		return nil, err

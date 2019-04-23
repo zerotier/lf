@@ -25,8 +25,6 @@ import (
 )
 
 var (
-	clientConfigFile = "client-config.json"
-
 	lfDefaultPath = func() string {
 		if os.Getuid() == 0 {
 			return "/var/lib/lf"
@@ -64,6 +62,8 @@ Commands:
     -file                                    Value is a file path, not literal
     -mask <key>                              Encrypt value using masking key
     -owner <owner>                           Use this owner instead of default
+    -remote                                  Remote encrypt/PoW (reveals keys)
+    -tryremote                               Try remote encrypt/PoW first
   get [-...] <name[#ord]>[,name[#ord]] [...] Get value(s) by selector or range
     -unmask <key>                            Decrypt value(s) with masking key
     -time <start>[,end]                      Get after time or in range
@@ -81,9 +81,7 @@ Binary or special character selector names currently require direct API use.
 `)
 }
 
-//////////////////////////////////////////////////////////////////////////////
-
-func doNodeStart(cfg *Config, basePath string, urls []string, verboseOutput bool, args []string) {
+func doNodeStart(cfg *lf.ClientConfig, basePath string, urls []string, args []string) {
 	osSignalChannel := make(chan os.Signal, 2)
 	signal.Notify(osSignalChannel, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGINT)
 	stdoutLogger := log.New(os.Stdout, "", log.LstdFlags)
@@ -97,26 +95,72 @@ func doNodeStart(cfg *Config, basePath string, urls []string, verboseOutput bool
 	node.Stop()
 }
 
-func doProxyStart(cfg *Config, basePath string, urls []string, verboseOutput bool, args []string) {
+func doProxyStart(cfg *lf.ClientConfig, basePath string, urls []string, args []string) {
 }
 
-func doSet(cfg *Config, owner *ConfigOwner, basePath string, urls []string, maskKey string, verboseOutput bool, args []string) {
-	var err error
-
-	if len(args) < 1 {
+func doStatus(cfg *lf.ClientConfig, basePath string, urls []string, args []string) {
+	if len(args) != 0 {
 		printHelp("")
 		return
 	}
-	if owner == nil {
-		fmt.Printf("ERROR: no owners specified and no default owner\n")
+	var stat *lf.APIStatusResult
+	var err error
+	for _, u := range urls {
+		stat, err = lf.APIStatusGet(u)
+		if err == nil {
+			break
+		}
+	}
+	if err != nil {
+		fmt.Printf("ERROR: %s\n", err.Error())
+		return
+	}
+	fmt.Println(lf.PrettyJSON(stat))
+}
+
+func doSet(cfg *lf.ClientConfig, basePath string, urls []string, args []string) {
+	setOpts := flag.NewFlagSet("set", flag.ContinueOnError)
+	ownerName := setOpts.String("owner", "", "")
+	maskKey := setOpts.String("mask", "", "")
+	valueIsFile := setOpts.Bool("file", false, "")
+	remote := setOpts.Bool("remote", false, "")
+	tryRemote := setOpts.Bool("tryremote", false, "")
+	err := setOpts.Parse(os.Args)
+	if err != nil {
+		printHelp("")
+		return
+	}
+	args = setOpts.Args()
+	if len(args) < 2 { // must have at least one selector and a value
+		printHelp("")
 		return
 	}
 
-	var mk lf.Blob
-	if len(maskKey) > 0 {
-		mk = []byte(maskKey)
+	var owner *lf.ClientConfigOwner
+	if len(*ownerName) > 0 {
+		owner = cfg.Owners[*ownerName]
+		if owner == nil {
+			fmt.Printf("ERROR: owner '%s' not found\n", *ownerName)
+			return
+		}
+	}
+	for _, o := range cfg.Owners {
+		if o.Default {
+			owner = o
+			break
+		}
+	}
+	if owner == nil {
+		fmt.Printf("ERROR: owner not found and no default specified\n")
+		return
 	}
 
+	var mk []byte
+	if len(*maskKey) > 0 {
+		mk = []byte(*maskKey)
+	}
+
+	var plainTextSelectorNames, selectorOrdinals [][]byte
 	var selectors []lf.APINewSelector
 	for i := 0; i < len(args)-1; i++ {
 		sel := args[i]
@@ -128,6 +172,8 @@ func doSet(cfg *Config, owner *ConfigOwner, basePath string, urls []string, mask
 			}
 			sel = sel[0:ordSepIdx]
 		}
+		plainTextSelectorNames = append(plainTextSelectorNames, []byte(sel))
+		selectorOrdinals = append(selectorOrdinals, []byte(ord))
 		selectors = append(selectors, lf.APINewSelector{
 			Name:    []byte(sel),
 			Ordinal: []byte(ord),
@@ -135,31 +181,70 @@ func doSet(cfg *Config, owner *ConfigOwner, basePath string, urls []string, mask
 	}
 
 	value := []byte(args[len(args)-1])
-
-	ts := lf.TimeSec()
-	req := lf.APINew{
-		Selectors:       selectors,
-		MaskingKey:      mk,
-		OwnerPrivateKey: owner.OwnerPrivate,
-		Links:           nil,
-		Value:           value,
-		Timestamp:       &ts,
+	if *valueIsFile {
+		vdata, err := ioutil.ReadFile(string(value))
+		if err != nil {
+			fmt.Println("ERROR: file '" + err.Error() + "' not found")
+			return
+		}
+		value = vdata
 	}
+
+	var links [][32]byte
 	var rec *lf.Record
-	for _, u := range urls {
-		rec, err = req.Run(u)
+	ts := lf.TimeSec()
+
+	// If remote delegated record creation is preferred, try that first.
+	var lazies []string
+	if *remote || *tryRemote {
+		req := lf.APINew{
+			Selectors:       selectors,
+			MaskingKey:      mk,
+			OwnerPrivateKey: owner.OwnerPrivate,
+			Links:           links,
+			Value:           value,
+			Timestamp:       &ts,
+		}
+		for _, u := range urls {
+			rec, err = req.Run(u)
+			if err == nil {
+				lazies = nil
+				break
+			}
+			apiErr, isAPIErr := err.(lf.APIError)
+			if isAPIErr && apiErr.Code == lf.APIErrorLazy {
+				lazies = append(lazies, u)
+			}
+		}
+	} else {
+		lazies = urls
+	}
+
+	// If not delegating or trial remote delgation failed, make record locally.
+	if len(lazies) > 0 && !*remote {
+		o, err := owner.GetOwner()
 		if err == nil {
-			break
+			rec, err = lf.NewRecord(value, links, mk, plainTextSelectorNames, selectorOrdinals, nil, ts, lf.NewWharrgarblr(lf.RecordDefaultWharrgarblMemory, 0), 0, o)
+			if err == nil {
+				rb := rec.Bytes()
+				for _, u := range lazies {
+					err = lf.APIPostRecord(u, rb)
+					if err == nil {
+						break
+					}
+				}
+			}
 		}
 	}
 
 	if err != nil {
 		fmt.Printf("ERROR: %s\n", err.Error())
+		return
 	}
-	fmt.Printf("%#v\n", rec)
+	fmt.Println(lf.PrettyJSON(rec))
 }
 
-func doOwner(cfg *Config, basePath string, urls []string, verboseOutput bool, args []string) {
+func doOwner(cfg *lf.ClientConfig, basePath string, urls []string, args []string) {
 	if len(args) == 0 {
 		printHelp("")
 		return
@@ -194,12 +279,12 @@ func doOwner(cfg *Config, basePath string, urls []string, verboseOutput bool, ar
 		}
 		owner, _ := lf.NewOwner(lf.OwnerTypeEd25519)
 		isDfl := len(cfg.Owners) == 0
-		cfg.Owners[name] = &ConfigOwner{
+		cfg.Owners[name] = &lf.ClientConfigOwner{
 			Owner:        owner.Bytes(),
 			OwnerPrivate: owner.PrivateBytes(),
 			Default:      isDfl,
 		}
-		cfg.dirty = true
+		cfg.Dirty = true
 		dfl := " "
 		if isDfl {
 			dfl = "*"
@@ -219,7 +304,7 @@ func doOwner(cfg *Config, basePath string, urls []string, verboseOutput bool, ar
 		for n, o := range cfg.Owners {
 			o.Default = (n == name)
 		}
-		cfg.dirty = true
+		cfg.Dirty = true
 		fmt.Printf("%-24s * %x\n", name, cfg.Owners[name].Owner)
 
 	case "delete":
@@ -246,8 +331,8 @@ func doOwner(cfg *Config, basePath string, urls []string, verboseOutput bool, ar
 				break
 			}
 		}
-		cfg.dirty = true
-		fmt.Printf("%s deleted.\n", name)
+		cfg.Dirty = true
+		fmt.Printf("%-24s deleted\n", name)
 
 	case "rename":
 		if len(args) < 3 {
@@ -260,7 +345,7 @@ func doOwner(cfg *Config, basePath string, urls []string, verboseOutput bool, ar
 	}
 }
 
-func doMakeGenesis(cfg *Config, basePath string, urls []string, verboseOutput bool, args []string) {
+func doMakeGenesis(cfg *lf.ClientConfig, basePath string, urls []string, args []string) {
 	var nwKey [32]byte
 	secrand.Read(nwKey[:])
 	g := lf.GenesisParameters{
@@ -271,14 +356,14 @@ func doMakeGenesis(cfg *Config, basePath string, urls []string, verboseOutput bo
 		LinkKey:                   nwKey,
 		TimestampFloor:            lf.TimeSec(),
 		RecordMinLinks:            3,
-		RecordMaxValueSize:        4096,
+		RecordMaxValueSize:        1024,
 		RecordMaxSize:             lf.RecordMaxSize,
 		RecordMaxForwardTimeDrift: 15,
 	}
 
 	fmt.Printf("Genesis parameters:\n%s\nCreating %d genesis records...\n", lf.PrettyJSON(&g), g.RecordMinLinks)
 
-	genesisRecords, genesisOwner, err := lf.CreateGenesisRecords(lf.OwnerTypeEd25519, &g)
+	genesisRecords, genesisOwner, err := lf.CreateGenesisRecords(lf.OwnerTypeNistP384, &g)
 	if err != nil {
 		fmt.Printf("ERROR: %s\n", err.Error())
 		os.Exit(-1)
@@ -309,9 +394,6 @@ func main() {
 	globalOpts := flag.NewFlagSet("global", flag.ContinueOnError)
 	basePath := globalOpts.String("path", lfDefaultPath, "")
 	urlOverride := globalOpts.String("url", "", "")
-	ownerOverride := globalOpts.String("owner", "", "")
-	maskKey := globalOpts.String("mask", "", "")
-	verboseOutput := globalOpts.Bool("verbose", false, "")
 	err := globalOpts.Parse(os.Args)
 	if err != nil {
 		printHelp("")
@@ -329,29 +411,13 @@ func main() {
 
 	os.MkdirAll(*basePath, 0755)
 
-	cfgPath := path.Join(*basePath, clientConfigFile)
-	var cfg Config
-	err = cfg.load(cfgPath)
+	cfgPath := path.Join(*basePath, lf.ClientConfigName)
+	var cfg lf.ClientConfig
+	err = cfg.Load(cfgPath)
 	if err != nil {
 		fmt.Printf("ERROR: cannot read or parse %s: %s\n", cfgPath, err.Error())
 		os.Exit(-1)
 		return
-	}
-
-	var owner *ConfigOwner
-	if len(*ownerOverride) > 0 {
-		owner = cfg.Owners[*ownerOverride]
-		if owner == nil {
-			fmt.Printf("ERROR: owner '%s' not found\n", *ownerOverride)
-			os.Exit(-1)
-			return
-		}
-	}
-	for _, o := range cfg.Owners {
-		if o.Default {
-			owner = o
-			break
-		}
 	}
 
 	var urls []string
@@ -399,27 +465,30 @@ func main() {
 		}
 
 	case "node-start":
-		doNodeStart(&cfg, *basePath, urls, *verboseOutput, cmdArgs)
+		doNodeStart(&cfg, *basePath, urls, cmdArgs)
 
 	case "proxy-start":
-		doProxyStart(&cfg, *basePath, urls, *verboseOutput, cmdArgs)
+		doProxyStart(&cfg, *basePath, urls, cmdArgs)
+
+	case "status":
+		doStatus(&cfg, *basePath, urls, cmdArgs)
 
 	case "set":
-		doSet(&cfg, owner, *basePath, urls, *maskKey, *verboseOutput, cmdArgs)
+		doSet(&cfg, *basePath, urls, cmdArgs)
 
 	case "owner":
-		doOwner(&cfg, *basePath, urls, *verboseOutput, cmdArgs)
+		doOwner(&cfg, *basePath, urls, cmdArgs)
 
 	case "_makegenesis":
-		doMakeGenesis(&cfg, *basePath, urls, *verboseOutput, cmdArgs)
+		doMakeGenesis(&cfg, *basePath, urls, cmdArgs)
 
 	default:
 		printHelp("")
 
 	}
 
-	if cfg.dirty {
-		err = cfg.save(cfgPath)
+	if cfg.Dirty {
+		err = cfg.Save(cfgPath)
 		if err != nil {
 			fmt.Printf("ERROR: cannot write %s: %s\n", cfgPath, err.Error())
 			os.Exit(-1)

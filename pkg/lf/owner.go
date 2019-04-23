@@ -172,8 +172,8 @@ func (o *Owner) Sign(hash []byte) ([]byte, error) {
 				return nil, ErrUnsupportedCurve
 			}
 			o.privateECDSA = priv
-			return ECDSASign(priv, hash)
 		}
+		return ECDSASign(o.privateECDSA, hash)
 	}
 	return nil, ErrPrivateKeyRequired
 }

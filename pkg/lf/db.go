@@ -210,18 +210,20 @@ func (db *db) getLinks(count uint) (uint, []byte, error) {
 	return lc, lbuf[0 : 32*lc], nil
 }
 
-// getLinks2 is like getLinks but returns a slice of slices instead of one slice with all the link IDs concatenated.
-// This slice of slices is just a slice of slices of the original concatenated array.
-func (db *db) getLinks2(count uint) ([][]byte, error) {
+// getLinks2 is like getLinks but returns a slice of arrays instead of one slice with all the link IDs concatenated.
+func (db *db) getLinks2(count uint) (ll [][32]byte, err error) {
 	_, l, err := db.getLinks(count)
 	if err != nil {
 		return nil, err
 	}
-	var ll [][]byte
-	for i := 0; (i + 32) <= len(l); i += 32 {
-		ll = append(ll, l[i:i+32])
+	if len(l) >= 32 {
+		ll = make([][32]byte, len(l)/32)
+		for i, j := 0, 0; (j + 32) <= len(l); j += 32 {
+			copy(ll[i][:], l[j:j+32])
+			i++
+		}
 	}
-	return ll, nil
+	return
 }
 
 // stats returns some basic statistics about this database.
