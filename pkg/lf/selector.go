@@ -21,8 +21,8 @@ const SelectorTypeBP160 byte = 0
 
 // Selector is a non-forgeable range queryable identifier for records.
 type Selector struct {
-	Ordinal Blob     // An ordinal value that can be used to perform range queries against selectors
-	Claim   [41]byte // 41-byte brainpoolP160t1 recoverable signature
+	Ordinal Blob     `json:",omitempty"` // An ordinal value that can be used to perform range queries against selectors
+	Claim   [41]byte ``                  // 41-byte brainpoolP160t1 recoverable signature
 }
 
 func addOrdinalToHash(h *[64]byte, ordinal []byte) {

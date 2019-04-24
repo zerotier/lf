@@ -75,6 +75,7 @@ func APIPostRecord(url string, recordData []byte) error {
 		if err := json.Unmarshal(body, &e); err != nil {
 			return APIError{Code: resp.StatusCode, Message: "error response invalid: " + err.Error()}
 		}
+		return e
 	}
 	return APIError{Code: resp.StatusCode}
 }

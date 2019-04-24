@@ -194,6 +194,18 @@ func doSet(cfg *lf.ClientConfig, basePath string, urls []string, args []string) 
 	var rec *lf.Record
 	ts := lf.TimeSec()
 
+	// Get links for record
+	for _, u := range urls {
+		links, err = lf.APIGetLinks(u, 0)
+		if err == nil {
+			break
+		}
+	}
+	if err != nil {
+		fmt.Printf("ERROR: %s\n", err.Error())
+		return
+	}
+
 	// If remote delegated record creation is preferred, try that first.
 	var lazies []string
 	if *remote || *tryRemote {
@@ -222,7 +234,8 @@ func doSet(cfg *lf.ClientConfig, basePath string, urls []string, args []string) 
 
 	// If not delegating or trial remote delgation failed, make record locally.
 	if len(lazies) > 0 && !*remote {
-		o, err := owner.GetOwner()
+		var o *lf.Owner
+		o, err = owner.GetOwner()
 		if err == nil {
 			rec, err = lf.NewRecord(value, links, mk, plainTextSelectorNames, selectorOrdinals, nil, ts, lf.NewWharrgarblr(lf.RecordDefaultWharrgarblMemory, 0), 0, o)
 			if err == nil {

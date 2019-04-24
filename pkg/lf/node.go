@@ -117,17 +117,6 @@ type Node struct {
 func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, logLevel int) (n *Node, err error) {
 	n = new(Node)
 
-	initOk := false
-	defer func() {
-		e := recover()
-		if e != nil {
-			err = fmt.Errorf("unexpected panic in node init: %s", e)
-		}
-		if !initOk {
-			n.Stop()
-		}
-	}()
-
 	if logger == nil {
 		logger = nullLogger
 	}
@@ -140,6 +129,18 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 	for i := logLevel + 1; i < logLevelCount; i++ {
 		n.log[i] = nullLogger
 	}
+
+	initOk := false
+	nn := n // hack for weird edge case issue with n being nil inside defer func
+	defer func() {
+		e := recover()
+		if e != nil {
+			err = fmt.Errorf("unexpected panic in node init: %s", e)
+		}
+		if !initOk {
+			nn.Stop()
+		}
+	}()
 
 	n.connectionsInStartup = make(map[*net.TCPConn]bool)
 	n.peers = make(map[string]*peer)
@@ -307,6 +308,8 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 					n.log[LogLevelNormal].Printf("applying genesis configuration update from record %x", *gr.Hash())
 					n.genesisParameters.Update(rv)
 				}
+			} else if err != nil {
+				n.log[LogLevelWarning].Print("error unmarshaling genesis record: " + err.Error())
 			}
 		}
 		return true
@@ -581,7 +584,7 @@ func (n *Node) AddRecord(r *Record) error {
 	if uint(len(r.Value)) > n.genesisParameters.RecordMaxValueSize {
 		return ErrRecordValueTooLarge
 	}
-	if r.LinkCount() < n.genesisParameters.RecordMinLinks {
+	if uint(len(r.Links)) < n.genesisParameters.RecordMinLinks {
 		return ErrRecordInsufficientLinks
 	}
 	if r.Timestamp > (TimeSec() + uint64(n.genesisParameters.RecordMaxForwardTimeDrift)) {
@@ -593,10 +596,10 @@ func (n *Node) AddRecord(r *Record) error {
 	if r.WorkAlgorithm == RecordWorkAlgorithmNone && n.genesisParameters.WorkRequired {
 		return ErrRecordInsufficientWork
 	}
-	if len(r.Certificate) > 0 && len(n.genesisParameters.RootCertificateAuthorities) == 0 { // don't let people shove crap into cert field if it's not used
+	if r.Certificate != nil && len(n.genesisParameters.RootCertificateAuthorities) == 0 { // don't let people shove crap into cert field if it's not used
 		return ErrRecordCertificateInvalid
 	}
-	if len(r.Certificate) == 0 && n.genesisParameters.CertificateRequired {
+	if r.Certificate == nil && n.genesisParameters.CertificateRequired {
 		return ErrRecordCertificateRequired
 	}
 

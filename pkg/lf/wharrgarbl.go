@@ -466,18 +466,7 @@ func wharrgarblHash(cipher0, cipher1 cipher.Block, tmp []byte, in *[16]byte) uin
 	return (binary.BigEndian.Uint64(tmp[0:8]) + binary.BigEndian.Uint64(tmp[8:16])) ^ y
 }
 
-// NewWharrgarblr creates a new Wharrgarbl instance with the given memory size (for memory/speed tradeoff).
-// If thread count is 0 the reported CPU/core count of the system is used.
-func NewWharrgarblr(memorySize uint, threadCount int) (wg *Wharrgarblr) {
-	wg = new(Wharrgarblr)
-
-	if memorySize < 1048576 {
-		memorySize = 1048576
-	}
-	wg.memory = make([]uint64, memorySize/8)
-	wg.SetThreadCount(threadCount)
-
-	// Initialize wharrgarblTable if it's not initialized already
+func wharrgarblInitTable() {
 	wharrgarblTableLock.RLock()
 	if wharrgarblTable != nil {
 		wharrgarblTableLock.RUnlock()
@@ -500,7 +489,19 @@ func NewWharrgarblr(memorySize uint, threadCount int) (wg *Wharrgarblr) {
 		}
 	}
 	wharrgarblTableLock.Unlock()
+}
 
+// NewWharrgarblr creates a new Wharrgarbl instance with the given memory size (for memory/speed tradeoff).
+// If thread count is 0 the reported CPU/core count of the system is used.
+func NewWharrgarblr(memorySize uint, threadCount int) (wg *Wharrgarblr) {
+	wg = new(Wharrgarblr)
+
+	if memorySize < 1048576 {
+		memorySize = 1048576
+	}
+	wg.memory = make([]uint64, memorySize/8)
+	wg.SetThreadCount(threadCount)
+	wharrgarblInitTable()
 	return
 }
 
@@ -621,6 +622,10 @@ func WharrgarblVerify(work []byte, in []byte) uint32 {
 	if len(work) != WharrgarblOutputSize {
 		return 0
 	}
+
+	wharrgarblInitTable()
+	wharrgarblTableLock.RLock()
+	defer wharrgarblTableLock.RUnlock()
 
 	var collisionHashIn [16]byte
 	inHashed := sha512.Sum512(in)

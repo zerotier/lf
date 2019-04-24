@@ -47,7 +47,7 @@ const RecordWorkAlgorithmWharrgarbl byte = 1
 type recordBody struct {
 	Value       Blob       `json:",omitempty"` // Record value (possibly masked and/or compressed, use GetValue() to get)
 	Owner       Blob       `json:",omitempty"` // Owner of this record (owner public bytes)
-	Certificate Blob       `json:",omitempty"` // Hash (256-bit) of exact record containing certificate for this owner (if CAs are enabled)
+	Certificate *[32]byte  `json:",omitempty"` // Hash (256-bit) of exact record containing certificate for this owner (if CAs are enabled)
 	Links       [][32]byte `json:",omitempty"` // Links to previous records' hashes
 	Timestamp   uint64     ``                  // Timestamp (and revision ID) in SECONDS since Unix epoch
 }
@@ -97,7 +97,7 @@ func (rb *recordBody) unmarshalFrom(r io.Reader) error {
 		if err != nil {
 			return err
 		}
-		rb.Certificate = cert[:]
+		rb.Certificate = &cert
 	} else {
 		rb.Certificate = nil
 	}
@@ -113,6 +113,9 @@ func (rb *recordBody) unmarshalFrom(r io.Reader) error {
 		rb.Links = make([][32]byte, uint(l))
 		for i := 0; i < len(rb.Links); i++ {
 			_, err = io.ReadFull(&rr, rb.Links[i][:])
+			if err != nil {
+				return err
+			}
 		}
 	} else {
 		rb.Links = nil
@@ -128,10 +131,9 @@ func (rb *recordBody) unmarshalFrom(r io.Reader) error {
 
 func (rb *recordBody) marshalTo(w io.Writer) error {
 	var flags [1]byte
-	if len(rb.Certificate) == 32 {
+	if rb.Certificate != nil {
 		flags[0] |= recordBodyFlagHasCertificate
 	}
-
 	if _, err := w.Write(flags[:]); err != nil {
 		return err
 	}
@@ -150,17 +152,16 @@ func (rb *recordBody) marshalTo(w io.Writer) error {
 		return err
 	}
 
-	if len(rb.Certificate) == 32 {
-		if _, err := w.Write(rb.Certificate); err != nil {
+	if rb.Certificate != nil {
+		if _, err := w.Write(rb.Certificate[:]); err != nil {
 			return err
 		}
 	}
 
-	linkCount := len(rb.Links)
-	if _, err := writeUVarint(w, uint64(linkCount)); err != nil {
+	if _, err := writeUVarint(w, uint64(len(rb.Links))); err != nil {
 		return err
 	}
-	for i := 0; i < linkCount; i++ {
+	for i := 0; i < len(rb.Links); i++ {
 		if _, err := w.Write(rb.Links[i][:]); err != nil {
 			return err
 		}
@@ -188,7 +189,9 @@ func (rb *recordBody) signingHash() (sum [32]byte) {
 	h.Write(b1_0)
 	h.Write(rb.Owner)
 	h.Write(b1_0)
-	h.Write(rb.Certificate)
+	if rb.Certificate != nil {
+		h.Write(rb.Certificate[:])
+	}
 	h.Write(b1_0)
 	for i := 0; i < len(rb.Links); i++ {
 		h.Write(rb.Links[i][:])
@@ -200,9 +203,6 @@ func (rb *recordBody) signingHash() (sum [32]byte) {
 	h.Sum(sum[:0])
 	return
 }
-
-// LinkCount returns the number of links, which is just short for len(Links)/32
-func (rb *recordBody) LinkCount() uint { return uint(len(rb.Links) / 32) }
 
 // GetValue decrypts and possibly decompresses this record's masked value.
 // An apparently invalid masking key or a decompression failure will result in an empty/nil value.
@@ -622,7 +622,7 @@ func NewRecordStart(value []byte, links [][32]byte, maskingKey []byte, plainText
 	if len(certificateRecordHash) == 32 {
 		var cert [32]byte
 		copy(cert[:], certificateRecordHash)
-		r.recordBody.Certificate = cert[:]
+		r.recordBody.Certificate = &cert
 	}
 
 	if len(links) > 0 {

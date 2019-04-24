@@ -128,8 +128,12 @@ func (db *db) putRecord(r *Record) error {
 		ssptr = unsafe.Pointer(&selectorSizes[0])
 	}
 	var lptr unsafe.Pointer
-	if len(r.recordBody.Links) > 0 {
-		lptr = unsafe.Pointer(&r.recordBody.Links[0])
+	l := make([]byte, 0, len(r.recordBody.Links)*32)
+	for i := 0; i < len(r.recordBody.Links); i++ {
+		l = append(l, r.recordBody.Links[i][:]...)
+	}
+	if len(l) > 0 {
+		lptr = unsafe.Pointer(&l[0])
 	}
 	owner := r.recordBody.Owner
 
@@ -147,7 +151,7 @@ func (db *db) putRecord(r *Record) error {
 		(*C.uint)(ssptr),
 		C.uint(len(selectors)),
 		lptr,
-		C.uint(r.recordBody.LinkCount()))
+		C.uint(len(r.recordBody.Links)))
 
 	if cerr != 0 {
 		return ErrDatabase{int(cerr), "record add failed (" + strconv.Itoa(int(cerr)) + ")"}
@@ -297,7 +301,7 @@ func (db *db) getAllByOwner(owner []byte, f func(uint64, uint64) bool) error {
 	if len(owner) == 0 {
 		return nil
 	}
-	results := C.ZTLF_DB_GetAllByOwner(db.cdb, unsafe.Pointer(&owner[0]))
+	results := C.ZTLF_DB_GetAllByOwner(db.cdb, unsafe.Pointer(&owner[0]), C.uint(len(owner)))
 	if uintptr(unsafe.Pointer(results)) != 0 {
 		for i := C.long(0); i < results.count; i++ {
 			rec := (*C.struct_ZTLF_RecordIndex)(unsafe.Pointer(uintptr(unsafe.Pointer(&results.records[0])) + (uintptr(i) * unsafe.Sizeof(results.records[0]))))

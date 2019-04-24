@@ -1123,7 +1123,7 @@ query_error:
 	return NULL;
 }
 
-struct ZTLF_RecordList *ZTLF_DB_GetAllByOwner(struct ZTLF_DB *db,const void *owner)
+struct ZTLF_RecordList *ZTLF_DB_GetAllByOwner(struct ZTLF_DB *db,const void *owner,const unsigned int ownerLen)
 {
 	long rcap = 64;
 	struct ZTLF_RecordList *r = (struct ZTLF_RecordList *)malloc(sizeof(struct ZTLF_RecordList) + (sizeof(struct ZTLF_RecordIndex) * rcap));
@@ -1135,7 +1135,7 @@ struct ZTLF_RecordList *ZTLF_DB_GetAllByOwner(struct ZTLF_DB *db,const void *own
 	r->count = 0;
 
 	sqlite3_reset(db->sGetAllByOwner);
-	sqlite3_bind_blob(db->sGetAllByOwner,1,owner,32,SQLITE_STATIC);
+	sqlite3_bind_blob(db->sGetAllByOwner,1,owner,(int)ownerLen,SQLITE_STATIC);
 	while (sqlite3_step(db->sGetAllByOwner) == SQLITE_ROW) {
 		r->records[r->count].doff = (uint64_t)sqlite3_column_int64(db->sGetAllByOwner,0);
 		r->records[r->count].dlen = (uint64_t)sqlite3_column_int64(db->sGetAllByOwner,1);
