@@ -81,6 +81,12 @@ func TestCore(out io.Writer) bool {
 			return false
 		}
 	}
+	var bFromStr Blob
+	err = bFromStr.UnmarshalJSON([]byte("\"Supercalifragilisticexpealidocious!\""))
+	if err != nil || string(bFromStr) != "Supercalifragilisticexpealidocious!" {
+		fmt.Fprintf(out, "FAILED (unmarshal from string)\n")
+		return false
+	}
 	fmt.Fprintf(out, "OK\n")
 
 	fmt.Fprintf(out, "Testing Shandwich256... ")
