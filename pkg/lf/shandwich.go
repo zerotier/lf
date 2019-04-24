@@ -17,14 +17,12 @@ import (
 
 // Shandwich256 uses sha256 to combine the outputs of sha512 and sha3-512 for a very future-proof 256-bit hash.
 // This is used to compute record identity hashes and in a few other critical spots where changing the hash
-// function would be painful and disruptive. It provides a very future-proof hash where a significant break of either
-// SHA2-512 or SHA3 would be relatively inconsequential since an attacker would have to successfully attack both.
-// A major break of SHA2-256 would also not matter much since we just use it to combine outputs in a nonlinear way.
+// function would be painful and disruptive.
 func Shandwich256(in []byte) (h [32]byte) {
-	h0 := sha512.Sum512(in)
-	h1 := sha3.Sum512(in)
 	combiner := sha256.New()
+	h0 := sha512.Sum512(in)
 	combiner.Write(h0[:])
+	h1 := sha3.Sum512(in)
 	combiner.Write(h1[:])
 	combiner.Sum(h[:0])
 	return

@@ -16,6 +16,9 @@ import (
 	"strings"
 )
 
+// Client config is mostly used by the code in cmd/lf but it's here so Node can
+// manipulate it easily.
+
 // ClientConfigName is the default name of the client config file
 const ClientConfigName = "client.json"
 

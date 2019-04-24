@@ -60,10 +60,13 @@ func APIPostRecord(url string, recordData []byte) error {
 		url = url + "/post"
 	}
 	resp, err := http.Post(url, "application/octet-stream", bytes.NewReader(recordData))
+	if err != nil {
+		return err
+	}
 	if resp.StatusCode == 200 {
 		return nil
 	}
-	body, err := ioutil.ReadAll(&io.LimitedReader{R: resp.Body, N: int64(APIMaxResponseSize)})
+	body, err := ioutil.ReadAll(&io.LimitedReader{R: resp.Body, N: 131072})
 	if err != nil {
 		return APIError{Code: resp.StatusCode}
 	}
@@ -74,6 +77,37 @@ func APIPostRecord(url string, recordData []byte) error {
 		}
 	}
 	return APIError{Code: resp.StatusCode}
+}
+
+// APIGetLinks queries this node for links to use to build a new record.
+// Passing 0 or a negative count causes the node to be asked for the default link count.
+func APIGetLinks(url string, count int) ([][32]byte, error) {
+	if strings.HasSuffix(url, "/") {
+		url = url + "links"
+	} else {
+		url = url + "/links"
+	}
+	if count > 0 {
+		url = url + "?count=" + strconv.FormatUint(uint64(count), 10)
+	}
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode == 200 {
+		body, err := ioutil.ReadAll(&io.LimitedReader{R: resp.Body, N: 131072})
+		if err != nil {
+			return nil, err
+		}
+		var l [][32]byte
+		for i := 0; (i + 32) <= len(body); i += 32 {
+			var h [32]byte
+			copy(h[:], body[i:i+32])
+			l = append(l, h)
+		}
+		return l, nil
+	}
+	return nil, APIError{Code: resp.StatusCode}
 }
 
 // apiRun contains common code for the Run() methods of API request objects.
@@ -233,7 +267,7 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 	smux.HandleFunc("/links", func(out http.ResponseWriter, req *http.Request) {
 		apiSetStandardHeaders(out)
 		if req.Method == http.MethodGet || req.Method == http.MethodHead {
-			desired := n.genesisParameters.RecordMinLinks
+			desired := n.genesisParameters.RecordMinLinks // default is min links for this LF DAG
 			desiredStr := req.URL.Query().Get("count")
 			if len(desiredStr) > 0 {
 				tmp, _ := strconv.ParseInt(desiredStr, 10, 64)

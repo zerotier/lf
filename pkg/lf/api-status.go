@@ -17,9 +17,9 @@ import (
 
 // APIStatusPeer (response) contains information about a connected peer.
 type APIStatusPeer struct {
-	Address   string    `json:",omitempty"` // IP and port
-	PublicKey ShortBlob `json:",omitempty"` // public key
-	Inbound   bool      ``                  // true if this is an inbound connection
+	Address   string `json:",omitempty"` // IP and port
+	PublicKey Blob   `json:",omitempty"` // public key
+	Inbound   bool   ``                  // true if this is an inbound connection
 }
 
 // APIStatusResult contains status information about this node and the network it belongs to.
