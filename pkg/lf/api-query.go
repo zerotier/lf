@@ -49,7 +49,7 @@ type APIQueryResult struct {
 type APIQueryResults []APIQueryResult
 
 // Run executes this API query against a remote LF node or proxy
-func (m *APIQuery) Run(url string) (*APIQueryResult, error) {
+func (m *APIQuery) Run(url string) (APIQueryResults, error) {
 	if strings.HasSuffix(url, "/") {
 		url = url + "query"
 	} else {
@@ -59,14 +59,14 @@ func (m *APIQuery) Run(url string) (*APIQueryResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	var qr APIQueryResult
+	var qr APIQueryResults
 	if err := json.Unmarshal(body, &qr); err != nil {
 		return nil, err
 	}
-	return &qr, nil
+	return qr, nil
 }
 
-func (m *APIQuery) execute(n *Node) (qr []APIQueryResult, err *APIError) {
+func (m *APIQuery) execute(n *Node) (qr APIQueryResults, err *APIError) {
 	// Set up selector ranges using sender-supplied or computed selector keys.
 	mm := m.Range
 	if len(mm) == 0 {

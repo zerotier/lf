@@ -134,3 +134,25 @@ func ipIsGlobalPublicUnicast(ip net.IP) bool {
 	}
 	return false
 }
+
+// TokenizeStringWithEsc splits a string with escape characters
+func TokenizeStringWithEsc(s string, sep, escape rune) (tokens []string) {
+	var runes []rune
+	inEscape := false
+	for _, r := range s {
+		switch {
+		case inEscape:
+			inEscape = false
+			fallthrough
+		default:
+			runes = append(runes, r)
+		case r == escape:
+			inEscape = true
+		case r == sep:
+			tokens = append(tokens, string(runes))
+			runes = runes[:0]
+		}
+	}
+	tokens = append(tokens, string(runes))
+	return
+}

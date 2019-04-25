@@ -18,8 +18,10 @@ import (
 	"os/signal"
 	"path"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"../../pkg/lf"
 )
@@ -36,6 +38,20 @@ var (
 		return "./lf"
 	}()
 )
+
+func parseCLITime(t string) uint64 {
+	if len(t) > 0 {
+		timeInt, err := strconv.ParseUint(t, 10, 64)
+		if timeInt > 0 && err == nil {
+			return timeInt
+		}
+		tp, err := time.Parse(time.RFC1123, t)
+		if err == nil {
+			return uint64(tp.Unix())
+		}
+	}
+	return 0
+}
 
 func printHelp(cmd string) {
 	fmt.Print(`LF Global Key/Value Store ` + lf.VersionStr + `
@@ -64,9 +80,10 @@ Commands:
     -owner <owner>                           Use this owner instead of default
     -remote                                  Remote encrypt/PoW (reveals keys)
     -tryremote                               Try remote encrypt/PoW first
-  get [-...] <name[#ord]>[,name[#ord]] [...] Get value(s) by selector or range
+  get [-...] <name[#start[#end]]> [...]      Find by selector (optional range)
     -unmask <key>                            Decrypt value(s) with masking key
-    -time <start>[,end]                      Get after time or in range
+    -tstart <time>                           Constrain to after this time
+    -tend <time>                             Constrain to before this time
   owner <operation> [...]
     list                                     List owners
     new <name>                               Create a new owner
@@ -74,7 +91,7 @@ Commands:
     delete <name>                            Delete an owner (PERMANENT)
     rename <old name> <new name>             Rename an owner
 
-Times for time range queries are in Unix time (seconds since epoch).
+Time can be specified in either RFC1123 format or as numeric Unix time.
 Default home path is ` + lfDefaultPath + ` unless -path is used.
 Binary or special character selector names currently require direct API use.
 
@@ -116,6 +133,74 @@ func doStatus(cfg *lf.ClientConfig, basePath string, urls []string, args []strin
 		return
 	}
 	fmt.Println(lf.PrettyJSON(stat))
+}
+
+func doGet(cfg *lf.ClientConfig, basePath string, urls []string, args []string) {
+	getOpts := flag.NewFlagSet("get", flag.ContinueOnError)
+	unmaskKey := getOpts.String("unmask", "", "")
+	tStart := getOpts.String("tstart", "", "")
+	tEnd := getOpts.String("tend", "", "")
+	err := getOpts.Parse(os.Args)
+	if err != nil {
+		printHelp("")
+		return
+	}
+	args = getOpts.Args()
+	if len(args) < 1 {
+		printHelp("")
+		return
+	}
+
+	var mk []byte
+	if len(*unmaskKey) > 0 {
+		mk = []byte(*unmaskKey)
+	}
+
+	tr := []uint64{0, 9223372036854775807}
+	if len(*tStart) > 0 {
+		tr[0] = parseCLITime(*tStart)
+	}
+	if len(*tEnd) > 0 {
+		tr[1] = parseCLITime(*tEnd)
+	}
+
+	var ranges []lf.APIQueryRange
+	for i := 0; i < len(args); i++ {
+		tord := lf.TokenizeStringWithEsc(args[i], '#', '\\')
+		if len(tord) == 1 {
+			ranges = append(ranges, lf.APIQueryRange{KeyRange: []lf.Blob{lf.MakeSelectorKey([]byte(tord[0]), nil)}})
+		} else if len(tord) == 2 {
+			ranges = append(ranges, lf.APIQueryRange{KeyRange: []lf.Blob{lf.MakeSelectorKey([]byte(tord[0]), []byte(tord[1]))}})
+		} else if len(tord) == 3 {
+			ranges = append(ranges, lf.APIQueryRange{KeyRange: []lf.Blob{
+				lf.MakeSelectorKey([]byte(tord[0]), []byte(tord[1])),
+				lf.MakeSelectorKey([]byte(tord[0]), []byte(tord[2])),
+			}})
+		} else {
+			fmt.Printf("ERROR: selector ordinal range has 3 elements (use \\ to escape # signs)")
+			return
+		}
+	}
+
+	req := &lf.APIQuery{
+		Range:      ranges,
+		TimeRange:  tr,
+		MaskingKey: mk,
+	}
+
+	var res lf.APIQueryResults
+	for _, u := range urls {
+		res, err = req.Run(u)
+		if err == nil {
+			break
+		}
+	}
+
+	if err != nil {
+		fmt.Printf("ERROR: %s\n", err.Error())
+		return
+	}
+	fmt.Println(lf.PrettyJSON(res))
 }
 
 func doSet(cfg *lf.ClientConfig, basePath string, urls []string, args []string) {
@@ -488,6 +573,9 @@ func main() {
 
 	case "set":
 		doSet(&cfg, *basePath, urls, cmdArgs)
+
+	case "get":
+		doGet(&cfg, *basePath, urls, cmdArgs)
 
 	case "owner":
 		doOwner(&cfg, *basePath, urls, cmdArgs)
