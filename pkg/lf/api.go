@@ -52,6 +52,8 @@ func (e APIError) Error() string {
 	return strconv.FormatInt(int64(e.Code), 10)
 }
 
+//////////////////////////////////////////////////////////////////////////////
+
 // APIPostRecord submits a raw LF record to a node or proxy.
 func APIPostRecord(url string, recordData []byte) error {
 	if strings.HasSuffix(url, "/") {
@@ -110,6 +112,8 @@ func APIGetLinks(url string, count int) ([][32]byte, error) {
 	}
 	return nil, APIError{Code: resp.StatusCode}
 }
+
+//////////////////////////////////////////////////////////////////////////////
 
 // apiRun contains common code for the Run() methods of API request objects.
 func apiRun(url string, m interface{}) ([]byte, error) {

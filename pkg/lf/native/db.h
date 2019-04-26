@@ -217,4 +217,35 @@ static inline int ZTLF_DB_GetRecordData(struct ZTLF_DB *db,uint64_t doff,void *d
 	return 0;
 }
 
+/* Golang-specific shims to get around some inconvenient aspects of cgo */
+
+#ifdef ZTLF_GOLANG
+static inline int ZTLF_DB_Open_fromGo(struct ZTLF_DB *db,const char *path,char *errbuf,unsigned int errbufSize,uintptr_t loggerArg,uintptr_t syncCallbackArg)
+{
+	return ZTLF_DB_Open(db,path,errbuf,errbufSize,&ztlfLogOutputCCallback,(void *)loggerArg,&ztlfSyncCCallback,(void *)syncCallbackArg);
+}
+static inline int ZTLF_DB_PutRecord_fromGo(
+	struct ZTLF_DB *db,
+	const void *rec,
+	const unsigned int rsize,
+	const void *owner,
+	const unsigned int ownerSize,
+	const void *hash,
+	const void *id,
+	const uint64_t ts,
+	const uint32_t score,
+	const uintptr_t sel,
+	const unsigned int *selSize,
+	const unsigned int selCount,
+	const void *links,
+	const unsigned int linkCount)
+{
+	return ZTLF_DB_PutRecord(db,rec,rsize,owner,ownerSize,hash,id,ts,score,(const void **)sel,selSize,selCount,links,linkCount);
+}
+static inline struct ZTLF_QueryResults *ZTLF_DB_Query_fromGo(struct ZTLF_DB *db,const int64_t tsMin,const int64_t tsMax,const uintptr_t sel,const unsigned int *selSize,const unsigned int selCount)
+{
+	return ZTLF_DB_Query(db,tsMin,tsMax,(const void **)sel,selSize,selCount);
+}
+#endif
+
 #endif

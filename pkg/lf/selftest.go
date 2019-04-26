@@ -373,8 +373,10 @@ func TestDatabase(testBasePath string, out io.Writer) bool {
 	fmt.Fprintf(out, "OK\n")
 
 	fmt.Fprintf(out, "Generating %d random linked records... ", testDatabaseRecords)
+	var values, selectors, ordinals, selectorKeys [testDatabaseRecords][]byte
 	var records [testDatabaseRecords]*Record
 	ts := TimeSec()
+	testMaskingKey := []byte("maskingkey")
 	for ri := 0; ri < testDatabaseRecords; ri++ {
 		var linkTo []uint
 		for i := 0; i < 3 && i < ri; i++ {
@@ -393,19 +395,39 @@ func TestDatabase(testBasePath string, out io.Writer) bool {
 			links = append(links, *(records[linkTo[i]].Hash()))
 		}
 
-		ts++
-		sel := []byte("test-owner-number-" + strconv.FormatInt(int64(ri%testDatabaseOwners), 10))
-		value := []byte(strconv.FormatUint(ts, 10))
-		records[ri], err = NewRecord(value, links, []byte("test"), [][]byte{sel}, [][]byte{[]byte("0000")}, nil, ts, nil, 0, owners[ri%testDatabaseOwners])
+		ownerIdx := ri % testDatabaseOwners
+		values[ri] = []byte(strconv.FormatUint(ts, 10))
+		selectors[ri] = []byte(fmt.Sprintf("%.16x", ownerIdx))
+		ordinals[ri] = []byte(fmt.Sprintf("%.16x", ri))
+		records[ri], err = NewRecord(
+			values[ri],
+			links,
+			testMaskingKey,
+			[][]byte{selectors[ri]},
+			[][]byte{ordinals[ri]},
+			nil,
+			ts,
+			nil,
+			0,
+			owners[ownerIdx])
 		if err != nil {
 			fmt.Fprintf(out, "FAILED: %s\n", err.Error())
 			return false
 		}
-		valueDec, err := records[ri].GetValue([]byte("test"))
-		if !bytes.Equal(value, valueDec) || err != nil {
+
+		valueDec, _ := records[ri].GetValue(testMaskingKey)
+		if !bytes.Equal(values[ri], valueDec) {
 			fmt.Fprintf(out, "FAILED: record value unmask failed!\n")
 			return false
 		}
+		valueDec = nil
+		valueDec, _ = records[ri].GetValue([]byte("not maskingkey"))
+		if bytes.Equal(values[ri], valueDec) {
+			fmt.Fprintf(out, "FAILED: record value unmask succeeded with wrong key!\n")
+			return false
+		}
+
+		selectorKeys[ri] = records[ri].SelectorKey(0)
 	}
 	fmt.Fprintf(out, "OK\n")
 
@@ -428,14 +450,13 @@ func TestDatabase(testBasePath string, out io.Writer) bool {
 		fmt.Fprintf(out, "  #%d OK\n", dbi)
 	}
 
-	fmt.Fprintf(out, "Waiting for graph traversal and weight reconciliation...")
+	fmt.Fprintf(out, "Waiting for graph traversal and weight reconciliation... ")
 	for dbi := 0; dbi < testDatabaseInstances; dbi++ {
 		for dbs[dbi].hasPending() {
 			time.Sleep(time.Second / 2)
 		}
-		fmt.Fprintf(out, " %d", dbi)
 	}
-	fmt.Fprintf(out, " OK\n")
+	fmt.Fprintf(out, "OK\n")
 
 	fmt.Fprintf(out, "Checking database CRC64s...\n")
 	var c64s [testDatabaseInstances]uint64
@@ -449,6 +470,42 @@ func TestDatabase(testBasePath string, out io.Writer) bool {
 		}
 	}
 	fmt.Fprintf(out, "All databases reached the same final state for hashes, weights, and links.\n")
+
+	fmt.Fprintf(out, "Testing query functions...\n")
+	rb := make([]byte, 0, 4096)
+	gotRecordCount := 0
+	for ri := 0; ri < testDatabaseRecords; ri++ {
+		for dbi := 0; dbi < testDatabaseInstances; dbi++ {
+			err = dbs[dbi].query(0, 9223372036854775807, [][2][]byte{{selectorKeys[ri], selectorKeys[ri]}}, func(ts, weightL, weightH, doff, dlen uint64, id *[32]byte, owner []byte) bool {
+				rdata, err := dbs[dbi].getDataByOffset(doff, uint(dlen), rb[:0])
+				if err != nil {
+					fmt.Fprintf(out, "  FAILED to retrieve (selector key: %x) (%s)\n", selectorKeys[ri], err.Error())
+					return false
+				}
+				rec, err := NewRecordFromBytes(rdata)
+				if err != nil {
+					fmt.Fprintf(out, "  FAILED to unmarshal (selector key: %x) (%s)\n", selectorKeys[ri], err.Error())
+					return false
+				}
+				valueDec, err := rec.GetValue(testMaskingKey)
+				if err != nil {
+					fmt.Fprintf(out, "  FAILED to unmask value (selector key: %x) (%s)\n", selectorKeys[ri], err.Error())
+					return false
+				}
+				if !bytes.Equal(valueDec, values[ri]) {
+					fmt.Fprintf(out, "  FAILED to unmask value (selector key: %x) (values do not match)", selectorKeys[ri])
+					return false
+				}
+				//fmt.Fprintf(out, "  [%d][%d] %x -> %x\n", ri, dbi, selectorKeys[ri], *rec.Hash())
+				gotRecordCount++
+				return true
+			})
+		}
+	}
+	if gotRecordCount != (testDatabaseRecords * testDatabaseInstances) {
+		fmt.Fprintf(out, "  FAILED since we got %d records and expected %d between all test databases\n", gotRecordCount, testDatabaseRecords*testDatabaseInstances)
+	}
+	fmt.Fprintf(out, "  OK (%d records from %d parallel databases)\n", gotRecordCount, testDatabaseInstances)
 
 	return true
 }

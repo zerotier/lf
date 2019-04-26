@@ -9,12 +9,13 @@ package lf
 
 // #cgo CFLAGS: -O3
 // #cgo LDFLAGS: -lsqlite3
+//#include <stdint.h>
+//#define ZTLF_GOLANG 1
+//struct ZTLF_DB;
+//extern void ztlfLogOutputCCallback(int,const char *,int,const char *,void *);
+//extern void ztlfSyncCCallback(struct ZTLF_DB *db,const void *,uint64_t,unsigned int,void *);
 // #include "./native/db.h"
 // #include "./native/db.c"
-// extern void ztlfLogOutputCCallback(int,const char *,int,const char *,void *);
-// extern void ztlfSyncCCallback(struct ZTLF_DB *db,const void *,uint64_t,unsigned int,void *);
-// static inline int ZTLF_DB_Open_fromGo(struct ZTLF_DB *db,const char *path,char *errbuf,unsigned int errbufSize,uintptr_t loggerArg,uintptr_t syncCallbackArg) { return ZTLF_DB_Open(db,path,errbuf,errbufSize,&ztlfLogOutputCCallback,(void *)loggerArg,&ztlfSyncCCallback,(void *)syncCallbackArg); }
-// static inline struct ZTLF_QueryResults *ZTLF_DB_Query_fromGo(struct ZTLF_DB *db,const int64_t tsMin,const int64_t tsMax,const uintptr_t sel,const unsigned int *selSize,const unsigned int selCount) { return ZTLF_DB_Query(db,tsMin,tsMax,(const void **)sel,selSize,selCount); }
 import "C"
 
 import (
@@ -114,20 +115,21 @@ func (db *db) putRecord(r *Record) error {
 	rhash := r.Hash()
 	rid := r.ID()
 
+	var selectorsPtr C.uintptr_t
+	var selectorSizesPtr *C.uint
 	selectorKeys := make([][]byte, len(r.Selectors))
 	selectors := make([]uintptr, len(r.Selectors))
 	selectorSizes := make([]C.uint, len(r.Selectors))
-	for i := 0; i < len(r.Selectors); i++ {
-		selectorKeys[i] = r.SelectorKey(i)
-		selectors[i] = uintptr(unsafe.Pointer(&selectorKeys[i]))
-		selectorSizes[i] = C.uint(len(selectorKeys[i]))
+	if len(r.Selectors) > 0 {
+		for i := 0; i < len(r.Selectors); i++ {
+			selectorKeys[i] = r.SelectorKey(i)
+			selectors[i] = uintptr(unsafe.Pointer(&selectorKeys[i][0]))
+			selectorSizes[i] = C.uint(len(selectorKeys[i]))
+		}
+		selectorsPtr = C.uintptr_t(uintptr(unsafe.Pointer(&selectors[0])))
+		selectorSizesPtr = &selectorSizes[0]
 	}
-	var sptr unsafe.Pointer
-	var ssptr unsafe.Pointer
-	if len(selectors) > 0 {
-		sptr = unsafe.Pointer(&selectors[0])
-		ssptr = unsafe.Pointer(&selectorSizes[0])
-	}
+
 	var lptr unsafe.Pointer
 	l := make([]byte, 0, len(r.recordBody.Links)*32)
 	for i := 0; i < len(r.recordBody.Links); i++ {
@@ -136,9 +138,10 @@ func (db *db) putRecord(r *Record) error {
 	if len(l) > 0 {
 		lptr = unsafe.Pointer(&l[0])
 	}
+
 	owner := r.recordBody.Owner
 
-	cerr := C.ZTLF_DB_PutRecord(
+	cerr := C.ZTLF_DB_PutRecord_fromGo(
 		db.cdb,
 		unsafe.Pointer(&rdata[0]),
 		C.uint(len(rdata)),
@@ -148,8 +151,8 @@ func (db *db) putRecord(r *Record) error {
 		unsafe.Pointer(rid),
 		C.uint64_t(r.recordBody.Timestamp),
 		C.uint32_t(r.Score()),
-		(*unsafe.Pointer)(sptr),
-		(*C.uint)(ssptr),
+		selectorsPtr,
+		selectorSizesPtr,
 		C.uint(len(selectors)),
 		lptr,
 		C.uint(len(r.recordBody.Links)))
