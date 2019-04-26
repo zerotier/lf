@@ -471,7 +471,7 @@ func TestDatabase(testBasePath string, out io.Writer) bool {
 	}
 	fmt.Fprintf(out, "All databases reached the same final state for hashes, weights, and links.\n")
 
-	fmt.Fprintf(out, "Testing query functions...\n")
+	fmt.Fprintf(out, "Testing database queries by selector and selector range...\n")
 	rb := make([]byte, 0, 4096)
 	gotRecordCount := 0
 	for ri := 0; ri < testDatabaseRecords; ri++ {
@@ -496,16 +496,37 @@ func TestDatabase(testBasePath string, out io.Writer) bool {
 					fmt.Fprintf(out, "  FAILED to unmask value (selector key: %x) (values do not match)", selectorKeys[ri])
 					return false
 				}
-				//fmt.Fprintf(out, "  [%d][%d] %x -> %x\n", ri, dbi, selectorKeys[ri], *rec.Hash())
+				//fmt.Fprintf(out, "  [%d][%d] %x\n", ri, dbi, selectorKeys[ri])
 				gotRecordCount++
 				return true
 			})
 		}
 	}
 	if gotRecordCount != (testDatabaseRecords * testDatabaseInstances) {
-		fmt.Fprintf(out, "  FAILED since we got %d records and expected %d between all test databases\n", gotRecordCount, testDatabaseRecords*testDatabaseInstances)
+		fmt.Fprintf(out, "  FAILED non-range query test: got %d records, expected %d\n", gotRecordCount, testDatabaseRecords*testDatabaseInstances)
 	}
-	fmt.Fprintf(out, "  OK (%d records from %d parallel databases)\n", gotRecordCount, testDatabaseInstances)
+	fmt.Fprintf(out, "  Non-range query test OK (%d records from %d parallel databases)\n", gotRecordCount, testDatabaseInstances)
+	gotRecordCount = 0
+	for oi := 0; oi < testDatabaseOwners; oi++ {
+		for dbi := 0; dbi < testDatabaseInstances; dbi++ {
+			sk0 := MakeSelectorKey([]byte(fmt.Sprintf("%.16x", oi)), []byte("0000000000000000"))
+			sk1 := MakeSelectorKey([]byte(fmt.Sprintf("%.16x", oi)), []byte("ffffffffffffffff"))
+			err = dbs[dbi].query(0, 9223372036854775807, [][2][]byte{{sk0, sk1}}, func(ts, weightL, weightH, doff, dlen uint64, id *[32]byte, owner []byte) bool {
+				_, err := dbs[dbi].getDataByOffset(doff, uint(dlen), rb[:0])
+				if err != nil {
+					fmt.Fprintf(out, "  FAILED to retrieve (selector key range %x-%x) (%s)\n", sk0, sk1, err.Error())
+					return false
+				}
+				//fmt.Fprintf(out, "  [%d][%d] %x-%x\n", oi, dbi, sk0, sk1)
+				gotRecordCount++
+				return true
+			})
+		}
+	}
+	if gotRecordCount != (testDatabaseRecords * testDatabaseInstances) {
+		fmt.Fprintf(out, "  FAILED ordinal range query test: got %d records, expected %d\n", gotRecordCount, testDatabaseRecords*testDatabaseInstances)
+	}
+	fmt.Fprintf(out, "  Ordinal range query test OK (%d records from %d parallel databases)\n", gotRecordCount, testDatabaseInstances)
 
 	return true
 }

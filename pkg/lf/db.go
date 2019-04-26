@@ -280,7 +280,7 @@ func (db *db) query(tsMin, tsMax int64, selectorRanges [][2][]byte, f func(uint6
 		var owner [dbMaxOwnerSize]byte
 		var id [32]byte
 		for i := C.long(0); i < cresults.count; i++ {
-			cr := cresults.results[i]
+			cr := (*C.struct_ZTLF_QueryResult)(unsafe.Pointer(uintptr(unsafe.Pointer(&cresults.results[0])) + (uintptr(i) * unsafe.Sizeof(cresults.results[0]))))
 			ownerSize := uint(cr.ownerSize)
 			if ownerSize > 0 && ownerSize <= dbMaxOwnerSize && cr.dlen > 0 {
 				for j := 0; j < 32; j++ {
