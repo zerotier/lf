@@ -96,7 +96,7 @@ Commands:
   proxy-start                             Start a proxy
   status                                  Get status from remote node/proxy
   set [-...] <name[#ord]> [...] <value>   Set a value in the data store
-    -file                                 Value is a file path, not literal
+    -file                                 Value is a file path not a literal
     -mask <key>                           Encrypt value using masking key
     -owner <owner>                        Use this owner instead of default
     -remote                               Remote encrypt/PoW (reveals keys)
