@@ -307,7 +307,7 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 				APIVersion:         APIVersion,
 				MinAPIVersion:      APIVersion,
 				MaxAPIVersion:      APIVersion,
-				Uptime:             (now - n.startTime),
+				Uptime:             (now - uint64(n.startTime.Unix())),
 				Clock:              now,
 				DBRecordCount:      rc,
 				DBSize:             ds,
@@ -326,6 +326,26 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 		apiSetStandardHeaders(out)
 		if req.Method == http.MethodGet || req.Method == http.MethodHead {
 			if req.URL.Path == "/" {
+				now := time.Now()
+				rc, ds := n.db.stats()
+				req.Header.Set("Content-Type", "text/plain")
+				out.WriteHeader(200)
+				out.Write([]byte(`
+------------------------------------------------------------------------------
+LF Global Key/Value Store ` + VersionStr + `
+(c)2018-2019 ZeroTier, Inc.  https://www.zerotier.com/
+MIT License
+------------------------------------------------------------------------------
+
+Software:            ` + SoftwareName + `
+Version:             ` + VersionStr + `
+Uptime:              ` + (now.Sub(n.startTime)).String() + `
+Clock:               ` + now.Format(time.RFC1123) + `
+Record Count:        ` + strconv.FormatUint(rc, 10) + `
+Data Size:           ` + strconv.FormatUint(ds, 10) + `
+
+------------------------------------------------------------------------------
+`))
 			} else {
 				apiSendObj(out, req, http.StatusNotFound, &APIError{Code: http.StatusNotFound, Message: req.URL.Path + " is not a valid path"})
 			}

@@ -108,7 +108,7 @@ type Node struct {
 	workFunctionLock         sync.RWMutex               //
 	db                       db                         //
 	backgroundThreadWG       sync.WaitGroup             // Wait group for background goroutines
-	startTime                uint64                     // Time node was started in seconds since epoch
+	startTime                time.Time                  // Time this node started
 	shutdown                 uint32                     // Set to non-zero to signal all background goroutines to exit
 	mine                     bool                       // If true, add work to DAG in background
 }
@@ -457,7 +457,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 		cc.Save(clientConfigPath)
 	}
 
-	n.startTime = TimeSec()
+	n.startTime = time.Now()
 	initOk = true
 
 	return n, nil
