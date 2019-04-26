@@ -61,39 +61,40 @@ MIT License
 Usage: lf [-...] <command> [...]
 
 Global options:
-  -path <path>                               Override default home path
-  -url <url>                                 Override configured URL(s)
+  -path <path>                            Override default home path
+  -url <url>                              Override configured URL(s)
 
 Commands:
-  help                                       Display help about a command
-  version                                    Display version information
+  help                                    Display help about a command
+  version                                 Display version information
   selftest [test name]
-    core                                     Test core systems (default)
-    wharrgarbl                               Test proof of work (long!)
-    database                                 Test database core
-  node-start                                 Start a full node
-  proxy-start                                Start a proxy
-  status                                     Get status from remote node/proxy
-  set [-...] <name[#ord]> [...] <value>      Set a value in the data store
-    -file                                    Value is a file path, not literal
-    -mask <key>                              Encrypt value using masking key
-    -owner <owner>                           Use this owner instead of default
-    -remote                                  Remote encrypt/PoW (reveals keys)
-    -tryremote                               Try remote encrypt/PoW first
-  get [-...] <name[#start[#end]]> [...]      Find by selector (optional range)
-    -unmask <key>                            Decrypt value(s) with masking key
-    -tstart <time>                           Constrain to after this time
-    -tend <time>                             Constrain to before this time
+    core                                  Test core systems (default)
+    wharrgarbl                            Test proof of work (long!)
+    database                              Test database core
+  node-start                              Start a full node
+  proxy-start                             Start a proxy
+  status                                  Get status from remote node/proxy
+  set [-...] <name[#ord]> [...] <value>   Set a value in the data store
+    -file                                 Value is a file path, not literal
+    -mask <key>                           Encrypt value using masking key
+    -owner <owner>                        Use this owner instead of default
+    -remote                               Remote encrypt/PoW (reveals keys)
+    -tryremote                            Try remote encrypt/PoW first
+  get [-...] <name[#start[#end]]> [...]   Find by selector (optional range)
+    -unmask <key>                         Decrypt value(s) with masking key
+    -tstart <time>                        Constrain to after this time
+    -tend <time>                          Constrain to before this time
   owner <operation> [...]
-    list                                     List owners
-    new <name>                               Create a new owner
-    default <name>                           Set default owner
-    delete <name>                            Delete an owner (PERMANENT)
-    rename <old name> <new name>             Rename an owner
+    list                                  List owners
+    new <name>                            Create a new owner
+    default <name>                        Set default owner
+    delete <name>                         Delete an owner (PERMANENT)
+    rename <old name> <new name>          Rename an owner
 
 Time can be specified in either RFC1123 format or as numeric Unix time.
+RFC1123 format looks like "Mon Jan 2 15:04:05 PST 2018".
+
 Default home path is ` + lfDefaultPath + ` unless -path is used.
-Binary or special character selector names currently require direct API use.
 
 `)
 }
@@ -140,7 +141,7 @@ func doGet(cfg *lf.ClientConfig, basePath string, urls []string, args []string) 
 	unmaskKey := getOpts.String("unmask", "", "")
 	tStart := getOpts.String("tstart", "", "")
 	tEnd := getOpts.String("tend", "", "")
-	err := getOpts.Parse(os.Args)
+	err := getOpts.Parse(args)
 	if err != nil {
 		printHelp("")
 		return
@@ -177,7 +178,7 @@ func doGet(cfg *lf.ClientConfig, basePath string, urls []string, args []string) 
 				lf.MakeSelectorKey([]byte(tord[0]), []byte(tord[2])),
 			}})
 		} else {
-			fmt.Printf("ERROR: selector ordinal range has 3 elements (use \\ to escape # signs)")
+			fmt.Printf("ERROR: selector or selector ordinal range invalid")
 			return
 		}
 	}
@@ -210,7 +211,7 @@ func doSet(cfg *lf.ClientConfig, basePath string, urls []string, args []string) 
 	valueIsFile := setOpts.Bool("file", false, "")
 	remote := setOpts.Bool("remote", false, "")
 	tryRemote := setOpts.Bool("tryremote", false, "")
-	err := setOpts.Parse(os.Args)
+	err := setOpts.Parse(args)
 	if err != nil {
 		printHelp("")
 		return
@@ -248,21 +249,20 @@ func doSet(cfg *lf.ClientConfig, basePath string, urls []string, args []string) 
 	var plainTextSelectorNames, selectorOrdinals [][]byte
 	var selectors []lf.APINewSelector
 	for i := 0; i < len(args)-1; i++ {
-		sel := args[i]
-		var ord string
-		ordSepIdx := strings.LastIndex(sel, "#")
-		if ordSepIdx >= 0 {
-			if ordSepIdx < (len(sel) - 1) {
-				ord = sel[ordSepIdx+1:]
+		selOrd := lf.TokenizeStringWithEsc(args[i], '#', '\\')
+		if len(selOrd) > 0 {
+			sel := []byte(selOrd[0])
+			var ord []byte
+			if len(selOrd) == 2 {
+				ord = []byte(selOrd[1])
 			}
-			sel = sel[0:ordSepIdx]
+			plainTextSelectorNames = append(plainTextSelectorNames, sel)
+			selectorOrdinals = append(selectorOrdinals, ord)
+			selectors = append(selectors, lf.APINewSelector{
+				Name:    sel,
+				Ordinal: ord,
+			})
 		}
-		plainTextSelectorNames = append(plainTextSelectorNames, []byte(sel))
-		selectorOrdinals = append(selectorOrdinals, []byte(ord))
-		selectors = append(selectors, lf.APINewSelector{
-			Name:    []byte(sel),
-			Ordinal: []byte(ord),
-		})
 	}
 
 	value := []byte(args[len(args)-1])

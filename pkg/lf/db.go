@@ -14,6 +14,7 @@ package lf
 // extern void ztlfLogOutputCCallback(int,const char *,int,const char *,void *);
 // extern void ztlfSyncCCallback(struct ZTLF_DB *db,const void *,uint64_t,unsigned int,void *);
 // static inline int ZTLF_DB_Open_fromGo(struct ZTLF_DB *db,const char *path,char *errbuf,unsigned int errbufSize,uintptr_t loggerArg,uintptr_t syncCallbackArg) { return ZTLF_DB_Open(db,path,errbuf,errbufSize,&ztlfLogOutputCCallback,(void *)loggerArg,&ztlfSyncCCallback,(void *)syncCallbackArg); }
+// static inline struct ZTLF_QueryResults *ZTLF_DB_Query_fromGo(struct ZTLF_DB *db,const int64_t tsMin,const int64_t tsMax,const uintptr_t sel,const unsigned int *selSize,const unsigned int selCount) { return ZTLF_DB_Query(db,tsMin,tsMax,(const void **)sel,selSize,selCount); }
 import "C"
 
 import (
@@ -257,21 +258,21 @@ func (db *db) query(tsMin, tsMax int64, selectorRanges [][2][]byte, f func(uint6
 		return nil
 	}
 
-	sel := make([]unsafe.Pointer, len(selectorRanges)*2)
+	sel := make([]uintptr, len(selectorRanges)*2)
 	selSizes := make([]C.uint, len(selectorRanges)*2)
 	for i := 0; i < len(selectorRanges); i++ {
 		if len(selectorRanges[i][0]) == 0 || len(selectorRanges[i][1]) == 0 {
 			return ErrInvalidParameter
 		}
 		ii := i * 2
-		sel[ii] = unsafe.Pointer(&selectorRanges[i][0][0])
+		sel[ii] = uintptr(unsafe.Pointer(&selectorRanges[i][0][0]))
 		selSizes[ii] = C.uint(len(selectorRanges[i][0]))
 		ii++
-		sel[ii] = unsafe.Pointer(&selectorRanges[i][1][0])
+		sel[ii] = uintptr(unsafe.Pointer(&selectorRanges[i][1][0]))
 		selSizes[ii] = C.uint(len(selectorRanges[i][1]))
 	}
 
-	cresults := C.ZTLF_DB_Query(db.cdb, C.int64_t(tsMin), C.int64_t(tsMax), &sel[0], (*C.uint)(unsafe.Pointer(&selSizes[0])), C.uint(len(selectorRanges)))
+	cresults := C.ZTLF_DB_Query_fromGo(db.cdb, C.int64_t(tsMin), C.int64_t(tsMax), C.uintptr_t(uintptr(unsafe.Pointer(&sel[0]))), &selSizes[0], C.uint(len(selectorRanges)))
 	if uintptr(unsafe.Pointer(cresults)) != 0 {
 		var owner [dbMaxOwnerSize]byte
 		var id [32]byte

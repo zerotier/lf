@@ -55,7 +55,7 @@ func (m *APIQuery) Run(url string) (APIQueryResults, error) {
 	} else {
 		url = url + "/query"
 	}
-	body, err := apiRun(url, m.Range)
+	body, err := apiRun(url, &m)
 	if err != nil {
 		return nil, err
 	}

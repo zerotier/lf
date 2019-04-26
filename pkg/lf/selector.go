@@ -14,38 +14,37 @@ import (
 	"crypto/sha512"
 	"encoding/binary"
 	"io"
+	"math/big"
 )
 
 // SelectorTypeBP160 indicates a sortable selector built from the brainpoolP160t1 elliptic curve.
 const SelectorTypeBP160 byte = 0
 
+// SelectorMaxOrdinalSize is the maximum length of an ordinal. The functions will take longer
+// ordinals but characters to the left of the right-most 64 are ignored.
+const SelectorMaxOrdinalSize = 64
+
+// SelectorKeySize is the size of the sortable ordinal-modified hash used for DB queries and range queries.
+// It's computed by adding the ordinal to the SHA512 hash of the deterministic selector public key.
+const SelectorKeySize = 64
+
 // Selector is a non-forgeable range queryable identifier for records.
 type Selector struct {
-	Ordinal Blob     `json:",omitempty"` // An ordinal value that can be used to perform range queries against selectors
+	Ordinal Blob     `json:",omitempty"` // A plain text sortable field that can be used for range queries against secret selectors
 	Claim   [41]byte ``                  // 41-byte brainpoolP160t1 recoverable signature
 }
 
 func addOrdinalToHash(h *[64]byte, ordinal []byte) {
-	var carry byte
-	for hi, oi := 63, len(ordinal)-1; hi >= 0; hi-- {
-		var o byte
-		if oi >= 0 {
-			o = ordinal[oi]
-			oi--
-		} else if carry == 0 {
-			break
+	var a, b big.Int
+	a.Add(a.SetBytes(h[:]), b.SetBytes(ordinal))
+	ab := a.Bytes()
+	if len(ab) >= 64 {
+		copy(h[:], ab[len(ab)-64:])
+	} else {
+		for i, j := 0, 64-len(ab); i < j; i++ {
+			h[i] = 0
 		}
-
-		b := h[hi]
-		old := b
-		b += o
-		var c byte
-		if b < old {
-			c = 1
-		}
-		h[hi] = b + carry
-
-		carry = c
+		copy(h[0:64-len(ab)], ab)
 	}
 }
 
@@ -53,6 +52,10 @@ func addOrdinalToHash(h *[64]byte, ordinal []byte) {
 // If this name is not used with range queries use zero for the ordinal. This function exists
 // to allow selector database keys to be created separate from record creation if needed.
 func MakeSelectorKey(plainTextName []byte, ordinal []byte) []byte {
+	if len(ordinal) > 64 {
+		ordinal = ordinal[len(ordinal)-64:]
+	}
+
 	var prng seededPrng
 	prng.seed(plainTextName)
 	priv, err := ecdsa.GenerateKey(ECCCurveBrainpoolP160T1, &prng)
@@ -148,7 +151,12 @@ func (s *Selector) unmarshalFrom(in io.Reader) error {
 // The hash supplied is the record's body hash. If this selector is not intended for range
 // queries use nil for its ordinal.
 func (s *Selector) set(plainTextName []byte, ord []byte, hash []byte) {
-	s.Ordinal = ord
+	if len(ord) > 64 {
+		s.Ordinal = make([]byte, 64)
+		copy(s.Ordinal, ord[len(ord)-64:])
+	} else {
+		s.Ordinal = ord
+	}
 
 	// Generate an ECDSA key pair deterministically using the plain text name. Note that
 	// this depends on the ECDSA key generation algorithm. Go currently implements the

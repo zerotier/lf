@@ -575,7 +575,7 @@ func NewRecordStart(value []byte, links [][32]byte, maskingKey []byte, plainText
 		valueCrc16 := crc16(value)
 
 		// If value is of non-trivial length, try to compress it with LZW. LZW is an older algorithm
-		// but is standard and tends to do fairly well with small compressable objects like JSON
+		// but is fast and tends to do fairly well with small compressable objects like JSON
 		// blobs, text, HTML, etc.
 		if len(value) >= 32 {
 			var lzwBuf bytes.Buffer
@@ -610,7 +610,7 @@ func NewRecordStart(value []byte, links [][32]byte, maskingKey []byte, plainText
 			if len(ownerPublic) >= 8 {
 				copy(cfbIv[8:16], ownerPublic[0:8])
 			}
-			maskingKeyH := sha256.Sum256(maskingKey) // sha256 is used here because it's more ubiquitous and should make implementation in other languages / code easier
+			maskingKeyH := sha256.Sum256(maskingKey)
 			c, _ := aes.NewCipher(maskingKeyH[:])
 			cipher.NewCFBEncrypter(c, cfbIv[:]).XORKeyStream(valueMasked, valueMasked)
 		}
