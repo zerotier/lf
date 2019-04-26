@@ -39,14 +39,25 @@ func crc16(bs []byte) (crc uint16) {
 	return
 }
 
-type byteAndArrayReader struct{ r io.Reader }
+// byteAndArrayReader combines Reader and ByteReader capabilities
+type byteAndArrayReader [1]io.Reader
 
-func (mr byteAndArrayReader) Read(p []byte) (int, error) { return mr.r.Read(p) }
+func (mr byteAndArrayReader) Read(p []byte) (int, error) { return mr[0].Read(p) }
 
 func (mr byteAndArrayReader) ReadByte() (byte, error) {
 	var tmp [1]byte
-	_, err := io.ReadFull(mr.r, tmp[:])
+	_, err := io.ReadFull(mr[0], tmp[:])
 	return tmp[0], err
+}
+
+// countingWriter is an io.Writer that increments an integer for each byte "written" to it.
+type countingWriter uint
+
+// Write implements io.Writer
+func (cr *countingWriter) Write(b []byte) (n int, err error) {
+	n = len(b)
+	*cr += countingWriter(n)
+	return
 }
 
 func writeUVarint(out io.Writer, v uint64) (int, error) {
@@ -76,15 +87,6 @@ func integerSqrtRounded(op uint32) (res uint32) {
 	return
 }
 
-func sliceContainsInt(s []int, e int) bool {
-	for _, a := range s {
-		if a == e {
-			return true
-		}
-	}
-	return false
-}
-
 func sliceContainsUInt(s []uint, e uint) bool {
 	for _, a := range s {
 		if a == e {
@@ -94,14 +96,18 @@ func sliceContainsUInt(s []uint, e uint) bool {
 	return false
 }
 
-// countingWriter is an io.Writer that increments an integer for each byte "written" to it.
-type countingWriter uint
-
-// Write implements io.Writer
-func (cr *countingWriter) Write(b []byte) (n int, err error) {
-	n = len(b)
-	*cr += countingWriter(n)
-	return
+// ipIsGlobalPublicUnicast returns true if IP is global unicast and is not a private (10.x.x.x etc.) range.
+func ipIsGlobalPublicUnicast(ip net.IP) bool {
+	if ip.IsGlobalUnicast() {
+		ip4 := ip.To4()
+		if len(ip4) == 4 {
+			return ip4[0] != 10 && (!((ip4[0] == 192) && (ip4[1] == 168))) && (!((ip4[0] == 172) && (ip4[1] == 16)))
+		}
+		if len(ip) == 16 {
+			return ((ip[0] & 0xfe) != 0xfc)
+		}
+	}
+	return false
 }
 
 var jsonPrettyOptions = &pretty.Options{
@@ -119,40 +125,4 @@ func PrettyJSON(obj interface{}) string {
 		return "null"
 	}
 	return string(pretty.PrettyOptions(j, jsonPrettyOptions))
-}
-
-// ipIsGlobalPublicUnicast returns true if IP is global unicast and is not a private (10.x.x.x etc.) range.
-func ipIsGlobalPublicUnicast(ip net.IP) bool {
-	if ip.IsGlobalUnicast() {
-		ip4 := ip.To4()
-		if len(ip4) == 4 {
-			return ip4[0] != 10 && (!((ip4[0] == 192) && (ip4[1] == 168))) && (!((ip4[0] == 172) && (ip4[1] == 16)))
-		}
-		if len(ip) == 16 {
-			return ((ip[0] & 0xfe) != 0xfc)
-		}
-	}
-	return false
-}
-
-// TokenizeStringWithEsc splits a string with escape characters
-func TokenizeStringWithEsc(s string, sep, escape rune) (tokens []string) {
-	var runes []rune
-	inEscape := false
-	for _, r := range s {
-		switch {
-		case inEscape:
-			inEscape = false
-			fallthrough
-		default:
-			runes = append(runes, r)
-		case r == escape:
-			inEscape = true
-		case r == sep:
-			tokens = append(tokens, string(runes))
-			runes = runes[:0]
-		}
-	}
-	tokens = append(tokens, string(runes))
-	return
 }

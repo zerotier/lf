@@ -53,6 +53,27 @@ func parseCLITime(t string) uint64 {
 	return 0
 }
 
+func tokenizeStringWithEsc(s string, sep, escape rune) (tokens []string) {
+	var runes []rune
+	inEscape := false
+	for _, r := range s {
+		switch {
+		case inEscape:
+			inEscape = false
+			fallthrough
+		default:
+			runes = append(runes, r)
+		case r == escape:
+			inEscape = true
+		case r == sep:
+			tokens = append(tokens, string(runes))
+			runes = runes[:0]
+		}
+	}
+	tokens = append(tokens, string(runes))
+	return
+}
+
 func printHelp(cmd string) {
 	fmt.Print(`LF Global Key/Value Store ` + lf.VersionStr + `
 (c)2018-2019 ZeroTier, Inc.  https://www.zerotier.com/
@@ -167,7 +188,7 @@ func doGet(cfg *lf.ClientConfig, basePath string, urls []string, args []string) 
 
 	var ranges []lf.APIQueryRange
 	for i := 0; i < len(args); i++ {
-		tord := lf.TokenizeStringWithEsc(args[i], '#', '\\')
+		tord := tokenizeStringWithEsc(args[i], '#', '\\')
 		if len(tord) == 1 {
 			ranges = append(ranges, lf.APIQueryRange{KeyRange: []lf.Blob{lf.MakeSelectorKey([]byte(tord[0]), nil)}})
 		} else if len(tord) == 2 {
@@ -249,7 +270,7 @@ func doSet(cfg *lf.ClientConfig, basePath string, urls []string, args []string) 
 	var plainTextSelectorNames, selectorOrdinals [][]byte
 	var selectors []lf.APINewSelector
 	for i := 0; i < len(args)-1; i++ {
-		selOrd := lf.TokenizeStringWithEsc(args[i], '#', '\\')
+		selOrd := tokenizeStringWithEsc(args[i], '#', '\\')
 		if len(selOrd) > 0 {
 			sel := []byte(selOrd[0])
 			var ord []byte
