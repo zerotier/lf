@@ -23,6 +23,8 @@ import (
 	"os"
 	"path"
 	"strconv"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/crypto/sha3"
@@ -333,7 +335,7 @@ func TestWharrgarbl(out io.Writer) bool {
 //////////////////////////////////////////////////////////////////////////////
 
 const testDatabaseInstances = 3
-const testDatabaseRecords = 1000
+const testDatabaseRecords = 32768
 const testDatabaseOwners = 16
 
 // TestDatabase tests the database using a large set of randomly generated records.
@@ -396,6 +398,7 @@ func TestDatabase(testBasePath string, out io.Writer) bool {
 		}
 
 		ownerIdx := ri % testDatabaseOwners
+		ts++
 		values[ri] = []byte(strconv.FormatUint(ts, 10))
 		selectors[ri] = []byte(fmt.Sprintf("%.16x", ownerIdx))
 		ordinals[ri] = []byte(fmt.Sprintf("%.16x", ri))
@@ -472,57 +475,76 @@ func TestDatabase(testBasePath string, out io.Writer) bool {
 	fmt.Fprintf(out, "All databases reached the same final state for hashes, weights, and links.\n")
 
 	fmt.Fprintf(out, "Testing database queries by selector and selector range...\n")
-	rb := make([]byte, 0, 4096)
-	gotRecordCount := 0
-	for ri := 0; ri < testDatabaseRecords; ri++ {
-		for dbi := 0; dbi < testDatabaseInstances; dbi++ {
-			err = dbs[dbi].query(0, 9223372036854775807, [][2][]byte{{selectorKeys[ri], selectorKeys[ri]}}, func(ts, weightL, weightH, doff, dlen uint64, id *[32]byte, owner []byte) bool {
-				rdata, err := dbs[dbi].getDataByOffset(doff, uint(dlen), rb[:0])
-				if err != nil {
-					fmt.Fprintf(out, "  FAILED to retrieve (selector key: %x) (%s)\n", selectorKeys[ri], err.Error())
-					return false
-				}
-				rec, err := NewRecordFromBytes(rdata)
-				if err != nil {
-					fmt.Fprintf(out, "  FAILED to unmarshal (selector key: %x) (%s)\n", selectorKeys[ri], err.Error())
-					return false
-				}
-				valueDec, err := rec.GetValue(testMaskingKey)
-				if err != nil {
-					fmt.Fprintf(out, "  FAILED to unmask value (selector key: %x) (%s)\n", selectorKeys[ri], err.Error())
-					return false
-				}
-				if !bytes.Equal(valueDec, values[ri]) {
-					fmt.Fprintf(out, "  FAILED to unmask value (selector key: %x) (values do not match)", selectorKeys[ri])
-					return false
-				}
-				//fmt.Fprintf(out, "  [%d][%d] %x\n", ri, dbi, selectorKeys[ri])
-				gotRecordCount++
-				return true
-			})
-		}
+	var gotRecordCount uint32
+	wg := new(sync.WaitGroup)
+	wg.Add(testDatabaseInstances)
+	for dbi2 := 0; dbi2 < testDatabaseInstances; dbi2++ {
+		dbi := dbi2
+		go func() {
+			defer wg.Done()
+			rb := make([]byte, 0, 4096)
+			for ri := 0; ri < testDatabaseRecords; ri++ {
+				err = dbs[dbi].query(0, 9223372036854775807, [][2][]byte{{selectorKeys[ri], selectorKeys[ri]}}, func(ts, weightL, weightH, doff, dlen uint64, id *[32]byte, owner []byte) bool {
+					rdata, err := dbs[dbi].getDataByOffset(doff, uint(dlen), rb[:0])
+					if err != nil {
+						fmt.Fprintf(out, "  FAILED to retrieve (selector key: %x) (%s)\n", selectorKeys[ri], err.Error())
+						return false
+					}
+					rec, err := NewRecordFromBytes(rdata)
+					if err != nil {
+						fmt.Fprintf(out, "  FAILED to unmarshal (selector key: %x) (%s)\n", selectorKeys[ri], err.Error())
+						return false
+					}
+					valueDec, err := rec.GetValue(testMaskingKey)
+					if err != nil {
+						fmt.Fprintf(out, "  FAILED to unmask value (selector key: %x) (%s)\n", selectorKeys[ri], err.Error())
+						return false
+					}
+					if !bytes.Equal(valueDec, values[ri]) {
+						fmt.Fprintf(out, "  FAILED to unmask value (selector key: %x) (values do not match)", selectorKeys[ri])
+						return false
+					}
+					rc := atomic.AddUint32(&gotRecordCount, 1)
+					if (rc % 1000) == 0 {
+						fmt.Fprintf(out, "  ... %d records\n", rc)
+					}
+					return true
+				})
+			}
+		}()
 	}
+	wg.Wait()
 	if gotRecordCount != (testDatabaseRecords * testDatabaseInstances) {
 		fmt.Fprintf(out, "  FAILED non-range query test: got %d records, expected %d\n", gotRecordCount, testDatabaseRecords*testDatabaseInstances)
 	}
 	fmt.Fprintf(out, "  Non-range query test OK (%d records from %d parallel databases)\n", gotRecordCount, testDatabaseInstances)
 	gotRecordCount = 0
-	for oi := 0; oi < testDatabaseOwners; oi++ {
-		for dbi := 0; dbi < testDatabaseInstances; dbi++ {
-			sk0 := MakeSelectorKey([]byte(fmt.Sprintf("%.16x", oi)), []byte("0000000000000000"))
-			sk1 := MakeSelectorKey([]byte(fmt.Sprintf("%.16x", oi)), []byte("ffffffffffffffff"))
-			err = dbs[dbi].query(0, 9223372036854775807, [][2][]byte{{sk0, sk1}}, func(ts, weightL, weightH, doff, dlen uint64, id *[32]byte, owner []byte) bool {
-				_, err := dbs[dbi].getDataByOffset(doff, uint(dlen), rb[:0])
-				if err != nil {
-					fmt.Fprintf(out, "  FAILED to retrieve (selector key range %x-%x) (%s)\n", sk0, sk1, err.Error())
-					return false
-				}
-				//fmt.Fprintf(out, "  [%d][%d] %x-%x\n", oi, dbi, sk0, sk1)
-				gotRecordCount++
-				return true
-			})
-		}
+	wg = new(sync.WaitGroup)
+	wg.Add(testDatabaseInstances)
+	for dbi2 := 0; dbi2 < testDatabaseInstances; dbi2++ {
+		dbi := dbi2
+		go func() {
+			defer wg.Done()
+			rb := make([]byte, 0, 4096)
+			for oi := 0; oi < testDatabaseOwners; oi++ {
+				sk0 := MakeSelectorKey([]byte(fmt.Sprintf("%.16x", oi)), []byte("0000000000000000"))
+				sk1 := MakeSelectorKey([]byte(fmt.Sprintf("%.16x", oi)), []byte("ffffffffffffffff"))
+				err = dbs[dbi].query(0, 9223372036854775807, [][2][]byte{{sk0, sk1}}, func(ts, weightL, weightH, doff, dlen uint64, id *[32]byte, owner []byte) bool {
+					_, err := dbs[dbi].getDataByOffset(doff, uint(dlen), rb[:0])
+					if err != nil {
+						fmt.Fprintf(out, "  FAILED to retrieve (selector key range %x-%x) (%s)\n", sk0, sk1, err.Error())
+						return false
+					}
+					rc := atomic.AddUint32(&gotRecordCount, 1)
+					if (rc % 1000) == 0 {
+						fmt.Fprintf(out, "  ... %d records\n", rc)
+					}
+					return true
+				})
+			}
+		}()
 	}
+	wg.Wait()
 	if gotRecordCount != (testDatabaseRecords * testDatabaseInstances) {
 		fmt.Fprintf(out, "  FAILED ordinal range query test: got %d records, expected %d\n", gotRecordCount, testDatabaseRecords*testDatabaseInstances)
 	}
