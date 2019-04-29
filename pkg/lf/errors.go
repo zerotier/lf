@@ -56,6 +56,7 @@ const (
 	ErrAlreadyConnected   Err = "already connected"
 	ErrDuplicateRecord    Err = "duplicate record"
 	ErrPrivateKeyRequired Err = "private key required"
+	ErrInvalidMessageSize Err = "message size invalid"
 )
 
 // Errs indicating that a record is invalid
