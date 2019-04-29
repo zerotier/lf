@@ -190,6 +190,11 @@ func TestCore(out io.Writer) bool {
 	secrand.Read(testSelectorClaimHash[:])
 	for k := range testSelectors {
 		testSelectors[k].set([]byte("name"), []byte(fmt.Sprintf("%.16x", k)), testSelectorClaimHash[:])
+		ts2, err := newSelectorFromBytes(testSelectors[k].bytes())
+		if err != nil || !bytes.Equal(ts2.Ordinal, testSelectors[k].Ordinal) || !bytes.Equal(ts2.Claim[:], testSelectors[k].Claim[:]) {
+			fmt.Fprintln(out, "FAILED (marshal/unmarshal)")
+			return false
+		}
 	}
 	for k := 1; k < len(testSelectors); k++ {
 		sk := testSelectors[k].key(testSelectorClaimHash[:])
@@ -298,7 +303,7 @@ func TestWharrgarbl(out io.Writer) bool {
 	}
 	th := wharrgarblHash(tc0, tc1, make([]byte, 16), &testIn)
 	fmt.Fprintf(out, "Testing Wharrgarbl keyed 64-bit hash function... %.16x ", th)
-	if th == 0xa4c3ada437c2dc4c {
+	if th == 0xd4d965ceec0098a1 {
 		fmt.Fprintf(out, "OK\n")
 	} else {
 		fmt.Fprintf(out, "FAILED\n")

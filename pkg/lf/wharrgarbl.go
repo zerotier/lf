@@ -484,9 +484,8 @@ func wharrgarblInitTable() {
 		h := sha512.Sum512(wharrgarblTable[:])
 		aes, _ := aes.NewCipher(h[0:32])
 		c := cipher.NewCFBEncrypter(aes, h[32:48])
-		for k := 0; k < 4; k++ {
-			c.XORKeyStream(wharrgarblTable[:], wharrgarblTable[:])
-		}
+		c.XORKeyStream(wharrgarblTable[:], wharrgarblTable[:])
+		c.XORKeyStream(wharrgarblTable[:], wharrgarblTable[:])
 	}
 	wharrgarblTableLock.Unlock()
 }

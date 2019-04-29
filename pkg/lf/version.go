@@ -13,10 +13,10 @@ import "fmt"
 const (
 	VersionMajor    = 0
 	VersionMinor    = 0
-	VersionRevision = 1
+	VersionRevision = 5
 	VersionBuild    = 0
 
-	SoftwareName = "ZeroTier LF"
+	SoftwareName = "ZeroTier LF Reference"
 )
 
 // Version is the version in array form.

@@ -157,7 +157,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 
 				defer func() {
 					e := recover()
-					if e != nil {
+					if e != nil && atomic.LoadUint32(&n.shutdown) != 0 {
 						n.log[LogLevelWarning].Printf("WARNING: unexpected panic replicating synchronized record: %s", e)
 					}
 				}()
@@ -784,7 +784,7 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inb
 	c.SetKeepAlive(true)
 	c.SetLinger(0)
 	c.SetNoDelay(false)
-	reader := bufio.NewReaderSize(c, 16384)
+	reader := bufio.NewReader(c)
 
 	// Exchange public keys (prefixed by connection mode and key length)
 	helloMessage := make([]byte, len(n.linkKeyPub)+2)

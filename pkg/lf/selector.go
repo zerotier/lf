@@ -18,11 +18,11 @@ import (
 )
 
 // SelectorTypeBP160 indicates a sortable selector built from the brainpoolP160t1 elliptic curve.
-const SelectorTypeBP160 byte = 0
+const SelectorTypeBP160 byte = 0 // valid range: 0..3
 
-// SelectorMaxOrdinalSize is the maximum length of an ordinal. The functions will take longer
-// ordinals but characters to the left of the right-most 64 are ignored.
-const SelectorMaxOrdinalSize = 64
+// SelectorMaxOrdinalSize is the maximum length of an ordinal.
+// Functions will take larger ordinals but bytes to the left of this size are ignored.
+const SelectorMaxOrdinalSize = 31
 
 // SelectorKeySize is the size of the sortable ordinal-modified hash used for DB queries and range queries.
 // It's computed by adding the ordinal to the SHA512 hash of the deterministic selector public key.
@@ -52,8 +52,8 @@ func addOrdinalToHash(h *[64]byte, ordinal []byte) {
 // If this name is not used with range queries use zero for the ordinal. This function exists
 // to allow selector database keys to be created separate from record creation if needed.
 func MakeSelectorKey(plainTextName []byte, ordinal []byte) []byte {
-	if len(ordinal) > 64 {
-		ordinal = ordinal[len(ordinal)-64:]
+	if len(ordinal) > SelectorMaxOrdinalSize {
+		ordinal = ordinal[len(ordinal)-SelectorMaxOrdinalSize:]
 	}
 
 	var prng seededPrng
@@ -74,9 +74,15 @@ func MakeSelectorKey(plainTextName []byte, ordinal []byte) []byte {
 	return publicKeyHash[:]
 }
 
+// MakeSelectorKeyIntOrdinal is a shortcut to make a selector key with a 64-bit integer ordinal.
+func MakeSelectorKeyIntOrdinal(plainTextName []byte, ordinal uint64) []byte {
+	var ob [8]byte
+	binary.BigEndian.PutUint64(ob[:], ordinal)
+	return MakeSelectorKey(plainTextName, ob[:])
+}
+
 // key returns the sortable and comparable database key for this selector.
 // This must be supplied with the hash that was used in set() to perform ECDSA key recovery.
-// The Record SelectorKey(n) method is a more convenient way to use this.
 func (s *Selector) key(hash []byte) []byte {
 	sigHash := sha256.New()
 	sigHash.Write(hash)
@@ -97,63 +103,74 @@ func (s *Selector) key(hash []byte) []byte {
 	return publicKeyHash[:]
 }
 
-// marshalTo outputs this selector to a writer.
 func (s *Selector) marshalTo(out io.Writer) error {
-	if _, err := writeUVarint(out, uint64(len(s.Ordinal))); err != nil {
+	if len(s.Ordinal) > SelectorMaxOrdinalSize || s.Claim[40] > 1 {
+		return ErrInvalidParameter
+	}
+
+	// This packs the ordinal length, selector type, and the last byte of the claim signature
+	// into the first byte. The last byte of the claim signature holds either 0 or 1 to select
+	// which key recovery index should be used. This saves a few bytes per selector which can
+	// add up with records with multiple selectors. Note that max ordinal length is 31, which
+	// is five bits.
+	if _, err := out.Write([]byte{(byte(len(s.Ordinal)) << 3) | (SelectorTypeBP160 << 1) | s.Claim[40]}); err != nil {
 		return err
 	}
-	if _, err := out.Write(s.Ordinal); err != nil {
+	if len(s.Ordinal) > 0 {
+		if _, err := out.Write(s.Ordinal); err != nil {
+			return err
+		}
+	}
+	if _, err := out.Write(s.Claim[0:40]); err != nil {
 		return err
 	}
-	if _, err := out.Write([]byte{SelectorTypeBP160}); err != nil {
-		return err
-	}
-	if _, err := out.Write(s.Claim[:]); err != nil {
-		return err
-	}
+
 	return nil
 }
 
-// bytes returns this selector marshaled to a byte array.
+func newSelectorFromBytes(b []byte) (s *Selector, err error) {
+	s = new(Selector)
+	err = s.unmarshalFrom(bytes.NewReader(b))
+	return
+}
+
 func (s *Selector) bytes() []byte {
 	var b bytes.Buffer
 	s.marshalTo(&b)
 	return b.Bytes()
 }
 
-// unmarshalFrom reads a selector from this input stream.
 func (s *Selector) unmarshalFrom(in io.Reader) error {
-	br := byteAndArrayReader{in}
-	l, err := binary.ReadUvarint(&br)
-	if err != nil {
+	var typeOrdinalLenClaimSignatureRecoverIndex [1]byte
+	if _, err := io.ReadFull(in, typeOrdinalLenClaimSignatureRecoverIndex[:]); err != nil {
 		return err
 	}
-	if l > RecordMaxSize {
-		return ErrRecordTooLarge
+	if ((typeOrdinalLenClaimSignatureRecoverIndex[0] >> 1) & 3) != SelectorTypeBP160 {
+		return ErrInvalidParameter
 	}
-	s.Ordinal = make([]byte, int(l))
-	_, err = io.ReadFull(&br, s.Ordinal)
-	if err != nil {
+	ordSize := uint(typeOrdinalLenClaimSignatureRecoverIndex[0] >> 3)
+	if ordSize > 0 {
+		s.Ordinal = make([]byte, ordSize)
+		if _, err := io.ReadFull(in, s.Ordinal); err != nil {
+			return err
+		}
+	} else {
+		s.Ordinal = nil
+	}
+	if _, err := io.ReadFull(in, s.Claim[0:40]); err != nil {
 		return err
 	}
-	t, err := br.ReadByte()
-	if err != nil {
-		return err
-	}
-	if t != SelectorTypeBP160 {
-		return ErrUnsupportedType
-	}
-	_, err = io.ReadFull(&br, s.Claim[:])
-	return err
+	s.Claim[40] = typeOrdinalLenClaimSignatureRecoverIndex[0] & 1
+	return nil
 }
 
 // set sets this selector to a given plain text name, ordinal, and record body hash.
 // The hash supplied is the record's body hash. If this selector is not intended for range
 // queries use nil for its ordinal.
 func (s *Selector) set(plainTextName []byte, ord []byte, hash []byte) {
-	if len(ord) > 64 {
-		s.Ordinal = make([]byte, 64)
-		copy(s.Ordinal, ord[len(ord)-64:])
+	if len(ord) > SelectorMaxOrdinalSize {
+		s.Ordinal = make([]byte, SelectorMaxOrdinalSize)
+		copy(s.Ordinal, ord[len(ord)-SelectorMaxOrdinalSize:])
 	} else {
 		s.Ordinal = ord
 	}

@@ -9,6 +9,7 @@ package lf
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -147,7 +148,7 @@ func apiSetStandardHeaders(out http.ResponseWriter) {
 	h.Set("Cache-Control", "no-cache, no-store, must-revalidate")
 	h.Set("Expires", "0")
 	h.Set("Pragma", "no-cache")
-	h.Set("Date", time.Now().String())
+	h.Set("Date", time.Now().UTC().Format(time.RFC1123))
 	h.Set("X-LF-Version", VersionStr)
 	h.Set("X-LF-APIVersion", apiVersionStr)
 	h.Set("Server", SoftwareName)
@@ -330,8 +331,7 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 				rc, ds := n.db.stats()
 				req.Header.Set("Content-Type", "text/plain")
 				out.WriteHeader(200)
-				out.Write([]byte(`
-------------------------------------------------------------------------------
+				out.Write([]byte(`------------------------------------------------------------------------------
 LF Global Key/Value Store ` + VersionStr + `
 (c)2018-2019 ZeroTier, Inc.  https://www.zerotier.com/
 MIT License
@@ -339,13 +339,27 @@ MIT License
 
 Software:            ` + SoftwareName + `
 Version:             ` + VersionStr + `
+API Version:         ` + apiVersionStr + `
 Uptime:              ` + (now.Sub(n.startTime)).String() + `
 Clock:               ` + now.Format(time.RFC1123) + `
+Network:             ` + n.genesisParameters.Name + `
 Record Count:        ` + strconv.FormatUint(rc, 10) + `
 Data Size:           ` + strconv.FormatUint(ds, 10) + `
 
 ------------------------------------------------------------------------------
+Peer Connections
+------------------------------------------------------------------------------
+
 `))
+				pl := n.Peers()
+				for _, p := range pl {
+					inout := "->"
+					if p.Inbound {
+						inout = "<-"
+					}
+					out.Write([]byte(fmt.Sprintf("%s %-42s %s\n", inout, p.Address, base64.URLEncoding.EncodeToString(p.PublicKey))))
+				}
+				out.Write([]byte("\n------------------------------------------------------------------------------\n"))
 			} else {
 				apiSendObj(out, req, http.StatusNotFound, &APIError{Code: http.StatusNotFound, Message: req.URL.Path + " is not a valid path"})
 			}

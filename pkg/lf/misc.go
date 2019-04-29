@@ -110,7 +110,7 @@ func ipIsGlobalPublicUnicast(ip net.IP) bool {
 	return false
 }
 
-var jsonPrettyOptions = &pretty.Options{
+var jsonPrettyOptions = pretty.Options{
 	Width:    2147483647, // always put arrays on one line
 	Prefix:   "",
 	Indent:   "  ",
@@ -124,5 +124,5 @@ func PrettyJSON(obj interface{}) string {
 	if err != nil {
 		return "null"
 	}
-	return string(pretty.PrettyOptions(j, jsonPrettyOptions))
+	return string(pretty.PrettyOptions(j, &jsonPrettyOptions))
 }
