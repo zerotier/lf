@@ -46,6 +46,7 @@ const (
 	ErrInvalidPublicKey   Err = "invalid public key"
 	ErrInvalidPrivateKey  Err = "invalid private key"
 	ErrInvalidParameter   Err = "invalid parameter"
+	ErrInvalidObject      Err = "invalid object"
 	ErrUnsupportedType    Err = "unsupported type"
 	ErrUnsupportedCurve   Err = "unsupported ECC curve (for this purpose)"
 	ErrOutOfRange         Err = "parameter out of range"

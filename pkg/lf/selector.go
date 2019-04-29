@@ -51,7 +51,7 @@ func addOrdinalToHash(h *[64]byte, ordinal []byte) {
 // MakeSelectorKey generates a masked selector database key from a plain text name.
 // If this name is not used with range queries use zero for the ordinal. This function exists
 // to allow selector database keys to be created separate from record creation if needed.
-func MakeSelectorKey(plainTextName []byte, ordinal []byte) []byte {
+func MakeSelectorKey(plainTextName, ordinal []byte) []byte {
 	if len(ordinal) > SelectorMaxOrdinalSize {
 		ordinal = ordinal[len(ordinal)-SelectorMaxOrdinalSize:]
 	}
@@ -105,7 +105,7 @@ func (s *Selector) key(hash []byte) []byte {
 
 func (s *Selector) marshalTo(out io.Writer) error {
 	if len(s.Ordinal) > SelectorMaxOrdinalSize || s.Claim[40] > 1 {
-		return ErrInvalidParameter
+		return ErrInvalidObject
 	}
 
 	// This packs the ordinal length, selector type, and the last byte of the claim signature
@@ -146,7 +146,7 @@ func (s *Selector) unmarshalFrom(in io.Reader) error {
 		return err
 	}
 	if ((typeOrdinalLenClaimSignatureRecoverIndex[0] >> 1) & 3) != SelectorTypeBP160 {
-		return ErrInvalidParameter
+		return ErrInvalidObject
 	}
 	ordSize := uint(typeOrdinalLenClaimSignatureRecoverIndex[0] >> 3)
 	if ordSize > 0 {
@@ -167,7 +167,7 @@ func (s *Selector) unmarshalFrom(in io.Reader) error {
 // set sets this selector to a given plain text name, ordinal, and record body hash.
 // The hash supplied is the record's body hash. If this selector is not intended for range
 // queries use nil for its ordinal.
-func (s *Selector) set(plainTextName []byte, ord []byte, hash []byte) {
+func (s *Selector) set(plainTextName, ord, hash []byte) {
 	if len(ord) > SelectorMaxOrdinalSize {
 		s.Ordinal = make([]byte, SelectorMaxOrdinalSize)
 		copy(s.Ordinal, ord[len(ord)-SelectorMaxOrdinalSize:])
