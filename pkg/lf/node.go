@@ -399,7 +399,8 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 
 			// Periodically announce that we have a few recent records to prompt syncing
 			if (now - lastAnnouncedRecentRecord) > 10000 {
-				_, links, err := n.db.getLinks(4)
+				lastAnnouncedRecentRecord = now
+				_, links, err := n.db.getLinks(2)
 				if err == nil && len(links) >= 32 {
 					hr := make([]byte, 1, 1+len(links))
 					hr[0] = p2pProtoMessageTypeHaveRecords
