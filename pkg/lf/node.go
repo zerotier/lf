@@ -453,7 +453,6 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 			}
 
 			// If we don't have enough connections, try to make more to peers we've learned about.
-			fmt.Printf("%v\n", n.knownPeers)
 			if (now - lastAttemptedConnections) > 10000 {
 				lastAttemptedConnections = now
 
