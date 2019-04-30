@@ -257,9 +257,6 @@ type Record struct {
 }
 
 // UnmarshalFrom deserializes this record from a reader.
-// The special error ErrorRecordMarkedIgnore indicates a record whose first bytes have
-// been overwritten by 0xff followed by a 32-bit length. This can be used to mark a record
-// to be ignored in a flat file without having to rewrite the entire file to delete it.
 func (r *Record) UnmarshalFrom(rdr io.Reader) error {
 	rr := byteAndArrayReader{rdr}
 
@@ -316,10 +313,8 @@ func (r *Record) UnmarshalFrom(rdr io.Reader) error {
 
 // MarshalTo writes this record in serialized form to the supplied writer.
 // If hashAsProxyForValue is true a hash of the value is substituted for the actual value.
-// This results in a byte stream that can't be unmarshaled and is for hashing. The hash
-// of the value is used in place of the value for hashing records to permit obsolete values
-// to eventually be dropped from storage. This also allows any "pee in the pool attacks"
-// like storing CP in the DAG to be mitigated via some kind of local blacklist.
+// This results in a byte stream that can't be unmarshaled and is used for computing
+// record hashes.
 func (r *Record) MarshalTo(w io.Writer, hashAsProxyForValue bool) error {
 	if err := r.recordBody.marshalTo(w, hashAsProxyForValue); err != nil {
 		return err

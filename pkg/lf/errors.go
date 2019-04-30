@@ -73,5 +73,4 @@ const (
 	ErrRecordTooOld                    ErrRecord = "record older than network timestamp floor"
 	ErrRecordCertificateInvalid        ErrRecord = "certificate invalid"
 	ErrRecordCertificateRequired       ErrRecord = "certificate required"
-	ErrRecordMarkedIgnore              ErrRecord = "record marked 'ignore' in file or stream"
 )
