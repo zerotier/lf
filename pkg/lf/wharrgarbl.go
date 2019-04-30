@@ -473,6 +473,7 @@ func wharrgarblInitTable() {
 		return
 	}
 	wharrgarblTableLock.RUnlock()
+
 	wharrgarblTableLock.Lock()
 	if wharrgarblTable != nil {
 		wharrgarblTableLock.Unlock()

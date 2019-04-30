@@ -377,15 +377,20 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 	n.backgroundThreadWG.Add(1)
 	go func() {
 		defer n.backgroundThreadWG.Done()
-		var lastCleanedPeerHasRecords, lastCleanedAnnouncedPeers, lastAnnouncedRecentRecord uint64
-		lastWroteKnownPeers := TimeMs()
-		lastAttemptedConnections := lastWroteKnownPeers - 5000
+
+		// Init this in background if it isn't already to speed up node readiness
+		wharrgarblInitTable()
+
+		now := TimeMs()
+		lastCleanedPeerHasRecords, lastAnnouncedRecentRecord, lastCleanedAnnouncedPeers := now, now, now
+		lastAttemptedConnections := now - 5000 // do this in 5s
+
 		for atomic.LoadUint32(&n.shutdown) == 0 {
 			time.Sleep(time.Second)
 			if atomic.LoadUint32(&n.shutdown) != 0 {
 				break
 			}
-			now := TimeMs()
+			now = TimeMs()
 
 			// Clean peer "has record" map entries older than 5 minutes.
 			if (now - lastCleanedPeerHasRecords) > 120000 {
@@ -406,7 +411,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 			// Periodically announce that we have a few recent records to prompt syncing
 			if (now - lastAnnouncedRecentRecord) > 10000 {
 				lastAnnouncedRecentRecord = now
-				_, links, err := n.db.getLinks(2)
+				_, links, err := n.db.getLinks(4)
 				if err == nil && len(links) >= 32 {
 					hr := make([]byte, 1, 1+len(links))
 					hr[0] = p2pProtoMessageTypeHaveRecords
@@ -444,11 +449,6 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 					}
 				}
 				n.knownPeersLock.Unlock()
-			}
-
-			// Write peers.json periodically
-			if (now - lastWroteKnownPeers) > 120000 {
-				lastWroteKnownPeers = now
 				n.writeKnownPeers()
 			}
 
@@ -974,8 +974,7 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inb
 	n.peersLock.Lock()
 	for _, pa := range n.peers {
 		if bytes.Equal(pa.remotePublicKey, rpk) {
-			n.log[LogLevelNormal].Printf("P2P connection to %s closed: closing redundant link (peer has same link key).", pa.address)
-			pa.c.Close()
+			n.log[LogLevelNormal].Printf("P2P connection to %s closed: closing redundant link (peer has same link key).", peerAddressStr)
 			return
 		}
 

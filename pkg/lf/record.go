@@ -253,7 +253,8 @@ type Record struct {
 	WorkAlgorithm byte       ``                  // Proof of work algorithm
 	Signature     Blob       `json:",omitempty"` // Signature of sha3-256(sha3-256(Body Signing Hash | Selectors) | Work | WorkAlgorithm)
 
-	selectorKeys [][]byte // Cached selector keys
+	selectorKeys [][]byte  // memoized selector keys
+	hash         *[32]byte // memoized hash
 }
 
 // UnmarshalFrom deserializes this record from a reader.
@@ -307,6 +308,7 @@ func (r *Record) UnmarshalFrom(rdr io.Reader) error {
 	}
 
 	r.selectorKeys = nil
+	r.hash = nil
 
 	return nil
 }
@@ -362,9 +364,14 @@ func (r *Record) Bytes() []byte {
 // hash of the record's bytes by a hash of the record with the (raw unmasked) value
 // replaced by the value's hash.
 func (r *Record) Hash() (hb [32]byte) {
+	if r.hash != nil {
+		copy(hb[:], r.hash[:])
+		return
+	}
 	h := NewShandwich256()
 	r.MarshalTo(h, true)
 	h.Sum(hb[:0])
+	r.hash = &hb
 	return
 }
 
