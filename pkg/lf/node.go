@@ -130,11 +130,11 @@ type Node struct {
 }
 
 // NewNode creates and starts a node.
-func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, logLevel int) (n *Node, err error) {
-	n = new(Node)
+func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, logLevel int) (*Node, error) {
+	n := new(Node)
 
 	n.basePath = basePath
-	n.peersFilePath = path.Join(n.basePath, "peers.json")
+	n.peersFilePath = path.Join(basePath, "peers.json")
 	if logger == nil {
 		logger = nullLogger
 	}
@@ -149,14 +149,9 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 	}
 
 	initOk := false
-	nn := n // hack for weird edge case issue with n being nil inside defer func
 	defer func() {
-		e := recover()
-		if e != nil {
-			err = fmt.Errorf("unexpected panic in node init: %s", e)
-		}
 		if !initOk {
-			nn.Stop()
+			n.Stop()
 		}
 	}()
 
@@ -164,7 +159,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 	n.peers = make(map[string]*peer)
 
 	// Open node database and other related files
-	err = n.db.open(basePath, n.log, func(doff uint64, dlen uint, hash *[32]byte) {
+	err := n.db.open(basePath, n.log, func(doff uint64, dlen uint, hash *[32]byte) {
 		// This is the handler passed to 'db' to be called when records are fully synchronized, meaning
 		// they have all their dependencies met and are ready to be replicated.
 		if atomic.LoadUint32(&n.shutdown) == 0 {
@@ -270,7 +265,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 	}
 
 	n.log[LogLevelNormal].Printf("listening on port %d for HTTP and %d for LF P2P", httpPort, p2pPort)
-	n.log[LogLevelNormal].Printf("node public key: %s", base64.RawURLEncoding.EncodeToString(n.linkKeyPub))
+	n.log[LogLevelNormal].Printf("my node public key: %s", base64.RawURLEncoding.EncodeToString(n.linkKeyPub))
 
 	// Load genesis.lf or use compiled-in defaults for global LF network
 	var genesisReader io.Reader
@@ -384,7 +379,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 		defer n.backgroundThreadWG.Done()
 		var lastCleanedPeerHasRecords, lastCleanedAnnouncedPeers, lastAnnouncedRecentRecord uint64
 		lastWroteKnownPeers := TimeMs()
-		lastAttemptedConnections := lastWroteKnownPeers
+		lastAttemptedConnections := lastWroteKnownPeers - 5000
 		for atomic.LoadUint32(&n.shutdown) == 0 {
 			time.Sleep(time.Second)
 			if atomic.LoadUint32(&n.shutdown) != 0 {
@@ -432,11 +427,11 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 				if len(n.knownPeers) > 0 {
 					kpSize := 0
 					for i := 0; i < len(n.knownPeers); i++ {
-						if (n.knownPeers[i].TotalSuccessfulConnections > 0) || (now-n.knownPeers[i].LastLearn) < 600000 {
+						if n.knownPeers[i].TotalSuccessfulConnections > 0 || (now-n.knownPeers[i].LastLearn) < 600000 {
 							if i != kpSize {
 								n.knownPeers[kpSize] = n.knownPeers[i]
-								kpSize++
 							}
+							kpSize++
 						}
 					}
 					if kpSize == 0 {
@@ -458,6 +453,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 			}
 
 			// If we don't have enough connections, try to make more to peers we've learned about.
+			fmt.Printf("%v\n", n.knownPeers)
 			if (now - lastAttemptedConnections) > 10000 {
 				lastAttemptedConnections = now
 
@@ -472,7 +468,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 						visited := make(map[int]bool)
 						for k := 0; k < wantMore; k++ {
 							idx := rand.Int() % len(n.knownPeers)
-							if !visited[idx] {
+							if _, have := visited[idx]; !have {
 								kp := &n.knownPeers[idx]
 								n.Connect(kp.IP, kp.Port, kp.PublicKeyBytes())
 								visited[idx] = true
@@ -583,9 +579,7 @@ func (n *Node) Stop() {
 
 		n.db.close()
 
-		if len(n.knownPeers) > 0 {
-			n.writeKnownPeers()
-		}
+		n.writeKnownPeers()
 	}
 }
 
@@ -606,13 +600,15 @@ func (n *Node) Connect(ip net.IP, port int, publicKey []byte) {
 		}
 		n.peersLock.RUnlock()
 
-		n.log[LogLevelTrace].Printf("TRACE: attempting to connect to %s / %s", ta.String(), base64.RawURLEncoding.EncodeToString(publicKey))
+		n.log[LogLevelNormal].Printf("P2P attempting to connect to %s / %s", ta.String(), base64.RawURLEncoding.EncodeToString(publicKey))
 
 		c, err := net.DialTCP("tcp", nil, &ta)
 		if atomic.LoadUint32(&n.shutdown) == 0 {
 			if err == nil {
 				n.backgroundThreadWG.Add(1)
 				go p2pConnectionHandler(n, c, publicKey, false)
+			} else {
+				n.log[LogLevelNormal].Printf("P2P connection to %s failed: %s", ta.String(), err.Error())
 			}
 		} else if c != nil {
 			c.Close()
@@ -804,9 +800,14 @@ func (n *Node) updateKnownPeersWithConnectResult(ip net.IP, port int, publicKey 
 	defer n.knownPeersLock.Unlock()
 	now := TimeMs()
 
+	ip4 := ip.To4()
+	if len(ip4) == 4 {
+		ip = ip4
+	}
+
 	// Update success or failure info for known peer record if we already have one.
 	for _, kp := range n.knownPeers {
-		if bytes.Equal(kp.IP, ip) && kp.Port == port && bytes.Equal(kp.PublicKeyBytes(), publicKey) {
+		if kp.IP.Equal(ip) && kp.Port == port && bytes.Equal(kp.PublicKeyBytes(), publicKey) {
 			if success {
 				if kp.FirstConnect == 0 {
 					kp.FirstConnect = now
@@ -974,13 +975,9 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inb
 	n.peersLock.Lock()
 	for _, pa := range n.peers {
 		if bytes.Equal(pa.remotePublicKey, rpk) {
-			if inbound { // if this connection is inbound, keep the other one as it is more informative (tells us proper IP/port)
-				n.log[LogLevelNormal].Printf("P2P connection to %s closed: closing redundant link (peer has same link key).", peerAddressStr)
-				n.peersLock.Unlock()
-				return
-			}
 			n.log[LogLevelNormal].Printf("P2P connection to %s closed: closing redundant link (peer has same link key).", pa.address)
 			pa.c.Close()
+			return
 		}
 
 		if !inbound && publicAddress {
@@ -988,12 +985,7 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inb
 		}
 
 		if !pa.inbound && ipIsGlobalPublicUnicast(pa.tcpAddress.IP) {
-			err = p.sendPeerAnnouncement(pa.tcpAddress, pa.remotePublicKey)
-			if err != nil {
-				n.log[LogLevelNormal].Printf("P2P connection to %s closed: %s", peerAddressStr, err.Error())
-				n.peersLock.Unlock()
-				return
-			}
+			p.sendPeerAnnouncement(pa.tcpAddress, pa.remotePublicKey)
 		}
 	}
 	n.peers[peerAddressStr] = p
@@ -1142,7 +1134,7 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inb
 					dupe := false
 					n.knownPeersLock.Lock()
 					for _, kp := range n.knownPeers {
-						if bytes.Equal(kp.PublicKeyBytes(), peerMsg.PublicKeyBytes()) && bytes.Equal(kp.IP, peerMsg.IP) && kp.Port == peerMsg.Port {
+						if bytes.Equal(kp.PublicKeyBytes(), peerMsg.PublicKeyBytes()) && kp.IP.Equal(peerMsg.IP) && kp.Port == peerMsg.Port {
 							kp.LastLearn = TimeMs()
 							kp.TotalLearn++
 							dupe = true
