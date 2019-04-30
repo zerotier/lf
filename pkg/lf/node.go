@@ -268,6 +268,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 	}
 
 	n.log[LogLevelNormal].Printf("listening on port %d for HTTP and %d for LF P2P", httpPort, p2pPort)
+	n.log[LogLevelNormal].Printf("node public key: %s", base64.URLEncoding.EncodeToString(n.linkKeyPub))
 
 	// Load genesis.lf or use compiled-in defaults for global LF network
 	var genesisReader io.Reader
