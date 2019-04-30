@@ -15,13 +15,6 @@ import (
 	"strings"
 )
 
-// APIStatusPeer (response) contains information about a connected peer.
-type APIStatusPeer struct {
-	Address   string `json:",omitempty"` // IP and port
-	PublicKey Blob   `json:",omitempty"` // public key
-	Inbound   bool   ``                  // true if this is an inbound connection
-}
-
 // APIStatusResult contains status information about this node and the network it belongs to.
 type APIStatusResult struct {
 	Software           string            `json:",omitempty"` // Software implementation name
@@ -33,7 +26,7 @@ type APIStatusResult struct {
 	Clock              uint64            ``                  // Node local clock in seconds since epoch
 	DBRecordCount      uint64            ``                  // Number of records in database
 	DBSize             uint64            ``                  // Total size of records in database in bytes
-	Peers              []APIStatusPeer   `json:",omitempty"` // Connected peers to this full node
+	PeerCount          int               ``                  // Number of connected peers
 	GenesisParameters  GenesisParameters ``                  // Genesis record contents that define settings for this LF network
 	NodeWorkAuthorized bool              ``                  // True if full node will do work for querying user/proxy
 	ProxyChain         []string          ``                  // Each proxy prepends its next URL hop to this slice

@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -53,6 +54,26 @@ func (e APIError) Error() string {
 	return strconv.FormatInt(int64(e.Code), 10)
 }
 
+// APIPeer contains information about a peer
+type APIPeer struct {
+	IP        net.IP
+	Port      int
+	PublicKey string
+}
+
+// PublicKeyBytes is a shortcut to un-base64-encode PublicKey.
+// It returns nil if PublicKey is empty or invalid.
+func (p *APIPeer) PublicKeyBytes() []byte {
+	if len(p.PublicKey) > 0 {
+		pkb, err := base64.URLEncoding.DecodeString(p.PublicKey)
+		if err != nil {
+			return nil
+		}
+		return pkb
+	}
+	return nil
+}
+
 //////////////////////////////////////////////////////////////////////////////
 
 // APIPostRecord submits a raw LF record to a node or proxy.
@@ -63,6 +84,42 @@ func APIPostRecord(url string, recordData []byte) error {
 		url = url + "/post"
 	}
 	resp, err := http.Post(url, "application/octet-stream", bytes.NewReader(recordData))
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode == 200 {
+		return nil
+	}
+	body, err := ioutil.ReadAll(&io.LimitedReader{R: resp.Body, N: 131072})
+	if err != nil {
+		return APIError{Code: resp.StatusCode}
+	}
+	if len(body) > 0 {
+		var e APIError
+		if err := json.Unmarshal(body, &e); err != nil {
+			return APIError{Code: resp.StatusCode, Message: "error response invalid: " + err.Error()}
+		}
+		return e
+	}
+	return APIError{Code: resp.StatusCode}
+}
+
+// APIPostConnect submits an APIPeer record to /connect.
+func APIPostConnect(url string, ip net.IP, port int, publicKey string) error {
+	if strings.HasSuffix(url, "/") {
+		url = url + "connect"
+	} else {
+		url = url + "/connect"
+	}
+	apiPeerJSON, err := json.Marshal(&APIPeer{
+		IP:        ip,
+		Port:      port,
+		PublicKey: publicKey,
+	})
+	if err != nil {
+		return err
+	}
+	resp, err := http.Post(url, "application/json", bytes.NewReader(apiPeerJSON))
 	if err != nil {
 		return err
 	}
@@ -302,6 +359,9 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 			rc, ds := n.db.stats()
 			now := TimeSec()
 			wa := apiIsTrusted(n, req)
+			n.peersLock.RLock()
+			pcount := len(n.peers)
+			n.peersLock.RUnlock()
 			apiSendObj(out, req, http.StatusOK, &APIStatusResult{
 				Software:           SoftwareName,
 				Version:            Version,
@@ -312,13 +372,31 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 				Clock:              now,
 				DBRecordCount:      rc,
 				DBSize:             ds,
-				Peers:              n.Peers(),
+				PeerCount:          pcount,
 				GenesisParameters:  n.genesisParameters,
 				NodeWorkAuthorized: wa,
 				WorkAuthorized:     wa,
 			})
 		} else {
 			out.Header().Set("Allow", "GET, HEAD")
+			apiSendObj(out, req, http.StatusMethodNotAllowed, &APIError{Code: http.StatusMethodNotAllowed, Message: req.Method + " not supported for this path"})
+		}
+	})
+
+	smux.HandleFunc("/connect", func(out http.ResponseWriter, req *http.Request) {
+		apiSetStandardHeaders(out)
+		if req.Method == http.MethodPost || req.Method == http.MethodPut {
+			if apiIsTrusted(n, req) {
+				var m APIPeer
+				if apiReadObj(out, req, &m) == nil {
+					n.Connect(m.IP, m.Port, m.PublicKeyBytes())
+					apiSendObj(out, req, http.StatusOK, nil)
+				}
+			} else {
+				apiSendObj(out, req, http.StatusForbidden, &APIError{Code: http.StatusMethodNotAllowed, Message: "only trusted clients can suggest P2P endpoints"})
+			}
+		} else {
+			out.Header().Set("Allow", "POST, PUT")
 			apiSendObj(out, req, http.StatusMethodNotAllowed, &APIError{Code: http.StatusMethodNotAllowed, Message: req.Method + " not supported for this path"})
 		}
 	})
@@ -351,14 +429,15 @@ Peer Connections
 ------------------------------------------------------------------------------
 
 `))
-				pl := n.Peers()
-				for _, p := range pl {
+				n.peersLock.RLock()
+				for _, p := range n.peers {
 					inout := "->"
-					if p.Inbound {
+					if p.inbound {
 						inout = "<-"
 					}
-					out.Write([]byte(fmt.Sprintf("%s %-42s %s\n", inout, p.Address, base64.URLEncoding.EncodeToString(p.PublicKey))))
+					out.Write([]byte(fmt.Sprintf("%s %-42s %s\n", inout, p.address, base64.URLEncoding.EncodeToString(p.remotePublicKey))))
 				}
+				n.peersLock.RUnlock()
 				out.Write([]byte("\n------------------------------------------------------------------------------\n"))
 			} else {
 				apiSendObj(out, req, http.StatusNotFound, &APIError{Code: http.StatusNotFound, Message: req.URL.Path + " is not a valid path"})

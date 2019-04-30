@@ -8,48 +8,55 @@
 package lf
 
 import (
+	"crypto/aes"
 	"crypto/sha256"
-	"crypto/sha512"
 	"hash"
 
 	"golang.org/x/crypto/sha3"
 )
 
-// Shandwich256 uses sha256 to combine the outputs of sha512 and sha3-512 for a very future-proof 256-bit hash.
-// This is used to compute record identity hashes and in a few other critical spots where changing the hash
-// function would be painful and disruptive.
+// Shandwich256 uses AES to combine the results of SHA256 and SHA3-256 to yield a very future-proof hash.
 func Shandwich256(in []byte) (h [32]byte) {
-	combiner := sha256.New()
-	h0 := sha512.Sum512(in)
-	combiner.Write(h0[:])
-	h1 := sha3.Sum512(in)
-	combiner.Write(h1[:])
-	combiner.Sum(h[:0])
+	h = sha256.Sum256(in)
+	hs3 := sha3.Sum256(in)
+	c, _ := aes.NewCipher(hs3[:])
+	c.Encrypt(h[0:16], h[0:16])
+	c.Encrypt(h[16:32], h[16:32])
 	return
 }
 
-type shandwich256Hasher [2]hash.Hash
+// Shandwich256Hasher is a hash.Hash implementation for Shandwich256.
+type Shandwich256Hasher [2]hash.Hash
 
 // NewShandwich256 creates a new hash.Hash that implements Shandwich256.
-func NewShandwich256() hash.Hash { return &shandwich256Hasher{sha512.New(), sha3.New512()} }
+func NewShandwich256() *Shandwich256Hasher { return &Shandwich256Hasher{sha256.New(), sha3.New256()} }
 
-func (h *shandwich256Hasher) Write(in []byte) (int, error) {
+// Write hashes in[]
+func (h *Shandwich256Hasher) Write(in []byte) (int, error) {
 	h[0].Write(in)
 	h[1].Write(in)
 	return len(in), nil
 }
 
-func (h *shandwich256Hasher) Reset() {
+// Reset resets this instance to be used again.
+func (h *Shandwich256Hasher) Reset() {
 	h[0].Reset()
 	h[1].Reset()
 }
 
-func (h *shandwich256Hasher) Size() int { return 32 }
+// Size returns the size of Sum()'s output.
+func (h *Shandwich256Hasher) Size() int { return 32 }
 
-func (h *shandwich256Hasher) BlockSize() int { return h[0].BlockSize() } // not really correct but nothing in our code cares about this
+// BlockSize returns the block size of one of the two hashes and isn't that meaningful here.
+func (h *Shandwich256Hasher) BlockSize() int { return h[0].BlockSize() } // not really correct but nothing in our code cares about this
 
-func (h *shandwich256Hasher) Sum(b []byte) []byte {
-	var hbuf [128]byte
-	combined := sha256.Sum256(h[1].Sum(h[0].Sum(hbuf[:0])))
-	return append(b, combined[:]...)
+// Sum computes the 256-bit Shandwich256 sum of the current input.
+func (h *Shandwich256Hasher) Sum(b []byte) []byte {
+	h256 := h[0].Sum(b)
+	var hs3 [32]byte
+	h[1].Sum(hs3[:0])
+	c, _ := aes.NewCipher(hs3[:])
+	c.Encrypt(h256[0:16], h256[0:16])
+	c.Encrypt(h256[16:32], h256[16:32])
+	return h256
 }

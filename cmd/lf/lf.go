@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"net"
 	"os"
 	"os/signal"
 	"path"
@@ -91,8 +92,9 @@ Commands:
   selftest [test name]
     core                                  Test core systems (default)
     wharrgarbl                            Test proof of work (long!)
-    database                              Test database core
+    database                              Test DAG and database (long!)
   node-start                              Start a full node
+  node-connect <ip> <port> [<key>]        Suggest P2P endpoint for node
   proxy-start                             Start a proxy
   status                                  Get status from remote node/proxy
   set [-...] <name[#ord]> [...] <value>   Set a value in the data store
@@ -132,6 +134,33 @@ func doNodeStart(cfg *lf.ClientConfig, basePath string, urls []string, args []st
 	}
 	_ = <-osSignalChannel
 	node.Stop()
+}
+
+func doNodeConnect(cfg *lf.ClientConfig, basePath string, urls []string, args []string) {
+	if len(args) != 3 {
+		printHelp("")
+		return
+	}
+	ip := net.ParseIP(args[0])
+	if !ip.IsGlobalUnicast() && !ip.IsLoopback() {
+		printHelp("")
+		return
+	}
+	port, err := strconv.ParseUint(args[1], 10, 64)
+	if port == 0 || port > 65535 || err != nil {
+		printHelp("")
+		return
+	}
+	for _, u := range urls {
+		err = lf.APIPostConnect(u, ip, int(port), args[2])
+		if err == nil {
+			break
+		}
+	}
+	if err != nil {
+		fmt.Printf("ERROR: %s\n", err.Error())
+		return
+	}
 }
 
 func doProxyStart(cfg *lf.ClientConfig, basePath string, urls []string, args []string) {
@@ -492,7 +521,7 @@ func doMakeGenesis(cfg *lf.ClientConfig, basePath string, urls []string, args []
 	var grData bytes.Buffer
 	for i := 0; i < len(genesisRecords); i++ {
 		fmt.Printf("%s\n", lf.PrettyJSON(genesisRecords[i]))
-		err = genesisRecords[i].MarshalTo(&grData)
+		err = genesisRecords[i].MarshalTo(&grData, false)
 		if err != nil {
 			fmt.Printf("ERROR: %s\n", err.Error())
 			os.Exit(-1)
@@ -566,13 +595,6 @@ func main() {
 			test = "core"
 		}
 		switch test {
-		case "all":
-			lf.TestCore(os.Stdout)
-			fmt.Println()
-			lf.TestDatabase("./lf-db-test", os.Stdout)
-			fmt.Println()
-			//lf.TestWharrgarbl(os.Stdout)
-			//fmt.Println()
 		case "core":
 			lf.TestCore(os.Stdout)
 		case "wharrgarbl":
@@ -585,6 +607,9 @@ func main() {
 
 	case "node-start":
 		doNodeStart(&cfg, *basePath, urls, cmdArgs)
+
+	case "node-connect":
+		doNodeConnect(&cfg, *basePath, urls, cmdArgs)
 
 	case "proxy-start":
 		doProxyStart(&cfg, *basePath, urls, cmdArgs)

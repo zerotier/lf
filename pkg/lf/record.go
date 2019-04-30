@@ -9,15 +9,17 @@ package lf
 
 import (
 	"bytes"
-	"compress/lzw"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"sort"
+
+	"gopkg.in/kothar/brotli-go.v0/dec"
+
+	"gopkg.in/kothar/brotli-go.v0/enc"
 
 	"golang.org/x/crypto/sha3"
 )
@@ -25,9 +27,20 @@ import (
 var (
 	b1_0 = []byte{0x00}
 	b1_1 = []byte{0x01}
+
+	brotliParams = func() (bp *enc.BrotliParams) {
+		bp = enc.NewBrotliParams()
+		bp.SetQuality(11)
+		bp.SetMode(enc.GENERIC)
+		return
+	}()
 )
 
-const recordBodyFlagHasCertificate byte = 0x01
+const (
+	recordBodyFlagHasCertificate  byte = 0x01
+	recordBodyFlagValueMasked     byte = 0x02
+	recordBodyFlagValueCompressed byte = 0x04
+)
 
 // RecordDefaultWharrgarblMemory is the default amount of memory to use for Wharrgarbl momentum-type PoW.
 const RecordDefaultWharrgarblMemory = 1024 * 1024 * 512
@@ -45,11 +58,13 @@ const RecordWorkAlgorithmWharrgarbl byte = 1
 // recordBody represents the main body of a record including its value, owner public keys, etc.
 // It's included as part of Record but separated since in record construction we want to treat it as a separate element.
 type recordBody struct {
-	Value       Blob       `json:",omitempty"` // Record value (possibly masked and/or compressed, use GetValue() to get)
-	Owner       Blob       `json:",omitempty"` // Owner of this record (owner public bytes)
-	Certificate *[32]byte  `json:",omitempty"` // Hash (256-bit) of exact record containing certificate for this owner (if CAs are enabled)
-	Links       [][32]byte `json:",omitempty"` // Links to previous records' hashes
-	Timestamp   uint64     ``                  // Timestamp (and revision ID) in SECONDS since Unix epoch
+	Value           Blob       `json:",omitempty"` // Record value (possibly masked and/or compressed, use GetValue() to get)
+	Owner           Blob       `json:",omitempty"` // Owner of this record (owner public bytes)
+	Certificate     *[32]byte  `json:",omitempty"` // Hash (256-bit) of exact record containing certificate for this owner (if CAs are enabled)
+	Links           [][32]byte `json:",omitempty"` // Links to previous records' hashes
+	Timestamp       uint64     ``                  // Timestamp (and revision ID) in SECONDS since Unix epoch
+	ValueMasked     bool       ``                  // If true, value is encrypted with a masking key
+	ValueCompressed bool       ``                  // If true, value is compressed (within encrypted envelope)
 }
 
 func (rb *recordBody) unmarshalFrom(r io.Reader) error {
@@ -126,23 +141,39 @@ func (rb *recordBody) unmarshalFrom(r io.Reader) error {
 		return err
 	}
 
+	rb.ValueMasked = (flags & recordBodyFlagValueMasked) != 0
+	rb.ValueCompressed = (flags & recordBodyFlagValueCompressed) != 0
+
 	return nil
 }
 
-func (rb *recordBody) marshalTo(w io.Writer) error {
+func (rb *recordBody) marshalTo(w io.Writer, hashAsProxyForValue bool) error {
 	var flags [1]byte
 	if rb.Certificate != nil {
 		flags[0] |= recordBodyFlagHasCertificate
+	}
+	if rb.ValueMasked {
+		flags[0] |= recordBodyFlagValueMasked
+	}
+	if rb.ValueCompressed {
+		flags[0] |= recordBodyFlagValueCompressed
 	}
 	if _, err := w.Write(flags[:]); err != nil {
 		return err
 	}
 
-	if _, err := writeUVarint(w, uint64(len(rb.Value))); err != nil {
-		return err
-	}
-	if _, err := w.Write(rb.Value); err != nil {
-		return err
+	if hashAsProxyForValue {
+		h := sha3.Sum256(rb.Value)
+		if _, err := w.Write(h[:]); err != nil {
+			return err
+		}
+	} else {
+		if _, err := writeUVarint(w, uint64(len(rb.Value))); err != nil {
+			return err
+		}
+		if _, err := w.Write(rb.Value); err != nil {
+			return err
+		}
 	}
 
 	if _, err := writeUVarint(w, uint64(len(rb.Owner))); err != nil {
@@ -171,48 +202,28 @@ func (rb *recordBody) marshalTo(w io.Writer) error {
 	return err
 }
 
-func (rb *recordBody) sizeBytes() uint {
-	var wc countingWriter
-	rb.marshalTo(&wc)
-	return uint(wc)
-}
-
-// signingHash computes a hash for use in record signing.
-// This doesn't just hash Bytes(). It uses a different encoding and hashes the value
-// separately. This is done to make it possible in the future to store only value hashes
-// but still be able to authenticate records, which could allow the size of the data store
-// to get trimmed down a bit by discarding actual values for very old records.
-func (rb *recordBody) signingHash() (sum [32]byte) {
+func (rb *recordBody) signingHash() (hb [32]byte) {
 	h := NewShandwich256()
-	vh := Shandwich256(rb.Value)
-	h.Write(vh[:])
-	h.Write(b1_0)
-	h.Write(rb.Owner)
-	h.Write(b1_0)
-	if rb.Certificate != nil {
-		h.Write(rb.Certificate[:])
-	}
-	h.Write(b1_0)
-	for i := 0; i < len(rb.Links); i++ {
-		h.Write(rb.Links[i][:])
-	}
-	h.Write(b1_0)
-	binary.BigEndian.PutUint64(vh[0:8], rb.Timestamp) // this just re-uses vh[] as a temp buffer
-	h.Write(vh[0:8])
-	h.Write(b1_0)
-	h.Sum(sum[:0])
+	rb.marshalTo(h, true)
+	h.Sum(hb[:0])
 	return
 }
 
-// GetValue decrypts and possibly decompresses this record's masked value.
-// An apparently invalid masking key or a decompression failure will result in an empty/nil value.
+func (rb *recordBody) sizeBytes() uint {
+	var wc countingWriter
+	rb.marshalTo(&wc, false)
+	return uint(wc)
+}
+
+// GetValue unmasks and possibly decompresses this record's value.
+// Nil is returned if the value is empty.
 func (rb *recordBody) GetValue(maskingKey []byte) ([]byte, error) {
-	if len(rb.Value) < 3 {
+	if len(rb.Value) == 0 {
 		return nil, nil
 	}
 
 	var unmaskedValue []byte
-	if len(maskingKey) > 0 {
+	if rb.ValueMasked {
 		unmaskedValue = make([]byte, len(rb.Value))
 		var cfbIv [16]byte
 		binary.BigEndian.PutUint64(cfbIv[0:8], rb.Timestamp)
@@ -226,21 +237,10 @@ func (rb *recordBody) GetValue(maskingKey []byte) ([]byte, error) {
 		unmaskedValue = rb.Value
 	}
 
-	if (unmaskedValue[0] & 0x01) != 0 {
-		uncompressedValue, err := ioutil.ReadAll(io.LimitReader(lzw.NewReader(bytes.NewReader(unmaskedValue[3:]), lzw.LSB, 8), RecordMaxSize))
-		if err != nil {
-			return nil, err
-		}
-		if crc16(uncompressedValue) != binary.BigEndian.Uint16(unmaskedValue[1:3]) {
-			return nil, ErrIncorrectKey
-		}
-		return uncompressedValue, nil
+	if rb.ValueCompressed {
+		return dec.DecompressBuffer(unmaskedValue, make([]byte, 0, len(unmaskedValue)+(len(unmaskedValue)/3)))
 	}
-
-	if crc16(unmaskedValue[3:]) != binary.BigEndian.Uint16(unmaskedValue[1:3]) {
-		return nil, ErrIncorrectKey
-	}
-	return unmaskedValue[3:], nil
+	return unmaskedValue, nil
 }
 
 // Record combines the record body with one or more selectors, work, and a signature.
@@ -253,10 +253,7 @@ type Record struct {
 	WorkAlgorithm byte       ``                  // Proof of work algorithm
 	Signature     Blob       `json:",omitempty"` // Signature of sha3-256(sha3-256(Body Signing Hash | Selectors) | Work | WorkAlgorithm)
 
-	selectorKeys [][]byte  // Cached selector keys
-	data         []byte    // Cached raw data
-	hash         *[32]byte // Cached hash
-	id           *[32]byte // Cached ID
+	selectorKeys [][]byte // Cached selector keys
 }
 
 // UnmarshalFrom deserializes this record from a reader.
@@ -266,26 +263,7 @@ type Record struct {
 func (r *Record) UnmarshalFrom(rdr io.Reader) error {
 	rr := byteAndArrayReader{rdr}
 
-	hdrb, err := rr.ReadByte()
-	if err != nil {
-		return err
-	}
-	if hdrb == 0xff {
-		var deadRecordLen [4]byte
-		if _, err = io.ReadFull(&rr, deadRecordLen[:]); err != nil {
-			return err
-		}
-		deadLen := binary.BigEndian.Uint32(deadRecordLen[:])
-		if deadLen >= 5 {
-			io.CopyN(ioutil.Discard, &rr, int64(deadLen-5))
-		}
-		return ErrRecordMarkedIgnore
-	}
-	if hdrb != 0 { // right now header byte must be 0 for valid records -- could be used later for types or flags
-		return ErrRecordInvalid
-	}
-
-	if err = r.recordBody.unmarshalFrom(&rr); err != nil {
+	if err := r.recordBody.unmarshalFrom(&rr); err != nil {
 		return err
 	}
 
@@ -332,26 +310,18 @@ func (r *Record) UnmarshalFrom(rdr io.Reader) error {
 	}
 
 	r.selectorKeys = nil
-	r.data = nil
-	r.hash = nil
-	r.id = nil
 
 	return nil
 }
 
 // MarshalTo writes this record in serialized form to the supplied writer.
-func (r *Record) MarshalTo(w io.Writer) error {
-	if len(r.data) > 0 { // just send cached data if present since this is faster
-		_, err := w.Write(r.data)
-		return err
-	}
-
-	// Record begins with a reserved version/type byte, currently 0
-	if _, err := w.Write(b1_0); err != nil {
-		return err
-	}
-
-	if err := r.recordBody.marshalTo(w); err != nil {
+// If hashAsProxyForValue is true a hash of the value is substituted for the actual value.
+// This results in a byte stream that can't be unmarshaled and is for hashing. The hash
+// of the value is used in place of the value for hashing records to permit obsolete values
+// to eventually be dropped from storage. This also allows any "pee in the pool attacks"
+// like storing CP in the DAG to be mitigated via some kind of local blacklist.
+func (r *Record) MarshalTo(w io.Writer, hashAsProxyForValue bool) error {
+	if err := r.recordBody.marshalTo(w, hashAsProxyForValue); err != nil {
 		return err
 	}
 
@@ -386,32 +356,21 @@ func (r *Record) MarshalTo(w io.Writer) error {
 // The returned slice should not be modified since it's cached internally in Record to
 // make multiple calls to Bytes() faster.
 func (r *Record) Bytes() []byte {
-	if len(r.data) == 0 {
-		var buf bytes.Buffer
-		r.MarshalTo(&buf)
-		r.data = buf.Bytes()
-	}
-	return r.data
-}
-
-// SizeBytes returns the serialized size of this record.
-func (r *Record) SizeBytes() uint {
-	if len(r.data) == 0 {
-		var cr countingWriter
-		r.MarshalTo(&cr)
-		return uint(cr)
-	}
-	return uint(len(r.data))
+	var buf bytes.Buffer
+	buf.Grow(len(r.Value) + 256)
+	r.MarshalTo(&buf, false)
+	return buf.Bytes()
 }
 
 // Hash returns Shandwich256(Bytes()).
-// This is the main record hash used for record linking.
-func (r *Record) Hash() *[32]byte {
-	if r.hash == nil {
-		sum := Shandwich256(r.Bytes())
-		r.hash = &sum
-	}
-	return r.hash
+// This is the main record hash used for record linking. Note that it's not a straight
+// hash of the record's bytes by a hash of the record with the (raw unmasked) value
+// replaced by the value's hash.
+func (r *Record) Hash() (hb [32]byte) {
+	h := NewShandwich256()
+	r.MarshalTo(h, true)
+	h.Sum(hb[:0])
+	return
 }
 
 // Score returns this record's work score, which is algorithm dependent.
@@ -446,27 +405,23 @@ func (r *Record) SelectorKey(selectorIndex int) []byte {
 
 // ID returns a Shandwich256 hash of all this record's selector database keys sorted in ascending order.
 // If the record has no selectors the ID is just its hash.
-func (r *Record) ID() *[32]byte {
-	if r.id == nil {
-		if len(r.Selectors) == 0 {
-			return r.Hash()
-		}
-
-		var selectorKeys [][]byte
-		for i := range r.Selectors {
-			selectorKeys = append(selectorKeys, r.SelectorKey(i))
-		}
-		sort.Slice(selectorKeys, func(a, b int) bool { return bytes.Compare(selectorKeys[a], selectorKeys[b]) < 0 })
-
-		h := NewShandwich256()
-		for i := 0; i < len(selectorKeys); i++ {
-			h.Write(selectorKeys[i])
-		}
-		var id [32]byte
-		h.Sum(id[:0])
-		r.id = &id
+func (r *Record) ID() (id [32]byte) {
+	if len(r.Selectors) == 0 {
+		return r.Hash()
 	}
-	return r.id
+
+	var selectorKeys [][]byte
+	for i := range r.Selectors {
+		selectorKeys = append(selectorKeys, r.SelectorKey(i))
+	}
+	sort.Slice(selectorKeys, func(a, b int) bool { return bytes.Compare(selectorKeys[a], selectorKeys[b]) < 0 })
+
+	h := NewShandwich256()
+	for i := 0; i < len(selectorKeys); i++ {
+		h.Write(selectorKeys[i])
+	}
+	h.Sum(id[:0])
+	return
 }
 
 // Validate checks this record's signatures and other attributes and returns an error or nil if there is no problem.
@@ -571,40 +526,18 @@ func NewRecordStart(value []byte, links [][32]byte, maskingKey []byte, plainText
 	r = new(Record)
 
 	if len(value) > 0 {
-		var valueMasked []byte
-		valueCrc16 := crc16(value)
-
-		// If value is of non-trivial length, try to compress it with LZW. LZW is an older algorithm
-		// but is fast and tends to do fairly well with small compressable objects like JSON
-		// blobs, text, HTML, etc.
-		if len(value) >= 32 {
-			var lzwBuf bytes.Buffer
-			lzwBuf.WriteByte(0x01) // flag 0x01 indicates compression
-			lzwBuf.WriteByte(byte(valueCrc16 >> 8))
-			lzwBuf.WriteByte(byte(valueCrc16))
-			lzwWriter := lzw.NewWriter(&lzwBuf, lzw.LSB, 8)
-			_, lzwErr := lzwWriter.Write(value)
-			if lzwErr == nil {
-				lzwErr = lzwWriter.Close()
-				valueMasked = lzwBuf.Bytes()
-				if lzwErr != nil || len(valueMasked) > len(value) {
-					valueMasked = nil
-				}
-			} else {
-				valueMasked = nil
+		// Attempt compression for values of non-trivial size.
+		if len(value) > 32 {
+			var valueCompr []byte
+			valueCompr, err = enc.CompressBuffer(brotliParams, value, make([]byte, 0, len(value)+4))
+			if err == nil && len(valueCompr) < len(value) {
+				value = valueCompr
+				r.recordBody.ValueCompressed = true
 			}
 		}
 
-		// If compression failed to improve size, store uncompressed.
-		if len(valueMasked) == 0 {
-			valueMasked = append(valueMasked, 0x00, byte(valueCrc16>>8), byte(valueCrc16)) // 0x00 indicates no compression
-			valueMasked = append(valueMasked, value...)
-		}
-
+		// Encrypt with AES256-CFB using the timestamp and owner for IV.
 		if len(maskingKey) > 0 {
-			// Encrypt with AES256-CFB using the timestamp and owner for IV.
-			// No AEAD is needed here because the record is already authenticated by digital signature from the owner.
-			// We do include a little CRC16 to detect invalid masking keys with some reliability to improve ease of use in some cases.
 			var cfbIv [16]byte
 			binary.BigEndian.PutUint64(cfbIv[0:8], ts)
 			if len(ownerPublic) >= 8 {
@@ -612,10 +545,13 @@ func NewRecordStart(value []byte, links [][32]byte, maskingKey []byte, plainText
 			}
 			maskingKeyH := sha256.Sum256(maskingKey)
 			c, _ := aes.NewCipher(maskingKeyH[:])
-			cipher.NewCFBEncrypter(c, cfbIv[:]).XORKeyStream(valueMasked, valueMasked)
+			valueMasked := make([]byte, len(value))
+			cipher.NewCFBEncrypter(c, cfbIv[:]).XORKeyStream(valueMasked, value)
+			r.recordBody.Value = valueMasked
+			r.recordBody.ValueMasked = true
+		} else {
+			r.recordBody.Value = append(r.recordBody.Value, value...)
 		}
-
-		r.recordBody.Value = valueMasked
 	}
 
 	r.recordBody.Owner = append(r.recordBody.Owner, ownerPublic...)
@@ -688,12 +624,6 @@ func NewRecordComplete(incompleteRecord *Record, signingHash []byte, owner *Owne
 	r = incompleteRecord
 	r.Signature, err = owner.Sign(signingHash)
 	r.selectorKeys = nil
-	r.data = nil
-	r.hash = nil
-	r.id = nil
-	if r.SizeBytes() > RecordMaxSize {
-		return nil, ErrRecordTooLarge
-	}
 	return
 }
 

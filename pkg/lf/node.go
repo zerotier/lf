@@ -16,6 +16,7 @@ import (
 	secrand "crypto/rand"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -28,6 +29,7 @@ import (
 	"os"
 	"path"
 	"runtime"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -77,16 +79,16 @@ type peer struct {
 	inbound         bool                // True if this is an incoming connection
 }
 
-// knownPeer remembers a peer announcement we've received
+// knownPeer contains info about a peer we know about via another peer or the API
 type knownPeer struct {
-	learnedTime uint64 // non-zero but not yet tested peers
-
-	FirstConnected             uint64
-	LastConnected              uint64
+	APIPeer
+	LastLearn                  uint64
+	TotalLearn                 uint64
+	FirstConnect               uint64
+	LastFailedConnection       uint64
+	LastSuccessfulConnection   uint64
+	TotalFailedConnections     uint64
 	TotalSuccessfulConnections uint64
-	IP                         net.IP
-	Port                       int
-	PublicKey                  string
 }
 
 // Node is an instance of a full LF node supporting both P2P and HTTP access.
@@ -286,7 +288,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 		if bytes.Equal(n.genesisOwner, r.Owner) { // sanity check
 			rh := r.Hash()
 			if !n.db.hasRecord(rh[:]) {
-				n.log[LogLevelNormal].Printf("genesis record %x not found in database, initializing", *rh)
+				n.log[LogLevelNormal].Printf("genesis record %x not found in database, initializing", rh)
 				err = n.db.putRecord(&r)
 				if err != nil {
 					return nil, err
@@ -312,7 +314,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 			if gr != nil && err == nil {
 				rv, _ := gr.GetValue(nil)
 				if len(rv) > 0 {
-					n.log[LogLevelNormal].Printf("applying genesis configuration update from record %x", *gr.Hash())
+					n.log[LogLevelNormal].Printf("applying genesis configuration update from record %x", gr.Hash())
 					n.genesisParameters.Update(rv)
 				}
 			} else if err != nil {
@@ -341,7 +343,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 			}
 			if c != nil {
 				n.backgroundThreadWG.Add(1)
-				go p2pConnectionHandler(n, c, nil, true, nil)
+				go p2pConnectionHandler(n, c, nil, true)
 			}
 		}
 	}()
@@ -360,7 +362,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 	n.backgroundThreadWG.Add(1)
 	go func() {
 		defer n.backgroundThreadWG.Done()
-		var lastCleanedPeerHasRecords, lastCleanedAnnouncedPeers, lastAttemptedConnections uint64
+		var lastCleanedPeerHasRecords, lastCleanedAnnouncedPeers, lastAttemptedConnections, lastAnnouncedRecentRecord uint64
 		lastWroteKnownPeers := TimeMs()
 		for atomic.LoadUint32(&n.shutdown) == 0 {
 			time.Sleep(time.Second)
@@ -385,20 +387,45 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 				n.peersLock.RUnlock()
 			}
 
+			// Periodically announce that we have a few recent records to prompt syncing
+			if (now - lastAnnouncedRecentRecord) > 10000 {
+				_, links, err := n.db.getLinks(4)
+				if err == nil && len(links) >= 32 {
+					hr := make([]byte, 1, 1+len(links))
+					hr[0] = p2pProtoMessageTypeHaveRecords
+					hr = append(hr, links...)
+
+					n.peersLock.RLock()
+					for _, p := range n.peers {
+						p.send(hr)
+					}
+					n.peersLock.RUnlock()
+				}
+			}
+
 			// Clean announced peer list of peers we learned about more than 10 minutes ago.
 			if (now - lastCleanedAnnouncedPeers) > 120000 {
 				lastCleanedAnnouncedPeers = now
-				var newAP []knownPeer
 				n.knownPeersLock.Lock()
-				if len(n.knownPeers) > 4096 { // sanity check to prevent insanity
-					n.knownPeers = n.knownPeers[4096:]
-				}
-				for _, ap := range n.knownPeers {
-					if ap.learnedTime > 0 && (now-ap.learnedTime) < 600000 {
-						newAP = append(newAP, ap)
+				if len(n.knownPeers) > 0 {
+					kpSize := 0
+					for i := 0; i < len(n.knownPeers); i++ {
+						if (n.knownPeers[i].TotalSuccessfulConnections > 0) || (now-n.knownPeers[i].LastLearn) < 600000 {
+							if i != kpSize {
+								n.knownPeers[kpSize] = n.knownPeers[i]
+								kpSize++
+							}
+						}
+					}
+					if kpSize == 0 {
+						n.knownPeers = nil
+					} else {
+						n.knownPeers = n.knownPeers[0:kpSize]
+						sort.Slice(n.knownPeers, func(a, b int) bool {
+							return n.knownPeers[b].TotalSuccessfulConnections < n.knownPeers[a].TotalSuccessfulConnections
+						})
 					}
 				}
-				n.knownPeers = newAP
 				n.knownPeersLock.Unlock()
 			}
 
@@ -416,35 +443,17 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 				peerCount := len(n.peers)
 				n.peersLock.RUnlock()
 
-				n.knownPeersLock.Lock()
-				for c := peerCount; c < p2pDesiredConnectionCount; c++ {
-					if len(n.knownPeers) == 0 {
-						break
+				if peerCount < p2pDesiredConnectionCount {
+					wantMore := p2pDesiredConnectionCount - peerCount
+					n.knownPeersLock.Lock()
+					if len(n.knownPeers) > 0 {
+						for k := 0; k < wantMore; k++ {
+							kp := &n.knownPeers[rand.Int()%len(n.knownPeers)]
+							n.Connect(kp.IP, kp.Port, kp.PublicKeyBytes())
+						}
 					}
-					kp := &n.knownPeers[rand.Int()%len(n.knownPeers)]
-					ip := kp.IP
-					port := kp.Port
-					var pkb []byte
-					if len(kp.PublicKey) > 0 {
-						pkb, err = base64.URLEncoding.DecodeString(kp.PublicKey)
-					}
-					if err == nil {
-						n.Connect(ip, port, pkb, func(err error) {
-							if err == nil {
-								now := TimeMs()
-								kp.learnedTime = 0
-								if kp.FirstConnected == 0 {
-									kp.FirstConnected = now
-								}
-								kp.LastConnected = now
-								kp.TotalSuccessfulConnections++
-							} else if err != ErrAlreadyConnected {
-								n.log[LogLevelNormal].Printf("P2P connection to %s:%d failed: %s", ip, port, err.Error())
-							}
-						})
-					}
+					n.knownPeersLock.Unlock()
 				}
-				n.knownPeersLock.Unlock()
 			}
 		}
 	}()
@@ -453,7 +462,9 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 	n.backgroundThreadWG.Add(1)
 	go func() {
 		defer n.backgroundThreadWG.Done()
-		time.Sleep(5 * time.Second) // wait for other stuff to come up
+		for k := 0; k < 10 && atomic.LoadUint32(&n.shutdown) == 0; k++ { // wait 10s for other stuff to come up
+			time.Sleep(time.Second)
+		}
 		for atomic.LoadUint32(&n.shutdown) == 0 {
 			time.Sleep(time.Millisecond * 500)
 			if n.mine && atomic.LoadUint32(&n.shutdown) == 0 {
@@ -552,12 +563,7 @@ func (n *Node) Stop() {
 }
 
 // Connect attempts to establish a peer-to-peer connection to a remote node.
-// If the status callback is non-nil it gets called when the connection either succeeds
-// (with a nil error) or fails (with an error). ErrorAlreadyConnected is returned if
-// a connection already exists to this endpoint. If publicKey is non-empty it allows
-// an expected (pinned) public key to be specified and the connection will be rejected
-// if this key does not match.
-func (n *Node) Connect(ip net.IP, port int, publicKey []byte, statusCallback func(error)) {
+func (n *Node) Connect(ip net.IP, port int, publicKey []byte) {
 	n.backgroundThreadWG.Add(1)
 	go func() {
 		defer n.backgroundThreadWG.Done()
@@ -569,9 +575,6 @@ func (n *Node) Connect(ip net.IP, port int, publicKey []byte, statusCallback fun
 		n.peersLock.RLock()
 		if n.peers[ta.String()] != nil {
 			n.peersLock.RUnlock()
-			if statusCallback != nil {
-				statusCallback(ErrAlreadyConnected)
-			}
 			return
 		}
 		n.peersLock.RUnlock()
@@ -580,11 +583,7 @@ func (n *Node) Connect(ip net.IP, port int, publicKey []byte, statusCallback fun
 		if atomic.LoadUint32(&n.shutdown) == 0 {
 			if err == nil {
 				n.backgroundThreadWG.Add(1)
-				go p2pConnectionHandler(n, c, publicKey, false, statusCallback)
-			} else {
-				if statusCallback != nil {
-					statusCallback(err)
-				}
+				go p2pConnectionHandler(n, c, publicKey, false)
 			}
 		} else if c != nil {
 			c.Close()
@@ -640,7 +639,7 @@ func (n *Node) AddRecord(r *Record) error {
 		return err
 	}
 
-	n.log[LogLevelTrace].Printf("TRACE: new record: %x", *rhash)
+	n.log[LogLevelTrace].Printf("TRACE: new record: %x", rhash)
 
 	// Add record to database, aborting if this generates some kind of error.
 	err = n.db.putRecord(r)
@@ -649,20 +648,6 @@ func (n *Node) AddRecord(r *Record) error {
 	}
 
 	return nil
-}
-
-// Peers returns an array of peer description objects suitable for return via the API.
-func (n *Node) Peers() (peers []APIStatusPeer) {
-	n.peersLock.RLock()
-	for a, p := range n.peers {
-		peers = append(peers, APIStatusPeer{
-			Address:   a,
-			PublicKey: p.remotePublicKey,
-			Inbound:   p.inbound,
-		})
-	}
-	n.peersLock.RUnlock()
-	return
 }
 
 // writeKnownPeers writes the current known peer list
@@ -725,37 +710,36 @@ func (n *Node) getBackgroundWorkFunction() (wf *Wharrgarblr) {
 
 // sendPeerAnnouncement sends a peer announcement to this peer for the given address and public key
 func (p *peer) sendPeerAnnouncement(tcpAddr *net.TCPAddr, publicKey []byte) error {
-	pa := make([]byte, 1, 256)
+	var peerMsg APIPeer
+	peerMsg.IP = tcpAddr.IP
+	peerMsg.Port = tcpAddr.Port
+	if len(publicKey) > 0 {
+		peerMsg.PublicKey = base64.URLEncoding.EncodeToString(publicKey)
+	}
+	json, err := json.Marshal(&peerMsg)
+	if err != nil {
+		return err
+	}
+	pa := make([]byte, 1, len(json)+1)
 	pa[0] = p2pProtoMessageTypePeer
-	ipv4 := tcpAddr.IP.To4()
-	if len(ipv4) == 4 {
-		pa = append(pa, byte((tcpAddr.Port>>8)&0xff))
-		pa = append(pa, byte(tcpAddr.Port&0xff))
-		pa = append(pa, 4)
-		pa = append(pa, ipv4...)
-		pa = append(pa, publicKey...)
-	} else {
-		ipv6 := tcpAddr.IP.To16()
-		if len(ipv6) == 16 {
-			pa = append(pa, byte((tcpAddr.Port>>8)&0xff))
-			pa = append(pa, byte(tcpAddr.Port&0xff))
-			pa = append(pa, 6)
-			pa = append(pa, ipv6...)
-			pa = append(pa, publicKey...)
-		}
-	}
-	if len(pa) > 1 {
-		return p.send(pa)
-	}
-	return ErrInvalidParameter
+	pa = append(pa, json...)
+	return p.send(pa)
 }
 
 // send sends a message to a peer (message must be prefixed by type byte)
-func (p *peer) send(msg []byte) error {
+func (p *peer) send(msg []byte) (err error) {
 	p.sendLock.Lock()
+	defer func() {
+		e := recover()
+		p.sendLock.Unlock()
+		if e != nil {
+			err = fmt.Errorf("unexpected panic in send: %s", e)
+		}
+	}()
 
 	if len(msg) < 1 {
-		return ErrInvalidParameter
+		err = ErrInvalidParameter
+		return
 	}
 
 	if int(msg[0]) < len(p2pProtoMessageNames) {
@@ -775,34 +759,74 @@ func (p *peer) send(msg []byte) error {
 	buf = buf[0:binary.PutUvarint(buf, uint64(len(msg)))]
 	buf = p.cryptor.Seal(buf, p.outgoingNonce[0:12], msg, nil)
 
-	_, err := p.c.Write(buf)
+	_, err = p.c.Write(buf)
 	if err != nil {
 		p.c.Close()
-		p.sendLock.Unlock()
-		return err
 	}
-
-	p.sendLock.Unlock()
-	return nil
+	return
 }
 
-func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inbound bool, statusCallback func(error)) {
-	peerAddressStr := c.RemoteAddr().String()
+// updateKnownPeersWithConnectResult is called from p2pConnectionHandler to update n.knownPeers
+func (n *Node) updateKnownPeersWithConnectResult(ip net.IP, port int, publicKey []byte, success bool) {
+	n.knownPeersLock.Lock()
+	defer n.knownPeersLock.Unlock()
+	now := TimeMs()
+
+	// Update success or failure info for known peer record if we already have one.
+	for _, kp := range n.knownPeers {
+		if bytes.Equal(kp.IP, ip) && kp.Port == port && bytes.Equal(kp.PublicKeyBytes(), publicKey) {
+			if success {
+				if kp.FirstConnect == 0 {
+					kp.FirstConnect = now
+				}
+				kp.LastSuccessfulConnection = now
+				kp.TotalSuccessfulConnections++
+			} else {
+				kp.LastFailedConnection = now
+				kp.TotalFailedConnections++
+			}
+			return
+		}
+	}
+
+	// If there's no known peer record, create only on success.
+	if success {
+		n.knownPeers = append(n.knownPeers, knownPeer{
+			APIPeer: APIPeer{
+				IP:        ip,
+				Port:      port,
+				PublicKey: base64.URLEncoding.EncodeToString(publicKey),
+			},
+			LastLearn:                  now,
+			TotalLearn:                 1,
+			FirstConnect:               now,
+			LastSuccessfulConnection:   now,
+			TotalSuccessfulConnections: 1,
+		})
+	}
+}
+
+func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inbound bool) {
 	var err error
+	var p *peer
+	peerAddressStr := c.RemoteAddr().String()
+	tcpAddr, tcpAddrOk := c.RemoteAddr().(*net.TCPAddr)
+	if tcpAddr == nil || !tcpAddrOk {
+		n.log[LogLevelWarning].Print("BUG: P2P connection RemoteAddr() did not return a TCPAddr object, connection closed")
+		return
+	}
+	publicAddress := ipIsGlobalPublicUnicast(tcpAddr.IP)
+	success := false
 
 	defer func() {
 		e := recover()
 		if e != nil {
 			n.log[LogLevelWarning].Printf("WARNING: P2P connection to %s closed: caught panic: %v", peerAddressStr, e)
-			if statusCallback != nil {
-				go statusCallback(fmt.Errorf("unexpected panic: %s", e))
-			}
-		} else {
-			if statusCallback != nil {
-				go statusCallback(err)
-			}
 		}
 
+		if !success {
+			n.updateKnownPeersWithConnectResult(tcpAddr.IP, tcpAddr.Port, nil, false)
+		}
 		c.Close()
 
 		n.connectionsInStartupLock.Lock()
@@ -819,14 +843,6 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inb
 	n.connectionsInStartupLock.Lock()
 	n.connectionsInStartup[c] = true
 	n.connectionsInStartupLock.Unlock()
-
-	tcpAddr, tcpAddrOk := c.RemoteAddr().(*net.TCPAddr)
-	if tcpAddr == nil || !tcpAddrOk {
-		n.log[LogLevelWarning].Print("BUG: P2P connection RemoteAddr() did not return a TCPAddr object, connection closed")
-		err = errors.New("RemoteAddr() did not return a TCPAddr")
-		return
-	}
-	publicAddress := ipIsGlobalPublicUnicast(tcpAddr.IP)
 
 	c.SetKeepAlivePeriod(time.Second * 30)
 	c.SetKeepAlive(true)
@@ -911,7 +927,7 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inb
 
 	// Add peer connection to node peers[] map and also announce this peer to other peers (if this
 	// is an outbound connection) and announce other outbound peers to this one.
-	p := peer{
+	p = &peer{
 		n:               n,
 		address:         peerAddressStr,
 		tcpAddress:      tcpAddr,
@@ -928,7 +944,6 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inb
 			if inbound { // if this connection is inbound, keep the other one as it is more informative (tells us proper IP/port)
 				n.log[LogLevelNormal].Printf("P2P connection to %s closed: closing redundant link (peer has same link key).", peerAddressStr)
 				n.peersLock.Unlock()
-				err = ErrAlreadyConnected
 				return
 			}
 			n.log[LogLevelNormal].Printf("P2P connection to %s closed: closing redundant link (peer has same link key).", pa.address)
@@ -948,14 +963,19 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inb
 			}
 		}
 	}
-	n.peers[peerAddressStr] = &p
+	n.peers[peerAddressStr] = p
 	n.peersLock.Unlock()
 
 	n.connectionsInStartupLock.Lock()
 	delete(n.connectionsInStartup, c)
 	n.connectionsInStartupLock.Unlock()
 
-	n.log[LogLevelNormal].Printf("P2P connection established to %s / %x", peerAddressStr, p.remotePublicKey)
+	success = true
+	if !inbound {
+		n.updateKnownPeersWithConnectResult(tcpAddr.IP, tcpAddr.Port, rpk, true)
+	}
+
+	n.log[LogLevelNormal].Printf("P2P connection established to %s / %s", peerAddressStr, base64.URLEncoding.EncodeToString(rpk))
 
 	var msgbuf []byte
 	for atomic.LoadUint32(&n.shutdown) == 0 {
@@ -967,12 +987,10 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inb
 		}
 		if msgSize == 0 || msgSize > p2pProtoMaxMessageSize {
 			n.log[LogLevelNormal].Printf("P2P connection to %s closed: invalid message size", peerAddressStr)
-			err = ErrInvalidMessageSize
 			break
 		}
 
 		if atomic.LoadUint32(&n.shutdown) != 0 {
-			err = nil
 			break
 		}
 
@@ -992,7 +1010,6 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inb
 		}
 
 		if atomic.LoadUint32(&n.shutdown) != 0 {
-			err = nil
 			break
 		}
 
@@ -1012,7 +1029,6 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inb
 		}
 		if len(msg) < 1 {
 			n.log[LogLevelNormal].Printf("P2P connection to %s closed: invalid message size", peerAddressStr)
-			err = ErrInvalidMessageSize
 			break
 		}
 		incomingMessageType := msg[0]
@@ -1031,7 +1047,7 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inb
 				rec, err := NewRecordFromBytes(msg)
 				if err == nil {
 					p.hasRecordsLock.Lock()
-					p.hasRecords[*rec.Hash()] = TimeMs()
+					p.hasRecords[rec.Hash()] = TimeMs()
 					p.hasRecordsLock.Unlock()
 					n.AddRecord(rec)
 				}
@@ -1074,46 +1090,24 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inb
 			}
 
 		case p2pProtoMessageTypePeer:
-			n.peersLock.RLock()
-			peerCount := len(n.peers)
-			n.peersLock.RUnlock()
-			if peerCount < p2pDesiredConnectionCount && len(msg) > 3 {
-				port := binary.BigEndian.Uint16(msg[0:2])
-				var ip net.IP
-				var publicKey []byte
-				if msg[2] == 4 && len(msg) >= 7 {
-					ip = msg[3:7]
-					if len(msg) > 7 {
-						publicKey = msg[7:]
-					}
-				} else if msg[2] == 6 && len(msg) >= 19 {
-					ip = msg[3:19]
-					if len(msg) > 19 {
-						publicKey = msg[19:]
-					}
-				}
-				if len(ip) > 0 {
+			if len(msg) > 0 {
+				var peerMsg APIPeer
+				if json.Unmarshal(msg, &peerMsg) == nil {
 					dupe := false
 					n.knownPeersLock.Lock()
-					for _, ap := range n.knownPeers {
-						var pkb []byte
-						if len(ap.PublicKey) > 0 {
-							pkb, _ = base64.URLEncoding.DecodeString(ap.PublicKey)
-						}
-						if bytes.Equal(pkb, publicKey) && bytes.Equal(ap.IP, ip) && ap.Port == int(port) {
-							if ap.learnedTime > 0 {
-								ap.learnedTime = TimeMs()
-							}
+					for _, kp := range n.knownPeers {
+						if bytes.Equal(kp.PublicKeyBytes(), peerMsg.PublicKeyBytes()) && bytes.Equal(kp.IP, peerMsg.IP) && kp.Port == peerMsg.Port {
+							kp.LastLearn = TimeMs()
+							kp.TotalLearn++
 							dupe = true
 							break
 						}
 					}
 					if !dupe {
 						n.knownPeers = append(n.knownPeers, knownPeer{
-							learnedTime: TimeMs(),
-							IP:          ip,
-							Port:        int(port),
-							PublicKey:   base64.URLEncoding.EncodeToString(publicKey),
+							APIPeer:    peerMsg,
+							LastLearn:  TimeMs(),
+							TotalLearn: 1,
 						})
 					}
 					n.knownPeersLock.Unlock()
@@ -1121,7 +1115,5 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inb
 			}
 
 		} // switch incomingMessageType
-
-		err = nil // reset err in case something in switch() modified it to signify a non-fatal error
 	}
 }

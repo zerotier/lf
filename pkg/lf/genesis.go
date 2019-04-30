@@ -125,7 +125,7 @@ func CreateGenesisRecords(genesisOwnerType int, genesisParameters *GenesisParame
 		return nil, nil, err
 	}
 	records = append(records, r)
-	links = append(links, *r.Hash())
+	links = append(links, r.Hash())
 
 	// Subsequent genesis records are empty and just exist so real records can satisfy their minimum link requirement.
 	for i := uint(1); i < genesisParameters.RecordMinLinks; i++ {
@@ -134,7 +134,7 @@ func CreateGenesisRecords(genesisOwnerType int, genesisParameters *GenesisParame
 			return nil, nil, err
 		}
 		records = append(records, r)
-		links = append(links, *r.Hash())
+		links = append(links, r.Hash())
 	}
 
 	return records, genesisOwner, nil

@@ -96,7 +96,7 @@ func TestCore(out io.Writer) bool {
 	t1h := NewShandwich256()
 	t1h.Write(testStr)
 	t1 := t1h.Sum(nil)
-	if bytes.Equal(t0[:], t1) && hex.EncodeToString(t0[:]) == "fcb43f704eb65e06be713636021d4168e9b355f9a8df24e14177f7ddc1105fea" {
+	if bytes.Equal(t0[:], t1) && hex.EncodeToString(t0[:]) == "6a958404145338606af8408024367cf47d5c3addd555b284ff0630307c4a7fa1" {
 		fmt.Fprintf(out, "OK\n")
 	} else {
 		fmt.Fprintf(out, "FAILED %x\n", t0)
@@ -219,20 +219,18 @@ func TestCore(out io.Writer) bool {
 			secrand.Read(tmp[:])
 			testLinks = append(testLinks, tmp)
 		}
-		var testValue [32]byte
-		secrand.Read(testValue[:])
 		owner, err := NewOwner(OwnerTypeEd25519)
 		if err != nil {
 			fmt.Fprintf(out, "FAILED (create owner): %s\n", err.Error())
 			return false
 		}
-		rec, err := NewRecord(testValue[:], testLinks, []byte("test"), [][]byte{[]byte("test0")}, [][]byte{[]byte("0000")}, nil, uint64(k), nil, 0, owner)
+		rec, err := NewRecord([]byte("Supercalifragilisticexpealidocious!"), testLinks, []byte("test"), [][]byte{[]byte("test0")}, [][]byte{[]byte("0000")}, nil, uint64(k), nil, 0, owner)
 		if err != nil {
 			fmt.Fprintf(out, "FAILED (create record): %s\n", err.Error())
 			return false
 		}
 		var testBuf0 bytes.Buffer
-		err = rec.MarshalTo(&testBuf0)
+		err = rec.MarshalTo(&testBuf0, false)
 		if err != nil {
 			fmt.Fprintf(out, "FAILED (marshal record): %s\n", err.Error())
 			return false
@@ -399,7 +397,7 @@ func TestDatabase(testBasePath string, out io.Writer) bool {
 		}
 		var links [][32]byte
 		for i := range linkTo {
-			links = append(links, *(records[linkTo[i]].Hash()))
+			links = append(links, records[linkTo[i]].Hash())
 		}
 
 		ownerIdx := ri % testDatabaseOwners
