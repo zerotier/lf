@@ -54,6 +54,47 @@ const RecordWorkAlgorithmNone byte = 0
 // RecordWorkAlgorithmWharrgarbl indicates the Wharrgarbl momentum-like proof of work algorithm.
 const RecordWorkAlgorithmWharrgarbl byte = 1
 
+// recordWharrgarblCost computes the cost in Wharrgarbl difficulty for a record of a given number of "billable" bytes.
+func recordWharrgarblCost(bytes uint) uint32 {
+	//
+	// This function was figured out by:
+	//
+	// (1) Empirically sampling difficulty vs time.
+	// (2) Using Microsoft Excel to fit the curve to a power function.
+	// (3) Figuring out an integer based function that approximates this power function.
+	//
+	// An integer only algorithm is used to avoid FPU inconsistencies across systems.
+	//
+	// This function provides a relatively linear relationship between average Wharrgarbl time
+	// and the number of bytes (total) in a record.
+	//
+	if bytes < 4 { // small byte counts break the calculation (no real record is this small anyway)
+		return uint32(bytes) + 1
+	}
+	if bytes > RecordMaxSize { // sanity check, shouldn't ever happen
+		bytes = RecordMaxSize
+	}
+	b := uint64(bytes * 3)
+	c := (uint64(integerSqrtRounded(uint32(b))) * b * uint64(3)) - (b * 8)
+	if c > 0xffffffff { // sanity check, no record gets this big
+		return 0xffffffff
+	}
+	return uint32(c)
+}
+
+// recordWharrgarblScore computes a score approximately scaled to uint32_max based on a Wharrgarbl cost value from a piece of work.
+func recordWharrgarblScore(cost uint32) uint32 {
+	if cost > 0x0f7b0000 { // RecordWharrgarblCost(RecordMaxSize)
+		return 0xffffa8db
+	}
+	if cost < 1 {
+		return 1
+	}
+	return ((cost * 16) + ((cost / 10000) * 5369))
+}
+
+//////////////////////////////////////////////////////////////////////////////
+
 // recordBody represents the main body of a record including its value, owner public keys, etc.
 // It's included as part of Record but separated since in record construction we want to treat it as a separate element.
 type recordBody struct {
@@ -215,7 +256,8 @@ func (rb *recordBody) sizeBytes() uint {
 }
 
 // GetValue unmasks and possibly decompresses this record's value.
-// Nil is returned if the value is empty.
+// Nil is returned if the value is empty. ErrIncorrectKey is returned if the masking
+// key is not correct.
 func (rb *recordBody) GetValue(maskingKey []byte) ([]byte, error) {
 	if len(rb.Value) == 0 {
 		return nil, nil
@@ -248,6 +290,8 @@ func (rb *recordBody) GetValue(maskingKey []byte) ([]byte, error) {
 	}
 	return unmaskedValue, nil
 }
+
+//////////////////////////////////////////////////////////////////////////////
 
 // Record combines the record body with one or more selectors, work, and a signature.
 // A record should not be modified once created. It should be treated as a read-only value.
@@ -481,45 +525,6 @@ func (r *Record) Validate() (err error) {
 	}
 
 	return nil
-}
-
-// recordWharrgarblCost computes the cost in Wharrgarbl difficulty for a record of a given number of "billable" bytes.
-func recordWharrgarblCost(bytes uint) uint32 {
-	//
-	// This function was figured out by:
-	//
-	// (1) Empirically sampling difficulty vs time.
-	// (2) Using Microsoft Excel to fit the curve to a power function.
-	// (3) Figuring out an integer based function that approximates this power function.
-	//
-	// An integer only algorithm is used to avoid FPU inconsistencies across systems.
-	//
-	// This function provides a relatively linear relationship between average Wharrgarbl time
-	// and the number of bytes (total) in a record.
-	//
-	if bytes < 4 { // small byte counts break the calculation (no real record is this small anyway)
-		return uint32(bytes) + 1
-	}
-	if bytes > RecordMaxSize { // sanity check, shouldn't ever happen
-		bytes = RecordMaxSize
-	}
-	b := uint64(bytes * 3)
-	c := (uint64(integerSqrtRounded(uint32(b))) * b * uint64(3)) - (b * 8)
-	if c > 0xffffffff { // sanity check, no record gets this big
-		return 0xffffffff
-	}
-	return uint32(c)
-}
-
-// recordWharrgarblScore computes a score approximately scaled to uint32_max based on a Wharrgarbl cost value from a piece of work.
-func recordWharrgarblScore(cost uint32) uint32 {
-	if cost > 0x0f7b0000 { // RecordWharrgarblCost(RecordMaxSize)
-		return 0xffffa8db
-	}
-	if cost < 1 {
-		return 1
-	}
-	return ((cost * 16) + ((cost / 10000) * 5369))
 }
 
 // NewRecordStart creates an incomplete record with its body and selectors filled out but no work or final signature.
