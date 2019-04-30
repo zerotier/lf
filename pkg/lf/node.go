@@ -45,11 +45,12 @@ const (
 	// p2pProtoModeAES256GCMECCP384 indicates our simple AES-256 GCM encrypted stream protocol with ECDH key exchange.
 	p2pProtoModeAES256GCMECCP384 byte = 1
 
-	p2pProtoMessageTypeNop                  byte = 0 // no operation, ignore payload
-	p2pProtoMessageTypeRecord               byte = 1 // binary marshaled Record
-	p2pProtoMesaggeTypeRequestRecordsByHash byte = 2 // one or more 32-byte hashes we want
-	p2pProtoMessageTypeHaveRecords          byte = 3 // one or more 32-byte hashes we have
-	p2pProtoMessageTypePeer                 byte = 4 // <[uint16] port><[byte] type><[4-16] IP>[<public key>]
+	p2pProtoMessageTypeNop                  byte = 0 // no operation
+	p2pProtoMessageTypeHello                byte = 1 // peerHelloMsg (JSON)
+	p2pProtoMessageTypeRecord               byte = 2 // binary marshaled Record
+	p2pProtoMesaggeTypeRequestRecordsByHash byte = 3 // one or more 32-byte hashes we want
+	p2pProtoMessageTypeHaveRecords          byte = 4 // one or more 32-byte hashes we have
+	p2pProtoMessageTypePeer                 byte = 5 // APIPeer (JSON)
 
 	// p2pDesiredConnectionCount is how many P2P TCP connections we want to have open
 	p2pDesiredConnectionCount = 64
@@ -61,8 +62,13 @@ const (
 	DefaultP2PPort = 9908
 )
 
-var p2pProtoMessageNames = []string{"Nop", "Record", "RequestRecordsByHash", "HaveRecords", "Peer"}
+var p2pProtoMessageNames = []string{"Nop", "Hello", "Record", "RequestRecordsByHash", "HaveRecords", "Peer"}
 var nullLogger = log.New(ioutil.Discard, "", 0)
+
+// peerHelloMsg is a JSON message used to say 'hello' to other nodes via the P2P protocol.
+type peerHelloMsg struct {
+	SubscribeToNewRecords bool // If true, peer wants new records
+}
 
 // peer represents a single TCP connection to another peer using the LF P2P TCP protocol
 type peer struct {
@@ -76,6 +82,7 @@ type peer struct {
 	sendLock        sync.Mutex          //
 	outgoingNonce   [16]byte            // outgoing nonce (incremented for each message)
 	remotePublicKey []byte              // Remote public key in compressed/encoded format
+	peerHelloMsg    peerHelloMsg        // Hello message received from peer
 	inbound         bool                // True if this is an incoming connection
 }
 
@@ -177,13 +184,15 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 
 				n.peersLock.RLock()
 				if len(n.peers) > 0 {
-					n.log[LogLevelVerbose].Printf("record %x fully synchronized, announcing to %d peers", *hash, len(n.peers))
+					n.log[LogLevelVerbose].Printf("record %x fully synchronized, announcing to peers", *hash)
 					for _, p := range n.peers {
-						p.hasRecordsLock.Lock()
-						_, hasRecord := p.hasRecords[*hash]
-						p.hasRecordsLock.Unlock()
-						if !hasRecord {
-							p.send(msg[:])
+						if p.peerHelloMsg.SubscribeToNewRecords {
+							p.hasRecordsLock.Lock()
+							_, hasRecord := p.hasRecords[*hash]
+							p.hasRecordsLock.Unlock()
+							if !hasRecord {
+								p.send(msg[:])
+							}
 						}
 					}
 				} else {
@@ -809,6 +818,7 @@ func (n *Node) updateKnownPeersWithConnectResult(ip net.IP, port int, publicKey 
 func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inbound bool) {
 	var err error
 	var p *peer
+	var msgbuf []byte
 	peerAddressStr := c.RemoteAddr().String()
 	tcpAddr, tcpAddrOk := c.RemoteAddr().(*net.TCPAddr)
 	if tcpAddr == nil || !tcpAddrOk {
@@ -970,6 +980,15 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inb
 	delete(n.connectionsInStartup, c)
 	n.connectionsInStartupLock.Unlock()
 
+	msgbuf, err = json.Marshal(&peerHelloMsg{
+		SubscribeToNewRecords: true,
+	})
+	if err != nil {
+		n.log[LogLevelNormal].Printf("P2P connection to %s closed: %s", peerAddressStr, err.Error())
+		return
+	}
+	p.send(append([]byte{p2pProtoMessageTypeHello}, msgbuf...))
+
 	success = true
 	if !inbound {
 		n.updateKnownPeersWithConnectResult(tcpAddr.IP, tcpAddr.Port, rpk, true)
@@ -977,7 +996,6 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inb
 
 	n.log[LogLevelNormal].Printf("P2P connection established to %s / %s", peerAddressStr, base64.URLEncoding.EncodeToString(rpk))
 
-	var msgbuf []byte
 	for atomic.LoadUint32(&n.shutdown) == 0 {
 		// Read size of message (varint)
 		msgSize, err := binary.ReadUvarint(reader)
@@ -1041,6 +1059,13 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inb
 		}
 
 		switch incomingMessageType {
+
+		case p2pProtoMessageTypeHello:
+			if len(msg) > 0 {
+				json.Unmarshal(msg, &p.peerHelloMsg)
+				j2, _ := json.Marshal(&p.peerHelloMsg)
+				n.log[LogLevelTrace].Printf("P2P << %s HELLO %s", peerAddressStr, j2)
+			}
 
 		case p2pProtoMessageTypeRecord:
 			if len(msg) > 0 {
