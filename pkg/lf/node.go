@@ -101,6 +101,7 @@ type knownPeer struct {
 // Node is an instance of a full LF node supporting both P2P and HTTP access.
 type Node struct {
 	basePath                 string                     //
+	peersFilePath            string                     //
 	log                      [logLevelCount]*log.Logger // Pointers to loggers for each log level (inoperative levels point to a discard logger)
 	linkKeyPriv              []byte                     // P-384 private key
 	linkKeyPubX              *big.Int                   // X coordinate of P-384 public key
@@ -133,6 +134,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 	n = new(Node)
 
 	n.basePath = basePath
+	n.peersFilePath = path.Join(n.basePath, "peers.json")
 	if logger == nil {
 		logger = nullLogger
 	}
@@ -268,7 +270,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 	}
 
 	n.log[LogLevelNormal].Printf("listening on port %d for HTTP and %d for LF P2P", httpPort, p2pPort)
-	n.log[LogLevelNormal].Printf("node public key: %s", base64.URLEncoding.EncodeToString(n.linkKeyPub))
+	n.log[LogLevelNormal].Printf("node public key: %s", base64.RawURLEncoding.EncodeToString(n.linkKeyPub))
 
 	// Load genesis.lf or use compiled-in defaults for global LF network
 	var genesisReader io.Reader
@@ -339,6 +341,14 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 		n.log[LogLevelNormal].Printf("network '%s' genesis configuration is immutable (via any in-band mechanism)", n.genesisParameters.Name)
 	}
 
+	// Load peers.json if present
+	peersJSON, err := ioutil.ReadFile(n.peersFilePath)
+	if err == nil && len(peersJSON) > 0 {
+		if json.Unmarshal(peersJSON, &n.knownPeers) != nil {
+			n.knownPeers = nil
+		}
+	}
+
 	// Start P2P connection listener
 	n.backgroundThreadWG.Add(1)
 	go func() {
@@ -372,8 +382,9 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 	n.backgroundThreadWG.Add(1)
 	go func() {
 		defer n.backgroundThreadWG.Done()
-		var lastCleanedPeerHasRecords, lastCleanedAnnouncedPeers, lastAttemptedConnections, lastAnnouncedRecentRecord uint64
+		var lastCleanedPeerHasRecords, lastCleanedAnnouncedPeers, lastAnnouncedRecentRecord uint64
 		lastWroteKnownPeers := TimeMs()
+		lastAttemptedConnections := lastWroteKnownPeers
 		for atomic.LoadUint32(&n.shutdown) == 0 {
 			time.Sleep(time.Second)
 			if atomic.LoadUint32(&n.shutdown) != 0 {
@@ -583,6 +594,8 @@ func (n *Node) Connect(ip net.IP, port int, publicKey []byte) {
 		ta.IP = ip
 		ta.Port = port
 
+		n.log[LogLevelTrace].Printf("TRACE: attempting to connect to %s / %s", ta.String(), base64.RawURLEncoding.EncodeToString(publicKey))
+
 		n.peersLock.RLock()
 		if n.peers[ta.String()] != nil {
 			n.peersLock.RUnlock()
@@ -665,8 +678,11 @@ func (n *Node) AddRecord(r *Record) error {
 func (n *Node) writeKnownPeers() {
 	n.knownPeersLock.Lock()
 	defer n.knownPeersLock.Unlock()
-	kp := PrettyJSON(&n.knownPeers)
-	ioutil.WriteFile(path.Join(n.basePath, "peers.json"), []byte(kp), 0644)
+	if len(n.knownPeers) > 0 {
+		ioutil.WriteFile(n.peersFilePath, []byte(PrettyJSON(&n.knownPeers)), 0644)
+	} else {
+		ioutil.WriteFile(n.peersFilePath, []byte("[]"), 0644)
+	}
 }
 
 // getAPIWorkFunction gets (creating if needed) the work function for API calls.
@@ -725,7 +741,7 @@ func (p *peer) sendPeerAnnouncement(tcpAddr *net.TCPAddr, publicKey []byte) erro
 	peerMsg.IP = tcpAddr.IP
 	peerMsg.Port = tcpAddr.Port
 	if len(publicKey) > 0 {
-		peerMsg.PublicKey = base64.URLEncoding.EncodeToString(publicKey)
+		peerMsg.PublicKey = base64.RawURLEncoding.EncodeToString(publicKey)
 	}
 	json, err := json.Marshal(&peerMsg)
 	if err != nil {
@@ -806,7 +822,7 @@ func (n *Node) updateKnownPeersWithConnectResult(ip net.IP, port int, publicKey 
 			APIPeer: APIPeer{
 				IP:        ip,
 				Port:      port,
-				PublicKey: base64.URLEncoding.EncodeToString(publicKey),
+				PublicKey: base64.RawURLEncoding.EncodeToString(publicKey),
 			},
 			LastLearn:                  now,
 			TotalLearn:                 1,
@@ -996,7 +1012,7 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inb
 		n.updateKnownPeersWithConnectResult(tcpAddr.IP, tcpAddr.Port, rpk, true)
 	}
 
-	n.log[LogLevelNormal].Printf("P2P connection established to %s / %s", peerAddressStr, base64.URLEncoding.EncodeToString(rpk))
+	n.log[LogLevelNormal].Printf("P2P connection established to %s / %s", peerAddressStr, base64.RawURLEncoding.EncodeToString(rpk))
 
 	for atomic.LoadUint32(&n.shutdown) == 0 {
 		// Read size of message (varint)
@@ -1055,9 +1071,9 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inb
 		msg = msg[1:]
 
 		if int(incomingMessageType) < len(p2pProtoMessageNames) {
-			n.log[LogLevelTrace].Printf("P2P << %s %d %s", peerAddressStr, len(msg), p2pProtoMessageNames[incomingMessageType])
+			n.log[LogLevelTrace].Printf("TRACE: P2P << %s %d %s", peerAddressStr, len(msg), p2pProtoMessageNames[incomingMessageType])
 		} else {
-			n.log[LogLevelTrace].Printf("P2P << %s %d unknown message type %d", peerAddressStr, len(msg), incomingMessageType)
+			n.log[LogLevelTrace].Printf("TRACE: P2P << %s %d unknown message type %d", peerAddressStr, len(msg), incomingMessageType)
 		}
 
 		switch incomingMessageType {
@@ -1065,8 +1081,6 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inb
 		case p2pProtoMessageTypeHello:
 			if len(msg) > 0 {
 				json.Unmarshal(msg, &p.peerHelloMsg)
-				j2, _ := json.Marshal(&p.peerHelloMsg)
-				n.log[LogLevelTrace].Printf("P2P << %s HELLO %s", peerAddressStr, j2)
 			}
 
 		case p2pProtoMessageTypeRecord:

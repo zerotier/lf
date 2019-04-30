@@ -65,7 +65,7 @@ type APIPeer struct {
 // It returns nil if PublicKey is empty or invalid.
 func (p *APIPeer) PublicKeyBytes() []byte {
 	if len(p.PublicKey) > 0 {
-		pkb, err := base64.URLEncoding.DecodeString(p.PublicKey)
+		pkb, err := base64.RawURLEncoding.DecodeString(p.PublicKey)
 		if err != nil {
 			return nil
 		}
@@ -435,7 +435,7 @@ Peer Connections
 					if p.inbound {
 						inout = "<-"
 					}
-					out.Write([]byte(fmt.Sprintf("%s %-42s %s\n", inout, p.address, base64.URLEncoding.EncodeToString(p.remotePublicKey))))
+					out.Write([]byte(fmt.Sprintf("%s %-42s %s\n", inout, p.address, base64.RawURLEncoding.EncodeToString(p.remotePublicKey))))
 				}
 				n.peersLock.RUnlock()
 				out.Write([]byte("\n------------------------------------------------------------------------------\n"))
