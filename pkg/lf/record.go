@@ -17,21 +17,19 @@ import (
 	"io"
 	"sort"
 
-	"gopkg.in/kothar/brotli-go.v0/dec"
-
-	"gopkg.in/kothar/brotli-go.v0/enc"
-
 	"golang.org/x/crypto/sha3"
+	brotlidec "gopkg.in/kothar/brotli-go.v0/dec"
+	brotlienc "gopkg.in/kothar/brotli-go.v0/enc"
 )
 
 var (
 	b1_0 = []byte{0x00}
 	b1_1 = []byte{0x01}
 
-	brotliParams = func() (bp *enc.BrotliParams) {
-		bp = enc.NewBrotliParams()
+	brotliParams = func() (bp *brotlienc.BrotliParams) {
+		bp = brotlienc.NewBrotliParams()
 		bp.SetQuality(11)
-		bp.SetMode(enc.GENERIC)
+		bp.SetMode(brotlienc.GENERIC)
 		return
 	}()
 )
@@ -238,7 +236,7 @@ func (rb *recordBody) GetValue(maskingKey []byte) ([]byte, error) {
 	}
 
 	if rb.ValueCompressed {
-		return dec.DecompressBuffer(unmaskedValue, make([]byte, 0, len(unmaskedValue)+(len(unmaskedValue)/3)))
+		return brotlidec.DecompressBuffer(unmaskedValue, make([]byte, 0, len(unmaskedValue)+(len(unmaskedValue)/3)))
 	}
 	return unmaskedValue, nil
 }
@@ -531,7 +529,7 @@ func NewRecordStart(value []byte, links [][32]byte, maskingKey []byte, plainText
 		// Attempt compression for values of non-trivial size.
 		if len(value) > 32 {
 			var valueCompr []byte
-			valueCompr, err = enc.CompressBuffer(brotliParams, value, make([]byte, 0, len(value)+4))
+			valueCompr, err = brotlienc.CompressBuffer(brotliParams, value, make([]byte, 0, len(value)+4))
 			if err == nil && len(valueCompr) < len(value) {
 				value = valueCompr
 				r.recordBody.ValueCompressed = true
