@@ -469,9 +469,14 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 					wantMore := p2pDesiredConnectionCount - peerCount
 					n.knownPeersLock.Lock()
 					if len(n.knownPeers) > 0 {
+						visited := make(map[int]bool)
 						for k := 0; k < wantMore; k++ {
-							kp := &n.knownPeers[rand.Int()%len(n.knownPeers)]
-							n.Connect(kp.IP, kp.Port, kp.PublicKeyBytes())
+							idx := rand.Int() % len(n.knownPeers)
+							if !visited[idx] {
+								kp := &n.knownPeers[idx]
+								n.Connect(kp.IP, kp.Port, kp.PublicKeyBytes())
+								visited[idx] = true
+							}
 						}
 					}
 					n.knownPeersLock.Unlock()
@@ -594,14 +599,14 @@ func (n *Node) Connect(ip net.IP, port int, publicKey []byte) {
 		ta.IP = ip
 		ta.Port = port
 
-		n.log[LogLevelTrace].Printf("TRACE: attempting to connect to %s / %s", ta.String(), base64.RawURLEncoding.EncodeToString(publicKey))
-
 		n.peersLock.RLock()
 		if n.peers[ta.String()] != nil {
 			n.peersLock.RUnlock()
 			return
 		}
 		n.peersLock.RUnlock()
+
+		n.log[LogLevelTrace].Printf("TRACE: attempting to connect to %s / %s", ta.String(), base64.RawURLEncoding.EncodeToString(publicKey))
 
 		c, err := net.DialTCP("tcp", nil, &ta)
 		if atomic.LoadUint32(&n.shutdown) == 0 {
