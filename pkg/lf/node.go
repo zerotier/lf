@@ -390,7 +390,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 		defer n.backgroundThreadWG.Done()
 
 		// Init this in background if it isn't already to speed up node readiness
-		wharrgarblInitTable()
+		WharrgarblInitTable(path.Join(n.basePath, "wharrgarbl-table.bin"))
 
 		for atomic.LoadUint32(&n.shutdown) == 0 {
 			time.Sleep(time.Second)

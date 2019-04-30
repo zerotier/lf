@@ -307,7 +307,7 @@ func TestWharrgarbl(out io.Writer) bool {
 	}
 	th := wharrgarblHash(tc0, tc1, make([]byte, 16), &testIn)
 	fmt.Fprintf(out, "Testing Wharrgarbl keyed 64-bit hash function... %.16x ", th)
-	if th == 0xd4d965ceec0098a1 {
+	if th == 0x09b4a1fcb53537e6 {
 		fmt.Fprintf(out, "OK\n")
 	} else {
 		fmt.Fprintf(out, "FAILED\n")

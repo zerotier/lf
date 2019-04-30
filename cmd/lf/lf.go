@@ -369,6 +369,7 @@ func doSet(cfg *lf.ClientConfig, basePath string, urls []string, args []string) 
 
 	// If not delegating or trial remote delgation failed, make record locally.
 	if len(lazies) > 0 && !*remote {
+		lf.WharrgarblInitTable(path.Join(basePath, "wharrgarbl-table.bin"))
 		var o *lf.Owner
 		o, err = owner.GetOwner()
 		if err == nil {
@@ -598,6 +599,7 @@ func main() {
 		case "core":
 			lf.TestCore(os.Stdout)
 		case "wharrgarbl":
+			go lf.WharrgarblInitTable(path.Join(*basePath, "wharrgarbl-table.bin"))
 			lf.TestWharrgarbl(os.Stdout)
 		case "database":
 			lf.TestDatabase("./lf-db-test", os.Stdout)

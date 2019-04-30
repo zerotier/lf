@@ -12,7 +12,11 @@ import (
 	"crypto/cipher"
 	"crypto/sha512"
 	"encoding/binary"
+	"hash/crc32"
+	"io"
+	"io/ioutil"
 	"math/rand"
+	"os"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -466,7 +470,9 @@ func wharrgarblHash(cipher0, cipher1 cipher.Block, tmp []byte, in *[16]byte) uin
 	return (binary.BigEndian.Uint64(tmp[0:8]) + binary.BigEndian.Uint64(tmp[8:16])) ^ y
 }
 
-func wharrgarblInitTable() {
+// WharrgarblInitTable initializes the internal memory table if it's not already.
+// If cacheFilePath is non-empty the table will be cached there for faster startup.
+func WharrgarblInitTable(cacheFilePath string) {
 	wharrgarblTableLock.RLock()
 	if wharrgarblTable != nil {
 		wharrgarblTableLock.RUnlock()
@@ -479,15 +485,36 @@ func wharrgarblInitTable() {
 		wharrgarblTableLock.Unlock()
 		return
 	}
+
 	wharrgarblTable = new([wharrgarblTableSize]byte)
-	copy(wharrgarblTable[:], []byte("My hovercraft is full of eels!")) // magic seed for expanding table
-	for i := 0; i < 2; i++ {
+
+	if len(cacheFilePath) > 0 {
+		cf, _ := os.Open(cacheFilePath)
+		if cf != nil {
+			_, err := io.ReadFull(cf, wharrgarblTable[:])
+			if err == nil {
+				if crc32.ChecksumIEEE(wharrgarblTable[:]) == 0xf25f8b7d {
+					wharrgarblTableLock.Unlock()
+					return
+				}
+			}
+			for i := 0; i < wharrgarblTableSize; i++ {
+				wharrgarblTable[i] = 0
+			}
+		}
+	}
+
+	copy(wharrgarblTable[:], []byte("My hovercraft is full of eels!"))
+	for i := 0; i < 4; i++ {
 		h := sha512.Sum512(wharrgarblTable[:])
 		aes, _ := aes.NewCipher(h[0:32])
 		c := cipher.NewCFBEncrypter(aes, h[32:48])
 		c.XORKeyStream(wharrgarblTable[:], wharrgarblTable[:])
 		c.XORKeyStream(wharrgarblTable[:], wharrgarblTable[:])
 	}
+
+	ioutil.WriteFile(cacheFilePath, wharrgarblTable[:], 0644)
+
 	wharrgarblTableLock.Unlock()
 }
 
@@ -501,7 +528,7 @@ func NewWharrgarblr(memorySize uint, threadCount int) (wg *Wharrgarblr) {
 	}
 	wg.memory = make([]uint64, memorySize/8)
 	wg.SetThreadCount(threadCount)
-	wharrgarblInitTable()
+	WharrgarblInitTable("")
 	return
 }
 
@@ -623,7 +650,7 @@ func WharrgarblVerify(work []byte, in []byte) uint32 {
 		return 0
 	}
 
-	wharrgarblInitTable()
+	WharrgarblInitTable("")
 	wharrgarblTableLock.RLock()
 	defer wharrgarblTableLock.RUnlock()
 
