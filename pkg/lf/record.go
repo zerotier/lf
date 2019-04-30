@@ -14,6 +14,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"sort"
 
@@ -222,6 +223,9 @@ func (rb *recordBody) GetValue(maskingKey []byte) ([]byte, error) {
 
 	var unmaskedValue []byte
 	if rb.ValueMasked {
+		if len(rb.Value) < 4 {
+			return nil, ErrIncorrectKey
+		}
 		unmaskedValue = make([]byte, len(rb.Value))
 		var cfbIv [16]byte
 		binary.BigEndian.PutUint64(cfbIv[0:8], rb.Timestamp)
@@ -231,6 +235,10 @@ func (rb *recordBody) GetValue(maskingKey []byte) ([]byte, error) {
 		maskingKeyH := sha256.Sum256(maskingKey)
 		c, _ := aes.NewCipher(maskingKeyH[:])
 		cipher.NewCFBDecrypter(c, cfbIv[:]).XORKeyStream(unmaskedValue, rb.Value)
+		if crc32.ChecksumIEEE(unmaskedValue[4:]) != binary.BigEndian.Uint32(unmaskedValue[0:4]) {
+			return nil, ErrIncorrectKey
+		}
+		unmaskedValue = unmaskedValue[4:]
 	} else {
 		unmaskedValue = rb.Value
 	}
@@ -545,8 +553,11 @@ func NewRecordStart(value []byte, links [][32]byte, maskingKey []byte, plainText
 			}
 			maskingKeyH := sha256.Sum256(maskingKey)
 			c, _ := aes.NewCipher(maskingKeyH[:])
-			valueMasked := make([]byte, len(value))
-			cipher.NewCFBEncrypter(c, cfbIv[:]).XORKeyStream(valueMasked, value)
+			cfb := cipher.NewCFBEncrypter(c, cfbIv[:])
+			valueMasked := make([]byte, 4+len(value))
+			binary.BigEndian.PutUint32(valueMasked[0:4], crc32.ChecksumIEEE(value))
+			cfb.XORKeyStream(valueMasked[0:4], valueMasked[0:4])
+			cfb.XORKeyStream(valueMasked[4:], value)
 			r.recordBody.Value = valueMasked
 			r.recordBody.ValueMasked = true
 		} else {

@@ -224,7 +224,8 @@ func TestCore(out io.Writer) bool {
 			fmt.Fprintf(out, "FAILED (create owner): %s\n", err.Error())
 			return false
 		}
-		rec, err := NewRecord([]byte("Supercalifragilisticexpealidocious!"), testLinks, []byte("test"), [][]byte{[]byte("test0")}, [][]byte{[]byte("0000")}, nil, uint64(k), nil, 0, owner)
+		testVal := []byte("Supercalifragilisticexpealidocious!")
+		rec, err := NewRecord(testVal, testLinks, []byte("test"), [][]byte{[]byte("test0")}, [][]byte{[]byte("0000")}, nil, uint64(k), nil, 0, owner)
 		if err != nil {
 			fmt.Fprintf(out, "FAILED (create record): %s\n", err.Error())
 			return false
@@ -246,10 +247,15 @@ func TestCore(out io.Writer) bool {
 			fmt.Fprintf(out, "FAILED (hashes are not equal)\n")
 			return false
 		}
+		testVal2, err := rec.GetValue([]byte("test"))
+		if err != nil || !bytes.Equal(testVal2, testVal) {
+			fmt.Fprintf(out, "FAILED (values are not equal)\n")
+			return false
+		}
 	}
 	fmt.Fprintf(out, "OK\n")
 
-	fmt.Fprintf(out, "Testing Record will full proof of work (generate, verify)... ")
+	fmt.Fprintf(out, "Testing Record with full proof of work (generate, verify)... ")
 	var testLinks [][32]byte
 	for i := 0; i < 3; i++ {
 		var tmp [32]byte

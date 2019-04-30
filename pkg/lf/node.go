@@ -67,23 +67,27 @@ var nullLogger = log.New(ioutil.Discard, "", 0)
 
 // peerHelloMsg is a JSON message used to say 'hello' to other nodes via the P2P protocol.
 type peerHelloMsg struct {
+	ProtocolVersion       int
+	MinProtocolVersion    int
+	Version               [4]int
+	SoftwareName          string
 	SubscribeToNewRecords bool // If true, peer wants new records
 }
 
 // peer represents a single TCP connection to another peer using the LF P2P TCP protocol
 type peer struct {
-	n               *Node               // Node that owns this peer
-	address         string              // Address in string format
-	tcpAddress      *net.TCPAddr        // IP and port
-	c               *net.TCPConn        // TCP connection to this peer
-	cryptor         cipher.AEAD         // AES-GCM instance
-	hasRecords      map[[32]byte]uint64 // Record this peer has recently reported that it has or has sent
-	hasRecordsLock  sync.Mutex          //
-	sendLock        sync.Mutex          //
-	outgoingNonce   [16]byte            // outgoing nonce (incremented for each message)
-	remotePublicKey []byte              // Remote public key in compressed/encoded format
-	peerHelloMsg    peerHelloMsg        // Hello message received from peer
-	inbound         bool                // True if this is an incoming connection
+	n               *Node                // Node that owns this peer
+	address         string               // Address in string format
+	tcpAddress      *net.TCPAddr         // IP and port
+	c               *net.TCPConn         // TCP connection to this peer
+	cryptor         cipher.AEAD          // AES-GCM instance
+	hasRecords      map[[32]byte]uintptr // Record this peer has recently reported that it has or has sent
+	hasRecordsLock  sync.Mutex           //
+	sendLock        sync.Mutex           //
+	outgoingNonce   [16]byte             // outgoing nonce (incremented for each message)
+	remotePublicKey []byte               // Remote public key in compressed/encoded format
+	peerHelloMsg    peerHelloMsg         // Hello message received from peer
+	inbound         bool                 // True if this is an incoming connection
 }
 
 // knownPeer contains info about a peer we know about via another peer or the API
@@ -100,33 +104,42 @@ type knownPeer struct {
 
 // Node is an instance of a full LF node supporting both P2P and HTTP access.
 type Node struct {
-	basePath                 string                     //
-	peersFilePath            string                     //
-	log                      [logLevelCount]*log.Logger // Pointers to loggers for each log level (inoperative levels point to a discard logger)
-	linkKeyPriv              []byte                     // P-384 private key
-	linkKeyPubX              *big.Int                   // X coordinate of P-384 public key
-	linkKeyPubY              *big.Int                   // Y coordinate of P-384 public key
-	linkKeyPub               []byte                     // Point compressed P-384 public key
-	owner                    *Owner                     // Owner for commentary and/or "mining" records
-	genesisParameters        GenesisParameters          // Genesis configuration for this node's network
-	genesisOwner             []byte                     // Owner of genesis record(s)
-	knownPeers               []knownPeer                // Peers we know about
-	knownPeersLock           sync.Mutex                 //
-	connectionsInStartup     map[*net.TCPConn]bool      // Connections in startup state but not yet in peers[]
-	connectionsInStartupLock sync.Mutex                 //
-	peers                    map[string]*peer           // Currently connected peers by address
-	peersLock                sync.RWMutex               //
-	httpTCPListener          *net.TCPListener           //
-	httpServer               *http.Server               //
-	p2pTCPListener           *net.TCPListener           //
-	apiWorkFunction          *Wharrgarblr               // Work function for API call use
-	backgroundWorkFunction   *Wharrgarblr               // Work function for background work addition (if enabled)
-	workFunctionLock         sync.RWMutex               //
-	db                       db                         //
-	backgroundThreadWG       sync.WaitGroup             // Wait group for background goroutines
-	startTime                time.Time                  // Time this node started
-	shutdown                 uint32                     // Set to non-zero to signal all background goroutines to exit
-	mine                     bool                       // If true, add work to DAG in background
+	basePath      string                     //
+	peersFilePath string                     //
+	log           [logLevelCount]*log.Logger // Pointers to loggers for each log level (inoperative levels point to a discard logger)
+
+	linkKeyPriv []byte   // P-384 private key
+	linkKeyPubX *big.Int // X coordinate of P-384 public key
+	linkKeyPubY *big.Int // Y coordinate of P-384 public key
+	linkKeyPub  []byte   // Point compressed P-384 public key
+	owner       *Owner   // Owner for commentary and/or "mining" records
+
+	genesisParameters GenesisParameters // Genesis configuration for this node's network
+	genesisOwner      []byte            // Owner of genesis record(s)
+
+	knownPeers               []knownPeer           // Peers we know about
+	knownPeersLock           sync.Mutex            //
+	connectionsInStartup     map[*net.TCPConn]bool // Connections in startup state but not yet in peers[]
+	connectionsInStartupLock sync.Mutex            //
+	peers                    map[string]*peer      // Currently connected peers by address
+	peersLock                sync.RWMutex          //
+	recordsRequested         map[[32]byte]uintptr  // When records were last requested
+	recordsRequestedLock     sync.Mutex            //
+
+	httpTCPListener *net.TCPListener
+	httpServer      *http.Server
+	p2pTCPListener  *net.TCPListener
+
+	apiWorkFunction        *Wharrgarblr
+	backgroundWorkFunction *Wharrgarblr
+	workFunctionLock       sync.RWMutex
+
+	db                 db             //
+	backgroundThreadWG sync.WaitGroup // used to wait for all goroutines
+	startTime          time.Time      // time node started
+	timeTicker         uintptr        // ticks approximately every second
+	shutdown           uint32         // set to non-zero to cause many routines to exit
+	mine               bool           // true to add work to DAG
 }
 
 // NewNode creates and starts a node.
@@ -157,6 +170,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 
 	n.connectionsInStartup = make(map[*net.TCPConn]bool)
 	n.peers = make(map[string]*peer)
+	n.recordsRequested = make(map[[32]byte]uintptr)
 
 	// Open node database and other related files
 	err := n.db.open(basePath, n.log, func(doff uint64, dlen uint, hash *[32]byte) {
@@ -181,7 +195,6 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 
 				n.peersLock.RLock()
 				if len(n.peers) > 0 {
-					n.log[LogLevelVerbose].Printf("record %x fully synchronized, announcing to peers", *hash)
 					for _, p := range n.peers {
 						if p.peerHelloMsg.SubscribeToNewRecords {
 							p.hasRecordsLock.Lock()
@@ -192,8 +205,6 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 							}
 						}
 					}
-				} else {
-					n.log[LogLevelVerbose].Printf("record %x fully synchronized", *hash)
 				}
 				n.peersLock.RUnlock()
 			}()
@@ -381,36 +392,38 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 		// Init this in background if it isn't already to speed up node readiness
 		wharrgarblInitTable()
 
-		now := TimeMs()
-		lastCleanedPeerHasRecords, lastAnnouncedRecentRecord, lastCleanedAnnouncedPeers := now, now, now
-		lastAttemptedConnections := now - 5000 // do this in 5s
-
 		for atomic.LoadUint32(&n.shutdown) == 0 {
 			time.Sleep(time.Second)
 			if atomic.LoadUint32(&n.shutdown) != 0 {
 				break
 			}
-			now = TimeMs()
+			ticker := atomic.AddUintptr(&n.timeTicker, 1)
 
-			// Clean peer "has record" map entries older than 5 minutes.
-			if (now - lastCleanedPeerHasRecords) > 120000 {
-				lastCleanedPeerHasRecords = now
+			// Clean record tracking entries of items older than 5 minutes.
+			if (ticker % 120) == 0 {
 				n.peersLock.RLock()
 				for _, p := range n.peers {
 					p.hasRecordsLock.Lock()
 					for h, ts := range p.hasRecords {
-						if (now - ts) > 300000 {
+						if (ticker - ts) > 300 {
 							delete(p.hasRecords, h)
 						}
 					}
 					p.hasRecordsLock.Unlock()
 				}
 				n.peersLock.RUnlock()
+
+				n.recordsRequestedLock.Lock()
+				for h, t := range n.recordsRequested {
+					if (ticker - t) > 300 {
+						delete(n.recordsRequested, h)
+					}
+				}
+				n.recordsRequestedLock.Unlock()
 			}
 
 			// Periodically announce that we have a few recent records to prompt syncing
-			if (now - lastAnnouncedRecentRecord) > 10000 {
-				lastAnnouncedRecentRecord = now
+			if (ticker % 10) == 0 {
 				_, links, err := n.db.getLinks(4)
 				if err == nil && len(links) >= 32 {
 					hr := make([]byte, 1, 1+len(links))
@@ -426,8 +439,8 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 			}
 
 			// Clean announced peer list of peers we learned about more than 10 minutes ago.
-			if (now - lastCleanedAnnouncedPeers) > 120000 {
-				lastCleanedAnnouncedPeers = now
+			if (ticker % 120) == 0 {
+				now := TimeMs()
 				n.knownPeersLock.Lock()
 				if len(n.knownPeers) > 0 {
 					kpSize := 0
@@ -453,9 +466,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 			}
 
 			// If we don't have enough connections, try to make more to peers we've learned about.
-			if (now - lastAttemptedConnections) > 10000 {
-				lastAttemptedConnections = now
-
+			if (ticker % 10) == 5 {
 				n.peersLock.RLock()
 				peerCount := len(n.peers)
 				n.peersLock.RUnlock()
@@ -966,7 +977,7 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inb
 		tcpAddress:      tcpAddr,
 		c:               c,
 		cryptor:         cryptor,
-		hasRecords:      make(map[[32]byte]uint64),
+		hasRecords:      make(map[[32]byte]uintptr),
 		outgoingNonce:   outgoingNonce,
 		remotePublicKey: rpk,
 		inbound:         inbound,
@@ -994,6 +1005,10 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inb
 	n.connectionsInStartupLock.Unlock()
 
 	msgbuf, err = json.Marshal(&peerHelloMsg{
+		ProtocolVersion:       ProtocolVersion,
+		MinProtocolVersion:    MinProtocolVersion,
+		Version:               Version,
+		SoftwareName:          SoftwareName,
 		SubscribeToNewRecords: true,
 	})
 	if err != nil {
@@ -1083,7 +1098,7 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inb
 				rec, err := NewRecordFromBytes(msg)
 				if err == nil {
 					p.hasRecordsLock.Lock()
-					p.hasRecords[rec.Hash()] = TimeMs()
+					p.hasRecords[rec.Hash()] = atomic.LoadUintptr(&n.timeTicker)
 					p.hasRecordsLock.Unlock()
 					n.AddRecord(rec)
 				}
@@ -1101,28 +1116,36 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inb
 			}
 
 		case p2pProtoMessageTypeHaveRecords:
-			var h [32]byte
-			req := make([]byte, 1, 256)
-			req[0] = p2pProtoMesaggeTypeRequestRecordsByHash
 			for len(msg) >= 32 {
+				req := make([]byte, 1, 1+len(msg))
+				req[0] = p2pProtoMesaggeTypeRequestRecordsByHash
+				var h [32]byte
 				copy(h[:], msg[0:32])
-
-				p.hasRecordsLock.Lock()
-				p.hasRecords[h] = TimeMs()
-				p.hasRecordsLock.Unlock()
-
+				msg = msg[32:]
 				if !n.db.hasRecord(h[:]) {
+					ticker := atomic.LoadUintptr(&n.timeTicker)
+
+					n.recordsRequestedLock.Lock()
+					if (ticker - n.recordsRequested[h]) <= 1 {
+						n.recordsRequestedLock.Unlock()
+						continue
+					}
+					n.recordsRequested[h] = ticker
+					n.recordsRequestedLock.Unlock()
+
+					p.hasRecordsLock.Lock()
+					p.hasRecords[h] = ticker
+					p.hasRecordsLock.Unlock()
+
 					req = append(req, h[:]...)
 					if len(req) >= (p2pProtoMaxMessageSize - 64) {
 						p.send(req)
 						req = req[0:1]
 					}
 				}
-
-				msg = msg[32:]
-			}
-			if len(req) > 1 {
-				p.send(req)
+				if len(req) > 1 {
+					p.send(req)
+				}
 			}
 
 		case p2pProtoMessageTypePeer:

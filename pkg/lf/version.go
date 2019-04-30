@@ -16,6 +16,9 @@ const (
 	VersionRevision = 5
 	VersionBuild    = 0
 
+	ProtocolVersion    = 1
+	MinProtocolVersion = 1
+
 	SoftwareName = "ZeroTier LF Reference"
 )
 
