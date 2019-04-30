@@ -527,7 +527,7 @@ func NewRecordStart(value []byte, links [][32]byte, maskingKey []byte, plainText
 
 	if len(value) > 0 {
 		// Attempt compression for values of non-trivial size.
-		if len(value) > 32 {
+		if len(value) > 24 {
 			var valueCompr []byte
 			valueCompr, err = brotlienc.CompressBuffer(brotliParams, value, make([]byte, 0, len(value)+4))
 			if err == nil && len(valueCompr) < len(value) {
@@ -583,7 +583,6 @@ func NewRecordStart(value []byte, links [][32]byte, maskingKey []byte, plainText
 			workHasher.Write(sb)
 		}
 	}
-
 	workHasher.Sum(workHash[:0])
 
 	return
