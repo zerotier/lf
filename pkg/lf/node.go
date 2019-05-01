@@ -503,7 +503,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 	n.backgroundThreadWG.Add(1)
 	go func() {
 		defer n.backgroundThreadWG.Done()
-		numLinks := uint(16)
+		numLinks := uint(32)
 		for atomic.LoadUint32(&n.shutdown) == 0 {
 			time.Sleep(time.Second) // 1s pause between each new record
 			if atomic.LoadUint32(&n.commentary) != 0 && atomic.LoadUint32(&n.shutdown) == 0 {

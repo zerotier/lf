@@ -117,10 +117,10 @@ func (m *APIQuery) execute(n *Node) (qr APIQueryResults, err *APIError) {
 		if rptr == nil {
 			bestByID[*id] = &([4]uint64{weightH, weightL, doff, dlen})
 		} else {
-			if rptr[0] < weightH {
+			if rptr[0] > weightH {
 				return true
 			} else if rptr[0] == weightH {
-				if rptr[1] < weightL {
+				if rptr[1] > weightL {
 					return true
 				}
 			}

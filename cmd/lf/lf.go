@@ -135,6 +135,7 @@ func doNodeStart(cfg *lf.ClientConfig, basePath string, urls []string, args []st
 	p2pPort := nodeOpts.Int("p2p", lf.DefaultP2PPort, "")
 	httpPort := nodeOpts.Int("http", lf.DefaultHTTPPort, "")
 	commentary := nodeOpts.Bool("commentary", false, "")
+	nodeOpts.SetOutput(ioutil.Discard)
 	err := nodeOpts.Parse(args)
 	if err != nil {
 		printHelp("")
@@ -217,6 +218,7 @@ func doGet(cfg *lf.ClientConfig, basePath string, urls []string, args []string, 
 	unmaskKey := getOpts.String("unmask", "", "")
 	tStart := getOpts.String("tstart", "", "")
 	tEnd := getOpts.String("tend", "", "")
+	getOpts.SetOutput(ioutil.Discard)
 	err := getOpts.Parse(args)
 	if err != nil {
 		printHelp("")
@@ -305,6 +307,7 @@ func doSet(cfg *lf.ClientConfig, basePath string, urls []string, args []string, 
 	valueIsFile := setOpts.Bool("file", false, "")
 	remote := setOpts.Bool("remote", false, "")
 	tryRemote := setOpts.Bool("tryremote", false, "")
+	setOpts.SetOutput(ioutil.Discard)
 	err := setOpts.Parse(args)
 	if err != nil {
 		printHelp("")
@@ -594,19 +597,20 @@ func main() {
 	basePath := globalOpts.String("path", lfDefaultPath, "")
 	urlOverride := globalOpts.String("url", "", "")
 	jsonOutput := globalOpts.Bool("json", false, "")
-	err := globalOpts.Parse(os.Args)
+	globalOpts.SetOutput(ioutil.Discard)
+	err := globalOpts.Parse(os.Args[1:])
 	if err != nil {
 		printHelp("")
 		return
 	}
 	args := globalOpts.Args()
-	if len(args) <= 1 {
+	if len(args) < 1 {
 		printHelp("")
 		return
 	}
 	var cmdArgs []string
-	if len(args) >= 3 {
-		cmdArgs = args[2:]
+	if len(args) > 1 {
+		cmdArgs = args[1:]
 	}
 
 	os.MkdirAll(*basePath, 0755)
@@ -627,7 +631,7 @@ func main() {
 		urls = cfg.Urls
 	}
 
-	switch args[1] {
+	switch args[0] {
 
 	case "help":
 		if len(args) >= 3 {
