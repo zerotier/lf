@@ -99,9 +99,9 @@ Commands:
     wharrgarbl                            Test proof of work (long!)
     database                              Test DAG and database (long!)
   node-start [-...]                       Start a full node
-		-p2p <port>                           P2P TCP port (default: ` + lfDefaultP2PPortStr + `)
-		-http <port>                          HTTP TCP port (default: ` + lfDefaultHTTPPortStr + `)
-    -judge                                Use spare CPU to render judgements
+    -p2p <port>                           P2P TCP port (default: ` + lfDefaultP2PPortStr + `)
+    -http <port>                          HTTP TCP port (default: ` + lfDefaultHTTPPortStr + `)
+    -commentary                           Use spare CPU to publish commentary
   node-connect <ip> <port> [<key>]        Suggest P2P endpoint for node
   proxy-start                             Start a proxy
   status                                  Get status from remote node/proxy
@@ -132,16 +132,16 @@ Default home path is ` + lfDefaultPath + ` unless -path is used.
 
 func doNodeStart(cfg *lf.ClientConfig, basePath string, urls []string, args []string) {
 	nodeOpts := flag.NewFlagSet("node-start", flag.ContinueOnError)
-	p2pPort := flag.Int("p2p", lf.DefaultP2PPort, "")
-	httpPort := flag.Int("http", lf.DefaultHTTPPort, "")
-	judge := flag.Bool("judge", false, "")
+	p2pPort := nodeOpts.Int("p2p", lf.DefaultP2PPort, "")
+	httpPort := nodeOpts.Int("http", lf.DefaultHTTPPort, "")
+	commentary := nodeOpts.Bool("commentary", false, "")
 	err := nodeOpts.Parse(args)
 	if err != nil {
 		printHelp("")
 		return
 	}
 	args = nodeOpts.Args()
-	if len(args) < 1 {
+	if len(args) != 0 {
 		printHelp("")
 		return
 	}
@@ -156,7 +156,7 @@ func doNodeStart(cfg *lf.ClientConfig, basePath string, urls []string, args []st
 		os.Exit(-1)
 		return
 	}
-	node.SetJudgeEnabled(*judge)
+	node.SetCommentaryEnabled(*commentary)
 
 	_ = <-osSignalChannel
 	node.Stop()

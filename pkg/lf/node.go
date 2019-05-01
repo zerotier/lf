@@ -137,7 +137,7 @@ type Node struct {
 	startTime          time.Time      // time node started
 	timeTicker         uintptr        // ticks approximately every second
 	shutdown           uint32         // set to non-zero to cause many routines to exit
-	judge              uint32         // set to non-zero to add work and render judgements
+	commentary         uint32         // set to non-zero to add work and render commentary
 }
 
 // NewNode creates and starts a node.
@@ -191,6 +191,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 				msg[0] = p2pProtoMessageTypeHaveRecords
 				copy(msg[1:], hash[:])
 
+				announcementCount := 0
 				n.peersLock.RLock()
 				if len(n.peers) > 0 {
 					for _, p := range n.peers {
@@ -200,11 +201,14 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 							p.hasRecordsLock.Unlock()
 							if !hasRecord {
 								p.send(msg[:])
+								announcementCount++
 							}
 						}
 					}
 				}
 				n.peersLock.RUnlock()
+
+				n.log[LogLevelVerbose].Printf("record %x fully synchronized, announced to %d peers", *hash, announcementCount)
 			}()
 		}
 	})
@@ -467,18 +471,14 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 		}
 	}()
 
-	// Start background thread to add work to DAG and render judgements (if enabled).
+	// Start background thread to add work to DAG and render commentary (if enabled).
 	n.backgroundThreadWG.Add(1)
 	go func() {
 		defer n.backgroundThreadWG.Done()
-		for k := 0; k < 10 && atomic.LoadUint32(&n.shutdown) == 0; k++ { // wait 10s for other stuff to come up
-			time.Sleep(time.Second)
-		}
-
 		numLinks := uint(16)
 		for atomic.LoadUint32(&n.shutdown) == 0 {
-			time.Sleep(time.Second) // 1s pause between each judgement
-			if atomic.LoadUint32(&n.judge) != 0 && atomic.LoadUint32(&n.shutdown) == 0 {
+			time.Sleep(time.Second) // 1s pause between each new record
+			if atomic.LoadUint32(&n.commentary) != 0 && atomic.LoadUint32(&n.shutdown) == 0 {
 				if numLinks < n.genesisParameters.RecordMinLinks {
 					numLinks = n.genesisParameters.RecordMinLinks
 				}
@@ -491,11 +491,11 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 				links, err := n.db.getLinks2(numLinks)
 
 				if err == nil && len(links) > 0 {
-					// TODO: actual judgement commentary is not implemented yet, so this just adds work for now!
+					// TODO: actual commentary is not implemented yet, so this just adds work for now!
 					startTime := TimeMs()
 					rec, err := NewRecord(nil, links, nil, nil, nil, nil, TimeSec(), n.getBackgroundWorkFunction(), n.owner)
 					endTime := TimeMs()
-					if atomic.LoadUint32(&n.shutdown) != 0 {
+					if atomic.LoadUint32(&n.shutdown) == 0 {
 						if err == nil {
 							n.AddRecord(rec)
 
@@ -508,6 +508,8 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 							} else if duration > 120000 && numLinks > 0 {
 								numLinks--
 							}
+
+							n.log[LogLevelVerbose].Printf("commentary record %x submitted with %d links (generation time: %f seconds)", rec.Hash(), len(links), float64(duration)/1000.0)
 						} else {
 							n.log[LogLevelWarning].Printf("WARNING: error creating record: %s", err.Error())
 						}
@@ -678,17 +680,17 @@ func (n *Node) AddRecord(r *Record) error {
 	return nil
 }
 
-// SetJudgeEnabled sets whether or not background CPU power is used to render judgements.
+// SetCommentaryEnabled sets whether or not background CPU power is used to render commentary.
 // The default is false for new nodes. If true, nearly all background CPU is used
-// to publish records that add work to the DAG and render judgements on any records
+// to publish records that add work to the DAG and render commentary on any records
 // that appear suspect. These can be included in query results to allow end users to
 // decide what records they trust in the event of a conflict.
-func (n *Node) SetJudgeEnabled(j bool) {
+func (n *Node) SetCommentaryEnabled(j bool) {
 	jj := uint32(0)
 	if j {
 		jj = 1
 	}
-	atomic.StoreUint32(&n.judge, jj)
+	atomic.StoreUint32(&n.commentary, jj)
 }
 
 // writeKnownPeers writes the current known peer list
@@ -731,7 +733,7 @@ func (n *Node) getAPIWorkFunction() (wf *Wharrgarblr) {
 }
 
 // getBackgroundWorkFunction gets (creating if needed) the work function for background work addition.
-// This is used in rendering judgements and yields a work function that leaves one spare core on
+// This is used in rendering commentary and yields a work function that leaves one spare core on
 // systems with more than one CPU core.
 func (n *Node) getBackgroundWorkFunction() (wf *Wharrgarblr) {
 	n.workFunctionLock.RLock()
