@@ -326,6 +326,22 @@ func (db *db) haveSynchronizedWithID(id []byte, notOwner []byte) bool {
 	return (C.ZTLF_DB_HaveSynchronizedWithID(db.cdb, unsafe.Pointer(&id[0]), unsafe.Pointer(&notOwner[0]), C.uint(len(notOwner))) != 0)
 }
 
+// getWanted gets hashes we don't currently have but that are linked by others.
+// If incrementRetryCount is true the retry count in the database is incremented for all returned hashes.
+// The return is a hash count and a buffer with [count*32] bytes of 32-byte hashes.
+func (db *db) getWanted(max, retryCountMin, retryCountMax int, incrementRetryCount bool) (int, []byte) {
+	if max == 0 {
+		return 0, nil
+	}
+	increment := C.int(0)
+	if incrementRetryCount {
+		increment = 1
+	}
+	buf := make([]byte, max*32)
+	count := int(C.ZTLF_DB_GetWanted(db.cdb, unsafe.Pointer(&buf[0]), C.uint(max), C.uint(retryCountMin), C.uint(retryCountMax), increment))
+	return count, buf[0 : count*32]
+}
+
 func (db *db) getConfig(key string) []byte {
 	var tmp [dbMaxConfigValueSize]byte
 	l := C.ZTLF_DB_GetConfig(db.cdb, C.CString(key), unsafe.Pointer(&tmp[0]), C.uint(dbMaxConfigValueSize))

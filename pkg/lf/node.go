@@ -55,6 +55,9 @@ const (
 	// p2pDesiredConnectionCount is how many P2P TCP connections we want to have open
 	p2pDesiredConnectionCount = 64
 
+	// p2pMaxRecordRetries is the maximum number of retries for a record with a given hash.
+	p2pMaxRecordRetries = 32
+
 	// DefaultHTTPPort is the default LF HTTP API port
 	DefaultHTTPPort = 9980
 
@@ -445,12 +448,37 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 				n.writeKnownPeers()
 			}
 
+			// Try to get wanted records every 30 seconds.
+			n.peersLock.RLock()
+			connectionCount := len(n.peers) // this value is used in the next block too
+			if (ticker%30) == 0 && connectionCount > 0 {
+				count, hashes := n.db.getWanted(256, 0, p2pMaxRecordRetries, true)
+				if len(hashes) >= 32 {
+					var p *peer
+					for _, pp := range n.peers { // exploits the random map iteration order in Go
+						p = pp
+						break
+					}
+					if p != nil {
+						n.log[LogLevelVerbose].Printf("sync: requesting %d wanted records from %s", count, p.address)
+						n.backgroundThreadWG.Add(1)
+						go func() {
+							defer func() {
+								_ = recover()
+								n.backgroundThreadWG.Done()
+							}()
+							req := make([]byte, 1, len(hashes)+1)
+							req[0] = p2pProtoMesaggeTypeRequestRecordsByHash
+							req = append(req, hashes...)
+							p.send(req)
+						}()
+					}
+				}
+			}
+			n.peersLock.RUnlock()
+
 			// If we don't have enough connections, try to make more to peers we've learned about.
 			if (ticker % 10) == 5 {
-				n.peersLock.RLock()
-				connectionCount := len(n.peers)
-				n.peersLock.RUnlock()
-
 				if connectionCount < p2pDesiredConnectionCount {
 					wantMore := p2pDesiredConnectionCount - connectionCount
 					n.knownPeersLock.Lock()

@@ -272,9 +272,9 @@ int ZTLF_DB_Open(
 	S(db->sGetHaveSynchronizedWithID,
 	     "SELECT COUNT(1) FROM record AS r WHERE r.id = ? AND r.owner != ? AND NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) AND NOT EXISTS (SELECT gp.record_goff FROM graph_pending AS gp WHERE gp.record_goff = r.goff)");
 	S(db->sGetWanted,
-	     "SELECT hash FROM wanted WHERE retries < ? ORDER BY retries,hash LIMIT ?");
+	     "SELECT hash FROM wanted WHERE retries BETWEEN ? AND ? ORDER BY retries,hash LIMIT ?");
 	S(db->sIncWantedRetries,
-	     "UPDATE wanted SET retries = (retries + 1) WHERE retries < ? ORDER BY retries,hash LIMIT ?");
+	     "UPDATE wanted SET retries = (retries + 1) WHERE retries BETWEEN ? AND ? ORDER BY retries,hash LIMIT ?");
 	S(db->sQueryClearRecordSet,
 	     "DELETE FROM tmp.rs");
 	S(db->sQueryOrSelectorRange,
@@ -1228,7 +1228,7 @@ int ZTLF_DB_HaveSynchronizedWithID(struct ZTLF_DB *db,const void *id,const void 
 	return has;
 }
 
-unsigned int ZTLF_DB_GetWanted(struct ZTLF_DB *db,void *buf,const unsigned int maxHashes,const unsigned int retryLimit,const int incrementRetryCount)
+unsigned int ZTLF_DB_GetWanted(struct ZTLF_DB *db,void *buf,const unsigned int maxHashes,const unsigned int retryCountMin,const unsigned int retryCountMax,const int incrementRetryCount)
 {
 	if (maxHashes == 0)
 		return 0;
@@ -1238,18 +1238,20 @@ unsigned int ZTLF_DB_GetWanted(struct ZTLF_DB *db,void *buf,const unsigned int m
 	pthread_mutex_lock(&db->dbLock);
 
 	sqlite3_reset(db->sGetWanted);
-	sqlite3_bind_int(db->sGetWanted,1,(int)retryLimit);
-	sqlite3_bind_int(db->sGetWanted,2,(int)maxHashes);
+	sqlite3_bind_int(db->sGetWanted,1,(int)retryCountMin);
+	sqlite3_bind_int(db->sGetWanted,2,(int)retryCountMax);
+	sqlite3_bind_int(db->sGetWanted,3,(int)maxHashes);
 	while (sqlite3_step(db->sGetWanted) == SQLITE_ROW) {
 		memcpy(p,sqlite3_column_blob(db->sGetWanted,0),32);
 		count++;
 		p += 32;
 	}
 
-	if (count > 0) {
+	if ((count > 0)&&(incrementRetryCount > 0)) {
 		sqlite3_reset(db->sIncWantedRetries);
-		sqlite3_bind_int(db->sIncWantedRetries,1,(int)retryLimit);
-		sqlite3_bind_int(db->sIncWantedRetries,2,(int)maxHashes);
+		sqlite3_bind_int(db->sIncWantedRetries,1,(int)retryCountMin);
+		sqlite3_bind_int(db->sIncWantedRetries,2,(int)retryCountMax);
+		sqlite3_bind_int(db->sIncWantedRetries,3,(int)count);
 		sqlite3_step(db->sIncWantedRetries);
 	}
 
