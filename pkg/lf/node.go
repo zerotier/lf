@@ -485,8 +485,8 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 				if numLinks < 3 {
 					numLinks = 3
 				}
-				if numLinks > 256 { // sanity limit
-					numLinks = 256
+				if numLinks > RecordMaxLinks {
+					numLinks = RecordMaxLinks
 				}
 				links, err := n.db.getLinks2(numLinks)
 
@@ -648,6 +648,9 @@ func (n *Node) AddRecord(r *Record) error {
 	}
 	if uint(len(r.Links)) < n.genesisParameters.RecordMinLinks {
 		return ErrRecordInsufficientLinks
+	}
+	if len(r.Links) > RecordMaxLinks {
+		return ErrRecordTooManyLinks
 	}
 	if r.Timestamp > (TimeSec() + uint64(n.genesisParameters.RecordMaxForwardTimeDrift)) {
 		return ErrRecordViolatesSpecialRelativity

@@ -48,6 +48,9 @@ const RecordDefaultWharrgarblMemory = 1024 * 1024 * 512
 // This is more or less a sanity limit to prevent malloc overflow attacks and similar things.
 const RecordMaxSize = 65536
 
+// RecordMaxLinks is the maximum number of links a valid record can have.
+const RecordMaxLinks = 255
+
 // RecordWorkAlgorithmNone indicates no work algorithm (not allowed on main network but can exist in testing or private networks that are CA-only).
 const RecordWorkAlgorithmNone byte = 0
 

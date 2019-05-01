@@ -62,7 +62,6 @@ static void *_ZTLF_DB_graphThreadMain(void *arg);
  * wanted
  *   hash                     hash of wanted record
  *   retries                  number of retries attempted so far
- *   last_retry_time          time of last retry
  * 
  * Most tables are somewhat self-explanatory.
  * 
@@ -141,12 +140,10 @@ static void *_ZTLF_DB_graphThreadMain(void *arg);
 \
 "CREATE TABLE IF NOT EXISTS wanted (" \
 "hash BLOB PRIMARY KEY NOT NULL," \
-"retries INTEGER NOT NULL," \
-"first_wanted_time INTEGER NOT NULL," \
-"last_retry_time INTEGER NOT NULL" \
+"retries INTEGER NOT NULL" \
 ") WITHOUT ROWID;\n" \
 \
-"CREATE INDEX IF NOT EXISTS wanted_retries_last_retry_time ON wanted(retries,last_retry_time);\n" \
+"CREATE INDEX IF NOT EXISTS wanted_retries_hash ON wanted(retries,hash);\n" \
 \
 "ATTACH DATABASE ':memory:' AS tmp;\n" \
 \
@@ -255,7 +252,7 @@ int ZTLF_DB_Open(
 	S(db->sAddDanglingLink,
 	     "INSERT OR IGNORE INTO dangling_link (hash,linking_record_goff,linking_record_link_idx) VALUES (?,?,?)");
 	S(db->sAddWantedHash,
-	     "INSERT OR IGNORE INTO wanted (hash,retries,first_wanted_time,last_retry_time) VALUES (?,0,?,0)");
+	     "INSERT OR REPLACE INTO wanted (hash,retries) VALUES (?,0)");
 	S(db->sAddHole,
 	     "INSERT OR IGNORE INTO hole (waiting_record_goff,incomplete_goff,incomplete_link_idx) VALUES (?,?,?)");
 	S(db->sFlagRecordWeightApplicationPending,
@@ -274,6 +271,10 @@ int ZTLF_DB_Open(
 	     "SELECT gp.record_goff FROM graph_pending AS gp WHERE NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = gp.record_goff) LIMIT 1");
 	S(db->sGetHaveSynchronizedWithID,
 	     "SELECT COUNT(1) FROM record AS r WHERE r.id = ? AND r.owner != ? AND NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) AND NOT EXISTS (SELECT gp.record_goff FROM graph_pending AS gp WHERE gp.record_goff = r.goff)");
+	S(db->sGetWanted,
+	     "SELECT hash FROM wanted WHERE retries < ? ORDER BY retries,hash LIMIT ?");
+	S(db->sIncWantedRetries,
+	     "UPDATE wanted SET retries = (retries + 1) WHERE retries < ? ORDER BY retries,hash LIMIT ?");
 	S(db->sQueryClearRecordSet,
 	     "DELETE FROM tmp.rs");
 	S(db->sQueryOrSelectorRange,
@@ -673,6 +674,9 @@ void ZTLF_DB_Close(struct ZTLF_DB *db)
 		if (db->sUpdatePendingHoleCount)              sqlite3_finalize(db->sUpdatePendingHoleCount);
 		if (db->sDeleteCompletedPending)              sqlite3_finalize(db->sDeleteCompletedPending);
 		if (db->sGetAnyPending)                       sqlite3_finalize(db->sGetAnyPending);
+		if (db->sGetHaveSynchronizedWithID)           sqlite3_finalize(db->sGetHaveSynchronizedWithID);
+		if (db->sGetWanted)                           sqlite3_finalize(db->sGetWanted);
+		if (db->sIncWantedRetries)                    sqlite3_finalize(db->sIncWantedRetries);
 		if (db->sQueryClearRecordSet)                 sqlite3_finalize(db->sQueryClearRecordSet);
 		if (db->sQueryOrSelectorRange)                sqlite3_finalize(db->sQueryOrSelectorRange);
 		if (db->sQueryAndSelectorRange)               sqlite3_finalize(db->sQueryAndSelectorRange);
@@ -927,7 +931,6 @@ int ZTLF_DB_PutRecord(
 			/* Wanted hash records track attempts to get records. */
 			sqlite3_reset(db->sAddWantedHash);
 			sqlite3_bind_blob(db->sAddWantedHash,1,l,32,SQLITE_STATIC);
-			sqlite3_bind_int64(db->sAddWantedHash,2,(sqlite_int64)time(NULL));
 			if ((e = sqlite3_step(db->sAddWantedHash)) != SQLITE_DONE) {
 				ZTLF_L_warning("database error adding/resetting wanted hash: %d (%s)",e,sqlite3_errmsg(db->dbc));
 			}
@@ -1223,6 +1226,36 @@ int ZTLF_DB_HaveSynchronizedWithID(struct ZTLF_DB *db,const void *id,const void 
 		has = (sqlite3_column_int64(db->sGetHaveSynchronizedWithID,0) > 0) ? 1 : 0;
 	pthread_mutex_unlock(&db->dbLock);
 	return has;
+}
+
+unsigned int ZTLF_DB_GetWanted(struct ZTLF_DB *db,void *buf,const unsigned int maxHashes,const unsigned int retryLimit,const int incrementRetryCount)
+{
+	if (maxHashes == 0)
+		return 0;
+	unsigned int count = 0;
+	uint8_t *p = (uint8_t *)buf;
+
+	pthread_mutex_lock(&db->dbLock);
+
+	sqlite3_reset(db->sGetWanted);
+	sqlite3_bind_int(db->sGetWanted,1,(int)retryLimit);
+	sqlite3_bind_int(db->sGetWanted,2,(int)maxHashes);
+	while (sqlite3_step(db->sGetWanted) == SQLITE_ROW) {
+		memcpy(p,sqlite3_column_blob(db->sGetWanted,0),32);
+		count++;
+		p += 32;
+	}
+
+	if (count > 0) {
+		sqlite3_reset(db->sIncWantedRetries);
+		sqlite3_bind_int(db->sIncWantedRetries,1,(int)retryLimit);
+		sqlite3_bind_int(db->sIncWantedRetries,2,(int)maxHashes);
+		sqlite3_step(db->sIncWantedRetries);
+	}
+
+	pthread_mutex_unlock(&db->dbLock);
+
+	return count;
 }
 
 int ZTLF_DB_SetConfig(struct ZTLF_DB *db,const char *key,const void *value,const unsigned int vlen)

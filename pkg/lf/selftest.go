@@ -353,7 +353,7 @@ func TestWharrgarbl(out io.Writer) bool {
 //////////////////////////////////////////////////////////////////////////////
 
 const testDatabaseInstances = 3
-const testDatabaseRecords = 32768
+const testDatabaseRecords = 4096
 const testDatabaseOwners = 16
 
 // TestDatabase tests the database using a large set of randomly generated records.
