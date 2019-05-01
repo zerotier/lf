@@ -274,7 +274,7 @@ int ZTLF_DB_Open(
 	S(db->sGetWanted,
 	     "SELECT hash FROM wanted WHERE retries BETWEEN ? AND ? ORDER BY retries,hash LIMIT ?");
 	S(db->sIncWantedRetries,
-	     "UPDATE wanted SET retries = (retries + 1) WHERE retries BETWEEN ? AND ? ORDER BY retries,hash LIMIT ?");
+	     "UPDATE wanted SET retries = (retries + 1) WHERE hash = ?");
 	S(db->sQueryClearRecordSet,
 	     "DELETE FROM tmp.rs");
 	S(db->sQueryOrSelectorRange,
@@ -1243,16 +1243,13 @@ unsigned int ZTLF_DB_GetWanted(struct ZTLF_DB *db,void *buf,const unsigned int m
 	sqlite3_bind_int(db->sGetWanted,3,(int)maxHashes);
 	while (sqlite3_step(db->sGetWanted) == SQLITE_ROW) {
 		memcpy(p,sqlite3_column_blob(db->sGetWanted,0),32);
+		if (incrementRetryCount) {
+			sqlite3_reset(db->sIncWantedRetries);
+			sqlite3_bind_blob(db->sIncWantedRetries,1,p,32,SQLITE_STATIC);
+			sqlite3_step(db->sIncWantedRetries);
+		}
 		count++;
 		p += 32;
-	}
-
-	if ((count > 0)&&(incrementRetryCount > 0)) {
-		sqlite3_reset(db->sIncWantedRetries);
-		sqlite3_bind_int(db->sIncWantedRetries,1,(int)retryCountMin);
-		sqlite3_bind_int(db->sIncWantedRetries,2,(int)retryCountMax);
-		sqlite3_bind_int(db->sIncWantedRetries,3,(int)count);
-		sqlite3_step(db->sIncWantedRetries);
 	}
 
 	pthread_mutex_unlock(&db->dbLock);
