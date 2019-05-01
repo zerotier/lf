@@ -475,24 +475,39 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 			time.Sleep(time.Second)
 		}
 
+		numLinks := uint(16)
 		for atomic.LoadUint32(&n.shutdown) == 0 {
 			time.Sleep(time.Second) // 1s pause between each judgement
 			if atomic.LoadUint32(&n.judge) != 0 && atomic.LoadUint32(&n.shutdown) == 0 {
-				// To evenly distribute work we link commentary records to up to 32 others.
-				// This also makes these records big, but that's okay because we want to add
-				// a lot of work too.
-				minLinks := n.genesisParameters.RecordMinLinks
-				if minLinks < 32 {
-					minLinks = 32
+				if numLinks < n.genesisParameters.RecordMinLinks {
+					numLinks = n.genesisParameters.RecordMinLinks
 				}
-				links, err := n.db.getLinks2(minLinks)
+				if numLinks < 3 {
+					numLinks = 3
+				}
+				if numLinks > 256 { // sanity limit
+					numLinks = 256
+				}
+				links, err := n.db.getLinks2(numLinks)
 
 				if err == nil && len(links) > 0 {
 					// TODO: actual judgement commentary is not implemented yet, so this just adds work for now!
+					startTime := TimeMs()
 					rec, err := NewRecord(nil, links, nil, nil, nil, nil, TimeSec(), n.getBackgroundWorkFunction(), n.owner)
+					endTime := TimeMs()
 					if atomic.LoadUint32(&n.shutdown) != 0 {
 						if err == nil {
 							n.AddRecord(rec)
+
+							// Tune number of links (and thus average record size) to try to make records that take about two
+							// minutes of work to create. Linking more parent records is generally always good, but we want
+							// an acceptable new record generation rate too.
+							duration := endTime - startTime
+							if duration < 120000 {
+								numLinks++
+							} else if duration > 120000 && numLinks > 0 {
+								numLinks--
+							}
 						} else {
 							n.log[LogLevelWarning].Printf("WARNING: error creating record: %s", err.Error())
 						}
