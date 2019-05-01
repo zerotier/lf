@@ -1,5 +1,3 @@
-# Makefile for
-
 all: lf
 
 lf: FORCE
