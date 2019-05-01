@@ -139,7 +139,7 @@ type Node struct {
 	startTime          time.Time      // time node started
 	timeTicker         uintptr        // ticks approximately every second
 	shutdown           uint32         // set to non-zero to cause many routines to exit
-	mine               bool           // true to add work to DAG
+	judge              uint32         // set to non-zero to add work and render judgements
 }
 
 // NewNode creates and starts a node.
@@ -491,22 +491,26 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 		}
 	}()
 
-	// Start background work and record adding thread
+	// Start background thread to add work to DAG and render judgements (if enabled).
 	n.backgroundThreadWG.Add(1)
 	go func() {
 		defer n.backgroundThreadWG.Done()
 		for k := 0; k < 10 && atomic.LoadUint32(&n.shutdown) == 0; k++ { // wait 10s for other stuff to come up
 			time.Sleep(time.Second)
 		}
+
 		for atomic.LoadUint32(&n.shutdown) == 0 {
-			time.Sleep(time.Millisecond * 500)
-			if n.mine && atomic.LoadUint32(&n.shutdown) == 0 {
+			time.Sleep(time.Second) // 1s pause between each judgement
+			if atomic.LoadUint32(&n.judge) != 0 && atomic.LoadUint32(&n.shutdown) == 0 {
+				// To evenly distribute work we link commentary records to up to 16 others.
 				minLinks := n.genesisParameters.RecordMinLinks
-				if minLinks == 0 {
-					minLinks = 1
+				if minLinks < 16 {
+					minLinks = 16
 				}
 				links, err := n.db.getLinks2(minLinks)
+
 				if err == nil && len(links) > 0 {
+					// TODO: actual judgement commentary is not implemented yet, so this just adds work for now!
 					rec, err := NewRecord(nil, links, nil, nil, nil, nil, TimeSec(), n.getBackgroundWorkFunction(), 0, n.owner)
 					if atomic.LoadUint32(&n.shutdown) != 0 {
 						if err == nil {
@@ -515,8 +519,6 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 							n.log[LogLevelWarning].Printf("WARNING: error creating record: %s", err.Error())
 						}
 					}
-				} else {
-					n.log[LogLevelWarning].Printf("WARNING: database error getting links or %d links not available", n.genesisParameters.RecordMinLinks)
 				}
 			}
 		}
@@ -674,8 +676,6 @@ func (n *Node) AddRecord(r *Record) error {
 		return err
 	}
 
-	n.log[LogLevelTrace].Printf("TRACE: new record: %x", rhash)
-
 	// Add record to database, aborting if this generates some kind of error.
 	err = n.db.putRecord(r)
 	if err != nil {
@@ -683,6 +683,19 @@ func (n *Node) AddRecord(r *Record) error {
 	}
 
 	return nil
+}
+
+// SetJudgeEnabled sets whether or not background CPU power is used to render judgements.
+// The default is false for new nodes. If true, nearly all background CPU is used
+// to publish records that add work to the DAG and render judgements on any records
+// that appear suspect. These can be included in query results to allow end users to
+// decide what records they trust in the event of a conflict.
+func (n *Node) SetJudgeEnabled(j bool) {
+	jj := uint32(0)
+	if j {
+		jj = 1
+	}
+	atomic.StoreUint32(&n.judge, jj)
 }
 
 // writeKnownPeers writes the current known peer list
@@ -722,6 +735,8 @@ func (n *Node) getAPIWorkFunction() (wf *Wharrgarblr) {
 }
 
 // getBackgroundWorkFunction gets (creating if needed) the work function for background work addition.
+// This is used in rendering judgements and yields a work function that leaves one spare core on
+// systems with more than one CPU core.
 func (n *Node) getBackgroundWorkFunction() (wf *Wharrgarblr) {
 	n.workFunctionLock.RLock()
 	if n.backgroundWorkFunction != nil {
@@ -786,7 +801,7 @@ func (p *peer) send(msg []byte) (err error) {
 		p.n.log[LogLevelTrace].Printf("TRACE: P2P >> %s %d unknown message type %d", p.address, len(msg)-1, msg[0])
 	}
 
-	for i := 0; i < 12; i++ {
+	for i := 0; i < 12; i++ { // 12 == GCM standard nonce size
 		p.outgoingNonce[i]++
 		if p.outgoingNonce[i] != 0 {
 			break

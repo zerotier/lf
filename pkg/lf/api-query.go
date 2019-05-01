@@ -142,17 +142,15 @@ func (m *APIQuery) execute(n *Node) (qr APIQueryResults, err *APIError) {
 		if err != nil {
 			return nil, &APIError{http.StatusInternalServerError, "error retrieving record data: " + err.Error()}
 		}
-		var v []byte
-		if len(m.MaskingKey) > 0 {
-			v, err = rec.GetValue(m.MaskingKey)
+		v, err := rec.GetValue(m.MaskingKey)
+		if err != nil {
+			v = nil
 		}
-		if err == nil { // skip records with wrong masking key or invalid compressed data
-			qr = append(qr, APIQueryResult{
-				Record: rec,
-				Value:  v,
-				Weight: fmt.Sprintf("%.16x%.16x", rptr[0], rptr[1]),
-			})
-		}
+		qr = append(qr, APIQueryResult{
+			Record: rec,
+			Value:  v,
+			Weight: fmt.Sprintf("%.16x%.16x", rptr[0], rptr[1]),
+		})
 	}
 
 	// Sort qr[] by selector ordinal.

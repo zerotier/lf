@@ -10,6 +10,7 @@ package main
 import (
 	"bytes"
 	secrand "crypto/rand"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io/ioutil"
@@ -38,6 +39,9 @@ var (
 		}
 		return "./lf"
 	}()
+
+	lfDefaultP2PPortStr  = strconv.FormatUint(uint64(lf.DefaultP2PPort), 10)
+	lfDefaultHTTPPortStr = strconv.FormatUint(uint64(lf.DefaultHTTPPort), 10)
 )
 
 func parseCLITime(t string) uint64 {
@@ -85,6 +89,7 @@ Usage: lf [-...] <command> [...]
 Global options:
   -path <path>                            Override default home path
   -url <url>                              Override configured URL(s)
+  -json                                   Full JSON output
 
 Commands:
   help                                    Display help about a command
@@ -93,7 +98,10 @@ Commands:
     core                                  Test core systems (default)
     wharrgarbl                            Test proof of work (long!)
     database                              Test DAG and database (long!)
-  node-start                              Start a full node
+  node-start [-...]                       Start a full node
+		-p2p <port>                           P2P TCP port (default: ` + lfDefaultP2PPortStr + `)
+		-http <port>                          HTTP TCP port (default: ` + lfDefaultHTTPPortStr + `)
+    -judge                                Use spare CPU to render judgements
   node-connect <ip> <port> [<key>]        Suggest P2P endpoint for node
   proxy-start                             Start a proxy
   status                                  Get status from remote node/proxy
@@ -123,15 +131,33 @@ Default home path is ` + lfDefaultPath + ` unless -path is used.
 }
 
 func doNodeStart(cfg *lf.ClientConfig, basePath string, urls []string, args []string) {
+	nodeOpts := flag.NewFlagSet("node-start", flag.ContinueOnError)
+	p2pPort := flag.Int("p2p", lf.DefaultP2PPort, "")
+	httpPort := flag.Int("http", lf.DefaultHTTPPort, "")
+	judge := flag.Bool("judge", false, "")
+	err := nodeOpts.Parse(args)
+	if err != nil {
+		printHelp("")
+		return
+	}
+	args = nodeOpts.Args()
+	if len(args) < 1 {
+		printHelp("")
+		return
+	}
+
 	osSignalChannel := make(chan os.Signal, 2)
 	signal.Notify(osSignalChannel, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGINT)
+
 	stdoutLogger := log.New(os.Stdout, "", log.LstdFlags)
-	node, err := lf.NewNode(basePath, lf.DefaultP2PPort, lf.DefaultHTTPPort, stdoutLogger, lf.LogLevelTrace)
+	node, err := lf.NewNode(basePath, *p2pPort, *httpPort, stdoutLogger, lf.LogLevelTrace)
 	if err != nil {
 		fmt.Printf("ERROR: unable to start node: %s\n", err.Error())
 		os.Exit(-1)
 		return
 	}
+	node.SetJudgeEnabled(*judge)
+
 	_ = <-osSignalChannel
 	node.Stop()
 }
@@ -186,7 +212,7 @@ func doStatus(cfg *lf.ClientConfig, basePath string, urls []string, args []strin
 	fmt.Println(lf.PrettyJSON(stat))
 }
 
-func doGet(cfg *lf.ClientConfig, basePath string, urls []string, args []string) {
+func doGet(cfg *lf.ClientConfig, basePath string, urls []string, args []string, jsonOutput bool) {
 	getOpts := flag.NewFlagSet("get", flag.ContinueOnError)
 	unmaskKey := getOpts.String("unmask", "", "")
 	tStart := getOpts.String("tstart", "", "")
@@ -234,14 +260,13 @@ func doGet(cfg *lf.ClientConfig, basePath string, urls []string, args []string) 
 	}
 
 	req := &lf.APIQuery{
-		Range:      ranges,
-		TimeRange:  tr,
-		MaskingKey: mk,
+		Range:     ranges,
+		TimeRange: tr,
 	}
 
-	var res lf.APIQueryResults
+	var results lf.APIQueryResults
 	for _, u := range urls {
-		res, err = req.Run(u)
+		results, err = req.Run(u)
 		if err == nil {
 			break
 		}
@@ -251,10 +276,29 @@ func doGet(cfg *lf.ClientConfig, basePath string, urls []string, args []string) 
 		fmt.Printf("ERROR: %s\n", err.Error())
 		return
 	}
-	fmt.Println(lf.PrettyJSON(res))
+
+	for _, res := range results {
+		res.Value, err = res.Record.GetValue(mk)
+		if err != nil {
+			res.Value = nil
+		}
+	}
+
+	if jsonOutput {
+		if len(results) > 0 {
+			fmt.Println(lf.PrettyJSON(results))
+		} else {
+			fmt.Println("[]")
+		}
+	} else {
+		for _, res := range results {
+			jstr, _ := json.Marshal(string(res.Value))
+			fmt.Println(string(jstr))
+		}
+	}
 }
 
-func doSet(cfg *lf.ClientConfig, basePath string, urls []string, args []string) {
+func doSet(cfg *lf.ClientConfig, basePath string, urls []string, args []string, jsonOutput bool) {
 	setOpts := flag.NewFlagSet("set", flag.ContinueOnError)
 	ownerName := setOpts.String("owner", "", "")
 	maskKey := setOpts.String("mask", "", "")
@@ -390,7 +434,11 @@ func doSet(cfg *lf.ClientConfig, basePath string, urls []string, args []string) 
 		fmt.Printf("ERROR: %s\n", err.Error())
 		return
 	}
-	fmt.Println(lf.PrettyJSON(rec))
+	if jsonOutput {
+		fmt.Println(lf.PrettyJSON(rec))
+	} else {
+		fmt.Printf("%x\n", rec.Hash())
+	}
 }
 
 func doOwner(cfg *lf.ClientConfig, basePath string, urls []string, args []string) {
@@ -494,6 +542,7 @@ func doOwner(cfg *lf.ClientConfig, basePath string, urls []string, args []string
 	}
 }
 
+// doMakeGenesis is currently code for making the default genesis records and isn't very useful to anyone else.
 func doMakeGenesis(cfg *lf.ClientConfig, basePath string, urls []string, args []string) {
 	var nwKey [32]byte
 	secrand.Read(nwKey[:])
@@ -531,7 +580,7 @@ func doMakeGenesis(cfg *lf.ClientConfig, basePath string, urls []string, args []
 	}
 
 	ioutil.WriteFile("genesis.lf", grData.Bytes(), 0644)
-	ioutil.WriteFile("genesis.go", []byte(fmt.Sprintf("/*\n%s\n*/\n%#v", lf.PrettyJSON(g), grData.Bytes())), 0644)
+	ioutil.WriteFile("genesis.go", []byte(fmt.Sprintf("/*\n%s\n*/\nvar SolGenesisRecords = %#v\n", lf.PrettyJSON(g), grData.Bytes())), 0644)
 	if len(g.AmendableFields) > 0 {
 		ioutil.WriteFile("genesis.secret", genesisOwner.PrivateBytes(), 0600)
 	}
@@ -543,6 +592,7 @@ func main() {
 	globalOpts := flag.NewFlagSet("global", flag.ContinueOnError)
 	basePath := globalOpts.String("path", lfDefaultPath, "")
 	urlOverride := globalOpts.String("url", "", "")
+	jsonOutput := globalOpts.Bool("json", false, "")
 	err := globalOpts.Parse(os.Args)
 	if err != nil {
 		printHelp("")
@@ -620,10 +670,10 @@ func main() {
 		doStatus(&cfg, *basePath, urls, cmdArgs)
 
 	case "set":
-		doSet(&cfg, *basePath, urls, cmdArgs)
+		doSet(&cfg, *basePath, urls, cmdArgs, *jsonOutput)
 
 	case "get":
-		doGet(&cfg, *basePath, urls, cmdArgs)
+		doGet(&cfg, *basePath, urls, cmdArgs, *jsonOutput)
 
 	case "owner":
 		doOwner(&cfg, *basePath, urls, cmdArgs)
