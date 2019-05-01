@@ -12,7 +12,6 @@ import (
 	"crypto/ecdsa"
 	"crypto/sha256"
 	"crypto/sha512"
-	"encoding/binary"
 	"io"
 	"math/big"
 )
@@ -74,13 +73,6 @@ func MakeSelectorKey(plainTextName, ordinal []byte) []byte {
 	addOrdinalToHash(&publicKeyHash, ordinal)
 
 	return publicKeyHash[:]
-}
-
-// MakeSelectorKeyIntOrdinal is a shortcut to make a selector key with a 64-bit integer ordinal.
-func MakeSelectorKeyIntOrdinal(plainTextName []byte, ordinal uint64) []byte {
-	var ob [8]byte
-	binary.BigEndian.PutUint64(ob[:], ordinal)
-	return MakeSelectorKey(plainTextName, ob[:])
 }
 
 // key returns the sortable and comparable database key for this selector.

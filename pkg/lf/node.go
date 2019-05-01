@@ -93,8 +93,6 @@ type peer struct {
 // knownPeer contains info about a peer we know about via another peer or the API
 type knownPeer struct {
 	APIPeer
-	LastLearn                  uint64
-	TotalLearn                 uint64
 	FirstConnect               uint64
 	LastFailedConnection       uint64
 	LastSuccessfulConnection   uint64
@@ -438,41 +436,19 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 				}
 			}
 
-			// Clean announced peer list of peers we learned about more than 10 minutes ago.
+			// Peroidically write peers.json
 			if (ticker % 120) == 0 {
-				now := TimeMs()
-				n.knownPeersLock.Lock()
-				if len(n.knownPeers) > 0 {
-					kpSize := 0
-					for i := 0; i < len(n.knownPeers); i++ {
-						if n.knownPeers[i].TotalSuccessfulConnections > 0 || (now-n.knownPeers[i].LastLearn) < 600000 {
-							if i != kpSize {
-								n.knownPeers[kpSize] = n.knownPeers[i]
-							}
-							kpSize++
-						}
-					}
-					if kpSize == 0 {
-						n.knownPeers = nil
-					} else {
-						n.knownPeers = n.knownPeers[0:kpSize]
-						sort.Slice(n.knownPeers, func(a, b int) bool {
-							return n.knownPeers[b].TotalSuccessfulConnections < n.knownPeers[a].TotalSuccessfulConnections
-						})
-					}
-				}
-				n.knownPeersLock.Unlock()
 				n.writeKnownPeers()
 			}
 
 			// If we don't have enough connections, try to make more to peers we've learned about.
 			if (ticker % 10) == 5 {
 				n.peersLock.RLock()
-				peerCount := len(n.peers)
+				connectionCount := len(n.peers)
 				n.peersLock.RUnlock()
 
-				if peerCount < p2pDesiredConnectionCount {
-					wantMore := p2pDesiredConnectionCount - peerCount
+				if connectionCount < p2pDesiredConnectionCount {
+					wantMore := p2pDesiredConnectionCount - connectionCount
 					n.knownPeersLock.Lock()
 					if len(n.knownPeers) > 0 {
 						visited := make(map[int]bool)
@@ -705,6 +681,9 @@ func (n *Node) writeKnownPeers() {
 	n.knownPeersLock.Lock()
 	defer n.knownPeersLock.Unlock()
 	if len(n.knownPeers) > 0 {
+		sort.Slice(n.knownPeers, func(a, b int) bool {
+			return n.knownPeers[b].TotalSuccessfulConnections < n.knownPeers[a].TotalSuccessfulConnections
+		})
 		ioutil.WriteFile(n.peersFilePath, []byte(PrettyJSON(&n.knownPeers)), 0644)
 	} else {
 		ioutil.WriteFile(n.peersFilePath, []byte("[]"), 0644)
@@ -857,8 +836,6 @@ func (n *Node) updateKnownPeersWithConnectResult(ip net.IP, port int, publicKey 
 				Port:      port,
 				PublicKey: base64.RawURLEncoding.EncodeToString(publicKey),
 			},
-			LastLearn:                  now,
-			TotalLearn:                 1,
 			FirstConnect:               now,
 			LastSuccessfulConnection:   now,
 			TotalSuccessfulConnections: 1,
@@ -1169,24 +1146,22 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inb
 			if len(msg) > 0 {
 				var peerMsg APIPeer
 				if json.Unmarshal(msg, &peerMsg) == nil {
-					dupe := false
-					n.knownPeersLock.Lock()
-					for _, kp := range n.knownPeers {
-						if bytes.Equal(kp.PublicKeyBytes(), peerMsg.PublicKeyBytes()) && kp.IP.Equal(peerMsg.IP) && kp.Port == peerMsg.Port {
-							kp.LastLearn = TimeMs()
-							kp.TotalLearn++
-							dupe = true
-							break
+					if len(peerMsg.PublicKey) > 0 {
+						var tmp net.TCPAddr
+						tmp.IP = peerMsg.IP
+						tmp.Port = peerMsg.Port
+						n.peersLock.RLock()
+						_, alreadyConnected := n.peers[tmp.String()]
+						connectionCount := len(n.peers)
+						n.peersLock.RUnlock()
+						n.connectionsInStartupLock.Lock()
+						connectionCount += len(n.connectionsInStartup) // include this to prevent flooding attacks
+						n.connectionsInStartupLock.Unlock()
+						if !alreadyConnected && connectionCount < p2pDesiredConnectionCount {
+							n.Connect(peerMsg.IP, peerMsg.Port, peerMsg.PublicKeyBytes())
+							time.Sleep(time.Millisecond * 50) // also helps limit flooding, giving connects time to update connections in startup map
 						}
 					}
-					if !dupe {
-						n.knownPeers = append(n.knownPeers, knownPeer{
-							APIPeer:    peerMsg,
-							LastLearn:  TimeMs(),
-							TotalLearn: 1,
-						})
-					}
-					n.knownPeersLock.Unlock()
 				}
 			}
 

@@ -386,7 +386,7 @@ func doSet(cfg *lf.ClientConfig, basePath string, urls []string, args []string, 
 	}
 
 	// If remote delegated record creation is preferred, try that first.
-	var lazies []string
+	var submitDirectly []string
 	if *remote || *tryRemote {
 		req := lf.APINew{
 			Selectors:       selectors,
@@ -399,20 +399,20 @@ func doSet(cfg *lf.ClientConfig, basePath string, urls []string, args []string, 
 		for _, u := range urls {
 			rec, err = req.Run(u)
 			if err == nil {
-				lazies = nil
+				submitDirectly = nil
 				break
 			}
 			apiErr, isAPIErr := err.(lf.APIError)
 			if isAPIErr && apiErr.Code == lf.APIErrorLazy {
-				lazies = append(lazies, u)
+				submitDirectly = append(submitDirectly, u)
 			}
 		}
 	} else {
-		lazies = urls
+		submitDirectly = urls
 	}
 
 	// If not delegating or trial remote delgation failed, make record locally.
-	if len(lazies) > 0 && !*remote {
+	if len(submitDirectly) > 0 && !*remote {
 		lf.WharrgarblInitTable(path.Join(basePath, "wharrgarbl-table.bin"))
 		var o *lf.Owner
 		o, err = owner.GetOwner()
@@ -420,7 +420,7 @@ func doSet(cfg *lf.ClientConfig, basePath string, urls []string, args []string, 
 			rec, err = lf.NewRecord(value, links, mk, plainTextSelectorNames, selectorOrdinals, nil, ts, lf.NewWharrgarblr(lf.RecordDefaultWharrgarblMemory, 0), o)
 			if err == nil {
 				rb := rec.Bytes()
-				for _, u := range lazies {
+				for _, u := range submitDirectly {
 					err = lf.APIPostRecord(u, rb)
 					if err == nil {
 						break
@@ -434,6 +434,7 @@ func doSet(cfg *lf.ClientConfig, basePath string, urls []string, args []string, 
 		fmt.Printf("ERROR: %s\n", err.Error())
 		return
 	}
+
 	if jsonOutput {
 		fmt.Println(lf.PrettyJSON(rec))
 	} else {

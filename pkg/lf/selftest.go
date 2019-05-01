@@ -30,6 +30,15 @@ import (
 	"golang.org/x/crypto/sha3"
 )
 
+func sliceContainsUInt(s []uint, e uint) bool {
+	for _, a := range s {
+		if a == e {
+			return true
+		}
+	}
+	return false
+}
+
 //////////////////////////////////////////////////////////////////////////////
 
 // TestCore tests various core functions and helpers.

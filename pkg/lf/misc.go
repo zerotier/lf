@@ -50,6 +50,7 @@ func (cr *countingWriter) Write(b []byte) (n int, err error) {
 	return
 }
 
+// writeUVarint writes a varint to a writer because this is missing from the 'binary' package for some reason.
 func writeUVarint(out io.Writer, v uint64) (int, error) {
 	var tmp [10]byte
 	return out.Write(tmp[0:binary.PutUvarint(tmp[:], v)])
@@ -75,15 +76,6 @@ func integerSqrtRounded(op uint32) (res uint32) {
 		res++
 	}
 	return
-}
-
-func sliceContainsUInt(s []uint, e uint) bool {
-	for _, a := range s {
-		if a == e {
-			return true
-		}
-	}
-	return false
 }
 
 // ipIsGlobalPublicUnicast returns true if IP is global unicast and is not a private (10.x.x.x etc.) range.

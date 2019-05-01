@@ -14,7 +14,6 @@ import (
 	"math/big"
 
 	"github.com/codahale/rfc6979"
-
 	"golang.org/x/crypto/sha3"
 )
 
