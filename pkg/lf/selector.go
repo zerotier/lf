@@ -22,10 +22,12 @@ const SelectorTypeBP160 byte = 0 // valid range: 0..3
 
 // SelectorMaxOrdinalSize is the maximum length of an ordinal.
 // Functions will take larger ordinals but bytes to the left of this size are ignored.
+// This is a protocol constant and cannot be changed.
 const SelectorMaxOrdinalSize = 31
 
 // SelectorKeySize is the size of the sortable ordinal-modified hash used for DB queries and range queries.
 // It's computed by adding the ordinal to the SHA512 hash of the deterministic selector public key.
+// This is a protocol constant and cannot be changed.
 const SelectorKeySize = 64
 
 // Selector is a non-forgeable range queryable identifier for records.
@@ -111,8 +113,7 @@ func (s *Selector) marshalTo(out io.Writer) error {
 	// This packs the ordinal length, selector type, and the last byte of the claim signature
 	// into the first byte. The last byte of the claim signature holds either 0 or 1 to select
 	// which key recovery index should be used. This saves a few bytes per selector which can
-	// add up with records with multiple selectors. Note that max ordinal length is 31, which
-	// is five bits.
+	// add up with records with multiple selectors.
 	if _, err := out.Write([]byte{(byte(len(s.Ordinal)) << 3) | (SelectorTypeBP160 << 1) | s.Claim[40]}); err != nil {
 		return err
 	}
@@ -141,14 +142,14 @@ func (s *Selector) bytes() []byte {
 }
 
 func (s *Selector) unmarshalFrom(in io.Reader) error {
-	var typeOrdinalLenClaimSignatureRecoverIndex [1]byte
-	if _, err := io.ReadFull(in, typeOrdinalLenClaimSignatureRecoverIndex[:]); err != nil {
+	var typeOrdinalLenClaimSignatureRecoveryIndex [1]byte
+	if _, err := io.ReadFull(in, typeOrdinalLenClaimSignatureRecoveryIndex[:]); err != nil {
 		return err
 	}
-	if ((typeOrdinalLenClaimSignatureRecoverIndex[0] >> 1) & 3) != SelectorTypeBP160 {
+	if ((typeOrdinalLenClaimSignatureRecoveryIndex[0] >> 1) & 3) != SelectorTypeBP160 {
 		return ErrInvalidObject
 	}
-	ordSize := uint(typeOrdinalLenClaimSignatureRecoverIndex[0] >> 3)
+	ordSize := uint(typeOrdinalLenClaimSignatureRecoveryIndex[0] >> 3)
 	if ordSize > 0 {
 		s.Ordinal = make([]byte, ordSize)
 		if _, err := io.ReadFull(in, s.Ordinal); err != nil {
@@ -160,7 +161,7 @@ func (s *Selector) unmarshalFrom(in io.Reader) error {
 	if _, err := io.ReadFull(in, s.Claim[0:40]); err != nil {
 		return err
 	}
-	s.Claim[40] = typeOrdinalLenClaimSignatureRecoverIndex[0] & 1
+	s.Claim[40] = typeOrdinalLenClaimSignatureRecoveryIndex[0] & 1
 	return nil
 }
 
@@ -178,14 +179,15 @@ func (s *Selector) set(plainTextName, ord, hash []byte) {
 	// Generate an ECDSA key pair deterministically using the plain text name. Note that
 	// this depends on the ECDSA key generation algorithm. Go currently implements the
 	// standard [NSA] A.2.1 algorithm. As long as this doesn't change we're fine. If it
-	// does we'll have to copypasta the original [NSA] A.2.1 code. This is checked by
-	// testing known selectors in selftest.go.
+	// does we'll have to copypasta the original [NSA] A.2.1 code.
 	var prng seededPrng
 	prng.seed(plainTextName)
 	priv, err := ecdsa.GenerateKey(ECCCurveBrainpoolP160T1, &prng)
 
 	// The hash we actually sign includes the ordinal so that ordinals, while publicly
-	// visible, can't be forged without knowledge of the plain text name.
+	// visible, can't be forged without knowledge of the plain text name. Note that the
+	// claim is based on a signature computed from the plain text name, so that is
+	// a priori included too.
 	sigHash := sha256.New()
 	sigHash.Write(hash)
 	sigHash.Write(ord)
