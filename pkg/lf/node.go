@@ -502,16 +502,18 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 		for atomic.LoadUint32(&n.shutdown) == 0 {
 			time.Sleep(time.Second) // 1s pause between each judgement
 			if atomic.LoadUint32(&n.judge) != 0 && atomic.LoadUint32(&n.shutdown) == 0 {
-				// To evenly distribute work we link commentary records to up to 16 others.
+				// To evenly distribute work we link commentary records to up to 32 others.
+				// This also makes these records big, but that's okay because we want to add
+				// a lot of work too.
 				minLinks := n.genesisParameters.RecordMinLinks
-				if minLinks < 16 {
-					minLinks = 16
+				if minLinks < 32 {
+					minLinks = 32
 				}
 				links, err := n.db.getLinks2(minLinks)
 
 				if err == nil && len(links) > 0 {
 					// TODO: actual judgement commentary is not implemented yet, so this just adds work for now!
-					rec, err := NewRecord(nil, links, nil, nil, nil, nil, TimeSec(), n.getBackgroundWorkFunction(), 0, n.owner)
+					rec, err := NewRecord(nil, links, nil, nil, nil, nil, TimeSec(), n.getBackgroundWorkFunction(), n.owner)
 					if atomic.LoadUint32(&n.shutdown) != 0 {
 						if err == nil {
 							n.AddRecord(rec)

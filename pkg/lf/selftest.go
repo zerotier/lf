@@ -225,7 +225,7 @@ func TestCore(out io.Writer) bool {
 			return false
 		}
 		testVal := []byte("Supercalifragilisticexpealidocious!")
-		rec, err := NewRecord(testVal, testLinks, []byte("test"), [][]byte{[]byte("test0")}, [][]byte{[]byte("0000")}, nil, uint64(k), nil, 0, owner)
+		rec, err := NewRecord(testVal, testLinks, []byte("test"), [][]byte{[]byte("test0")}, [][]byte{[]byte("0000")}, nil, uint64(k), nil, owner)
 		if err != nil {
 			fmt.Fprintf(out, "FAILED (create record): %s\n", err.Error())
 			return false
@@ -270,7 +270,7 @@ func TestCore(out io.Writer) bool {
 		return false
 	}
 	wg := NewWharrgarblr(RecordDefaultWharrgarblMemory, 0)
-	rec, err := NewRecord(testValue[:], testLinks, []byte("test"), [][]byte{[]byte("full record test")}, [][]byte{[]byte("0000")}, nil, TimeSec(), wg, 0, owner)
+	rec, err := NewRecord(testValue[:], testLinks, []byte("test"), [][]byte{[]byte("full record test")}, [][]byte{[]byte("0000")}, nil, TimeSec(), wg, owner)
 	if err != nil {
 		fmt.Fprintf(out, "FAILED (new record creation): %s\n", err.Error())
 		return false
@@ -420,7 +420,6 @@ func TestDatabase(testBasePath string, out io.Writer) bool {
 			nil,
 			ts,
 			nil,
-			0,
 			owners[ownerIdx])
 		if err != nil {
 			fmt.Fprintf(out, "FAILED: %s\n", err.Error())

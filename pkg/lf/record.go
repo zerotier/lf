@@ -606,12 +606,9 @@ func NewRecordStart(value []byte, links [][32]byte, maskingKey []byte, plainText
 
 // NewRecordDoWork is a convenience method for doing the work to add to a record.
 // This can obviously be a time and memory intensive function.
-func NewRecordDoWork(workHash []byte, workBillableBytes uint, workFunction *Wharrgarblr, workCostOverride uint32) (work []byte, err error) {
+func NewRecordDoWork(workHash []byte, workBillableBytes uint, workFunction *Wharrgarblr) (work []byte, err error) {
 	if workFunction != nil {
-		if workCostOverride == 0 {
-			workCostOverride = recordWharrgarblCost(workBillableBytes)
-		}
-		w, iter := workFunction.Compute(workHash, workCostOverride)
+		w, iter := workFunction.Compute(workHash, recordWharrgarblCost(workBillableBytes))
 		if iter == 0 {
 			err = ErrWharrgarblFailed
 			return
@@ -644,14 +641,14 @@ func NewRecordComplete(incompleteRecord *Record, signingHash []byte, owner *Owne
 
 // NewRecord is a shortcut to running all incremental record creation functions.
 // Obviously this is time and memory intensive due to proof of work required to "pay" for this record.
-func NewRecord(value []byte, links [][32]byte, maskingKey []byte, plainTextSelectorNames [][]byte, selectorOrdinals [][]byte, certificateRecordHash []byte, ts uint64, workFunction *Wharrgarblr, workCostOverride uint32, owner *Owner) (r *Record, err error) {
+func NewRecord(value []byte, links [][32]byte, maskingKey []byte, plainTextSelectorNames [][]byte, selectorOrdinals [][]byte, certificateRecordHash []byte, ts uint64, workFunction *Wharrgarblr, owner *Owner) (r *Record, err error) {
 	var wh, sh [32]byte
 	var wb uint
 	r, wh, wb, err = NewRecordStart(value, links, maskingKey, plainTextSelectorNames, selectorOrdinals, owner.Bytes(), certificateRecordHash, ts)
 	if err != nil {
 		return
 	}
-	w, err := NewRecordDoWork(wh[:], wb, workFunction, workCostOverride)
+	w, err := NewRecordDoWork(wh[:], wb, workFunction)
 	if err != nil {
 		return
 	}

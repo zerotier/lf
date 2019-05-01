@@ -417,7 +417,7 @@ func doSet(cfg *lf.ClientConfig, basePath string, urls []string, args []string, 
 		var o *lf.Owner
 		o, err = owner.GetOwner()
 		if err == nil {
-			rec, err = lf.NewRecord(value, links, mk, plainTextSelectorNames, selectorOrdinals, nil, ts, lf.NewWharrgarblr(lf.RecordDefaultWharrgarblMemory, 0), 0, o)
+			rec, err = lf.NewRecord(value, links, mk, plainTextSelectorNames, selectorOrdinals, nil, ts, lf.NewWharrgarblr(lf.RecordDefaultWharrgarblMemory, 0), o)
 			if err == nil {
 				rb := rec.Bytes()
 				for _, u := range lazies {
