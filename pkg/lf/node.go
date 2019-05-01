@@ -99,8 +99,8 @@ type knownPeer struct {
 	FirstConnect               uint64
 	LastFailedConnection       uint64
 	LastSuccessfulConnection   uint64
-	TotalFailedConnections     uint64
-	TotalSuccessfulConnections uint64
+	TotalFailedConnections     int64
+	TotalSuccessfulConnections int64
 }
 
 // Node is an instance of a full LF node supporting both P2P and HTTP access.
@@ -118,7 +118,7 @@ type Node struct {
 	genesisParameters GenesisParameters // Genesis configuration for this node's network
 	genesisOwner      []byte            // Owner of genesis record(s)
 
-	knownPeers               []knownPeer           // Peers we know about
+	knownPeers               []*knownPeer          // Peers we know about
 	knownPeersLock           sync.Mutex            //
 	connectionsInStartup     map[*net.TCPConn]bool // Connections in startup state but not yet in peers[]
 	connectionsInStartupLock sync.Mutex            //
@@ -487,7 +487,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 						for k := 0; k < wantMore; k++ {
 							idx := rand.Int() % len(n.knownPeers)
 							if _, have := visited[idx]; !have {
-								kp := &n.knownPeers[idx]
+								kp := n.knownPeers[idx]
 								n.Connect(kp.IP, kp.Port, kp.PublicKeyBytes())
 								visited[idx] = true
 							}
@@ -644,6 +644,7 @@ func (n *Node) Connect(ip net.IP, port int, publicKey []byte) {
 				go p2pConnectionHandler(n, c, publicKey, false)
 			} else {
 				n.log[LogLevelNormal].Printf("P2P connection to %s failed: %s", ta.String(), err.Error())
+				n.updateKnownPeersWithConnectResult(ip, port, publicKey, false)
 			}
 		} else if c != nil {
 			c.Close()
@@ -854,11 +855,6 @@ func (n *Node) updateKnownPeersWithConnectResult(ip net.IP, port int, publicKey 
 	defer n.knownPeersLock.Unlock()
 	now := TimeMs()
 
-	ip4 := ip.To4()
-	if len(ip4) == 4 {
-		ip = ip4
-	}
-
 	// Update success or failure info for known peer record if we already have one.
 	for _, kp := range n.knownPeers {
 		if kp.IP.Equal(ip) && kp.Port == port && bytes.Equal(kp.PublicKeyBytes(), publicKey) {
@@ -878,7 +874,7 @@ func (n *Node) updateKnownPeersWithConnectResult(ip net.IP, port int, publicKey 
 
 	// If there's no known peer record, create only on success.
 	if success {
-		n.knownPeers = append(n.knownPeers, knownPeer{
+		n.knownPeers = append(n.knownPeers, &knownPeer{
 			APIPeer: APIPeer{
 				IP:        ip,
 				Port:      port,
