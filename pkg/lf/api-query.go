@@ -39,11 +39,14 @@ type APIQuery struct {
 
 // APIQueryResult (response, part of APIQueryResults) is a single query result.
 type APIQueryResult struct {
-	Record          *Record   `json:",omitempty"` // Record itself.
-	Value           Blob      `json:",omitempty"` // Unmasked value if masking key was included
-	UnmaskingFailed *bool     `json:",omitempty"` // If true, unmasking failed due to invalid masking key in query (or invalid compressed data in valid)
-	Weight          string    `json:",omitempty"` // Record weight as a 128-bit hex value
-	Conflicts       []*Record `json:",omitempty"` // Less weighted or otherwise less trusted records with conflicting IDs, if any
+	ID              [32]byte         ``                  // Record ID (its unique selector set)
+	Hash            [32]byte         ``                  // Hash of this specific unique record
+	Size            int              ``                  // Size of this record in bytes
+	Record          *Record          `json:",omitempty"` // Record itself.
+	Value           Blob             `json:",omitempty"` // Unmasked value if masking key was included
+	UnmaskingFailed *bool            `json:",omitempty"` // If true, unmasking failed due to invalid masking key in query (or invalid compressed data in valid)
+	Weight          string           `json:",omitempty"` // Record weight as a 128-bit hex value
+	Conflicts       []APIQueryResult `json:",omitempty"` // Less weighted/trusted records with this same ID (never nested more than 1 deep)
 }
 
 // APIQueryResults is a list of results to an API query.
@@ -68,6 +71,10 @@ func (m *APIQuery) Run(url string) (APIQueryResults, error) {
 		return nil, err
 	}
 	return qr, nil
+}
+
+type apiQueryResultTmp struct {
+	weightL, weightH, doff, dlen uint64 // don't reorder these without checking execute() below
 }
 
 func (m *APIQuery) execute(n *Node) (qr APIQueryResults, err *APIError) {
@@ -111,56 +118,75 @@ func (m *APIQuery) execute(n *Node) (qr APIQueryResults, err *APIError) {
 		tsMax = int64(m.TimeRange[1])
 	}
 
-	// Iterate through results and store them in a temporary map by ID (hash of selector keys). This
-	// lets us find the highest weighted record for each combination of selectors without wasting the
-	// time to grab whole records that we don't ultimately return. Note that the C side of this code
-	// handles finding the latest record (max timestamp) by owner/ID combo.
-	bestByID := make(map[[32]byte]*[4]uint64)
+	// Get all results grouped by ID (all selectors)
+	byID := make(map[[32]byte]*[]apiQueryResultTmp)
 	n.db.query(tsMin, tsMax, selectorRanges, func(ts, weightL, weightH, doff, dlen uint64, id *[32]byte, owner []byte) bool {
-		rptr := bestByID[*id]
+		rptr := byID[*id]
 		if rptr == nil {
-			bestByID[*id] = &([4]uint64{weightH, weightL, doff, dlen})
-		} else {
-			if rptr[0] > weightH {
-				return true
-			} else if rptr[0] == weightH {
-				if rptr[1] > weightL {
-					return true
-				}
-			}
-			rptr[0] = weightH
-			rptr[1] = weightL
-			rptr[2] = doff
-			rptr[3] = dlen
+			tmp := make([]apiQueryResultTmp, 0, 4)
+			rptr = &tmp
+			byID[*id] = rptr
 		}
+		*rptr = append(*rptr, apiQueryResultTmp{weightL, weightH, doff, dlen})
 		return true
 	})
 
 	// Actually grab the records and populate the qr[] slice.
-	for _, rptr := range bestByID {
-		rdata, err := n.db.getDataByOffset(rptr[2], uint(rptr[3]), nil)
-		if err != nil {
-			return nil, &APIError{http.StatusInternalServerError, "error retrieving record data: " + err.Error()}
-		}
-		rec, err := NewRecordFromBytes(rdata)
-		if err != nil {
-			return nil, &APIError{http.StatusInternalServerError, "error retrieving record data: " + err.Error()}
-		}
-		var mkinv *bool
-		v, err := rec.GetValue(m.MaskingKey)
-		if err != nil {
-			v = nil
-			mkinv = &troo
-		}
-		qr = append(qr, APIQueryResult{
-			Record:          rec,
-			Value:           v,
-			UnmaskingFailed: mkinv,
-			Weight:          fmt.Sprintf("%.16x%.16x", rptr[0], rptr[1]),
+	for id, rptr := range byID {
+		// Sort these results under this ID in descending order of weight/trust.
+		sort.Slice(*rptr, func(b, a int) bool {
+			x, y := &(*rptr)[a], &(*rptr)[b]
+			if x.weightH < y.weightH {
+				return true
+			} else if x.weightH == y.weightH {
+				return x.weightL < y.weightL
+			}
+			return false
 		})
+
+		// Collate results and add to query result
+		for rn := 0; rn < len(*rptr); rn++ {
+			result := &(*rptr)[rn]
+			rdata, err := n.db.getDataByOffset(result.doff, uint(result.dlen), nil)
+			if err != nil {
+				return nil, &APIError{http.StatusInternalServerError, "error retrieving record data: " + err.Error()}
+			}
+			rec, err := NewRecordFromBytes(rdata)
+			if err != nil {
+				return nil, &APIError{http.StatusInternalServerError, "error retrieving record data: " + err.Error()}
+			}
+			var mkinv *bool
+			v, err := rec.GetValue(m.MaskingKey)
+			if err != nil {
+				v = nil
+				mkinv = &troo
+			}
+			wstr := fmt.Sprintf("%.16x%.16x", result.weightH, result.weightL)
+			if rn == 0 {
+				qr = append(qr, APIQueryResult{
+					ID:              id,
+					Hash:            rec.Hash(),
+					Size:            int(result.dlen),
+					Record:          rec,
+					Value:           v,
+					UnmaskingFailed: mkinv,
+					Weight:          wstr,
+				})
+			} else {
+				qr[len(qr)-1].Conflicts = append(qr[len(qr)-1].Conflicts, APIQueryResult{
+					ID:              id,
+					Hash:            rec.Hash(),
+					Size:            int(result.dlen),
+					Record:          rec,
+					Value:           v,
+					UnmaskingFailed: mkinv,
+					Weight:          wstr,
+				})
+			}
+		}
 	}
 
-	// Sort qr[] by selector ordinals.
+	// Sort root qr[] by selector ordinals.
 	sort.Slice(qr, func(a, b int) bool {
 		sa := qr[a].Record.Selectors
 		sb := qr[b].Record.Selectors

@@ -1046,7 +1046,7 @@ struct ZTLF_QueryResults *ZTLF_DB_Query(struct ZTLF_DB *db,const int64_t tsMin,c
 		}
 	}
 
-	/* Get and collate final results. */
+	/* Get final results */
 	r->count = -1; /* gets incremented on very first iteration */
 	sqlite3_reset(db->sQueryGetResults);
 	sqlite3_bind_int(db->sQueryGetResults,1,(int)selCount);

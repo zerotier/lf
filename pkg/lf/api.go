@@ -39,7 +39,7 @@ var apiVersionStr = strconv.FormatInt(int64(APIVersion), 10)
 const APIMaxResponseSize = 4194304
 
 // APIMaxLinks is the maximum number of links that will be returned by /links.
-const APIMaxLinks = 2048
+const APIMaxLinks = RecordMaxLinks
 
 // APIError (response) indicates an error and is returned with non-200 responses.
 type APIError struct {
