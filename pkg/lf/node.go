@@ -212,7 +212,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 				}
 				n.peersLock.RUnlock()
 
-				n.log[LogLevelVerbose].Printf("record %x fully synchronized, announced to %d peers", *hash, announcementCount)
+				n.log[LogLevelVerbose].Printf("record %x links satisfied, announced to %d peers", *hash, announcementCount)
 			}()
 		}
 	})
@@ -1082,7 +1082,10 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inb
 	n.peersLock.Lock()
 	for _, pa := range n.peers {
 		if bytes.Equal(pa.remotePublicKey, rpk) {
-			n.log[LogLevelNormal].Printf("P2P connection to %s closed: closing redundant link (peer has same link key).", peerAddressStr)
+			if !inbound {
+				n.updateKnownPeersWithConnectResult(tcpAddr.IP, tcpAddr.Port, rpk, true) // we can still learn/record this as a success
+			}
+			n.log[LogLevelNormal].Printf("P2P connection to %s closed: closing redundant link to already connected peer", peerAddressStr)
 			return
 		}
 
