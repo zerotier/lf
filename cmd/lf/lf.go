@@ -40,15 +40,28 @@ var (
 		return "./lf"
 	}()
 
+	troo = true
+
 	lfDefaultP2PPortStr  = strconv.FormatUint(uint64(lf.DefaultP2PPort), 10)
 	lfDefaultHTTPPortStr = strconv.FormatUint(uint64(lf.DefaultHTTPPort), 10)
+
+	logger = log.New(os.Stderr, "", 0)
 )
 
 func parseCLITime(t string) uint64 {
 	if len(t) > 0 {
-		timeInt, err := strconv.ParseUint(t, 10, 64)
-		if timeInt > 0 && err == nil {
-			return timeInt
+		looksLikeNumber := true
+		for _, c := range t {
+			if c < 48 || c > 57 {
+				looksLikeNumber = false
+				break
+			}
+		}
+		if looksLikeNumber {
+			timeInt, err := strconv.ParseUint(t, 10, 64)
+			if timeInt > 0 && err == nil {
+				return timeInt
+			}
 		}
 		tp, err := time.Parse(time.RFC1123, t)
 		if err == nil {
@@ -79,7 +92,28 @@ func tokenizeStringWithEsc(s string, sep, escape rune) (tokens []string) {
 	return
 }
 
+func escapeOrdinal(ord []byte) string {
+	if len(ord) == 0 {
+		return ""
+	}
+	jstr, _ := json.Marshal(string(ord))
+	if len(jstr) < 2 {
+		return ""
+	}
+	var sb strings.Builder
+	for _, c := range string(jstr[1 : len(jstr)-1]) {
+		if c == '#' || c == '\\' {
+			sb.WriteRune('\\')
+		}
+		sb.WriteRune(c)
+	}
+	return sb.String()
+}
+
 func printHelp(cmd string) {
+	// NOTE: When editing make sure your editor doesn't indent help with
+	// tabs, otherwise it will format funny on a console. Also try to keep
+	// this 80 column just for legacy/standard reasons.
 	fmt.Print(`LF Global Key/Value Store ` + lf.VersionStr + `
 (c)2018-2019 ZeroTier, Inc.  https://www.zerotier.com/
 MIT License
@@ -88,31 +122,34 @@ Usage: lf [-...] <command> [...]
 
 Global options:
   -path <path>                            Override default home path
-  -url <url>                              Override configured URL(s)
-  -json                                   Full JSON output
+  -json                                   Raw JSON output where applicable
 
 Commands:
-  help                                    Display help about a command
+  help                                    Show this
   version                                 Display version information
   selftest [test name]
     core                                  Test core systems (default)
     wharrgarbl                            Test proof of work (long!)
     database                              Test DAG and database (long!)
-  node-start [-...]                       Start a full node
+  node-start [-...]                       Start a full LF node
     -p2p <port>                           P2P TCP port (default: ` + lfDefaultP2PPortStr + `)
     -http <port>                          HTTP TCP port (default: ` + lfDefaultHTTPPortStr + `)
     -commentary                           Use spare CPU to publish commentary
-  node-connect <ip> <port> [<key>]        Suggest P2P endpoint for node
+    -loglevel <normal|verbose|trace>      Node log level
+    -logstderr                            Log to stderr, not HOME/node.log
+  node-connect <ip> <port> [<key>]        Tell node to try a P2P endpoint
   proxy-start                             Start a proxy
   status                                  Get status from remote node/proxy
   set [-...] <name[#ord]> [...] <value>   Set a value in the data store
     -file                                 Value is a file path not a literal
     -mask <key>                           Encrypt value using masking key
     -owner <owner>                        Use this owner instead of default
-    -remote                               Remote encrypt/PoW (reveals keys)
-    -tryremote                            Try remote encrypt/PoW first
+    -url <url[,url,...]>                  Override configured node/proxy URLs
+    -remote                               Remote encrypt/PoW (shares mask key)
+    -tryremote                            Try remote encrypt/PoW, then local
   get [-...] <name[#start[#end]]> [...]   Find by selector (optional range)
-    -unmask <key>                         Decrypt value(s) with masking key
+    -mask <key>                           Decrypt value(s) with masking key
+    -url <url[,url,...]>                  Override configured node/proxy URLs
     -tstart <time>                        Constrain to after this time
     -tend <time>                          Constrain to before this time
   owner <operation> [...]
@@ -122,19 +159,42 @@ Commands:
     delete <name>                         Delete an owner (PERMANENT)
     rename <old name> <new name>          Rename an owner
 
-Time can be specified in either RFC1123 format or as numeric Unix time.
-RFC1123 format looks like "Mon Jan 2 15:04:05 PST 2018".
+Global options must precede commands, while command options must come after
+the command name.
 
-Default home path is ` + lfDefaultPath + ` unless -path is used.
+Selector names and ordinals are decoded using the same string escaping rules
+as JSON strings (without the enclosing quotes). In addition a # sign can be
+included in a selector name or ordinal by double-escaping it: '\\#'. The
+double backslash is required to first escape the backslash for the JSON string
+format decoder. Note that in shells something like '\\\\#' may be needed.
+
+Time can be specified in either RFC1123 format or as numeric Unix time.
+RFC1123 format looks like "` + time.Now().Format(time.RFC1123) + `" while
+Unix time is a decimal number indicating seconds since the Unix epoch.
+
+Default home path is ` + lfDefaultPath + ` unless overriden with -path.
 
 `)
 }
 
-func doNodeStart(cfg *lf.ClientConfig, basePath string, urls []string, args []string) {
+func doNodeStart(cfg *lf.ClientConfig, basePath string, args []string) {
+	var logFile *os.File
+	defer func() {
+		e := recover()
+		if e != nil {
+			log.Printf("FATAL: caught unexpected panic in doNodeStart(): %s", e)
+		}
+		if logFile != nil {
+			logFile.Close()
+		}
+	}()
+
 	nodeOpts := flag.NewFlagSet("node-start", flag.ContinueOnError)
 	p2pPort := nodeOpts.Int("p2p", lf.DefaultP2PPort, "")
 	httpPort := nodeOpts.Int("http", lf.DefaultHTTPPort, "")
 	commentary := nodeOpts.Bool("commentary", false, "")
+	logLevel := nodeOpts.String("loglevel", "verbose", "")
+	logToStderr := nodeOpts.Bool("logstderr", false, "")
 	nodeOpts.SetOutput(ioutil.Discard)
 	err := nodeOpts.Parse(args)
 	if err != nil {
@@ -147,23 +207,52 @@ func doNodeStart(cfg *lf.ClientConfig, basePath string, urls []string, args []st
 		return
 	}
 
-	osSignalChannel := make(chan os.Signal, 2)
-	signal.Notify(osSignalChannel, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGINT)
+	ll := lf.LogLevelVerbose
+	switch *logLevel {
+	case "normal":
+		ll = lf.LogLevelNormal
+	case "verbose":
+		ll = lf.LogLevelVerbose
+	case "trace":
+		ll = lf.LogLevelTrace
+	default:
+		printHelp("")
+		return
+	}
 
-	stdoutLogger := log.New(os.Stdout, "", log.LstdFlags)
-	node, err := lf.NewNode(basePath, *p2pPort, *httpPort, stdoutLogger, lf.LogLevelTrace)
+	if *logToStderr {
+		logger = log.New(os.Stderr, "", log.LstdFlags)
+	} else {
+		logFile, err = os.OpenFile(path.Join(basePath, "node.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+		if err != nil {
+			log.Printf("FATAL: cannot open node.log: %s\n", err.Error())
+			return
+		}
+		logger = log.New(logFile, "", log.LstdFlags)
+	}
+
+	osSignalChannel := make(chan os.Signal, 2)
+	signal.Notify(osSignalChannel, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGINT, syscall.SIGBUS)
+	signal.Ignore(syscall.SIGUSR1, syscall.SIGUSR2)
+
+	node, err := lf.NewNode(basePath, *p2pPort, *httpPort, logger, ll)
 	if err != nil {
-		fmt.Printf("ERROR: unable to start node: %s\n", err.Error())
-		os.Exit(-1)
+		log.Printf("FATAL: unable to start node: %s\n", err.Error())
 		return
 	}
 	node.SetCommentaryEnabled(*commentary)
 
-	_ = <-osSignalChannel
+	sig := <-osSignalChannel
+	if sig == syscall.SIGBUS {
+		// SIGBUS can happen if mmap'd I/O fails, such as if we are running over a network
+		// drive (not recommended for this reason) or a path is forcibly unmounted. The mmap
+		// code is in C but this should in theory get caught here.
+		log.Println("FATAL: received SIGBUS, shutting down (likely I/O problem, database may be corrupt!)")
+	}
 	node.Stop()
 }
 
-func doNodeConnect(cfg *lf.ClientConfig, basePath string, urls []string, args []string) {
+func doNodeConnect(cfg *lf.ClientConfig, basePath string, args []string) {
 	if len(args) != 3 {
 		printHelp("")
 		return
@@ -178,6 +267,7 @@ func doNodeConnect(cfg *lf.ClientConfig, basePath string, urls []string, args []
 		printHelp("")
 		return
 	}
+	urls := cfg.Urls
 	for _, u := range urls {
 		err = lf.APIPostConnect(u, ip, int(port), args[2])
 		if err == nil {
@@ -185,21 +275,24 @@ func doNodeConnect(cfg *lf.ClientConfig, basePath string, urls []string, args []
 		}
 	}
 	if err != nil {
-		fmt.Printf("ERROR: %s\n", err.Error())
+		log.Printf("ERROR: cannot send connect command to node: %s\n", err.Error())
 		return
 	}
 }
 
-func doProxyStart(cfg *lf.ClientConfig, basePath string, urls []string, args []string) {
+func doProxyStart(cfg *lf.ClientConfig, basePath string, args []string) {
+	log.Printf("ERROR: not implemented yet!")
+	return
 }
 
-func doStatus(cfg *lf.ClientConfig, basePath string, urls []string, args []string) {
+func doStatus(cfg *lf.ClientConfig, basePath string, args []string) {
 	if len(args) != 0 {
 		printHelp("")
 		return
 	}
 	var stat *lf.APIStatusResult
 	var err error
+	urls := cfg.Urls
 	for _, u := range urls {
 		stat, err = lf.APIStatusGet(u)
 		if err == nil {
@@ -207,17 +300,18 @@ func doStatus(cfg *lf.ClientConfig, basePath string, urls []string, args []strin
 		}
 	}
 	if err != nil {
-		fmt.Printf("ERROR: %s\n", err.Error())
+		log.Printf("ERROR: status query failed: %s\n", err.Error())
 		return
 	}
 	fmt.Println(lf.PrettyJSON(stat))
 }
 
-func doGet(cfg *lf.ClientConfig, basePath string, urls []string, args []string, jsonOutput bool) {
+func doGet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool) {
 	getOpts := flag.NewFlagSet("get", flag.ContinueOnError)
-	unmaskKey := getOpts.String("unmask", "", "")
+	maskKey := getOpts.String("mask", "", "")
 	tStart := getOpts.String("tstart", "", "")
 	tEnd := getOpts.String("tend", "", "")
+	urlOverride := getOpts.String("url", "", "")
 	getOpts.SetOutput(ioutil.Discard)
 	err := getOpts.Parse(args)
 	if err != nil {
@@ -231,8 +325,17 @@ func doGet(cfg *lf.ClientConfig, basePath string, urls []string, args []string, 
 	}
 
 	var mk []byte
-	if len(*unmaskKey) > 0 {
-		mk = []byte(*unmaskKey)
+	if len(*maskKey) > 0 {
+		mk = []byte(*maskKey)
+	}
+
+	urls := cfg.Urls
+	if len(*urlOverride) > 0 {
+		urls = tokenizeStringWithEsc(*urlOverride, ',', '\\')
+	}
+	if len(urls) == 0 {
+		log.Println("ERROR: get query failed: no URLs configured!")
+		return
 	}
 
 	tr := []uint64{0, 9223372036854775807}
@@ -244,20 +347,26 @@ func doGet(cfg *lf.ClientConfig, basePath string, urls []string, args []string, 
 	}
 
 	var ranges []lf.APIQueryRange
+	var selectorNames []string
 	for i := 0; i < len(args); i++ {
-		tord := tokenizeStringWithEsc(args[i], '#', '\\')
-		if len(tord) == 1 {
-			ranges = append(ranges, lf.APIQueryRange{KeyRange: []lf.Blob{lf.MakeSelectorKey([]byte(tord[0]), nil)}})
-		} else if len(tord) == 2 {
-			ranges = append(ranges, lf.APIQueryRange{KeyRange: []lf.Blob{lf.MakeSelectorKey([]byte(tord[0]), []byte(tord[1]))}})
-		} else if len(tord) == 3 {
-			ranges = append(ranges, lf.APIQueryRange{KeyRange: []lf.Blob{
-				lf.MakeSelectorKey([]byte(tord[0]), []byte(tord[1])),
-				lf.MakeSelectorKey([]byte(tord[0]), []byte(tord[2])),
-			}})
-		} else {
-			fmt.Printf("ERROR: selector or selector ordinal range invalid")
-			return
+		var unesc string
+		json.Unmarshal([]byte("\""+args[i]+"\""), &unesc) // use JSON string escaping for selector arguments
+		if len(unesc) > 0 {
+			tord := tokenizeStringWithEsc(unesc, '#', '\\')
+			if len(tord) == 1 {
+				ranges = append(ranges, lf.APIQueryRange{KeyRange: []lf.Blob{lf.MakeSelectorKey([]byte(tord[0]), nil)}})
+			} else if len(tord) == 2 {
+				ranges = append(ranges, lf.APIQueryRange{KeyRange: []lf.Blob{lf.MakeSelectorKey([]byte(tord[0]), []byte(tord[1]))}})
+			} else if len(tord) == 3 {
+				ranges = append(ranges, lf.APIQueryRange{KeyRange: []lf.Blob{
+					lf.MakeSelectorKey([]byte(tord[0]), []byte(tord[1])),
+					lf.MakeSelectorKey([]byte(tord[0]), []byte(tord[2])),
+				}})
+			} else {
+				fmt.Printf("ERROR: get query failed: selector or selector ordinal range invalid")
+				return
+			}
+			selectorNames = append(selectorNames, tord[0])
 		}
 	}
 
@@ -275,7 +384,7 @@ func doGet(cfg *lf.ClientConfig, basePath string, urls []string, args []string, 
 	}
 
 	if err != nil {
-		fmt.Printf("ERROR: %s\n", err.Error())
+		log.Printf("ERROR: get query failed: %s\n", err.Error())
 		return
 	}
 
@@ -283,6 +392,7 @@ func doGet(cfg *lf.ClientConfig, basePath string, urls []string, args []string, 
 		res.Value, err = res.Record.GetValue(mk)
 		if err != nil {
 			res.Value = nil
+			res.UnmaskingFailed = &troo
 		}
 	}
 
@@ -294,19 +404,40 @@ func doGet(cfg *lf.ClientConfig, basePath string, urls []string, args []string, 
 		}
 	} else {
 		for _, res := range results {
-			jstr, _ := json.Marshal(string(res.Value))
-			fmt.Println(string(jstr))
+			if len(res.Value) > 0 {
+				jstr, _ := json.Marshal(string(res.Value)) // use JSON's string escaping
+				fmt.Print(string(jstr[1 : len(jstr)-1]))
+			} else if res.UnmaskingFailed != nil && *res.UnmaskingFailed {
+				fmt.Print("<unmasking failed>")
+			} else {
+				fmt.Print("<empty>")
+			}
+			for i := range selectorNames {
+				fmt.Print("\t")
+				for si := range res.Record.Selectors {
+					sn := []byte(selectorNames[i])
+					if res.Record.SelectorIs(sn, si) {
+						fmt.Print(selectorNames[i])
+						if len(res.Record.Selectors[si].Ordinal) > 0 {
+							fmt.Print("#")
+							fmt.Print(escapeOrdinal(res.Record.Selectors[si].Ordinal))
+						}
+					}
+				}
+			}
+			fmt.Println("")
 		}
 	}
 }
 
-func doSet(cfg *lf.ClientConfig, basePath string, urls []string, args []string, jsonOutput bool) {
+func doSet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool) {
 	setOpts := flag.NewFlagSet("set", flag.ContinueOnError)
 	ownerName := setOpts.String("owner", "", "")
 	maskKey := setOpts.String("mask", "", "")
 	valueIsFile := setOpts.Bool("file", false, "")
 	remote := setOpts.Bool("remote", false, "")
 	tryRemote := setOpts.Bool("tryremote", false, "")
+	urlOverride := setOpts.String("url", "", "")
 	setOpts.SetOutput(ioutil.Discard)
 	err := setOpts.Parse(args)
 	if err != nil {
@@ -323,7 +454,7 @@ func doSet(cfg *lf.ClientConfig, basePath string, urls []string, args []string, 
 	if len(*ownerName) > 0 {
 		owner = cfg.Owners[*ownerName]
 		if owner == nil {
-			fmt.Printf("ERROR: owner '%s' not found\n", *ownerName)
+			log.Printf("ERROR: set failed: owner '%s' not found\n", *ownerName)
 			return
 		}
 	}
@@ -334,7 +465,7 @@ func doSet(cfg *lf.ClientConfig, basePath string, urls []string, args []string, 
 		}
 	}
 	if owner == nil {
-		fmt.Printf("ERROR: owner not found and no default specified\n")
+		log.Println("ERROR: set failed: owner not found and no default specified")
 		return
 	}
 
@@ -346,27 +477,44 @@ func doSet(cfg *lf.ClientConfig, basePath string, urls []string, args []string, 
 	var plainTextSelectorNames, selectorOrdinals [][]byte
 	var selectors []lf.APINewSelector
 	for i := 0; i < len(args)-1; i++ {
-		selOrd := tokenizeStringWithEsc(args[i], '#', '\\')
-		if len(selOrd) > 0 {
-			sel := []byte(selOrd[0])
-			var ord []byte
-			if len(selOrd) == 2 {
-				ord = []byte(selOrd[1])
+		var unesc string
+		json.Unmarshal([]byte("\""+args[i]+"\""), &unesc) // use JSON string escaping for selector arguments
+		if len(unesc) > 0 {
+			selOrd := tokenizeStringWithEsc(unesc, '#', '\\')
+			if len(selOrd) > 0 {
+				if len(selOrd) > 2 {
+					log.Println("ERROR: set failed: invalid selector#ordinal: \"" + args[i] + "\"")
+				}
+				sel := []byte(selOrd[0])
+				var ord []byte
+				if len(selOrd) == 2 {
+					ord = []byte(selOrd[1])
+				}
+				if len(ord) > lf.SelectorMaxOrdinalSize {
+					log.Println("ERROR: set failed: invalid selector#ordinal: \"" + args[i] + "\" (max ordinal size is 31 bytes)")
+				}
+				plainTextSelectorNames = append(plainTextSelectorNames, sel)
+				selectorOrdinals = append(selectorOrdinals, ord)
+				selectors = append(selectors, lf.APINewSelector{
+					Name:    sel,
+					Ordinal: ord,
+				})
 			}
-			plainTextSelectorNames = append(plainTextSelectorNames, sel)
-			selectorOrdinals = append(selectorOrdinals, ord)
-			selectors = append(selectors, lf.APINewSelector{
-				Name:    sel,
-				Ordinal: ord,
-			})
 		}
 	}
 
 	value := []byte(args[len(args)-1])
 	if *valueIsFile {
+		if string(value) == "-" {
+			value, err = ioutil.ReadAll(os.Stdin)
+			if err != nil {
+				log.Println("ERROR: set failed: error reading data from stdin (\"-\" specified as input file)")
+				return
+			}
+		}
 		vdata, err := ioutil.ReadFile(string(value))
 		if err != nil {
-			fmt.Println("ERROR: file '" + err.Error() + "' not found")
+			log.Println("ERROR: set failed: file '" + err.Error() + "' not found")
 			return
 		}
 		value = vdata
@@ -376,6 +524,15 @@ func doSet(cfg *lf.ClientConfig, basePath string, urls []string, args []string, 
 	var rec *lf.Record
 	ts := lf.TimeSec()
 
+	urls := cfg.Urls
+	if len(*urlOverride) > 0 {
+		urls = tokenizeStringWithEsc(*urlOverride, ',', '\\')
+	}
+	if len(urls) == 0 {
+		log.Println("ERROR: set failed: no URLs configured!")
+		return
+	}
+
 	// Get links for record
 	for _, u := range urls {
 		links, err = lf.APIGetLinks(u, 0)
@@ -384,7 +541,7 @@ func doSet(cfg *lf.ClientConfig, basePath string, urls []string, args []string, 
 		}
 	}
 	if err != nil {
-		fmt.Printf("ERROR: %s\n", err.Error())
+		fmt.Printf("ERROR: set failed: cannot get links: %s\n", err.Error())
 		return
 	}
 
@@ -416,7 +573,7 @@ func doSet(cfg *lf.ClientConfig, basePath string, urls []string, args []string, 
 
 	// If not delegating or trial remote delgation failed, make record locally.
 	if len(submitDirectly) > 0 && !*remote {
-		lf.WharrgarblInitTable(path.Join(basePath, "wharrgarbl-table.bin"))
+		go lf.WharrgarblInitTable(path.Join(basePath, "wharrgarbl-table.bin"))
 		var o *lf.Owner
 		o, err = owner.GetOwner()
 		if err == nil {
@@ -445,7 +602,7 @@ func doSet(cfg *lf.ClientConfig, basePath string, urls []string, args []string, 
 	}
 }
 
-func doOwner(cfg *lf.ClientConfig, basePath string, urls []string, args []string) {
+func doOwner(cfg *lf.ClientConfig, basePath string, args []string) {
 	if len(args) == 0 {
 		printHelp("")
 		return
@@ -547,7 +704,7 @@ func doOwner(cfg *lf.ClientConfig, basePath string, urls []string, args []string
 }
 
 // doMakeGenesis is currently code for making the default genesis records and isn't very useful to anyone else.
-func doMakeGenesis(cfg *lf.ClientConfig, basePath string, urls []string, args []string) {
+func doMakeGenesis(cfg *lf.ClientConfig, basePath string, args []string) {
 	var nwKey [32]byte
 	secrand.Read(nwKey[:])
 	g := lf.GenesisParameters{
@@ -595,7 +752,6 @@ func doMakeGenesis(cfg *lf.ClientConfig, basePath string, urls []string, args []
 func main() {
 	globalOpts := flag.NewFlagSet("global", flag.ContinueOnError)
 	basePath := globalOpts.String("path", lfDefaultPath, "")
-	urlOverride := globalOpts.String("url", "", "")
 	jsonOutput := globalOpts.Bool("json", false, "")
 	globalOpts.SetOutput(ioutil.Discard)
 	err := globalOpts.Parse(os.Args[1:])
@@ -622,13 +778,6 @@ func main() {
 		fmt.Printf("ERROR: cannot read or parse %s: %s\n", cfgPath, err.Error())
 		os.Exit(-1)
 		return
-	}
-
-	var urls []string
-	if len(*urlOverride) > 0 {
-		urls = append(urls, *urlOverride)
-	} else {
-		urls = cfg.Urls
 	}
 
 	switch args[0] {
@@ -663,28 +812,28 @@ func main() {
 		}
 
 	case "node-start":
-		doNodeStart(&cfg, *basePath, urls, cmdArgs)
+		doNodeStart(&cfg, *basePath, cmdArgs)
 
 	case "node-connect":
-		doNodeConnect(&cfg, *basePath, urls, cmdArgs)
+		doNodeConnect(&cfg, *basePath, cmdArgs)
 
 	case "proxy-start":
-		doProxyStart(&cfg, *basePath, urls, cmdArgs)
+		doProxyStart(&cfg, *basePath, cmdArgs)
 
 	case "status":
-		doStatus(&cfg, *basePath, urls, cmdArgs)
+		doStatus(&cfg, *basePath, cmdArgs)
 
 	case "set":
-		doSet(&cfg, *basePath, urls, cmdArgs, *jsonOutput)
+		doSet(&cfg, *basePath, cmdArgs, *jsonOutput)
 
 	case "get":
-		doGet(&cfg, *basePath, urls, cmdArgs, *jsonOutput)
+		doGet(&cfg, *basePath, cmdArgs, *jsonOutput)
 
 	case "owner":
-		doOwner(&cfg, *basePath, urls, cmdArgs)
+		doOwner(&cfg, *basePath, cmdArgs)
 
 	case "_makegenesis":
-		doMakeGenesis(&cfg, *basePath, urls, cmdArgs)
+		doMakeGenesis(&cfg, *basePath, cmdArgs)
 
 	default:
 		printHelp("")

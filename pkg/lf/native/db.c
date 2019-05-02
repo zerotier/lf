@@ -268,7 +268,9 @@ int ZTLF_DB_Open(
 	S(db->sDeleteCompletedPending,
 	     "DELETE FROM graph_pending WHERE record_goff = ?");
 	S(db->sGetAnyPending,
-	     "SELECT gp.record_goff FROM graph_pending AS gp WHERE NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = gp.record_goff) LIMIT 1");
+	     "SELECT COUNT(1) FROM graph_pending AS gp WHERE NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = gp.record_goff) LIMIT 1");
+	S(db->sHaveDanglingLinks,
+	     "SELECT COUNT(1) FROM dangling_link AS dl WHERE NOT EXISTS (SELECT w.hash FROM wanted AS w WHERE w.hash = dl.hash AND w.retries > ?) LIMIT 1");
 	S(db->sGetHaveSynchronizedWithID,
 	     "SELECT COUNT(1) FROM record AS r WHERE r.id = ? AND r.owner != ? AND NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) AND NOT EXISTS (SELECT gp.record_goff FROM graph_pending AS gp WHERE gp.record_goff = r.goff)");
 	S(db->sGetWanted,
@@ -674,6 +676,7 @@ void ZTLF_DB_Close(struct ZTLF_DB *db)
 		if (db->sUpdatePendingHoleCount)              sqlite3_finalize(db->sUpdatePendingHoleCount);
 		if (db->sDeleteCompletedPending)              sqlite3_finalize(db->sDeleteCompletedPending);
 		if (db->sGetAnyPending)                       sqlite3_finalize(db->sGetAnyPending);
+		if (db->sHaveDanglingLinks)                   sqlite3_finalize(db->sHaveDanglingLinks);
 		if (db->sGetHaveSynchronizedWithID)           sqlite3_finalize(db->sGetHaveSynchronizedWithID);
 		if (db->sGetWanted)                           sqlite3_finalize(db->sGetWanted);
 		if (db->sIncWantedRetries)                    sqlite3_finalize(db->sIncWantedRetries);
@@ -1202,7 +1205,7 @@ int ZTLF_DB_HasPending(struct ZTLF_DB *db)
 	pthread_mutex_lock(&db->dbLock);
 	sqlite3_reset(db->sGetAnyPending);
 	if (sqlite3_step(db->sGetAnyPending) == SQLITE_ROW)
-		has = (sqlite3_column_int64(db->sGetAnyPending,0) >= 0) ? 1 : 0;
+		has = (int)sqlite3_column_int64(db->sGetAnyPending,0);
 	if (has == 0) {
 		int64_t count = 0;
 		sqlite3_reset(db->sGetRecordCount);
@@ -1211,6 +1214,18 @@ int ZTLF_DB_HasPending(struct ZTLF_DB *db)
 		if (count == 0)
 			has = -1;
 	}
+	pthread_mutex_unlock(&db->dbLock);
+	return has;
+}
+
+int ZTLF_DB_HaveDanglingLinks(struct ZTLF_DB *db,int ignoreWantedAfterNRetries)
+{
+	int has = 0;
+	pthread_mutex_lock(&db->dbLock);
+	sqlite3_reset(db->sHaveDanglingLinks);
+	sqlite3_bind_int(db->sHaveDanglingLinks,1,ignoreWantedAfterNRetries);
+	if (sqlite3_step(db->sHaveDanglingLinks) == SQLITE_ROW)
+		has = (int)sqlite3_column_int(db->sHaveDanglingLinks,0);
 	pthread_mutex_unlock(&db->dbLock);
 	return has;
 }

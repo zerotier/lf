@@ -16,6 +16,8 @@ import (
 	"strings"
 )
 
+var troo = true
+
 // APIQueryRange (request, part of APIQuery) specifies a selector or selector range.
 // Selector ranges can be specified in one of two ways. If KeyRange is non-empty it contains a single
 // masked selector key or a range of keys. If KeyRange is empty then Name contains the plain text name
@@ -37,9 +39,11 @@ type APIQuery struct {
 
 // APIQueryResult (response, part of APIQueryResults) is a single query result.
 type APIQueryResult struct {
-	Record *Record `json:",omitempty"` // Record itself.
-	Value  Blob    `json:",omitempty"` // Unmasked value if masking key was included
-	Weight string  `json:",omitempty"` // Record weight as a 128-bit hex value
+	Record          *Record   `json:",omitempty"` // Record itself.
+	Value           Blob      `json:",omitempty"` // Unmasked value if masking key was included
+	UnmaskingFailed *bool     `json:",omitempty"` // If true, unmasking failed due to invalid masking key in query (or invalid compressed data in valid)
+	Weight          string    `json:",omitempty"` // Record weight as a 128-bit hex value
+	Conflicts       []*Record `json:",omitempty"` // Less weighted or otherwise less trusted records with conflicting IDs, if any
 }
 
 // APIQueryResults is a list of results to an API query.
@@ -142,18 +146,21 @@ func (m *APIQuery) execute(n *Node) (qr APIQueryResults, err *APIError) {
 		if err != nil {
 			return nil, &APIError{http.StatusInternalServerError, "error retrieving record data: " + err.Error()}
 		}
+		var mkinv *bool
 		v, err := rec.GetValue(m.MaskingKey)
 		if err != nil {
 			v = nil
+			mkinv = &troo
 		}
 		qr = append(qr, APIQueryResult{
-			Record: rec,
-			Value:  v,
-			Weight: fmt.Sprintf("%.16x%.16x", rptr[0], rptr[1]),
+			Record:          rec,
+			Value:           v,
+			UnmaskingFailed: mkinv,
+			Weight:          fmt.Sprintf("%.16x%.16x", rptr[0], rptr[1]),
 		})
 	}
 
-	// Sort qr[] by selector ordinal.
+	// Sort qr[] by selector ordinals.
 	sort.Slice(qr, func(a, b int) bool {
 		sa := qr[a].Record.Selectors
 		sb := qr[b].Record.Selectors

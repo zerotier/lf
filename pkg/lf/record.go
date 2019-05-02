@@ -27,34 +27,43 @@ var (
 	b1_0 = []byte{0x00}
 	b1_1 = []byte{0x01}
 
-	brotliParams = func() (bp *brotlienc.BrotliParams) {
-		bp = brotlienc.NewBrotliParams()
-		bp.SetQuality(11)
-		bp.SetMode(brotlienc.GENERIC)
+	brotliParams = func() (bp [2]*brotlienc.BrotliParams) {
+		bp[0] = brotlienc.NewBrotliParams()
+		bp[0].SetQuality(11)
+		bp[0].SetMode(brotlienc.TEXT)
+		bp[1] = brotlienc.NewBrotliParams()
+		bp[1].SetQuality(11)
+		bp[1].SetMode(brotlienc.GENERIC)
 		return
 	}()
 )
 
 const (
 	recordBodyFlagHasCertificate  byte = 0x01
-	recordBodyFlagValueMasked     byte = 0x02
-	recordBodyFlagValueCompressed byte = 0x04
+	recordBodyFlagValueCompressed byte = 0x02
 )
 
 // RecordDefaultWharrgarblMemory is the default amount of memory to use for Wharrgarbl momentum-type PoW.
 const RecordDefaultWharrgarblMemory = 1024 * 1024 * 512
 
 // RecordMaxSize is a global maximum record size (binary serialized length).
-// This is more or less a sanity limit to prevent malloc overflow attacks and similar things.
+// This is a protocol constant and can't be changed.
 const RecordMaxSize = 65536
 
 // RecordMaxLinks is the maximum number of links a valid record can have.
+// This is a protocol constant and can't be changed.
 const RecordMaxLinks = 255
 
+// RecordMaxSelectors is a sanity limit on the number of selectors.
+// This is a protocol constant and can't be changed.
+const RecordMaxSelectors = 16
+
 // RecordWorkAlgorithmNone indicates no work algorithm (not allowed on main network but can exist in testing or private networks that are CA-only).
+// This is a protocol constant and can't be changed.
 const RecordWorkAlgorithmNone byte = 0
 
 // RecordWorkAlgorithmWharrgarbl indicates the Wharrgarbl momentum-like proof of work algorithm.
+// This is a protocol constant and can't be changed.
 const RecordWorkAlgorithmWharrgarbl byte = 1
 
 // recordWharrgarblCost computes the cost in Wharrgarbl difficulty for a record of a given number of "billable" bytes.
@@ -106,8 +115,7 @@ type recordBody struct {
 	Certificate     *[32]byte  `json:",omitempty"` // Hash (256-bit) of exact record containing certificate for this owner (if CAs are enabled)
 	Links           [][32]byte `json:",omitempty"` // Links to previous records' hashes
 	Timestamp       uint64     ``                  // Timestamp (and revision ID) in SECONDS since Unix epoch
-	ValueMasked     bool       ``                  // If true, value is encrypted with a masking key
-	ValueCompressed bool       ``                  // If true, value is compressed (within encrypted envelope)
+	ValueCompressed *bool      `json:",omitempty"` // If true, value is compressed (within encrypted envelope)
 }
 
 func (rb *recordBody) unmarshalFrom(r io.Reader) error {
@@ -184,8 +192,9 @@ func (rb *recordBody) unmarshalFrom(r io.Reader) error {
 		return err
 	}
 
-	rb.ValueMasked = (flags & recordBodyFlagValueMasked) != 0
-	rb.ValueCompressed = (flags & recordBodyFlagValueCompressed) != 0
+	if (flags & recordBodyFlagValueCompressed) != 0 {
+		rb.ValueCompressed = &troo
+	}
 
 	return nil
 }
@@ -195,10 +204,7 @@ func (rb *recordBody) marshalTo(w io.Writer, hashAsProxyForValue bool) error {
 	if rb.Certificate != nil {
 		flags[0] |= recordBodyFlagHasCertificate
 	}
-	if rb.ValueMasked {
-		flags[0] |= recordBodyFlagValueMasked
-	}
-	if rb.ValueCompressed {
+	if rb.ValueCompressed != nil && *rb.ValueCompressed {
 		flags[0] |= recordBodyFlagValueCompressed
 	}
 	if _, err := w.Write(flags[:]); err != nil {
@@ -262,33 +268,30 @@ func (rb *recordBody) sizeBytes() uint {
 // Nil is returned if the value is empty. ErrIncorrectKey is returned if the masking
 // key is not correct.
 func (rb *recordBody) GetValue(maskingKey []byte) ([]byte, error) {
-	if len(rb.Value) == 0 {
+	if len(rb.Value) < 4 {
 		return nil, nil
 	}
 
-	var unmaskedValue []byte
-	if rb.ValueMasked {
-		if len(rb.Value) < 4 {
-			return nil, ErrIncorrectKey
-		}
-		unmaskedValue = make([]byte, len(rb.Value))
-		var cfbIv [16]byte
-		binary.BigEndian.PutUint64(cfbIv[0:8], rb.Timestamp)
-		if len(rb.Owner) >= 8 {
-			copy(cfbIv[8:16], rb.Owner[0:8])
-		}
-		maskingKeyH := sha256.Sum256(maskingKey)
-		c, _ := aes.NewCipher(maskingKeyH[:])
-		cipher.NewCFBDecrypter(c, cfbIv[:]).XORKeyStream(unmaskedValue, rb.Value)
-		if crc32.ChecksumIEEE(unmaskedValue[4:]) != binary.BigEndian.Uint32(unmaskedValue[0:4]) {
-			return nil, ErrIncorrectKey
-		}
-		unmaskedValue = unmaskedValue[4:]
-	} else {
-		unmaskedValue = rb.Value
+	if len(maskingKey) == 0 {
+		maskingKey = rb.Owner
 	}
 
-	if rb.ValueCompressed {
+	var unmaskedValue []byte
+	unmaskedValue = make([]byte, len(rb.Value))
+	var cfbIv [16]byte
+	binary.BigEndian.PutUint64(cfbIv[0:8], rb.Timestamp)
+	if len(rb.Owner) >= 8 {
+		copy(cfbIv[8:16], rb.Owner[0:8])
+	}
+	maskingKeyH := sha256.Sum256(maskingKey)
+	c, _ := aes.NewCipher(maskingKeyH[:])
+	cipher.NewCFBDecrypter(c, cfbIv[:]).XORKeyStream(unmaskedValue, rb.Value)
+	if crc32.ChecksumIEEE(unmaskedValue[4:]) != binary.BigEndian.Uint32(unmaskedValue[0:4]) {
+		return nil, ErrIncorrectKey
+	}
+	unmaskedValue = unmaskedValue[4:]
+
+	if rb.ValueCompressed != nil && *rb.ValueCompressed {
 		return brotlidec.DecompressBuffer(unmaskedValue, make([]byte, 0, len(unmaskedValue)+(len(unmaskedValue)/3)))
 	}
 	return unmaskedValue, nil
@@ -412,6 +415,13 @@ func (r *Record) Bytes() []byte {
 	return buf.Bytes()
 }
 
+// SizeBytes is a faster shortcut for len(Bytes())
+func (r *Record) SizeBytes() int {
+	var c countingWriter
+	r.MarshalTo(&c, false)
+	return int(c)
+}
+
 // Hash returns Shandwich256(Bytes()).
 // This is the main record hash used for record linking. Note that it's not a straight
 // hash of the record's bytes by a hash of the record with the (raw unmasked) value
@@ -445,7 +455,7 @@ func (r *Record) Score() uint32 {
 // This is easier than getting the record body hash and calling the selector's Key method and
 // also caches keys for faster retrieval later.
 func (r *Record) SelectorKey(selectorIndex int) []byte {
-	if selectorIndex < len(r.Selectors) {
+	if selectorIndex >= 0 && selectorIndex < len(r.Selectors) {
 		if len(r.selectorKeys) != len(r.Selectors) {
 			r.selectorKeys = make([][]byte, len(r.Selectors))
 			selectorClaimSigningHash := r.recordBody.signingHash()
@@ -458,8 +468,18 @@ func (r *Record) SelectorKey(selectorIndex int) []byte {
 	return nil
 }
 
-// ID returns a Shandwich256 hash of all this record's selector database keys sorted in ascending order.
-// If the record has no selectors the ID is just its hash.
+// SelectorIs returns true if the selector with the given index has the given plain text key.
+// Note that this is computationally a little more expensive than you'd think given how selectors work.
+func (r *Record) SelectorIs(plainTextKey []byte, selectorIndex int) bool {
+	if selectorIndex >= 0 && selectorIndex < len(r.Selectors) {
+		selectorClaimSigningHash := r.recordBody.signingHash()
+		return r.Selectors[selectorIndex].isNamed(selectorClaimSigningHash[:], plainTextKey)
+	}
+	return false
+}
+
+// ID returns SHA3-256(selector keys) where selector keys are sorted in ascending order.
+// If there are no selectors in this record, its ID is equal to its hash.
 func (r *Record) ID() (id [32]byte) {
 	if len(r.Selectors) == 0 {
 		return r.Hash()
@@ -471,7 +491,7 @@ func (r *Record) ID() (id [32]byte) {
 	}
 	sort.Slice(selectorKeys, func(a, b int) bool { return bytes.Compare(selectorKeys[a], selectorKeys[b]) < 0 })
 
-	h := NewShandwich256()
+	h := sha3.New256()
 	for i := 0; i < len(selectorKeys); i++ {
 		h.Write(selectorKeys[i])
 	}
@@ -533,47 +553,49 @@ func (r *Record) Validate() (err error) {
 // NewRecordStart creates an incomplete record with its body and selectors filled out but no work or final signature.
 // This can be used to do the first step of a three-phase record creation process with the next two phases being NewRecordAddWork
 // and NewRecordComplete. This is useful of record creation needs to be split among systems or participants.
-func NewRecordStart(value []byte, links [][32]byte, maskingKey []byte, plainTextSelectorNames [][]byte, selectorOrdinals [][]byte, ownerPublic, certificateRecordHash []byte, ts uint64) (r *Record, workHash [32]byte, workBillableBytes uint, err error) {
-	if len(value) > RecordMaxSize {
-		err = ErrInvalidParameter
-		return
-	}
-
+func NewRecordStart(value []byte, links [][32]byte, maskingKey []byte, plainTextSelectorNames [][]byte, selectorOrdinals [][]byte, owner, certificateRecordHash []byte, ts uint64) (r *Record, workHash [32]byte, workBillableBytes uint, err error) {
 	r = new(Record)
 
 	if len(value) > 0 {
 		// Attempt compression for values of non-trivial size.
 		if len(value) > 24 {
-			var valueCompr []byte
-			valueCompr, err = brotlienc.CompressBuffer(brotliParams, value, make([]byte, 0, len(value)+4))
-			if err == nil && len(valueCompr) < len(value) {
-				value = valueCompr
-				r.recordBody.ValueCompressed = true
+			bestOutput := value
+			for _, bp := range brotliParams { // tries both GENERIC and TEXT brotli parameters
+				var cout []byte
+				cout, err = brotlienc.CompressBuffer(bp, value, make([]byte, 0, len(value)+4))
+				if err == nil && len(cout) > 0 && len(cout) < len(bestOutput) {
+					bestOutput = cout
+				}
+			}
+			if len(bestOutput) < len(value) {
+				value = bestOutput
+				r.recordBody.ValueCompressed = &troo
 			}
 		}
 
-		// Encrypt with AES256-CFB using the timestamp and owner for IV.
-		if len(maskingKey) > 0 {
-			var cfbIv [16]byte
-			binary.BigEndian.PutUint64(cfbIv[0:8], ts)
-			if len(ownerPublic) >= 8 {
-				copy(cfbIv[8:16], ownerPublic[0:8])
-			}
-			maskingKeyH := sha256.Sum256(maskingKey)
-			c, _ := aes.NewCipher(maskingKeyH[:])
-			cfb := cipher.NewCFBEncrypter(c, cfbIv[:])
-			valueMasked := make([]byte, 4+len(value))
-			binary.BigEndian.PutUint32(valueMasked[0:4], crc32.ChecksumIEEE(value))
-			cfb.XORKeyStream(valueMasked[0:4], valueMasked[0:4])
-			cfb.XORKeyStream(valueMasked[4:], value)
-			r.recordBody.Value = valueMasked
-			r.recordBody.ValueMasked = true
-		} else {
-			r.recordBody.Value = append(r.recordBody.Value, value...)
+		// Encrypt with AES256-CFB using the timestamp and owner for IV. A CRC32 is
+		// included so users can tell if their masking key is correct. Note that this
+		// CRC32 is not used for real authentication. That happens via the owner's
+		// signature of the whole record.
+		var cfbIv [16]byte
+		binary.BigEndian.PutUint64(cfbIv[0:8], ts)
+		if len(owner) >= 8 { // sanity check
+			copy(cfbIv[8:16], owner[0:8])
 		}
+		if len(maskingKey) == 0 {
+			maskingKey = owner // all records are masked, use owner if no key given
+		}
+		maskingKeyH := sha256.Sum256(maskingKey)
+		c, _ := aes.NewCipher(maskingKeyH[:])
+		cfb := cipher.NewCFBEncrypter(c, cfbIv[:])
+		valueMasked := make([]byte, 4+len(value))
+		binary.BigEndian.PutUint32(valueMasked[0:4], crc32.ChecksumIEEE(value))
+		cfb.XORKeyStream(valueMasked[0:4], valueMasked[0:4])
+		cfb.XORKeyStream(valueMasked[4:], value)
+		r.recordBody.Value = valueMasked
 	}
 
-	r.recordBody.Owner = append(r.recordBody.Owner, ownerPublic...)
+	r.recordBody.Owner = append(r.recordBody.Owner, owner...)
 	if len(certificateRecordHash) == 32 {
 		var cert [32]byte
 		copy(cert[:], certificateRecordHash)
@@ -585,6 +607,7 @@ func NewRecordStart(value []byte, links [][32]byte, maskingKey []byte, plainText
 		for i := 0; i < len(links); i++ {
 			r.recordBody.Links = append(r.recordBody.Links, links[i])
 		}
+		sort.Slice(r.recordBody.Links, func(a, b int) bool { return bytes.Compare(r.recordBody.Links[a][:], r.recordBody.Links[b][:]) < 0 })
 	}
 
 	r.recordBody.Timestamp = ts

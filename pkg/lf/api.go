@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -363,19 +364,20 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 			pcount := len(n.peers)
 			n.peersLock.RUnlock()
 			apiSendObj(out, req, http.StatusOK, &APIStatusResult{
-				Software:           SoftwareName,
-				Version:            Version,
-				APIVersion:         APIVersion,
-				MinAPIVersion:      APIVersion,
-				MaxAPIVersion:      APIVersion,
-				Uptime:             (now - uint64(n.startTime.Unix())),
-				Clock:              now,
-				DBRecordCount:      rc,
-				DBSize:             ds,
-				PeerCount:          pcount,
-				GenesisParameters:  n.genesisParameters,
-				NodeWorkAuthorized: wa,
-				WorkAuthorized:     wa,
+				Software:            SoftwareName,
+				Version:             Version,
+				APIVersion:          APIVersion,
+				MinAPIVersion:       APIVersion,
+				MaxAPIVersion:       APIVersion,
+				Uptime:              (now - uint64(n.startTime.Unix())),
+				Clock:               now,
+				DBRecordCount:       rc,
+				DBSize:              ds,
+				DBFullySynchronized: (atomic.LoadUint32(&n.synchronized) != 0),
+				PeerCount:           pcount,
+				GenesisParameters:   n.genesisParameters,
+				NodeWorkAuthorized:  wa,
+				WorkAuthorized:      wa,
 			})
 		} else {
 			out.Header().Set("Allow", "GET, HEAD")

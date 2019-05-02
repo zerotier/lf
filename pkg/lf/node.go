@@ -52,11 +52,11 @@ const (
 	p2pProtoMessageTypeHaveRecords          byte = 4 // one or more 32-byte hashes we have
 	p2pProtoMessageTypePeer                 byte = 5 // APIPeer (JSON)
 
+	// p2pProtoMaxRetries is the maximum number of times we'll try to retry a record
+	p2pProtoMaxRetries = 16
+
 	// p2pDesiredConnectionCount is how many P2P TCP connections we want to have open
 	p2pDesiredConnectionCount = 64
-
-	// p2pMaxRecordRetries is the maximum number of retries for a record with a given hash.
-	p2pMaxRecordRetries = 32
 
 	// DefaultHTTPPort is the default LF HTTP API port
 	DefaultHTTPPort = 9980
@@ -139,6 +139,7 @@ type Node struct {
 	backgroundThreadWG sync.WaitGroup // used to wait for all goroutines
 	startTime          time.Time      // time node started
 	timeTicker         uintptr        // ticks approximately every second
+	synchronized       uint32         // set to non-zero when database is synchronized
 	shutdown           uint32         // set to non-zero to cause many routines to exit
 	commentary         uint32         // set to non-zero to add work and render commentary
 }
@@ -330,15 +331,19 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 
 	// Load any genesis records after those in genesis.lf (or compiled in default)
 	n.log[LogLevelNormal].Printf("loading genesis records from genesis owner %x", n.genesisOwner)
+	gotGenesis := false
 	n.db.getAllByOwner(n.genesisOwner, func(doff, dlen uint64) bool {
 		rdata, _ := n.db.getDataByOffset(doff, uint(dlen), nil)
 		if len(rdata) > 0 {
 			gr, err := NewRecordFromBytes(rdata)
 			if gr != nil && err == nil {
-				rv, _ := gr.GetValue(nil)
-				if len(rv) > 0 {
+				rv, err := gr.GetValue(nil)
+				if err != nil {
+					n.log[LogLevelWarning].Printf("WARNING: genesis record %x contains an invalid value!", gr.Hash())
+				} else if len(rv) > 0 {
 					n.log[LogLevelNormal].Printf("applying genesis configuration update from record %x", gr.Hash())
 					n.genesisParameters.Update(rv)
+					gotGenesis = true
 				}
 			} else if err != nil {
 				n.log[LogLevelWarning].Print("error unmarshaling genesis record: " + err.Error())
@@ -346,6 +351,9 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 		}
 		return true
 	})
+	if !gotGenesis {
+		return nil, errors.New("no genesis records found or none readable")
+	}
 	if len(n.genesisParameters.AmendableFields) > 0 {
 		n.log[LogLevelNormal].Printf("network '%s' permits changes to configuration fields %v by owner %x", n.genesisParameters.Name, n.genesisParameters.AmendableFields, n.genesisOwner)
 	} else {
@@ -448,37 +456,20 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 				n.writeKnownPeers()
 			}
 
-			// Try to get wanted records every 30 seconds.
-			n.peersLock.RLock()
-			connectionCount := len(n.peers) // this value is used in the next block too
-			if (ticker%30) == 0 && connectionCount > 0 {
-				count, hashes := n.db.getWanted(256, 0, p2pMaxRecordRetries, true)
-				if len(hashes) >= 32 {
-					var p *peer
-					for _, pp := range n.peers { // exploits the random map iteration order in Go
-						p = pp
-						break
-					}
-					if p != nil {
-						n.log[LogLevelVerbose].Printf("sync: requesting %d wanted records from %s", count, p.address)
-						n.backgroundThreadWG.Add(1)
-						go func() {
-							defer func() {
-								_ = recover()
-								n.backgroundThreadWG.Done()
-							}()
-							req := make([]byte, 1, len(hashes)+1)
-							req[0] = p2pProtoMesaggeTypeRequestRecordsByHash
-							req = append(req, hashes...)
-							p.send(req)
-						}()
-					}
-				}
+			// Request wanted records (if connected), requesting newly wanted records with
+			// zero retries immediately and then requesting records with higher numbers of
+			// retries less often.
+			if (ticker % 30) == 0 {
+				n.requestWantedRecords(1, p2pProtoMaxRetries)
+			} else {
+				n.requestWantedRecords(0, 0)
 			}
-			n.peersLock.RUnlock()
 
 			// If we don't have enough connections, try to make more to peers we've learned about.
 			if (ticker % 10) == 5 {
+				n.peersLock.RLock()
+				connectionCount := len(n.peers) // this value is used in the next block too
+				n.peersLock.RUnlock()
 				if connectionCount < p2pDesiredConnectionCount {
 					wantMore := p2pDesiredConnectionCount - connectionCount
 					n.knownPeersLock.Lock()
@@ -494,6 +485,19 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 						}
 					}
 					n.knownPeersLock.Unlock()
+				}
+			}
+
+			// Periodically check and update database full sync state.
+			if (ticker % 5) == 0 {
+				if n.db.haveDanglingLinks(p2pProtoMaxRetries) {
+					if atomic.SwapUint32(&n.synchronized, 0) == 1 {
+						n.log[LogLevelVerbose].Println("sync: database no longer fully synchronized (as of now)")
+					}
+				} else {
+					if atomic.SwapUint32(&n.synchronized, 1) == 0 {
+						n.log[LogLevelVerbose].Println("sync: database fully synchronized! (as of now)")
+					}
 				}
 			}
 		}
@@ -653,13 +657,14 @@ func (n *Node) Connect(ip net.IP, port int, publicKey []byte) {
 }
 
 // AddRecord adds a record to the database if it's valid and we do not already have it.
-// If the record is a duplicate this returns ErrorDuplicateRecord.
+// ErrDuplicateRecord is returned if this record is already in the database. This function
+// is the entry point for all but genesis records and it and the functions it calls are
+// where all record validation and commentary generating logic lives.
 func (n *Node) AddRecord(r *Record) error {
 	if r == nil {
 		return ErrInvalidParameter
 	}
 
-	rdata := r.Bytes()
 	rhash := r.Hash()
 
 	// Check to see if we already have this record.
@@ -667,30 +672,53 @@ func (n *Node) AddRecord(r *Record) error {
 		return ErrDuplicateRecord
 	}
 
-	// Check various record constraints such as sizes, timestamp, etc. This is done first
-	// because these checks are simple and fast while signature checks are CPU intensive.
-	if len(rdata) > RecordMaxSize || uint(len(rdata)) > n.genesisParameters.RecordMaxSize {
+	// Check basic constraints first since this is less CPU intensive than signature
+	// and work validation.
+
+	// Is record too big according to protocol or genesis parameter constraints?
+	rsize := uint(r.SizeBytes())
+	if rsize > RecordMaxSize || rsize > n.genesisParameters.RecordMaxSize {
 		return ErrRecordTooLarge
 	}
+
+	// Is value too big?
 	if uint(len(r.Value)) > n.genesisParameters.RecordMaxValueSize {
 		return ErrRecordValueTooLarge
 	}
+
+	// Check links: not too few, not too many, must be sorted, no duplicates
 	if uint(len(r.Links)) < n.genesisParameters.RecordMinLinks {
 		return ErrRecordInsufficientLinks
 	}
 	if len(r.Links) > RecordMaxLinks {
 		return ErrRecordTooManyLinks
 	}
+	for i := 1; i < len(r.Links); i++ {
+		if bytes.Compare(r.Links[i-1][:], r.Links[i][:]) >= 0 {
+			return ErrRecordInvalidLinks
+		}
+	}
+
+	// Not too many selectors
+	if len(r.Selectors) > RecordMaxSelectors {
+		return ErrRecordTooManySelectors
+	}
+
+	// Timestamp must be within a sane range
 	if r.Timestamp > (TimeSec() + uint64(n.genesisParameters.RecordMaxForwardTimeDrift)) {
 		return ErrRecordViolatesSpecialRelativity
 	}
 	if r.Timestamp < n.genesisParameters.TimestampFloor {
 		return ErrRecordTooOld
 	}
+
+	// Work must be present if work is required
 	if r.WorkAlgorithm == RecordWorkAlgorithmNone && n.genesisParameters.WorkRequired {
 		return ErrRecordInsufficientWork
 	}
-	if r.Certificate != nil && len(n.genesisParameters.RootCertificateAuthorities) == 0 { // don't let people shove crap into cert field if it's not used
+
+	// Sanity check certificate field: no certs if no roots, must have cert if required
+	if r.Certificate != nil && len(n.genesisParameters.RootCertificateAuthorities) == 0 {
 		return ErrRecordCertificateInvalid
 	}
 	if r.Certificate == nil && n.genesisParameters.CertificateRequired {
@@ -723,6 +751,37 @@ func (n *Node) SetCommentaryEnabled(j bool) {
 		jj = 1
 	}
 	atomic.StoreUint32(&n.commentary, jj)
+}
+
+// requestWantedRecords requests wanted records within the given inclusive retry bound.
+func (n *Node) requestWantedRecords(minRetries, maxRetries int) {
+	n.peersLock.RLock()
+	defer n.peersLock.RUnlock()
+	if len(n.peers) == 0 {
+		return
+	}
+	count, hashes := n.db.getWanted(256, minRetries, maxRetries, true)
+	if len(hashes) >= 32 {
+		var p *peer
+		for _, pp := range n.peers { // exploits the random map iteration order in Go
+			p = pp
+			break
+		}
+		if p != nil {
+			n.log[LogLevelNormal].Printf("sync: requesting %d wanted records from %s (retry count range %d-%d)", count, p.address, minRetries, maxRetries)
+			n.backgroundThreadWG.Add(1)
+			go func() {
+				defer func() {
+					_ = recover()
+					n.backgroundThreadWG.Done()
+				}()
+				req := make([]byte, 1, len(hashes)+1)
+				req[0] = p2pProtoMesaggeTypeRequestRecordsByHash
+				req = append(req, hashes...)
+				p.send(req)
+			}()
+		}
+	}
 }
 
 // writeKnownPeers writes the current known peer list

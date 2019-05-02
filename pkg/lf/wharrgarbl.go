@@ -514,7 +514,7 @@ func WharrgarblInitTable(cacheFilePath string) {
 	}
 
 	if len(cacheFilePath) > 0 {
-		ioutil.WriteFile(cacheFilePath, wharrgarblTable[:], 0644)
+		go ioutil.WriteFile(cacheFilePath, wharrgarblTable[:], 0644)
 	}
 
 	wharrgarblTableLock.Unlock()

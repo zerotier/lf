@@ -67,6 +67,8 @@ const (
 	ErrRecordInsufficientWork          ErrRecord = "insufficient work to pay for this record"
 	ErrRecordInsufficientLinks         ErrRecord = "insufficient links"
 	ErrRecordTooManyLinks              ErrRecord = "too many links"
+	ErrRecordInvalidLinks              ErrRecord = "links must be sorted and unique"
+	ErrRecordTooManySelectors          ErrRecord = "too many selectors"
 	ErrRecordUnsupportedAlgorithm      ErrRecord = "unsupported algorithm or type"
 	ErrRecordTooLarge                  ErrRecord = "record too large"
 	ErrRecordValueTooLarge             ErrRecord = "record value too large"

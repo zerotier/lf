@@ -252,6 +252,11 @@ func (db *db) hasPending() bool {
 	return (C.ZTLF_DB_HasPending(db.cdb) > 0)
 }
 
+// haveDanglingLinks returns true if we have dangling links that haven't been retried more than N times.
+func (db *db) haveDanglingLinks(ignoreAfterNRetries int) bool {
+	return (C.ZTLF_DB_HaveDanglingLinks(db.cdb, C.int(ignoreAfterNRetries)) > 0)
+}
+
 // query executes a query against a number of selector ranges. The function is executed for each result, with
 // results not sorted. The loop is broken if the function returns false. The owner is passed as a pointer to
 // an array that is reused, so a copy must be made if you want to keep it. The arguments to the function are:

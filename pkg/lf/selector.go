@@ -16,7 +16,8 @@ import (
 	"math/big"
 )
 
-// SelectorTypeBP160 indicates a sortable selector built from the brainpoolP160t1 elliptic curve.
+// SelectorTypeBP160 indicates a sortable selector built from the brainpoolP160t1 small elliptic curve.
+// This is a protocol constant and cannot be changed.
 const SelectorTypeBP160 byte = 0 // valid range: 0..3
 
 // SelectorMaxOrdinalSize is the maximum length of an ordinal.
@@ -73,6 +74,24 @@ func MakeSelectorKey(plainTextName, ordinal []byte) []byte {
 	addOrdinalToHash(&publicKeyHash, ordinal)
 
 	return publicKeyHash[:]
+}
+
+// isNamed returns true if this selector's plain text name matches the argument.
+func (s *Selector) isNamed(hash, plainTextName []byte) bool {
+	sigHash := sha256.New()
+	sigHash.Write(hash)
+	sigHash.Write(s.Ordinal)
+	var sigHashBuf [32]byte
+	pub := ECDSARecover(ECCCurveBrainpoolP160T1, sigHash.Sum(sigHashBuf[:0]), s.Claim[:])
+
+	var prng seededPrng
+	prng.seed(plainTextName)
+	priv, err := ecdsa.GenerateKey(ECCCurveBrainpoolP160T1, &prng)
+	if err != nil {
+		return false
+	}
+
+	return pub.X.Cmp(priv.PublicKey.X) == 0 && pub.Y.Cmp(priv.PublicKey.Y) == 0
 }
 
 // key returns the sortable and comparable database key for this selector.
