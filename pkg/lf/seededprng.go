@@ -14,6 +14,10 @@ import (
 )
 
 // seededPrng is a deterministic cryptographic random Reader used to generate key pairs from specific seeds.
+// This is effectively part of Selector and Owner and its spec is therefore a protocol constant.
+// Note that the seeds in this case are themselves secrets, so you don't have to worry much here about
+// a known-seed attack scenario. The only goal is to generate a random stream from a seed in a reproducible
+// and strongly random way.
 type seededPrng struct {
 	lock  sync.Mutex
 	state [64]byte // private state
