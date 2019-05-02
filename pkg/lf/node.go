@@ -74,6 +74,8 @@ type peerHelloMsg struct {
 	MinProtocolVersion    int
 	Version               [4]int
 	SoftwareName          string
+	P2PPort               int
+	HTTPPort              int
 	SubscribeToNewRecords bool // If true, peer wants new records
 }
 
@@ -107,6 +109,8 @@ type knownPeer struct {
 type Node struct {
 	basePath      string                     //
 	peersFilePath string                     //
+	p2pPort       int                        //
+	httpPort      int                        //
 	log           [logLevelCount]*log.Logger // Pointers to loggers for each log level (inoperative levels point to a discard logger)
 
 	linkKeyPriv []byte   // P-384 private key
@@ -150,6 +154,9 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 
 	n.basePath = basePath
 	n.peersFilePath = path.Join(basePath, "peers.json")
+	n.p2pPort = p2pPort
+	n.httpPort = httpPort
+
 	if logger == nil {
 		logger = nullLogger
 	}
@@ -1010,24 +1017,25 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inb
 		n.log[LogLevelNormal].Printf("P2P connection to %s closed: protocol mode not supported or invalid key length", peerAddressStr)
 		return
 	}
-	rpk := make([]byte, uint(helloMessage[1]))
-	_, err = io.ReadFull(reader, rpk)
+	remotePublicKey := make([]byte, uint(helloMessage[1]))
+	_, err = io.ReadFull(reader, remotePublicKey)
 	if err != nil {
 		n.log[LogLevelNormal].Printf("P2P connection to %s closed: %s", peerAddressStr, err.Error())
 		return
 	}
-	if bytes.Equal(rpk, n.linkKeyPub) {
+	if bytes.Equal(remotePublicKey, n.linkKeyPub) {
 		n.log[LogLevelNormal].Printf("P2P connection to %s closed: other side has same link key! connected to self or link key stolen or accidentally duplicated.", peerAddressStr)
 		return
 	}
-	if len(expectedPublicKey) > 0 && !bytes.Equal(expectedPublicKey, rpk) {
+	if len(expectedPublicKey) > 0 && !bytes.Equal(expectedPublicKey, remotePublicKey) {
 		n.log[LogLevelNormal].Printf("P2P connection to %s closed: remote public key does not match expected (pinned) public key", peerAddressStr)
 		return
 	}
 	helloMessage = nil
+	remotePublicKeyStr := base64.RawURLEncoding.EncodeToString(remotePublicKey)
 
 	// Perform ECDH key agreement and init encryption
-	remotePubX, remotePubY, err := ECCDecompressPublicKey(elliptic.P384(), rpk)
+	remotePubX, remotePubY, err := ECCDecompressPublicKey(elliptic.P384(), remotePublicKey)
 	if err != nil {
 		n.log[LogLevelNormal].Printf("P2P connection to %s closed: invalid public key: %s", peerAddressStr, err.Error())
 		return
@@ -1066,8 +1074,6 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inb
 	}
 	aesCipher.Decrypt(incomingNonce[:], incomingNonce[:])
 
-	// Add peer connection to node peers[] map and also announce this peer to other peers (if this
-	// is an outbound connection) and announce other outbound peers to this one.
 	p = &peer{
 		n:               n,
 		address:         peerAddressStr,
@@ -1076,39 +1082,17 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inb
 		cryptor:         cryptor,
 		hasRecords:      make(map[[32]byte]uintptr),
 		outgoingNonce:   outgoingNonce,
-		remotePublicKey: rpk,
+		remotePublicKey: remotePublicKey,
 		inbound:         inbound,
 	}
-	n.peersLock.Lock()
-	for _, pa := range n.peers {
-		if bytes.Equal(pa.remotePublicKey, rpk) {
-			if !inbound {
-				n.updateKnownPeersWithConnectResult(tcpAddr.IP, tcpAddr.Port, rpk, true) // we can still learn/record this as a success
-			}
-			n.log[LogLevelNormal].Printf("P2P connection to %s closed: closing redundant link to already connected peer", peerAddressStr)
-			return
-		}
-
-		if !inbound && publicAddress {
-			pa.sendPeerAnnouncement(tcpAddr, p.remotePublicKey)
-		}
-
-		if !pa.inbound && ipIsGlobalPublicUnicast(pa.tcpAddress.IP) {
-			p.sendPeerAnnouncement(pa.tcpAddress, pa.remotePublicKey)
-		}
-	}
-	n.peers[peerAddressStr] = p
-	n.peersLock.Unlock()
-
-	n.connectionsInStartupLock.Lock()
-	delete(n.connectionsInStartup, c)
-	n.connectionsInStartupLock.Unlock()
 
 	msgbuf, err = json.Marshal(&peerHelloMsg{
 		ProtocolVersion:       ProtocolVersion,
 		MinProtocolVersion:    MinProtocolVersion,
 		Version:               Version,
 		SoftwareName:          SoftwareName,
+		P2PPort:               n.p2pPort,
+		HTTPPort:              n.httpPort,
 		SubscribeToNewRecords: true,
 	})
 	if err != nil {
@@ -1117,13 +1101,43 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inb
 	}
 	p.send(append([]byte{p2pProtoMessageTypeHello}, msgbuf...))
 
+	// Check to make sure this isn't a redundant connection, announce this
+	// peer to other peers (if outbound), and announce other peers to this
+	// peer. Then if everything is okay add to peers map.
+	n.peersLock.Lock()
+	redundant := false
+	for _, existingPeer := range n.peers {
+		if bytes.Equal(existingPeer.remotePublicKey, remotePublicKey) {
+			redundant = true
+		}
+		if !inbound && publicAddress {
+			existingPeer.sendPeerAnnouncement(tcpAddr, p.remotePublicKey)
+		}
+		if !existingPeer.inbound && ipIsGlobalPublicUnicast(existingPeer.tcpAddress.IP) {
+			p.sendPeerAnnouncement(existingPeer.tcpAddress, existingPeer.remotePublicKey)
+		}
+	}
+	if redundant {
+		if !inbound {
+			n.updateKnownPeersWithConnectResult(tcpAddr.IP, tcpAddr.Port, remotePublicKey, true) // we can still remember this peer
+		}
+		n.log[LogLevelNormal].Printf("P2P connection to %s closed: closing redundant link to already connected peer", peerAddressStr)
+	}
+	n.peers[peerAddressStr] = p
+	n.peersLock.Unlock()
+
+	n.connectionsInStartupLock.Lock()
+	delete(n.connectionsInStartup, c)
+	n.connectionsInStartupLock.Unlock()
+
 	success = true
 	if !inbound {
-		n.updateKnownPeersWithConnectResult(tcpAddr.IP, tcpAddr.Port, rpk, true)
+		n.updateKnownPeersWithConnectResult(tcpAddr.IP, tcpAddr.Port, remotePublicKey, true)
 	}
 
-	n.log[LogLevelNormal].Printf("P2P connection established to %s / %s", peerAddressStr, base64.RawURLEncoding.EncodeToString(rpk))
+	n.log[LogLevelNormal].Printf("P2P connection established to %s / %s", peerAddressStr, remotePublicKeyStr)
 
+	gotHello := false
 	for atomic.LoadUint32(&n.shutdown) == 0 {
 		// Read size of message (varint)
 		msgSize, err := binary.ReadUvarint(reader)
@@ -1191,6 +1205,24 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inb
 		case p2pProtoMessageTypeHello:
 			if len(msg) > 0 {
 				json.Unmarshal(msg, &p.peerHelloMsg)
+				if inbound && publicAddress && !gotHello {
+					alreadyKnowPeer := false
+					n.knownPeersLock.Lock()
+					for _, kp := range n.knownPeers {
+						if remotePublicKeyStr == kp.PublicKey {
+							alreadyKnowPeer = true
+							break
+						}
+					}
+					n.knownPeersLock.Unlock()
+					if !alreadyKnowPeer {
+						// If we don't already know this peer, try connecting outbound to
+						// it at its source IP and its reported P2P port. This allows us
+						// to learn and announce peers with bidirectionally reachable IPs.
+						n.Connect(tcpAddr.IP, tcpAddr.Port, remotePublicKey)
+					}
+				}
+				gotHello = true
 			}
 
 		case p2pProtoMessageTypeRecord:
