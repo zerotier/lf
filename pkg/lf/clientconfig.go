@@ -96,11 +96,7 @@ func (c *ClientConfig) Save(path string) error {
 		}
 	}
 
-	d, err := json.MarshalIndent(c, "", "  ")
-	if err != nil {
-		return err
-	}
-	err = ioutil.WriteFile(path, d, 0600) // 0600 since this file contains secrets
+	err := ioutil.WriteFile(path, []byte(PrettyJSON(c)), 0600) // 0600 since this file contains secrets
 	if err == nil {
 		c.Dirty = false
 		return nil
