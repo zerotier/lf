@@ -10,17 +10,22 @@
 #include "iset.h"
 #include "map.h"
 
+/* Chunk size to increment nominal size of graph and data mmap files. */
 #define ZTLF_GRAPH_FILE_CAPACITY_INCREMENT 33554432
 #define ZTLF_DATA_FILE_CAPACITY_INCREMENT 33554432
 
+/* Max MMAP size for SQLite -- disable on 32-bit systems */
 #ifdef ZTLF_64BIT
 #define ZTLF_DB_SQLITE_MMAP_SIZE "17179869184" /* 16gb */
 #else
 #define ZTLF_DB_SQLITE_MMAP_SIZE "0"
 #endif
 
-/* A sanity limit on the number of records returned by a selector range query (as string because it's concatenated into a static SQL statement). */
-#define ZTLF_DB_SELECTOR_QUERY_RESULT_LIMIT "16777216"
+/* Cache size for SQLite */
+#define ZTLF_DB_CACHE_SIZE "-524288"
+
+/* A sanity limit on the number of records returned by a selector range query. */
+#define ZTLF_DB_SELECTOR_QUERY_RESULT_LIMIT "1048576"
 
 static void *_ZTLF_DB_graphThreadMain(void *arg);
 
@@ -36,6 +41,8 @@ static void *_ZTLF_DB_graphThreadMain(void *arg);
  *   ts                       record timestamp
  *   score                    score of this record (alone, not with weight from links)
  *   link_count               number of links from this record (actual links are in graph node)
+ *   reputation               records will only be linked if greater than 0
+ *   linked_count             number of records linking to this one
  *   selector_count           number of selectors for this record
  *   hash                     shandwich256(record data) (unique key)
  *   id                       sha256(selector keys)
@@ -81,7 +88,7 @@ static void *_ZTLF_DB_graphThreadMain(void *arg);
 #define ZTLF_DB_INIT_SQL \
 "PRAGMA locking_mode = EXCLUSIVE;\n" \
 "PRAGMA journal_mode = MEMORY;\n" \
-"PRAGMA cache_size = -524288;\n" \
+"PRAGMA cache_size = " ZTLF_DB_CACHE_SIZE ";\n" \
 "PRAGMA synchronous = 0;\n" \
 "PRAGMA auto_vacuum = 0;\n" \
 "PRAGMA foreign_keys = OFF;\n" \
@@ -98,6 +105,7 @@ static void *_ZTLF_DB_graphThreadMain(void *arg);
 "ts INTEGER NOT NULL," \
 "score INTEGER NOT NULL," \
 "link_count INTEGER NOT NULL," \
+"reputation INTEGER NOT NULL," \
 "linked_count INTEGER NOT NULL," \
 "selector_count INTEGER NOT NULL," \
 "hash BLOB NOT NULL," \
@@ -107,8 +115,9 @@ static void *_ZTLF_DB_graphThreadMain(void *arg);
 \
 "CREATE UNIQUE INDEX IF NOT EXISTS record_goff ON record(goff);\n" \
 "CREATE UNIQUE INDEX IF NOT EXISTS record_hash ON record(hash);\n" \
-"CREATE INDEX IF NOT EXISTS record_linked_count ON record(linked_count);\n" \
+"CREATE INDEX IF NOT EXISTS record_reputation_linked_count ON record(reputation,linked_count);\n" \
 "CREATE INDEX IF NOT EXISTS record_id_owner ON record(id,owner);\n" \
+"CREATE INDEX IF NOT EXISTS record_owner_ts ON record(owner,ts);\n" \
 "CREATE INDEX IF NOT EXISTS record_doff_selector_count_owner_id_ts ON record(doff,selector_count,owner,id,ts);\n" \
 \
 "CREATE TABLE IF NOT EXISTS selector (" \
@@ -144,7 +153,7 @@ static void *_ZTLF_DB_graphThreadMain(void *arg);
 "retries INTEGER NOT NULL" \
 ") WITHOUT ROWID;\n" \
 \
-"CREATE INDEX IF NOT EXISTS wanted_retries_hash ON wanted(retries,hash);\n" \
+"CREATE INDEX IF NOT EXISTS wanted_retries ON wanted(retries);\n" \
 \
 "ATTACH DATABASE ':memory:' AS tmp;\n" \
 \
@@ -216,76 +225,130 @@ int ZTLF_DB_Open(
 	if ((e = sqlite3_exec(db->dbc,(ZTLF_DB_INIT_SQL),NULL,NULL,NULL)) != SQLITE_OK)
 		goto exit_with_error;
 
+	/*
+	 * The following clause (and variants) is common and selects for records that
+	 * are fully synchronized, meaning they have all the links below them in the
+	 * graph satisfied.
+	 * 
+	 * "AND NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) "
+	 * "AND NOT EXISTS (SELECT gp.record_goff FROM graph_pending AS gp WHERE gp.record_goff = r.goff) "
+	 */
+
 	S(db->sSetConfig,
-	     "INSERT OR REPLACE INTO config (\"k\",\"v\") VALUES (?,?)");
+		"INSERT OR REPLACE INTO config (\"k\",\"v\") VALUES (?,?)");
 	S(db->sGetConfig,
-	     "SELECT \"v\" FROM config WHERE \"k\" = ?");
+		"SELECT \"v\" FROM config WHERE \"k\" = ?");
 	S(db->sAddRecord,
-	     "INSERT INTO record (doff,dlen,goff,ts,score,link_count,linked_count,selector_count,hash,id,owner) VALUES (?,?,?,?,?,?,0,?,?,?,?)");
+		"INSERT INTO record (doff,dlen,goff,ts,score,link_count,reputation,linked_count,selector_count,hash,id,owner) VALUES (?,?,?,?,?,?,?,0,?,?,?,?)");
 	S(db->sIncRecordLinkedCountByGoff,
-	     "UPDATE record SET linked_count = (linked_count + 1) WHERE goff = ?");
+		"UPDATE record SET linked_count = (linked_count + 1) WHERE goff = ?");
 	S(db->sAddSelector,
-	     "INSERT OR IGNORE INTO selector (sel,record_ts,record_doff) VALUES (?,?,?)");
+		"INSERT OR IGNORE INTO selector (sel,record_ts,record_doff) VALUES (?,?,?)");
 	S(db->sGetRecordCount,
-	     "SELECT COUNT(1) FROM record");
+		"SELECT COUNT(1) FROM record");
 	S(db->sGetDataSize,
-	     "SELECT (doff + dlen) FROM record ORDER BY doff DESC LIMIT 1");
+		"SELECT (doff + dlen) FROM record ORDER BY doff DESC LIMIT 1");
 	S(db->sGetAllRecords,
-	     "SELECT goff,hash,linked_count FROM record ORDER BY hash ASC");
+		"SELECT goff,hash,linked_count FROM record ORDER BY hash ASC");
 	S(db->sGetAllByOwner,
-	     "SELECT r.doff,r.dlen FROM record AS r WHERE r.owner = ? AND NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) AND NOT EXISTS (SELECT gp.record_goff FROM graph_pending AS gp WHERE gp.record_goff = r.goff) ORDER BY r.ts ASC");
+		"SELECT r.doff,r.dlen FROM record AS r WHERE "
+		"r.owner = ? "
+		"AND NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) "
+		"AND NOT EXISTS (SELECT gp.record_goff FROM graph_pending AS gp WHERE gp.record_goff = r.goff) "
+		"ORDER BY r.ts ASC"); /* this ordering is important for things like genesis record playback */
+	S(db->sGetIDOwnerReputation,
+		"SELECT r.reputation FROM record AS r WHERE "
+		"r.id = ? "
+		"AND r.owner = ? "
+		"AND NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) "
+		"AND NOT EXISTS (SELECT gp.record_goff FROM graph_pending AS gp WHERE gp.record_goff = r.goff) "
+		"ORDER BY r.reputation DESC LIMIT 1"); /* we want no rows at all if there aren't any and MAX() == NULL in this case */
+	S(db->sHaveRecordsWithIDNotOwner,
+		"SELECT doff FROM record WHERE id = ? AND owner != ? LIMIT 1");
+	S(db->sDemoteCollisions,
+		"UPDATE record SET reputation = 0 WHERE "
+		"id = ? " /* with apparently colliding ID */
+		"AND owner NOT IN (" /* and an owner for this ID that doesn't have a positive reputation already in synced records */
+			"SELECT DISTINCT r2.owner FROM record AS r2 WHERE "
+			"r2.id = ? " /* gets same ID value as first ? */
+			"AND r2.reputation > 0 "
+			"AND NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r2.goff) "
+			"AND NOT EXISTS (SELECT gp.record_goff FROM graph_pending AS gp WHERE gp.record_goff = r2.goff)"
+		") "
+		"AND reputation > 0"); /* and that isn't already zero (prevents unnecessary writes? not sure if necessary) */
 	S(db->sGetLinkCandidates,
-	     "SELECT r.hash FROM record AS r WHERE NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) AND NOT EXISTS (SELECT gp.record_goff FROM graph_pending AS gp WHERE gp.record_goff = r.goff) ORDER BY linked_count ASC LIMIT ?");
+		"SELECT r.hash FROM record AS r WHERE "
+		"r.reputation > 0 " /* exclude collisions or otherwise wonky records */
+		"AND NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) "
+		"AND NOT EXISTS (SELECT gp.record_goff FROM graph_pending AS gp WHERE gp.record_goff = r.goff) "
+		"ORDER BY r.linked_count,RANDOM() LIMIT ?"); /* link preferentially to records that have fewer links to them */
 	S(db->sGetRecordByHash,
-	     "SELECT doff,dlen FROM record WHERE hash = ?");
+		"SELECT doff,dlen FROM record WHERE hash = ?");
 	S(db->sGetMaxRecordDoff,
-	     "SELECT doff,dlen FROM record ORDER BY doff DESC LIMIT 1");
+		"SELECT doff,dlen FROM record ORDER BY doff DESC LIMIT 1");
 	S(db->sGetMaxRecordGoff,
-	     "SELECT MAX(goff) FROM record");
+		"SELECT MAX(goff) FROM record");
 	S(db->sGetRecordGoffByHash,
-	     "SELECT goff FROM record WHERE hash = ?");
+		"SELECT goff FROM record WHERE hash = ?");
 	S(db->sGetRecordInfoByGoff,
-	     "SELECT doff,dlen,score,hash FROM record WHERE goff = ?");
+		"SELECT doff,dlen,score,hash FROM record WHERE goff = ?");
 	S(db->sGetDanglingLinks,
-	     "SELECT linking_record_goff,linking_record_link_idx FROM dangling_link WHERE hash = ?");
+		"SELECT linking_record_goff,linking_record_link_idx FROM dangling_link WHERE hash = ?");
 	S(db->sDeleteDanglingLinks,
-	     "DELETE FROM dangling_link WHERE hash = ?");
+		"DELETE FROM dangling_link WHERE hash = ?");
 	S(db->sDeleteWantedHash,
-	     "DELETE FROM wanted WHERE hash = ?");
+		"DELETE FROM wanted WHERE hash = ?");
 	S(db->sAddDanglingLink,
-	     "INSERT OR IGNORE INTO dangling_link (hash,linking_record_goff,linking_record_link_idx) VALUES (?,?,?)");
+		"INSERT OR IGNORE INTO dangling_link (hash,linking_record_goff,linking_record_link_idx) VALUES (?,?,?)");
 	S(db->sAddWantedHash,
-	     "INSERT OR REPLACE INTO wanted (hash,retries) VALUES (?,0)");
+		"INSERT OR REPLACE INTO wanted (hash,retries) VALUES (?,0)"); /* NOTE: resets retry count every time a new record wants a record */
 	S(db->sAddHole,
-	     "INSERT OR IGNORE INTO hole (waiting_record_goff,incomplete_goff,incomplete_link_idx) VALUES (?,?,?)");
+		"INSERT OR IGNORE INTO hole (waiting_record_goff,incomplete_goff,incomplete_link_idx) VALUES (?,?,?)");
 	S(db->sFlagRecordWeightApplicationPending,
-	     "INSERT OR REPLACE INTO graph_pending (record_goff,hole_count) VALUES (?,?)");
+		"INSERT OR REPLACE INTO graph_pending (record_goff,hole_count) VALUES (?,?)");
 	S(db->sGetRecordsForWeightApplication,
-	     "SELECT gp.record_goff FROM graph_pending AS gp WHERE NOT EXISTS (SELECT dl1.linking_record_goff FROM dangling_link AS dl1 WHERE dl1.linking_record_goff = gp.record_goff) AND (gp.hole_count <= 0 OR (SELECT COUNT(1) FROM hole AS h,dangling_link AS dl2 WHERE h.waiting_record_goff = gp.record_goff AND dl2.linking_record_goff = h.incomplete_goff AND dl2.linking_record_link_idx = h.incomplete_link_idx) = 0) ORDER BY gp.record_goff ASC");
+		"SELECT gp.record_goff FROM graph_pending AS gp WHERE "
+		"NOT EXISTS (SELECT dl1.linking_record_goff FROM dangling_link AS dl1 WHERE dl1.linking_record_goff = gp.record_goff) "
+		"AND (" /* get records that don't appear to have any remaining holes under them or with hole count <= 0 (run now) */
+			"gp.hole_count <= 0 "
+			"OR NOT EXISTS ("
+				"SELECT h.waiting_record_goff FROM hole AS h,dangling_link AS dl2 WHERE "
+				"h.waiting_record_goff = gp.record_goff "
+				"AND dl2.linking_record_goff = h.incomplete_goff "
+				"AND dl2.linking_record_link_idx = h.incomplete_link_idx LIMIT 1"
+			")"
+		")");
 	S(db->sGetHoles,
-	     "SELECT incomplete_goff,incomplete_link_idx FROM hole WHERE waiting_record_goff = ?");
+		"SELECT incomplete_goff,incomplete_link_idx FROM hole WHERE waiting_record_goff = ?");
 	S(db->sDeleteHole,
-	     "DELETE FROM hole WHERE waiting_record_goff = ? AND incomplete_goff = ? AND incomplete_link_idx = ?");
+		"DELETE FROM hole WHERE waiting_record_goff = ? AND incomplete_goff = ? AND incomplete_link_idx = ?");
 	S(db->sUpdatePendingHoleCount,
-	     "UPDATE graph_pending SET hole_count = ? WHERE record_goff = ?");
+		"UPDATE graph_pending SET hole_count = ? WHERE record_goff = ?");
 	S(db->sDeleteCompletedPending,
-	     "DELETE FROM graph_pending WHERE record_goff = ?");
-	S(db->sGetAnyPending,
-	     "SELECT COUNT(1) FROM graph_pending AS gp WHERE NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = gp.record_goff) LIMIT 1");
+		"DELETE FROM graph_pending WHERE record_goff = ?");
+	S(db->sGetPendingCount,
+		"SELECT COUNT(1) FROM graph_pending AS gp");
 	S(db->sHaveDanglingLinks,
-	     "SELECT COUNT(1) FROM dangling_link AS dl WHERE NOT EXISTS (SELECT w.hash FROM wanted AS w WHERE w.hash = dl.hash AND w.retries > ?) LIMIT 1");
+		"SELECT w.retries FROM wanted AS w,dangling_link AS dl WHERE w.retries <= ? AND dl.hash = w.hash LIMIT 1");
 	S(db->sGetWanted,
-	     "SELECT hash FROM wanted WHERE retries BETWEEN ? AND ? ORDER BY retries,hash LIMIT ?");
+		"SELECT hash FROM wanted WHERE retries BETWEEN ? AND ? ORDER BY retries LIMIT ?");
 	S(db->sIncWantedRetries,
-	     "UPDATE wanted SET retries = (retries + 1) WHERE hash = ?");
+		"UPDATE wanted SET retries = (retries + 1) WHERE hash = ?");
 	S(db->sQueryClearRecordSet,
-	     "DELETE FROM tmp.rs");
+		"DELETE FROM tmp.rs");
 	S(db->sQueryOrSelectorRange,
-	     "INSERT OR IGNORE INTO tmp.rs SELECT record_doff AS \"i\" FROM selector WHERE sel BETWEEN ? AND ? AND record_ts BETWEEN ? AND ? LIMIT " ZTLF_DB_SELECTOR_QUERY_RESULT_LIMIT);
+		"INSERT OR IGNORE INTO tmp.rs SELECT record_doff AS \"i\" FROM selector WHERE "
+		"sel BETWEEN ? AND ? "
+		"AND record_ts BETWEEN ? AND ?"
+		"LIMIT " ZTLF_DB_SELECTOR_QUERY_RESULT_LIMIT);
 	S(db->sQueryAndSelectorRange,
-	     "DELETE FROM tmp.rs WHERE \"i\" NOT IN (SELECT record_doff FROM selector WHERE sel BETWEEN ? AND ? AND record_ts BETWEEN ? AND ?)");
+		"DELETE FROM tmp.rs WHERE \"i\" NOT IN (SELECT record_doff FROM selector WHERE sel BETWEEN ? AND ? AND record_ts BETWEEN ? AND ?)");
 	S(db->sQueryGetResults,
-	     "SELECT r.doff,r.dlen,r.goff,r.ts,r.id,r.owner FROM record AS r,tmp.rs AS rs WHERE r.doff = rs.i AND r.selector_count = ? AND NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) AND NOT EXISTS (SELECT gp.record_goff FROM graph_pending AS gp WHERE gp.record_goff = r.goff) ORDER BY r.owner,r.id,r.ts");
+		"SELECT r.doff,r.dlen,r.goff,r.ts,r.id,r.owner FROM record AS r,tmp.rs AS rs WHERE "
+		"r.doff = rs.i AND r.selector_count = ? "
+		"AND NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) "
+		"AND NOT EXISTS (SELECT gp.record_goff FROM graph_pending AS gp WHERE gp.record_goff = r.goff) "
+		"ORDER BY r.owner,r.id,r.ts");
 
 	/* Open and memory map graph and data files. */
 	snprintf(tmp,sizeof(tmp),"%s" ZTLF_PATH_SEPARATOR "graph.bin",path);
@@ -659,6 +722,9 @@ void ZTLF_DB_Close(struct ZTLF_DB *db)
 		if (db->sGetDataSize)                         sqlite3_finalize(db->sGetDataSize);
 		if (db->sGetAllRecords)                       sqlite3_finalize(db->sGetAllRecords);
 		if (db->sGetAllByOwner)                       sqlite3_finalize(db->sGetAllByOwner);
+		if (db->sGetIDOwnerReputation)                sqlite3_finalize(db->sGetIDOwnerReputation);
+		if (db->sHaveRecordsWithIDNotOwner)           sqlite3_finalize(db->sHaveRecordsWithIDNotOwner);
+		if (db->sDemoteCollisions)                    sqlite3_finalize(db->sDemoteCollisions);
 		if (db->sGetLinkCandidates)                   sqlite3_finalize(db->sGetLinkCandidates);
 		if (db->sGetRecordByHash)                     sqlite3_finalize(db->sGetRecordByHash);
 		if (db->sGetMaxRecordDoff)                    sqlite3_finalize(db->sGetMaxRecordDoff);
@@ -677,7 +743,7 @@ void ZTLF_DB_Close(struct ZTLF_DB *db)
 		if (db->sDeleteHole)                          sqlite3_finalize(db->sDeleteHole);
 		if (db->sUpdatePendingHoleCount)              sqlite3_finalize(db->sUpdatePendingHoleCount);
 		if (db->sDeleteCompletedPending)              sqlite3_finalize(db->sDeleteCompletedPending);
-		if (db->sGetAnyPending)                       sqlite3_finalize(db->sGetAnyPending);
+		if (db->sGetPendingCount)                     sqlite3_finalize(db->sGetPendingCount);
 		if (db->sHaveDanglingLinks)                   sqlite3_finalize(db->sHaveDanglingLinks);
 		if (db->sGetWanted)                           sqlite3_finalize(db->sGetWanted);
 		if (db->sIncWantedRetries)                    sqlite3_finalize(db->sIncWantedRetries);
@@ -730,14 +796,12 @@ unsigned int ZTLF_DB_GetByHash(struct ZTLF_DB *db,const void *hash,uint64_t *dof
 	return dlen;
 }
 
-unsigned int ZTLF_DB_GetLinks(struct ZTLF_DB *db,void *const lbuf,const unsigned int cnt)
+unsigned int ZTLF_DB_GetLinks(struct ZTLF_DB *db,void *const lbuf,unsigned int cnt)
 {
+	if (cnt == 0) return 0;
 	uint8_t *l = (uint8_t *)lbuf;
 	unsigned int lc = 0;
-	if (!cnt) return 0; /* sanity check */
-
 	pthread_mutex_lock(&db->dbLock);
-
 	sqlite3_reset(db->sGetLinkCandidates);
 	sqlite3_bind_int(db->sGetLinkCandidates,1,(int)cnt);
 	while (sqlite3_step(db->sGetLinkCandidates) == SQLITE_ROW) {
@@ -745,9 +809,7 @@ unsigned int ZTLF_DB_GetLinks(struct ZTLF_DB *db,void *const lbuf,const unsigned
 		l += 32;
 		++lc;
 	}
-
 	pthread_mutex_unlock(&db->dbLock);
-
 	return lc;
 }
 
@@ -833,6 +895,37 @@ int ZTLF_DB_PutRecord(
 		break;
 	}
 
+	/* Figure out what this record's reputation should be. First, we check if
+	 * there are fully synchronized records with this ID and owner. If these
+	 * exist we inherit their reputation. Otherwise we check to see if there
+	 * are ANY records (synchronized or not) with the same ID but a different
+	 * owner. If this is the case, this record gets a zero reputation and
+	 * any un-synchronized records with the same ID and owner also get a zero
+	 * reputation. Collisions between un-synchronized records earn them both
+	 * a zero. Note that reputation only exists on this node. It's not a part
+	 * of the DAG itself and is not replicated, though it will factor into
+	 * record commentary and therefore can be taken into consideration by
+	 * others on a voluntary trust basis. */
+	int reputation = 0;
+	sqlite3_reset(db->sGetIDOwnerReputation);
+	sqlite3_bind_blob(db->sGetIDOwnerReputation,1,id,32,SQLITE_STATIC);
+	sqlite3_bind_blob(db->sGetIDOwnerReputation,2,owner,ownerSize,SQLITE_STATIC);
+	if (sqlite3_step(db->sGetIDOwnerReputation) == SQLITE_ROW) {
+		reputation = sqlite3_column_int(db->sGetIDOwnerReputation,0);
+	} else {
+		sqlite3_reset(db->sHaveRecordsWithIDNotOwner);
+		sqlite3_bind_blob(db->sHaveRecordsWithIDNotOwner,1,id,32,SQLITE_STATIC);
+		sqlite3_bind_blob(db->sHaveRecordsWithIDNotOwner,2,owner,ownerSize,SQLITE_STATIC);
+		if (sqlite3_step(db->sHaveRecordsWithIDNotOwner) == SQLITE_ROW) {
+			sqlite3_reset(db->sDemoteCollisions);
+			sqlite3_bind_blob(db->sDemoteCollisions,1,id,32,SQLITE_STATIC);
+			sqlite3_bind_blob(db->sDemoteCollisions,2,id,32,SQLITE_STATIC);
+			sqlite3_step(db->sDemoteCollisions);
+		} else {
+			reputation = 1;
+		}
+	}
+
 	/* Add main record entry. */
 	sqlite3_reset(db->sAddRecord);
 	sqlite3_bind_int64(db->sAddRecord,1,doff);
@@ -841,10 +934,11 @@ int ZTLF_DB_PutRecord(
 	sqlite3_bind_int64(db->sAddRecord,4,(sqlite3_int64)ts);
 	sqlite3_bind_int64(db->sAddRecord,5,(sqlite3_int64)score);
 	sqlite3_bind_int(db->sAddRecord,6,(int)linkCount);
-	sqlite3_bind_int(db->sAddRecord,7,(int)selCount);
-	sqlite3_bind_blob(db->sAddRecord,8,hash,32,SQLITE_STATIC);
-	sqlite3_bind_blob(db->sAddRecord,9,id,32,SQLITE_STATIC);
-	sqlite3_bind_blob(db->sAddRecord,10,owner,ownerSize,SQLITE_STATIC);
+	sqlite3_bind_int(db->sAddRecord,7,reputation);
+	sqlite3_bind_int(db->sAddRecord,8,(int)selCount);
+	sqlite3_bind_blob(db->sAddRecord,9,hash,32,SQLITE_STATIC);
+	sqlite3_bind_blob(db->sAddRecord,10,id,32,SQLITE_STATIC);
+	sqlite3_bind_blob(db->sAddRecord,11,owner,ownerSize,SQLITE_STATIC);
 	if ((e = sqlite3_step(db->sAddRecord)) != SQLITE_DONE) {
 		result = ZTLF_POS(e);
 		goto exit_putRecord;
@@ -1173,10 +1267,10 @@ int ZTLF_DB_HasPending(struct ZTLF_DB *db)
 {
 	int has = 0;
 	pthread_mutex_lock(&db->dbLock);
-	sqlite3_reset(db->sGetAnyPending);
-	if (sqlite3_step(db->sGetAnyPending) == SQLITE_ROW)
-		has = (int)sqlite3_column_int64(db->sGetAnyPending,0);
-	if (has == 0) {
+	sqlite3_reset(db->sGetPendingCount);
+	if (sqlite3_step(db->sGetPendingCount) == SQLITE_ROW)
+		has = (int)sqlite3_column_int64(db->sGetPendingCount,0);
+	if (has <= 0) {
 		int64_t count = 0;
 		sqlite3_reset(db->sGetRecordCount);
 		if (sqlite3_step(db->sGetRecordCount) == SQLITE_ROW)
@@ -1195,7 +1289,7 @@ int ZTLF_DB_HaveDanglingLinks(struct ZTLF_DB *db,int ignoreWantedAfterNRetries)
 	sqlite3_reset(db->sHaveDanglingLinks);
 	sqlite3_bind_int(db->sHaveDanglingLinks,1,ignoreWantedAfterNRetries);
 	if (sqlite3_step(db->sHaveDanglingLinks) == SQLITE_ROW)
-		has = (int)sqlite3_column_int(db->sHaveDanglingLinks,0);
+		has = 1;
 	pthread_mutex_unlock(&db->dbLock);
 	return has;
 }

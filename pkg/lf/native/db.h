@@ -19,7 +19,7 @@
 #include <sqlite3.h>
 #endif
 
-#define ZTLF_DB_GRAPH_NODE_LOCK_ARRAY_SIZE 197 /* prime to randomize lock distribution */
+#define ZTLF_DB_GRAPH_NODE_LOCK_ARRAY_SIZE 197
 
 /**
  * Structure making up graph.bin
@@ -102,6 +102,9 @@ struct ZTLF_DB
 	sqlite3_stmt *sGetDataSize;
 	sqlite3_stmt *sGetAllRecords;
 	sqlite3_stmt *sGetAllByOwner;
+	sqlite3_stmt *sGetIDOwnerReputation;
+	sqlite3_stmt *sHaveRecordsWithIDNotOwner;
+	sqlite3_stmt *sDemoteCollisions;
 	sqlite3_stmt *sGetLinkCandidates;
 	sqlite3_stmt *sGetRecordByHash;
 	sqlite3_stmt *sGetMaxRecordDoff;
@@ -120,7 +123,7 @@ struct ZTLF_DB
 	sqlite3_stmt *sDeleteHole;
 	sqlite3_stmt *sUpdatePendingHoleCount;
 	sqlite3_stmt *sDeleteCompletedPending;
-	sqlite3_stmt *sGetAnyPending;
+	sqlite3_stmt *sGetPendingCount;
 	sqlite3_stmt *sHaveDanglingLinks;
 	sqlite3_stmt *sGetWanted;
 	sqlite3_stmt *sIncWantedRetries;
@@ -187,7 +190,7 @@ struct ZTLF_RecordList *ZTLF_DB_GetAllByOwner(struct ZTLF_DB *db,const void *own
 unsigned int ZTLF_DB_GetByHash(struct ZTLF_DB *db,const void *hash,uint64_t *doff);
 
 /* Gets up to cnt hashes of records to which a new record should link, returning actual number of links written to lbuf. */
-unsigned int ZTLF_DB_GetLinks(struct ZTLF_DB *db,void *const lbuf,const unsigned int cnt);
+unsigned int ZTLF_DB_GetLinks(struct ZTLF_DB *db,void *const lbuf,unsigned int cnt);
 
 /* Fill result pointer arguments with statistics about this database. */
 void ZTLF_DB_Stats(struct ZTLF_DB *db,uint64_t *recordCount,uint64_t *dataSize);

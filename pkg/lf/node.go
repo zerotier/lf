@@ -319,7 +319,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 		if bytes.Equal(n.genesisOwner, r.Owner) { // sanity check
 			rh := r.Hash()
 			if !n.db.hasRecord(rh[:]) {
-				n.log[LogLevelNormal].Printf("genesis record %x not found in database, initializing", rh)
+				n.log[LogLevelNormal].Printf("adding genesis record %x (not already in database)", rh)
 				err = n.db.putRecord(&r)
 				if err != nil {
 					return nil, err
@@ -337,6 +337,8 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 	}
 
 	// Load any genesis records after those in genesis.lf (or compiled in default)
+	// TODO: to support revisions by the genesis owner we will need to handle new genesis
+	// owner records coming in. Right now Sol is fixed so this never happens for public net.
 	n.log[LogLevelNormal].Printf("loading genesis records from genesis owner %x", n.genesisOwner)
 	gotGenesis := false
 	n.db.getAllByOwner(n.genesisOwner, func(doff, dlen uint64) bool {
@@ -449,7 +451,6 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 					hr := make([]byte, 1, 1+len(links))
 					hr[0] = p2pProtoMessageTypeHaveRecords
 					hr = append(hr, links...)
-
 					n.peersLock.RLock()
 					for _, p := range n.peers {
 						p.send(hr)

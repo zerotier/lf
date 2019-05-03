@@ -362,12 +362,13 @@ func TestDatabase(testBasePath string, out io.Writer) bool {
 	var dbs [testDatabaseInstances]db
 
 	testBasePath = path.Join(testBasePath, strconv.FormatInt(int64(os.Getpid()), 10))
+	logger := log.New(os.Stdout, "[db] ", 0)
 
 	fmt.Fprintf(out, "Creating and opening %d databases in \"%s\"... ", testDatabaseInstances, testBasePath)
 	for i := range dbs {
 		p := path.Join(testBasePath, strconv.FormatInt(int64(i), 10))
 		os.MkdirAll(p, 0755)
-		err = dbs[i].open(p, [logLevelCount]*log.Logger{nil, nil, nil, nil, nil}, func(doff uint64, dlen uint, hash *[32]byte) {})
+		err = dbs[i].open(p, [logLevelCount]*log.Logger{logger, logger, logger, logger, logger}, func(doff uint64, dlen uint, hash *[32]byte) {})
 		if err != nil {
 			fmt.Fprintf(out, "FAILED: %s\n", err.Error())
 			return false

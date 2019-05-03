@@ -75,6 +75,7 @@ func (db *db) open(basePath string, loggers [logLevelCount]*log.Logger, syncCall
 				eos++
 			}
 		}
+		fmt.Println(errstr)
 
 		db.close()
 
