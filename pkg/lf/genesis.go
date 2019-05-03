@@ -120,7 +120,7 @@ func CreateGenesisRecords(genesisOwnerType int, genesisParameters *GenesisParame
 	}
 
 	// Create the very first genesis record, which contains the genesis configuration structure in JSON format.
-	r, err := NewRecord(gpjson, nil, nil, nil, nil, nil, now, wg, genesisOwner)
+	r, err := NewRecord(RecordTypeGenesis, gpjson, nil, nil, nil, nil, nil, now, wg, genesisOwner)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -129,7 +129,7 @@ func CreateGenesisRecords(genesisOwnerType int, genesisParameters *GenesisParame
 
 	// Subsequent genesis records are empty and just exist so real records can satisfy their minimum link requirement.
 	for i := uint(1); i < genesisParameters.RecordMinLinks; i++ {
-		r, err := NewRecord(nil, links, nil, nil, nil, nil, now+uint64(i), wg, genesisOwner)
+		r, err := NewRecord(RecordTypeGenesis, nil, links, nil, nil, nil, nil, now+uint64(i), wg, genesisOwner)
 		if err != nil {
 			return nil, nil, err
 		}

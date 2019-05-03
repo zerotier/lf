@@ -41,30 +41,46 @@ var (
 const (
 	recordBodyFlagHasCertificate  byte = 0x01
 	recordBodyFlagValueCompressed byte = 0x02
+
+	// RecordDefaultWharrgarblMemory is the default amount of memory to use for Wharrgarbl momentum-type PoW.
+	RecordDefaultWharrgarblMemory = 1024 * 1024 * 512
+
+	// RecordMaxSize is a global maximum record size (binary serialized length).
+	// This is a protocol constant and can't be changed.
+	RecordMaxSize = 65536
+
+	// RecordMaxLinks is the maximum number of links a valid record can have.
+	// This is a protocol constant and can't be changed.
+	RecordMaxLinks = 255
+
+	// RecordMaxSelectors is a sanity limit on the number of selectors.
+	// This is a protocol constant and can't be changed.
+	RecordMaxSelectors = 16
+
+	// RecordWorkAlgorithmNone indicates no work algorithm (not allowed on main network but can exist in testing or private networks that are CA-only).
+	// This is a protocol constant and can't be changed.
+	RecordWorkAlgorithmNone byte = 0
+
+	// RecordWorkAlgorithmWharrgarbl indicates the Wharrgarbl momentum-like proof of work algorithm.
+	// This is a protocol constant and can't be changed.
+	RecordWorkAlgorithmWharrgarbl byte = 1
+
+	// RecordTypeDatum records are normal user data records (this is the default if unspecified).
+	// This is a protocol constant and can't be changed.
+	RecordTypeDatum byte = 0
+
+	// RecordTypeGenesis indicates a genesis record containing possible network config updates (if any are amendable).
+	// This is a protocol constant and can't be changed.
+	RecordTypeGenesis byte = 1
+
+	// RecordTypeCertificate records contain an x509 certificate.
+	// This is a protocol constant and can't be changed.
+	RecordTypeCertificate byte = 2
+
+	// RecordTypeCommentary records contain commentary about other records in the DAG.
+	// This is a protocol constant and can't be changed.
+	RecordTypeCommentary byte = 3
 )
-
-// RecordDefaultWharrgarblMemory is the default amount of memory to use for Wharrgarbl momentum-type PoW.
-const RecordDefaultWharrgarblMemory = 1024 * 1024 * 512
-
-// RecordMaxSize is a global maximum record size (binary serialized length).
-// This is a protocol constant and can't be changed.
-const RecordMaxSize = 65536
-
-// RecordMaxLinks is the maximum number of links a valid record can have.
-// This is a protocol constant and can't be changed.
-const RecordMaxLinks = 255
-
-// RecordMaxSelectors is a sanity limit on the number of selectors.
-// This is a protocol constant and can't be changed.
-const RecordMaxSelectors = 16
-
-// RecordWorkAlgorithmNone indicates no work algorithm (not allowed on main network but can exist in testing or private networks that are CA-only).
-// This is a protocol constant and can't be changed.
-const RecordWorkAlgorithmNone byte = 0
-
-// RecordWorkAlgorithmWharrgarbl indicates the Wharrgarbl momentum-like proof of work algorithm.
-// This is a protocol constant and can't be changed.
-const RecordWorkAlgorithmWharrgarbl byte = 1
 
 // recordWharrgarblCost computes the cost in Wharrgarbl difficulty for a record of a given number of "billable" bytes.
 func recordWharrgarblCost(bytes uint) uint32 {
@@ -116,12 +132,20 @@ type recordBody struct {
 	Links           [][32]byte `json:",omitempty"` // Links to previous records' hashes
 	Timestamp       uint64     ``                  // Timestamp (and revision ID) in SECONDS since Unix epoch
 	ValueCompressed *bool      `json:",omitempty"` // If true, value is compressed (within encrypted envelope)
+	Type            *byte      `json:",omitempty"` // Record type byte, RecordTypeDatum (0) if nil
 }
 
 func (rb *recordBody) unmarshalFrom(r io.Reader) error {
 	rr := byteAndArrayReader{r}
 
 	flags, err := rr.ReadByte()
+	if err != nil {
+		return err
+	}
+	rtype, err := rr.ReadByte()
+	if err != nil {
+		return err
+	}
 
 	l, err := binary.ReadUvarint(&rr)
 	if err != nil {
@@ -191,6 +215,9 @@ func (rb *recordBody) unmarshalFrom(r io.Reader) error {
 	if err != nil {
 		return err
 	}
+	if rtype != 0 {
+		rb.Type = &rtype
+	}
 
 	if (flags & recordBodyFlagValueCompressed) != 0 {
 		rb.ValueCompressed = &troo
@@ -200,12 +227,15 @@ func (rb *recordBody) unmarshalFrom(r io.Reader) error {
 }
 
 func (rb *recordBody) marshalTo(w io.Writer, hashAsProxyForValue bool) error {
-	var flags [1]byte
+	var flags [2]byte
 	if rb.Certificate != nil {
 		flags[0] |= recordBodyFlagHasCertificate
 	}
 	if rb.ValueCompressed != nil && *rb.ValueCompressed {
 		flags[0] |= recordBodyFlagValueCompressed
+	}
+	if rb.Type != nil && *rb.Type != 0 {
+		flags[1] = *rb.Type
 	}
 	if _, err := w.Write(flags[:]); err != nil {
 		return err
@@ -553,7 +583,7 @@ func (r *Record) Validate() (err error) {
 // NewRecordStart creates an incomplete record with its body and selectors filled out but no work or final signature.
 // This can be used to do the first step of a three-phase record creation process with the next two phases being NewRecordAddWork
 // and NewRecordComplete. This is useful of record creation needs to be split among systems or participants.
-func NewRecordStart(value []byte, links [][32]byte, maskingKey []byte, plainTextSelectorNames [][]byte, selectorOrdinals [][]byte, owner, certificateRecordHash []byte, ts uint64) (r *Record, workHash [32]byte, workBillableBytes uint, err error) {
+func NewRecordStart(recordType byte, value []byte, links [][32]byte, maskingKey []byte, plainTextSelectorNames [][]byte, selectorOrdinals [][]byte, owner, certificateRecordHash []byte, ts uint64) (r *Record, workHash [32]byte, workBillableBytes uint, err error) {
 	r = new(Record)
 
 	if len(value) > 0 {
@@ -612,6 +642,10 @@ func NewRecordStart(value []byte, links [][32]byte, maskingKey []byte, plainText
 
 	r.recordBody.Timestamp = ts
 
+	if recordType != 0 {
+		r.Type = &recordType
+	}
+
 	workBillableBytes = r.recordBody.sizeBytes()
 	selectorClaimSigningHash := r.recordBody.signingHash()
 	workHasher := sha3.New256()
@@ -667,10 +701,10 @@ func NewRecordComplete(incompleteRecord *Record, signingHash []byte, owner *Owne
 
 // NewRecord is a shortcut to running all incremental record creation functions.
 // Obviously this is time and memory intensive due to proof of work required to "pay" for this record.
-func NewRecord(value []byte, links [][32]byte, maskingKey []byte, plainTextSelectorNames [][]byte, selectorOrdinals [][]byte, certificateRecordHash []byte, ts uint64, workFunction *Wharrgarblr, owner *Owner) (r *Record, err error) {
+func NewRecord(recordType byte, value []byte, links [][32]byte, maskingKey []byte, plainTextSelectorNames [][]byte, selectorOrdinals [][]byte, certificateRecordHash []byte, ts uint64, workFunction *Wharrgarblr, owner *Owner) (r *Record, err error) {
 	var wh, sh [32]byte
 	var wb uint
-	r, wh, wb, err = NewRecordStart(value, links, maskingKey, plainTextSelectorNames, selectorOrdinals, owner.Bytes(), certificateRecordHash, ts)
+	r, wh, wb, err = NewRecordStart(recordType, value, links, maskingKey, plainTextSelectorNames, selectorOrdinals, owner.Bytes(), certificateRecordHash, ts)
 	if err != nil {
 		return
 	}

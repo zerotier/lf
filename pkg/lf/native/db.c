@@ -38,6 +38,7 @@ static void *_ZTLF_DB_graphThreadMain(void *arg);
  *   doff                     offset of record data in 'records' flat file (unique primary key)
  *   dlen                     length of record data
  *   goff                     offset of graph node in memory mapped graph file (unique key)
+ *   rtype                    LF-internal record type ID
  *   ts                       record timestamp
  *   score                    score of this record (alone, not with weight from links)
  *   link_count               number of links from this record (actual links are in graph node)
@@ -47,6 +48,13 @@ static void *_ZTLF_DB_graphThreadMain(void *arg);
  *   hash                     shandwich256(record data) (unique key)
  *   id                       sha256(selector keys)
  *   owner                    owner of this record or NULL if same as previous
+ *
+ * comment
+ *   by_record_doff           doff (key) of record containing comment
+ *   assertion                assertion (see comment.go)
+ *   reason                   reason (see comment.go)
+ *   subject                  subject of assertion
+ *   object                   object of assertion
  *
  * selector
  *   sel                      selector key (masked sortable ID)
@@ -102,6 +110,7 @@ static void *_ZTLF_DB_graphThreadMain(void *arg);
 "doff INTEGER PRIMARY KEY NOT NULL," \
 "dlen INTEGER NOT NULL," \
 "goff INTEGER NOT NULL," \
+"rtype INTEGER NOT NULL," \
 "ts INTEGER NOT NULL," \
 "score INTEGER NOT NULL," \
 "link_count INTEGER NOT NULL," \
@@ -119,6 +128,15 @@ static void *_ZTLF_DB_graphThreadMain(void *arg);
 "CREATE INDEX IF NOT EXISTS record_id_owner ON record(id,owner);\n" \
 "CREATE INDEX IF NOT EXISTS record_owner_ts ON record(owner,ts);\n" \
 "CREATE INDEX IF NOT EXISTS record_doff_selector_count_owner_id_ts ON record(doff,selector_count,owner,id,ts);\n" \
+\
+"CREATE TABLE IF EXISTS comment (" \
+"by_record_doff INTEGER NOT NULL," \
+"assertion INTEGER NOT NULL," \
+"reason INTEGER NOT NULL," \
+"subject BLOB," \
+"object BLOB," \
+"PRIMARY KEY(by_record_doff,assertion,reason,subject,object)" \
+") WITHOUT ROWID;\n" \
 \
 "CREATE TABLE IF NOT EXISTS selector (" \
 "sel BLOB NOT NULL," \
@@ -239,7 +257,7 @@ int ZTLF_DB_Open(
 	S(db->sGetConfig,
 		"SELECT \"v\" FROM config WHERE \"k\" = ?");
 	S(db->sAddRecord,
-		"INSERT INTO record (doff,dlen,goff,ts,score,link_count,reputation,linked_count,selector_count,hash,id,owner) VALUES (?,?,?,?,?,?,?,0,?,?,?,?)");
+		"INSERT INTO record (doff,dlen,goff,rtype,ts,score,link_count,reputation,linked_count,selector_count,hash,id,owner) VALUES (?,?,?,?,?,?,?,?,0,?,?,?,?)");
 	S(db->sIncRecordLinkedCountByGoff,
 		"UPDATE record SET linked_count = (linked_count + 1) WHERE goff = ?");
 	S(db->sAddSelector,
@@ -334,6 +352,8 @@ int ZTLF_DB_Open(
 		"SELECT hash FROM wanted WHERE retries BETWEEN ? AND ? ORDER BY retries LIMIT ?");
 	S(db->sIncWantedRetries,
 		"UPDATE wanted SET retries = (retries + 1) WHERE hash = ?");
+	S(db->sGetReputableOwners,
+		"SELECT DISTINCT owner FROM record WHERE id = ? AND reputation > 0");
 	S(db->sQueryClearRecordSet,
 		"DELETE FROM tmp.rs");
 	S(db->sQueryOrSelectorRange,
@@ -746,6 +766,7 @@ void ZTLF_DB_Close(struct ZTLF_DB *db)
 		if (db->sGetPendingCount)                     sqlite3_finalize(db->sGetPendingCount);
 		if (db->sHaveDanglingLinks)                   sqlite3_finalize(db->sHaveDanglingLinks);
 		if (db->sGetWanted)                           sqlite3_finalize(db->sGetWanted);
+		if (db->sGetReputableOwners)                  sqlite3_finalize(db->sGetReputableOwners);
 		if (db->sIncWantedRetries)                    sqlite3_finalize(db->sIncWantedRetries);
 		if (db->sQueryClearRecordSet)                 sqlite3_finalize(db->sQueryClearRecordSet);
 		if (db->sQueryOrSelectorRange)                sqlite3_finalize(db->sQueryOrSelectorRange);
@@ -817,6 +838,7 @@ int ZTLF_DB_PutRecord(
 	struct ZTLF_DB *db,
 	const void *rec,
 	const unsigned int rsize,
+	const int rtype,
 	const void *owner,
 	const unsigned int ownerSize,
 	const void *hash,
@@ -931,14 +953,15 @@ int ZTLF_DB_PutRecord(
 	sqlite3_bind_int64(db->sAddRecord,1,doff);
 	sqlite3_bind_int64(db->sAddRecord,2,(sqlite3_int64)rsize);
 	sqlite3_bind_int64(db->sAddRecord,3,goff);
-	sqlite3_bind_int64(db->sAddRecord,4,(sqlite3_int64)ts);
-	sqlite3_bind_int64(db->sAddRecord,5,(sqlite3_int64)score);
-	sqlite3_bind_int(db->sAddRecord,6,(int)linkCount);
-	sqlite3_bind_int(db->sAddRecord,7,reputation);
-	sqlite3_bind_int(db->sAddRecord,8,(int)selCount);
-	sqlite3_bind_blob(db->sAddRecord,9,hash,32,SQLITE_STATIC);
-	sqlite3_bind_blob(db->sAddRecord,10,id,32,SQLITE_STATIC);
-	sqlite3_bind_blob(db->sAddRecord,11,owner,ownerSize,SQLITE_STATIC);
+	sqlite3_bind_int(db->sAddRecord,4,rtype);
+	sqlite3_bind_int64(db->sAddRecord,5,(sqlite3_int64)ts);
+	sqlite3_bind_int64(db->sAddRecord,6,(sqlite3_int64)score);
+	sqlite3_bind_int(db->sAddRecord,7,(int)linkCount);
+	sqlite3_bind_int(db->sAddRecord,8,reputation);
+	sqlite3_bind_int(db->sAddRecord,9,(int)selCount);
+	sqlite3_bind_blob(db->sAddRecord,10,hash,32,SQLITE_STATIC);
+	sqlite3_bind_blob(db->sAddRecord,11,id,32,SQLITE_STATIC);
+	sqlite3_bind_blob(db->sAddRecord,12,owner,ownerSize,SQLITE_STATIC);
 	if ((e = sqlite3_step(db->sAddRecord)) != SQLITE_DONE) {
 		result = ZTLF_POS(e);
 		goto exit_putRecord;

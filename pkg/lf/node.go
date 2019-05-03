@@ -248,8 +248,8 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 		return nil, err
 	}
 
-	// Load or generate the node's owner key
-	ownerBytes := n.db.getConfig("owner-ed25519.private")
+	// Load or generate the node's owner key which is used for commentary on records.
+	ownerBytes := n.db.getConfig("owner-p384.private")
 	if len(ownerBytes) > 0 {
 		n.owner, err = NewOwnerFromPrivateBytes(ownerBytes)
 		if err != nil {
@@ -258,11 +258,11 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 		}
 	}
 	if n.owner == nil {
-		n.owner, err = NewOwner(OwnerTypeEd25519)
+		n.owner, err = NewOwner(OwnerTypeNistP384)
 		if err != nil {
 			return nil, err
 		}
-		n.db.setConfig("owner-ed25519.private", n.owner.PrivateBytes())
+		n.db.setConfig("owner-p384.private", n.owner.PrivateBytes())
 	}
 
 	// Listen for HTTP connections
@@ -346,13 +346,17 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 		if len(rdata) > 0 {
 			gr, err := NewRecordFromBytes(rdata)
 			if gr != nil && err == nil {
-				rv, err := gr.GetValue(nil)
-				if err != nil {
-					n.log[LogLevelWarning].Printf("WARNING: genesis record %x contains an invalid value!", gr.Hash())
-				} else if len(rv) > 0 {
-					n.log[LogLevelNormal].Printf("applying genesis configuration update from record %x", gr.Hash())
-					n.genesisParameters.Update(rv)
-					gotGenesis = true
+				if gr.Type != nil && *gr.Type == RecordTypeGenesis {
+					rv, err := gr.GetValue(nil)
+					if err != nil {
+						n.log[LogLevelWarning].Printf("WARNING: genesis record %x contains an invalid value!", gr.Hash())
+					} else if len(rv) > 0 {
+						n.log[LogLevelNormal].Printf("applying genesis configuration update from record %x", gr.Hash())
+						n.genesisParameters.Update(rv)
+						gotGenesis = true
+					}
+				} else {
+					n.log[LogLevelWarning].Printf("WARNING: record %x by genesis owner ignored as it is not a genesis record", gr.Hash())
 				}
 			} else if err != nil {
 				n.log[LogLevelWarning].Print("error unmarshaling genesis record: " + err.Error())
@@ -533,7 +537,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 				if err == nil && len(links) > 0 {
 					// TODO: actual commentary is not implemented yet, so this just adds work for now!
 					startTime := TimeMs()
-					rec, err := NewRecord(nil, links, nil, nil, nil, nil, TimeSec(), n.getBackgroundWorkFunction(), n.owner)
+					rec, err := NewRecord(RecordTypeCommentary, nil, links, nil, nil, nil, nil, TimeSec(), n.getBackgroundWorkFunction(), n.owner)
 					endTime := TimeMs()
 					if atomic.LoadUint32(&n.shutdown) == 0 {
 						if err == nil {

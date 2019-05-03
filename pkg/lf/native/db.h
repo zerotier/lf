@@ -127,6 +127,7 @@ struct ZTLF_DB
 	sqlite3_stmt *sHaveDanglingLinks;
 	sqlite3_stmt *sGetWanted;
 	sqlite3_stmt *sIncWantedRetries;
+	sqlite3_stmt *sGetReputableOwners;
 	sqlite3_stmt *sQueryClearRecordSet;
 	sqlite3_stmt *sQueryOrSelectorRange;
 	sqlite3_stmt *sQueryAndSelectorRange;
@@ -170,6 +171,7 @@ int ZTLF_DB_PutRecord(
 	struct ZTLF_DB *db,
 	const void *rec,
 	const unsigned int rsize,
+	const int rtype,
 	const void *owner,
 	const unsigned int ownerSize,
 	const void *hash,
@@ -236,6 +238,7 @@ static inline int ZTLF_DB_PutRecord_fromGo(
 	struct ZTLF_DB *db,
 	const void *rec,
 	const unsigned int rsize,
+	const int rtype,
 	const void *owner,
 	const unsigned int ownerSize,
 	const void *hash,
@@ -248,7 +251,7 @@ static inline int ZTLF_DB_PutRecord_fromGo(
 	const void *links,
 	const unsigned int linkCount)
 {
-	return ZTLF_DB_PutRecord(db,rec,rsize,owner,ownerSize,hash,id,ts,score,(const void **)sel,selSize,selCount,links,linkCount);
+	return ZTLF_DB_PutRecord(db,rec,rsize,rtype,owner,ownerSize,hash,id,ts,score,(const void **)sel,selSize,selCount,links,linkCount);
 }
 static inline struct ZTLF_QueryResults *ZTLF_DB_Query_fromGo(struct ZTLF_DB *db,const int64_t tsMin,const int64_t tsMax,const uintptr_t sel,const unsigned int *selSize,const unsigned int selCount)
 {

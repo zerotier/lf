@@ -141,11 +141,16 @@ func (db *db) putRecord(r *Record) error {
 	}
 
 	owner := r.recordBody.Owner
+	rtype := C.int(0)
+	if r.Type != nil {
+		rtype = C.int(*r.Type)
+	}
 
 	cerr := C.ZTLF_DB_PutRecord_fromGo(
 		db.cdb,
 		unsafe.Pointer(&rdata[0]),
 		C.uint(len(rdata)),
+		rtype,
 		unsafe.Pointer(&owner[0]),
 		C.uint(len(owner)),
 		unsafe.Pointer(&rhash),

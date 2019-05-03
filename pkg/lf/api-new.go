@@ -84,7 +84,7 @@ func (m *APINew) execute(workFunction *Wharrgarblr) (*Record, *APIError) {
 		selord[i] = m.Selectors[i].Ordinal
 	}
 
-	rec, err := NewRecord(m.Value, m.Links, m.MaskingKey, sel, selord, nil, ts, workFunction, owner)
+	rec, err := NewRecord(RecordTypeDatum, m.Value, m.Links, m.MaskingKey, sel, selord, nil, ts, workFunction, owner)
 	if err != nil {
 		return nil, &APIError{Code: http.StatusInternalServerError, Message: "record generation failed: " + err.Error()}
 	}
