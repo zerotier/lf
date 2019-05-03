@@ -41,6 +41,7 @@ var (
 const (
 	recordBodyFlagHasCertificate  byte = 0x01
 	recordBodyFlagValueCompressed byte = 0x02
+	recordBodyFlagHasType         byte = 0x04
 
 	// RecordDefaultWharrgarblMemory is the default amount of memory to use for Wharrgarbl momentum-type PoW.
 	RecordDefaultWharrgarblMemory = 1024 * 1024 * 512
@@ -142,9 +143,15 @@ func (rb *recordBody) unmarshalFrom(r io.Reader) error {
 	if err != nil {
 		return err
 	}
-	rtype, err := rr.ReadByte()
-	if err != nil {
-		return err
+
+	if (flags & recordBodyFlagHasType) != 0 {
+		rtype, err := rr.ReadByte()
+		if err != nil {
+			return err
+		}
+		if rtype != 0 {
+			rb.Type = &rtype
+		}
 	}
 
 	l, err := binary.ReadUvarint(&rr)
@@ -215,9 +222,6 @@ func (rb *recordBody) unmarshalFrom(r io.Reader) error {
 	if err != nil {
 		return err
 	}
-	if rtype != 0 {
-		rb.Type = &rtype
-	}
 
 	if (flags & recordBodyFlagValueCompressed) != 0 {
 		rb.ValueCompressed = &troo
@@ -235,10 +239,15 @@ func (rb *recordBody) marshalTo(w io.Writer, hashAsProxyForValue bool) error {
 		flags[0] |= recordBodyFlagValueCompressed
 	}
 	if rb.Type != nil && *rb.Type != 0 {
+		flags[0] |= recordBodyFlagHasType
 		flags[1] = *rb.Type
-	}
-	if _, err := w.Write(flags[:]); err != nil {
-		return err
+		if _, err := w.Write(flags[0:2]); err != nil {
+			return err
+		}
+	} else {
+		if _, err := w.Write(flags[0:1]); err != nil {
+			return err
+		}
 	}
 
 	if hashAsProxyForValue {
