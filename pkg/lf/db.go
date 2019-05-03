@@ -266,8 +266,8 @@ func (db *db) haveDanglingLinks(ignoreAfterNRetries int) bool {
 // query executes a query against a number of selector ranges. The function is executed for each result, with
 // results not sorted. The loop is broken if the function returns false. The owner is passed as a pointer to
 // an array that is reused, so a copy must be made if you want to keep it. The arguments to the function are:
-// timestamp, weight (low), weight (high), data offset, data length, id, owner, owner size (bytes).
-func (db *db) query(tsMin, tsMax int64, selectorRanges [][2][]byte, f func(uint64, uint64, uint64, uint64, uint64, *[32]byte, []byte) bool) error {
+// timestamp, weight (low), weight (high), data offset, data length, local reputation, id, owner.
+func (db *db) query(tsMin, tsMax int64, selectorRanges [][2][]byte, f func(uint64, uint64, uint64, uint64, uint64, int, *[32]byte, []byte) bool) error {
 	if len(selectorRanges) == 0 {
 		return nil
 	}
@@ -300,7 +300,7 @@ func (db *db) query(tsMin, tsMax int64, selectorRanges [][2][]byte, f func(uint6
 				for j := uint(0); j < ownerSize; j++ {
 					owner[j] = byte(cr.owner[j])
 				}
-				if !f(uint64(cr.ts), uint64(cr.weightL), uint64(cr.weightH), uint64(cr.doff), uint64(cr.dlen), &id, owner[0:ownerSize]) {
+				if !f(uint64(cr.ts), uint64(cr.weightL), uint64(cr.weightH), uint64(cr.doff), uint64(cr.dlen), int(cr.localReputation), &id, owner[0:ownerSize]) {
 					break
 				}
 			}

@@ -45,6 +45,7 @@ type APIQueryResult struct {
 	Record          *Record          `json:",omitempty"` // Record itself.
 	Value           Blob             `json:",omitempty"` // Unmasked value if masking key was included
 	UnmaskingFailed *bool            `json:",omitempty"` // If true, unmasking failed due to invalid masking key in query (or invalid compressed data in valid)
+	LocalReputation int              ``                  // Local reputation at source node
 	Weight          string           `json:",omitempty"` // Record weight as a 128-bit hex value
 	Conflicts       []APIQueryResult `json:",omitempty"` // Less weighted/trusted records with this same ID (never nested more than 1 deep)
 }
@@ -74,7 +75,8 @@ func (m *APIQuery) Run(url string) (APIQueryResults, error) {
 }
 
 type apiQueryResultTmp struct {
-	weightL, weightH, doff, dlen uint64 // don't reorder these without checking execute() below
+	weightL, weightH, doff, dlen uint64
+	localReputation              int
 }
 
 func (m *APIQuery) execute(n *Node) (qr APIQueryResults, err *APIError) {
@@ -120,26 +122,30 @@ func (m *APIQuery) execute(n *Node) (qr APIQueryResults, err *APIError) {
 
 	// Get all results grouped by ID (all selectors)
 	byID := make(map[[32]byte]*[]apiQueryResultTmp)
-	n.db.query(tsMin, tsMax, selectorRanges, func(ts, weightL, weightH, doff, dlen uint64, id *[32]byte, owner []byte) bool {
+	n.db.query(tsMin, tsMax, selectorRanges, func(ts, weightL, weightH, doff, dlen uint64, localReputation int, id *[32]byte, owner []byte) bool {
 		rptr := byID[*id]
 		if rptr == nil {
 			tmp := make([]apiQueryResultTmp, 0, 4)
 			rptr = &tmp
 			byID[*id] = rptr
 		}
-		*rptr = append(*rptr, apiQueryResultTmp{weightL, weightH, doff, dlen})
+		*rptr = append(*rptr, apiQueryResultTmp{weightL, weightH, doff, dlen, localReputation})
 		return true
 	})
 
 	// Actually grab the records and populate the qr[] slice.
 	for id, rptr := range byID {
-		// Sort these results under this ID in descending order of weight/trust.
+		// Sort these results under this ID in descending order of local reputation followed by weight.
 		sort.Slice(*rptr, func(b, a int) bool {
 			x, y := &(*rptr)[a], &(*rptr)[b]
-			if x.weightH < y.weightH {
+			if x.localReputation < y.localReputation {
 				return true
-			} else if x.weightH == y.weightH {
-				return x.weightL < y.weightL
+			} else if x.localReputation == y.localReputation {
+				if x.weightH < y.weightH {
+					return true
+				} else if x.weightH == y.weightH {
+					return x.weightL < y.weightL
+				}
 			}
 			return false
 		})

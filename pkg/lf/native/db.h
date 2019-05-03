@@ -49,6 +49,7 @@ struct ZTLF_QueryResult
 	uint64_t doff;
 	unsigned int dlen;
 	unsigned int ownerSize;
+	int localReputation;
 	uint8_t id[32];
 	uint8_t owner[ZTLF_DB_QUERY_MAX_OWNER_SIZE];
 };

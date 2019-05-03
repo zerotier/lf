@@ -129,7 +129,7 @@ static void *_ZTLF_DB_graphThreadMain(void *arg);
 "CREATE INDEX IF NOT EXISTS record_owner_ts ON record(owner,ts);\n" \
 "CREATE INDEX IF NOT EXISTS record_doff_selector_count_owner_id_ts ON record(doff,selector_count,owner,id,ts);\n" \
 \
-"CREATE TABLE IF EXISTS comment (" \
+"CREATE TABLE IF NOT EXISTS comment (" \
 "by_record_doff INTEGER NOT NULL," \
 "assertion INTEGER NOT NULL," \
 "reason INTEGER NOT NULL," \
@@ -359,12 +359,12 @@ int ZTLF_DB_Open(
 	S(db->sQueryOrSelectorRange,
 		"INSERT OR IGNORE INTO tmp.rs SELECT record_doff AS \"i\" FROM selector WHERE "
 		"sel BETWEEN ? AND ? "
-		"AND record_ts BETWEEN ? AND ?"
+		"AND record_ts BETWEEN ? AND ? "
 		"LIMIT " ZTLF_DB_SELECTOR_QUERY_RESULT_LIMIT);
 	S(db->sQueryAndSelectorRange,
 		"DELETE FROM tmp.rs WHERE \"i\" NOT IN (SELECT record_doff FROM selector WHERE sel BETWEEN ? AND ? AND record_ts BETWEEN ? AND ?)");
 	S(db->sQueryGetResults,
-		"SELECT r.doff,r.dlen,r.goff,r.ts,r.id,r.owner FROM record AS r,tmp.rs AS rs WHERE "
+		"SELECT r.doff,r.dlen,r.goff,r.ts,r.reputation,r.id,r.owner FROM record AS r,tmp.rs AS rs WHERE "
 		"r.doff = rs.i AND r.selector_count = ? "
 		"AND NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) "
 		"AND NOT EXISTS (SELECT gp.record_goff FROM graph_pending AS gp WHERE gp.record_goff = r.goff) "
@@ -766,8 +766,8 @@ void ZTLF_DB_Close(struct ZTLF_DB *db)
 		if (db->sGetPendingCount)                     sqlite3_finalize(db->sGetPendingCount);
 		if (db->sHaveDanglingLinks)                   sqlite3_finalize(db->sHaveDanglingLinks);
 		if (db->sGetWanted)                           sqlite3_finalize(db->sGetWanted);
-		if (db->sGetReputableOwners)                  sqlite3_finalize(db->sGetReputableOwners);
 		if (db->sIncWantedRetries)                    sqlite3_finalize(db->sIncWantedRetries);
+		if (db->sGetReputableOwners)                  sqlite3_finalize(db->sGetReputableOwners);
 		if (db->sQueryClearRecordSet)                 sqlite3_finalize(db->sQueryClearRecordSet);
 		if (db->sQueryOrSelectorRange)                sqlite3_finalize(db->sQueryOrSelectorRange);
 		if (db->sQueryAndSelectorRange)               sqlite3_finalize(db->sQueryAndSelectorRange);
@@ -1140,10 +1140,10 @@ struct ZTLF_QueryResults *ZTLF_DB_Query(struct ZTLF_DB *db,const int64_t tsMin,c
 	memset(lastOwner,0,sizeof(lastOwner));
 	memset(lastId,0,sizeof(lastId));
 	int lastOwnerSize = -1;
-	while (sqlite3_step(db->sQueryGetResults) == SQLITE_ROW) { /* columns: doff,dlen,goff,ts,id,owner */
-		const void *id = sqlite3_column_blob(db->sQueryGetResults,4);
-		const void *owner = sqlite3_column_blob(db->sQueryGetResults,5);
-		const int ownerSize = sqlite3_column_bytes(db->sQueryGetResults,5);
+	while (sqlite3_step(db->sQueryGetResults) == SQLITE_ROW) { /* columns: doff,dlen,goff,ts,reputation,id,owner */
+		const void *id = sqlite3_column_blob(db->sQueryGetResults,5);
+		const void *owner = sqlite3_column_blob(db->sQueryGetResults,6);
+		const int ownerSize = sqlite3_column_bytes(db->sQueryGetResults,6);
 		if ((!owner)||(ownerSize <= 0)||(ownerSize > ZTLF_DB_QUERY_MAX_OWNER_SIZE))
 			continue;
 
@@ -1174,6 +1174,7 @@ struct ZTLF_QueryResults *ZTLF_DB_Query(struct ZTLF_DB *db,const int64_t tsMin,c
 			qr->weightL = 0;
 			qr->weightH = 0;
 			qr->ownerSize = (unsigned int)ownerSize;
+			qr->localReputation = 0;
 			memcpy(qr->id,id,32);
 			memcpy(qr->owner,owner,ownerSize);
 		} else {
@@ -1191,6 +1192,9 @@ struct ZTLF_QueryResults *ZTLF_DB_Query(struct ZTLF_DB *db,const int64_t tsMin,c
 			qr->weightH += (uint64_t)((qr->weightL += ((uint64_t)w96m) << 32) < oldwl) + (uint64_t)w96h;
 			qr->doff = (uint64_t)sqlite3_column_int64(db->sQueryGetResults,0);
 			qr->dlen = (unsigned int)sqlite3_column_int(db->sQueryGetResults,1);
+			const int rep = sqlite3_column_int(db->sQueryGetResults,4);
+			if (rep > qr->localReputation)
+				qr->localReputation = rep;
 		}
 	}
 	++r->count;
