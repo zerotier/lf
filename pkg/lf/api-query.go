@@ -35,26 +35,26 @@ type APIQuery struct {
 	Range      []APIQueryRange `json:",omitempty"` // Selectors or selector range(s)
 	TimeRange  []uint64        `json:",omitempty"` // If present, constrain record times to after first value (if [1]) or range (if [2])
 	MaskingKey Blob            `json:",omitempty"` // Masking key to unmask record value(s) server-side (if non-empty)
+	Limit      int             `json:",omitempty"` // If non-zero, limit maximum lower trust records per result
 }
 
 // APIQueryResult (response, part of APIQueryResults) is a single query result.
 type APIQueryResult struct {
-	ID              [32]byte         ``                  // Record ID (its unique selector set)
-	Hash            [32]byte         ``                  // Hash of this specific unique record
-	Size            int              ``                  // Size of this record in bytes
-	Record          *Record          `json:",omitempty"` // Record itself.
-	Value           Blob             `json:",omitempty"` // Unmasked value if masking key was included
-	UnmaskingFailed *bool            `json:",omitempty"` // If true, unmasking failed due to invalid masking key in query (or invalid compressed data in valid)
-	LocalReputation int              ``                  // Local reputation at source node
-	Weight          string           `json:",omitempty"` // Record weight as a 128-bit hex value
-	Conflicts       []APIQueryResult `json:",omitempty"` // Less weighted/trusted records with this same ID (never nested more than 1 deep)
+	ID              [32]byte ``                  // Record ID (its unique selector set)
+	Hash            [32]byte ``                  // Hash of this specific unique record
+	Size            int      ``                  // Size of this record in bytes
+	Record          *Record  `json:",omitempty"` // Record itself.
+	Value           Blob     `json:",omitempty"` // Unmasked value if masking key was included
+	UnmaskingFailed *bool    `json:",omitempty"` // If true, unmasking failed due to invalid masking key in query (or invalid compressed data in valid)
+	LocalReputation int      ``                  // Local reputation at source node
+	Weight          string   `json:",omitempty"` // Record weight as a 128-bit hex value
 }
 
 // APIQueryResults is a list of results to an API query.
-// Each record will be the best (as determined by weight and possibly trust relationships) for each combination
-// of record selectors. If there are more than one it's the application's responsibility to decide which are
-// relevant or trustworthy.
-type APIQueryResults []APIQueryResult
+// Each result is actually an array of results sorted by weight and other metrics
+// of trust (descending order of trust). These member slices will never contain
+// zero records, though remote code should check to prevent exceptions.
+type APIQueryResults [][]APIQueryResult
 
 // Run executes this API query against a remote LF node or proxy
 func (m *APIQuery) Run(url string) (APIQueryResults, error) {
@@ -169,33 +169,37 @@ func (m *APIQuery) execute(n *Node) (qr APIQueryResults, err *APIError) {
 			}
 			wstr := fmt.Sprintf("%.16x%.16x", result.weightH, result.weightL)
 			if rn == 0 {
-				qr = append(qr, APIQueryResult{
+				qr = append(qr, []APIQueryResult{APIQueryResult{
 					ID:              id,
 					Hash:            rec.Hash(),
 					Size:            int(result.dlen),
 					Record:          rec,
 					Value:           v,
 					UnmaskingFailed: mkinv,
+					LocalReputation: result.localReputation,
+					Weight:          wstr,
+				}})
+			} else if m.Limit <= 0 || rn < m.Limit {
+				qr[len(qr)-1] = append(qr[len(qr)-1], APIQueryResult{
+					ID:              id,
+					Hash:            rec.Hash(),
+					Size:            int(result.dlen),
+					Record:          rec,
+					Value:           v,
+					UnmaskingFailed: mkinv,
+					LocalReputation: result.localReputation,
 					Weight:          wstr,
 				})
 			} else {
-				qr[len(qr)-1].Conflicts = append(qr[len(qr)-1].Conflicts, APIQueryResult{
-					ID:              id,
-					Hash:            rec.Hash(),
-					Size:            int(result.dlen),
-					Record:          rec,
-					Value:           v,
-					UnmaskingFailed: mkinv,
-					Weight:          wstr,
-				})
+				break
 			}
 		}
 	}
 
 	// Sort root qr[] by selector ordinals.
 	sort.Slice(qr, func(a, b int) bool {
-		sa := qr[a].Record.Selectors
-		sb := qr[b].Record.Selectors
+		sa := qr[a][0].Record.Selectors
+		sb := qr[b][0].Record.Selectors
 		if len(sa) < len(sb) {
 			return true
 		}

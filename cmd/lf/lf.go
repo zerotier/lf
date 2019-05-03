@@ -373,6 +373,9 @@ func doGet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool
 		Range:     ranges,
 		TimeRange: tr,
 	}
+	if !jsonOutput {
+		req.Limit = 1
+	}
 
 	var results lf.APIQueryResults
 	for _, u := range urls {
@@ -387,11 +390,13 @@ func doGet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool
 		return
 	}
 
-	for _, res := range results {
-		res.Value, err = res.Record.GetValue(mk)
-		if err != nil {
-			res.Value = nil
-			res.UnmaskingFailed = &troo
+	for _, ress := range results {
+		for _, res := range ress {
+			res.Value, err = res.Record.GetValue(mk)
+			if err != nil {
+				res.Value = nil
+				res.UnmaskingFailed = &troo
+			}
 		}
 	}
 
@@ -402,29 +407,32 @@ func doGet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool
 			fmt.Println("[]")
 		}
 	} else {
-		for _, res := range results {
-			if len(res.Value) > 0 {
-				jstr, _ := json.Marshal(string(res.Value)) // use JSON's string escaping
-				fmt.Print(string(jstr[1 : len(jstr)-1]))
-			} else if res.UnmaskingFailed != nil && *res.UnmaskingFailed {
-				fmt.Print("<unmasking failed>")
-			} else {
-				fmt.Print("<empty>")
-			}
-			for i := range selectorNames {
-				fmt.Print("\t")
-				for si := range res.Record.Selectors {
-					sn := []byte(selectorNames[i])
-					if res.Record.SelectorIs(sn, si) {
-						fmt.Print(selectorNames[i])
-						if len(res.Record.Selectors[si].Ordinal) > 0 {
-							fmt.Print("#")
-							fmt.Print(escapeOrdinal(res.Record.Selectors[si].Ordinal))
+		for _, ress := range results {
+			if len(ress) > 0 {
+				res := &ress[0]
+				if len(res.Value) > 0 {
+					jstr, _ := json.Marshal(string(res.Value)) // use JSON's string escaping
+					fmt.Print(string(jstr[1 : len(jstr)-1]))
+				} else if res.UnmaskingFailed != nil && *res.UnmaskingFailed {
+					fmt.Print("<unmasking failed>")
+				} else {
+					fmt.Print("<empty>")
+				}
+				for i := range selectorNames {
+					fmt.Print("\t")
+					for si := range res.Record.Selectors {
+						sn := []byte(selectorNames[i])
+						if res.Record.SelectorIs(sn, si) {
+							fmt.Print(selectorNames[i])
+							if len(res.Record.Selectors[si].Ordinal) > 0 {
+								fmt.Print("#")
+								fmt.Print(escapeOrdinal(res.Record.Selectors[si].Ordinal))
+							}
 						}
 					}
 				}
+				fmt.Println("")
 			}
-			fmt.Println("")
 		}
 	}
 }

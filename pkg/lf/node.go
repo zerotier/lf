@@ -219,7 +219,32 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 				}
 				n.peersLock.RUnlock()
 
-				n.log[LogLevelVerbose].Printf("record %x links satisfied, announced to %d peers", *hash, announcementCount)
+				n.log[LogLevelVerbose].Printf("record %x synchronized, announced to %d peers", *hash, announcementCount)
+
+				rdata, err := n.db.getDataByOffset(doff, dlen, nil)
+				if len(rdata) > 0 && err == nil {
+					r, err := NewRecordFromBytes(rdata)
+
+					// Special processing for certain record types
+					if err == nil && r.Type != nil {
+						switch *r.Type {
+						case RecordTypeCommentary:
+							cdata, err := r.GetValue(nil)
+							if err == nil && len(cdata) > 0 {
+								var c comment
+								for len(cdata) > 0 {
+									cdata, err = c.readFrom(cdata)
+									if err == nil {
+										n.log[LogLevelVerbose].Printf("commentary [%x]: %s", *hash, c.string())
+										n.db.logComment(doff, int(c.assertion), int(c.reason), c.subject, c.object)
+									} else {
+										break
+									}
+								}
+							}
+						}
+					}
+				}
 			}()
 		}
 	})

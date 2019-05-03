@@ -130,12 +130,12 @@ static void *_ZTLF_DB_graphThreadMain(void *arg);
 "CREATE INDEX IF NOT EXISTS record_doff_selector_count_owner_id_ts ON record(doff,selector_count,owner,id,ts);\n" \
 \
 "CREATE TABLE IF NOT EXISTS comment (" \
+"subject BLOB," \
+"object BLOB," \
 "by_record_doff INTEGER NOT NULL," \
 "assertion INTEGER NOT NULL," \
 "reason INTEGER NOT NULL," \
-"subject BLOB," \
-"object BLOB," \
-"PRIMARY KEY(by_record_doff,assertion,reason,subject,object)" \
+"PRIMARY KEY(subject,object,by_record_doff,assertion,reason)" \
 ") WITHOUT ROWID;\n" \
 \
 "CREATE TABLE IF NOT EXISTS selector (" \
@@ -354,6 +354,8 @@ int ZTLF_DB_Open(
 		"UPDATE wanted SET retries = (retries + 1) WHERE hash = ?");
 	S(db->sGetReputableOwners,
 		"SELECT DISTINCT owner FROM record WHERE id = ? AND reputation > 0");
+	S(db->sLogComment,
+		"INSERT OR IGNORE INTO comment (subject,object,by_record_doff,assertion,reason) VALUES (?,?,?,?,?)");
 	S(db->sQueryClearRecordSet,
 		"DELETE FROM tmp.rs");
 	S(db->sQueryOrSelectorRange,
@@ -768,6 +770,7 @@ void ZTLF_DB_Close(struct ZTLF_DB *db)
 		if (db->sGetWanted)                           sqlite3_finalize(db->sGetWanted);
 		if (db->sIncWantedRetries)                    sqlite3_finalize(db->sIncWantedRetries);
 		if (db->sGetReputableOwners)                  sqlite3_finalize(db->sGetReputableOwners);
+		if (db->sLogComment)                          sqlite3_finalize(db->sLogComment);
 		if (db->sQueryClearRecordSet)                 sqlite3_finalize(db->sQueryClearRecordSet);
 		if (db->sQueryOrSelectorRange)                sqlite3_finalize(db->sQueryOrSelectorRange);
 		if (db->sQueryAndSelectorRange)               sqlite3_finalize(db->sQueryAndSelectorRange);
@@ -1350,13 +1353,35 @@ unsigned int ZTLF_DB_GetWanted(struct ZTLF_DB *db,void *buf,const unsigned int m
 	return count;
 }
 
+int ZTLF_DB_LogComment(struct ZTLF_DB *db,const int64_t byRecordDoff,const int assertion,const int reason,const void *const subject,const int subjectLen,const void *const object,const int objectLen)
+{
+	pthread_mutex_lock(&db->dbLock);
+	sqlite3_reset(db->sLogComment);
+	if (subjectLen > 0) {
+		sqlite3_bind_blob(db->sLogComment,1,subject,subjectLen,SQLITE_STATIC);
+	} else {
+		sqlite3_bind_null(db->sLogComment,1);
+	}
+	if (objectLen > 0) {
+		sqlite3_bind_blob(db->sLogComment,2,object,objectLen,SQLITE_STATIC);
+	} else {
+		sqlite3_bind_null(db->sLogComment,2);
+	}
+	sqlite3_bind_int64(db->sLogComment,3,byRecordDoff);
+	sqlite3_bind_int(db->sLogComment,4,assertion);
+	sqlite3_bind_int(db->sLogComment,5,reason);
+	const int ok = sqlite3_step(db->sLogComment);
+	pthread_mutex_unlock(&db->dbLock);
+	return (ok == SQLITE_DONE) ? 0 : ZTLF_POS(ok);
+}
+
 int ZTLF_DB_SetConfig(struct ZTLF_DB *db,const char *key,const void *value,const unsigned int vlen)
 {
 	pthread_mutex_lock(&db->dbLock);
 	sqlite3_reset(db->sSetConfig);
 	sqlite3_bind_text(db->sSetConfig,1,key,-1,SQLITE_STATIC);
 	sqlite3_bind_blob(db->sSetConfig,2,value,(int)vlen,SQLITE_STATIC);
-	int ok = sqlite3_step(db->sSetConfig);
+	const int ok = sqlite3_step(db->sSetConfig);
 	pthread_mutex_unlock(&db->dbLock);
 	return (ok == SQLITE_DONE) ? 0 : ZTLF_POS(ok);
 }
