@@ -40,7 +40,7 @@ static void *_ZTLF_DB_graphThreadMain(void *arg);
  *   hash                     shandwich256(record data) (unique key)
  *   id                       sha256(selector keys)
  *   owner                    owner of this record or NULL if same as previous
- * 
+ *
  * selector
  *   sel                      selector key (masked sortable ID)
  *   doff                     offset of linked record
@@ -102,11 +102,11 @@ static void *_ZTLF_DB_graphThreadMain(void *arg);
 "hash BLOB NOT NULL," \
 "id BLOB NOT NULL," \
 "owner BLOB NOT NULL" \
-") WITHOUT ROWID;\n" \
+");\n" \
 \
 "CREATE UNIQUE INDEX IF NOT EXISTS record_goff ON record(goff);\n" \
 "CREATE UNIQUE INDEX IF NOT EXISTS record_hash ON record(hash);\n" \
-"CREATE INDEX IF NOT EXISTS record_id ON record(id);\n" \
+"CREATE INDEX IF NOT EXISTS record_id_owner ON record(id,owner);\n" \
 "CREATE INDEX IF NOT EXISTS record_ts ON record(ts);\n" \
 "CREATE INDEX IF NOT EXISTS record_doff_selector_count_owner_id_ts ON record(doff,selector_count,owner,id,ts);\n" \
 \
@@ -136,7 +136,7 @@ static void *_ZTLF_DB_graphThreadMain(void *arg);
 "CREATE TABLE IF NOT EXISTS graph_pending (" \
 "record_goff INTEGER PRIMARY KEY NOT NULL," \
 "hole_count INTEGER NOT NULL" \
-") WITHOUT ROWID;\n" \
+");\n" \
 \
 "CREATE TABLE IF NOT EXISTS wanted (" \
 "hash BLOB PRIMARY KEY NOT NULL," \
@@ -147,7 +147,7 @@ static void *_ZTLF_DB_graphThreadMain(void *arg);
 \
 "ATTACH DATABASE ':memory:' AS tmp;\n" \
 \
-"CREATE TABLE IF NOT EXISTS tmp.rs (\"i\" INTEGER PRIMARY KEY NOT NULL) WITHOUT ROWID;\n"
+"CREATE TABLE IF NOT EXISTS tmp.rs (\"i\" INTEGER PRIMARY KEY NOT NULL);\n"
 
 #ifdef S
 #define ZTLF_oldS S
@@ -271,8 +271,6 @@ int ZTLF_DB_Open(
 	     "SELECT COUNT(1) FROM graph_pending AS gp WHERE NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = gp.record_goff) LIMIT 1");
 	S(db->sHaveDanglingLinks,
 	     "SELECT COUNT(1) FROM dangling_link AS dl WHERE NOT EXISTS (SELECT w.hash FROM wanted AS w WHERE w.hash = dl.hash AND w.retries > ?) LIMIT 1");
-	S(db->sGetHaveSynchronizedWithID,
-	     "SELECT COUNT(1) FROM record AS r WHERE r.id = ? AND r.owner != ? AND NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) AND NOT EXISTS (SELECT gp.record_goff FROM graph_pending AS gp WHERE gp.record_goff = r.goff)");
 	S(db->sGetWanted,
 	     "SELECT hash FROM wanted WHERE retries BETWEEN ? AND ? ORDER BY retries,hash LIMIT ?");
 	S(db->sIncWantedRetries,
@@ -677,7 +675,6 @@ void ZTLF_DB_Close(struct ZTLF_DB *db)
 		if (db->sDeleteCompletedPending)              sqlite3_finalize(db->sDeleteCompletedPending);
 		if (db->sGetAnyPending)                       sqlite3_finalize(db->sGetAnyPending);
 		if (db->sHaveDanglingLinks)                   sqlite3_finalize(db->sHaveDanglingLinks);
-		if (db->sGetHaveSynchronizedWithID)           sqlite3_finalize(db->sGetHaveSynchronizedWithID);
 		if (db->sGetWanted)                           sqlite3_finalize(db->sGetWanted);
 		if (db->sIncWantedRetries)                    sqlite3_finalize(db->sIncWantedRetries);
 		if (db->sQueryClearRecordSet)                 sqlite3_finalize(db->sQueryClearRecordSet);
@@ -1226,19 +1223,6 @@ int ZTLF_DB_HaveDanglingLinks(struct ZTLF_DB *db,int ignoreWantedAfterNRetries)
 	sqlite3_bind_int(db->sHaveDanglingLinks,1,ignoreWantedAfterNRetries);
 	if (sqlite3_step(db->sHaveDanglingLinks) == SQLITE_ROW)
 		has = (int)sqlite3_column_int(db->sHaveDanglingLinks,0);
-	pthread_mutex_unlock(&db->dbLock);
-	return has;
-}
-
-int ZTLF_DB_HaveSynchronizedWithID(struct ZTLF_DB *db,const void *id,const void *notOwner,const unsigned int ownerSize)
-{
-	int has = 0;
-	pthread_mutex_lock(&db->dbLock);
-	sqlite3_reset(db->sGetHaveSynchronizedWithID);
-	sqlite3_bind_blob(db->sGetHaveSynchronizedWithID,1,id,32,SQLITE_STATIC);
-	sqlite3_bind_blob(db->sGetHaveSynchronizedWithID,2,notOwner,(int)ownerSize,SQLITE_STATIC);
-	if (sqlite3_step(db->sGetHaveSynchronizedWithID) == SQLITE_ROW)
-		has = (sqlite3_column_int64(db->sGetHaveSynchronizedWithID,0) > 0) ? 1 : 0;
 	pthread_mutex_unlock(&db->dbLock);
 	return has;
 }

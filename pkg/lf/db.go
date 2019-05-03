@@ -306,6 +306,7 @@ func (db *db) query(tsMin, tsMax int64, selectorRanges [][2][]byte, f func(uint6
 }
 
 // getAllByOwner gets all (complete) records owned by a given owner key.
+// Results are returned in ascending order of timestamp.
 func (db *db) getAllByOwner(owner []byte, f func(uint64, uint64) bool) error {
 	if len(owner) == 0 {
 		return nil
@@ -321,14 +322,6 @@ func (db *db) getAllByOwner(owner []byte, f func(uint64, uint64) bool) error {
 		C.free(unsafe.Pointer(results))
 	}
 	return nil
-}
-
-// haveSynchronizedWithID returns true if a fully synchronized record exists other than one owned by the supplied 'not owner'.
-func (db *db) haveSynchronizedWithID(id []byte, notOwner []byte) bool {
-	if len(id) != 32 || len(notOwner) == 0 {
-		return false
-	}
-	return (C.ZTLF_DB_HaveSynchronizedWithID(db.cdb, unsafe.Pointer(&id[0]), unsafe.Pointer(&notOwner[0]), C.uint(len(notOwner))) != 0)
 }
 
 // getWanted gets hashes we don't currently have but that are linked by others.

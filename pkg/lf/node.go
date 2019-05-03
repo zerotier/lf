@@ -53,7 +53,7 @@ const (
 	p2pProtoMessageTypePeer                 byte = 5 // APIPeer (JSON)
 
 	// p2pProtoMaxRetries is the maximum number of times we'll try to retry a record
-	p2pProtoMaxRetries = 16
+	p2pProtoMaxRetries = 32
 
 	// p2pDesiredConnectionCount is how many P2P TCP connections we want to have open
 	p2pDesiredConnectionCount = 64
@@ -1219,6 +1219,8 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, expectedPublicKey []byte, inb
 						// If we don't already know this peer, try connecting outbound to
 						// it at its source IP and its reported P2P port. This allows us
 						// to learn and announce peers with bidirectionally reachable IPs.
+						// Connection deduplication will reject these, but we'll still
+						// verify global port reachability.
 						n.Connect(tcpAddr.IP, tcpAddr.Port, remotePublicKey)
 					}
 				}

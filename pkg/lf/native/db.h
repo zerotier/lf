@@ -122,7 +122,6 @@ struct ZTLF_DB
 	sqlite3_stmt *sDeleteCompletedPending;
 	sqlite3_stmt *sGetAnyPending;
 	sqlite3_stmt *sHaveDanglingLinks;
-	sqlite3_stmt *sGetHaveSynchronizedWithID;
 	sqlite3_stmt *sGetWanted;
 	sqlite3_stmt *sIncWantedRetries;
 	sqlite3_stmt *sQueryClearRecordSet;
@@ -201,9 +200,6 @@ int ZTLF_DB_HasPending(struct ZTLF_DB *db);
 
 /* returns non-zero if we have dangling links that haven't been retried more than N times */
 int ZTLF_DB_HaveDanglingLinks(struct ZTLF_DB *db,int ignoreWantedAfterNRetries);
-
-/* returns nonzero if there are fully synchronized records already with this ID but without this owner */
-int ZTLF_DB_HaveSynchronizedWithID(struct ZTLF_DB *db,const void *id,const void *notOwner,const unsigned int ownerSize);
 
 /* gets wanted hashes, returns count of hashes. buf must have enough space for up to maxHashes hashes. */
 unsigned int ZTLF_DB_GetWanted(struct ZTLF_DB *db,void *buf,const unsigned int maxHashes,const unsigned int retryCountMin,const unsigned int retryCountMax,const int incrementRetryCount);
