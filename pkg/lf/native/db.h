@@ -33,7 +33,6 @@
 ZTLF_PACKED_STRUCT(struct ZTLF_DB_GraphNode
 {
 	uint64_t weightsFileOffset;          /* offset of weight in weights "file" */
-	volatile uint64_t linkedCount;       /* number of nodes linking TO this one */
 	uint8_t linkCount;                   /* size of linkedRecordGoff[] */
 	volatile int64_t linkedRecordGoff[]; /* graph node offsets of linked records or -1 for holes (will be filled later) */
 });
@@ -97,6 +96,7 @@ struct ZTLF_DB
 	sqlite3_stmt *sGetConfig;
 	sqlite3_stmt *sAddRejected;
 	sqlite3_stmt *sAddRecord;
+	sqlite3_stmt *sIncRecordLinkedCountByGoff;
 	sqlite3_stmt *sAddSelector;
 	sqlite3_stmt *sGetRecordCount;
 	sqlite3_stmt *sGetDataSize;

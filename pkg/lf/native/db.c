@@ -98,6 +98,7 @@ static void *_ZTLF_DB_graphThreadMain(void *arg);
 "ts INTEGER NOT NULL," \
 "score INTEGER NOT NULL," \
 "link_count INTEGER NOT NULL," \
+"linked_count INTEGER NOT NULL," \
 "selector_count INTEGER NOT NULL," \
 "hash BLOB NOT NULL," \
 "id BLOB NOT NULL," \
@@ -106,8 +107,8 @@ static void *_ZTLF_DB_graphThreadMain(void *arg);
 \
 "CREATE UNIQUE INDEX IF NOT EXISTS record_goff ON record(goff);\n" \
 "CREATE UNIQUE INDEX IF NOT EXISTS record_hash ON record(hash);\n" \
+"CREATE INDEX IF NOT EXISTS record_linked_count ON record(linked_count);\n" \
 "CREATE INDEX IF NOT EXISTS record_id_owner ON record(id,owner);\n" \
-"CREATE INDEX IF NOT EXISTS record_ts ON record(ts);\n" \
 "CREATE INDEX IF NOT EXISTS record_doff_selector_count_owner_id_ts ON record(doff,selector_count,owner,id,ts);\n" \
 \
 "CREATE TABLE IF NOT EXISTS selector (" \
@@ -220,7 +221,9 @@ int ZTLF_DB_Open(
 	S(db->sGetConfig,
 	     "SELECT \"v\" FROM config WHERE \"k\" = ?");
 	S(db->sAddRecord,
-	     "INSERT INTO record (doff,dlen,goff,ts,score,link_count,selector_count,hash,id,owner) VALUES (?,?,?,?,?,?,?,?,?,?)");
+	     "INSERT INTO record (doff,dlen,goff,ts,score,link_count,linked_count,selector_count,hash,id,owner) VALUES (?,?,?,?,?,?,0,?,?,?,?)");
+	S(db->sIncRecordLinkedCountByGoff,
+	     "UPDATE record SET linked_count = (linked_count + 1) WHERE goff = ?");
 	S(db->sAddSelector,
 	     "INSERT OR IGNORE INTO selector (sel,record_ts,record_doff) VALUES (?,?,?)");
 	S(db->sGetRecordCount,
@@ -228,11 +231,11 @@ int ZTLF_DB_Open(
 	S(db->sGetDataSize,
 	     "SELECT (doff + dlen) FROM record ORDER BY doff DESC LIMIT 1");
 	S(db->sGetAllRecords,
-	     "SELECT goff,hash FROM record ORDER BY hash ASC");
+	     "SELECT goff,hash,linked_count FROM record ORDER BY hash ASC");
 	S(db->sGetAllByOwner,
 	     "SELECT r.doff,r.dlen FROM record AS r WHERE r.owner = ? AND NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) AND NOT EXISTS (SELECT gp.record_goff FROM graph_pending AS gp WHERE gp.record_goff = r.goff) ORDER BY r.ts ASC");
 	S(db->sGetLinkCandidates,
-	     "SELECT r.goff,r.hash FROM record AS r WHERE NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) AND NOT EXISTS (SELECT gp.record_goff FROM graph_pending AS gp WHERE gp.record_goff = r.goff) ORDER BY ts DESC");
+	     "SELECT r.hash FROM record AS r WHERE NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) AND NOT EXISTS (SELECT gp.record_goff FROM graph_pending AS gp WHERE gp.record_goff = r.goff) ORDER BY linked_count ASC LIMIT ?");
 	S(db->sGetRecordByHash,
 	     "SELECT doff,dlen FROM record WHERE hash = ?");
 	S(db->sGetMaxRecordDoff,
@@ -650,6 +653,7 @@ void ZTLF_DB_Close(struct ZTLF_DB *db)
 		if (db->sGetConfig)                           sqlite3_finalize(db->sGetConfig);
 		if (db->sAddRejected)                         sqlite3_finalize(db->sAddRejected);
 		if (db->sAddRecord)                           sqlite3_finalize(db->sAddRecord);
+		if (db->sIncRecordLinkedCountByGoff)          sqlite3_finalize(db->sIncRecordLinkedCountByGoff);
 		if (db->sAddSelector)                         sqlite3_finalize(db->sAddSelector);
 		if (db->sGetRecordCount)                      sqlite3_finalize(db->sGetRecordCount);
 		if (db->sGetDataSize)                         sqlite3_finalize(db->sGetDataSize);
@@ -728,55 +732,20 @@ unsigned int ZTLF_DB_GetByHash(struct ZTLF_DB *db,const void *hash,uint64_t *dof
 
 unsigned int ZTLF_DB_GetLinks(struct ZTLF_DB *db,void *const lbuf,const unsigned int cnt)
 {
-	LogOutputCallback logger = db->logger;
 	uint8_t *l = (uint8_t *)lbuf;
 	unsigned int lc = 0;
-	uint64_t rn = (((uint64_t)rand() << 32) ^ (uint64_t)rand());
 	if (!cnt) return 0; /* sanity check */
 
 	pthread_mutex_lock(&db->dbLock);
-	pthread_rwlock_rdlock(&db->gfLock);
 
-	/* Pass 1: link to records with a preference for records with fewer existing links to them. */
 	sqlite3_reset(db->sGetLinkCandidates);
+	sqlite3_bind_int(db->sGetLinkCandidates,1,(int)cnt);
 	while (sqlite3_step(db->sGetLinkCandidates) == SQLITE_ROW) {
-		rn += (uint64_t)rand();
-		struct ZTLF_DB_GraphNode *const gn = (struct ZTLF_DB_GraphNode *)ZTLF_MappedFile_TryGet(&db->gf,(uintptr_t)sqlite3_column_int64(db->sGetLinkCandidates,0),ZTLF_DB_MAX_GRAPH_NODE_SIZE);
-		if ((gn)&&((rn % (ZTLF_getu64_le(gn->linkedCount) + 1ULL)) == 0)) {
-			memcpy(l,sqlite3_column_blob(db->sGetLinkCandidates,1),32);
-			l += 32;
-			if (++lc >= cnt) {
-				pthread_rwlock_unlock(&db->gfLock);
-				pthread_mutex_unlock(&db->dbLock);
-				return lc;
-			}
-		}
+		memcpy(l,sqlite3_column_blob(db->sGetLinkCandidates,0),32);
+		l += 32;
+		++lc;
 	}
 
-	/* Pass 2: if we don't have enough links, grab a few more without discriminating. */
-	if (lc < cnt) {
-		sqlite3_reset(db->sGetLinkCandidates);
-		while (sqlite3_step(db->sGetLinkCandidates) == SQLITE_ROW) {
-			const void *lnk = sqlite3_column_blob(db->sGetLinkCandidates,1);
-			for(uint8_t *ll=(uint8_t *)lbuf;ll!=l;ll+=32) {
-				if (memcmp(ll,lnk,32) == 0) {
-					lnk = NULL; /* skip ones we already linked */
-					break;
-				}
-			}
-			if (lnk) {
-				memcpy(l,lnk,32);
-				l += 32;
-				if (++lc >= cnt) {
-					pthread_rwlock_unlock(&db->gfLock);
-					pthread_mutex_unlock(&db->dbLock);
-					return lc;
-				}
-			}
-		}
-	}
-
-	pthread_rwlock_unlock(&db->gfLock);
 	pthread_mutex_unlock(&db->dbLock);
 
 	return lc;
@@ -899,22 +868,20 @@ int ZTLF_DB_PutRecord(
 	/* Initialize this record's graph node with its initial weight and links. */
 	ZTLF_SUint96_Set(&db->wf,woff,score,0,0);
 	ZTLF_setu64_le(graphNode->weightsFileOffset,woff);
-	ZTLF_setu64_le(graphNode->linkedCount,0);
 	graphNode->linkCount = (uint8_t)linkCount;
 	for(unsigned int i=0,j=linkCount;i<j;++i) {
 		const uint8_t *const l = ((const uint8_t *)links) + (i * 32);
 		sqlite3_reset(db->sGetRecordGoffByHash);
 		sqlite3_bind_blob(db->sGetRecordGoffByHash,1,l,32,SQLITE_STATIC);
 		if (sqlite3_step(db->sGetRecordGoffByHash) == SQLITE_ROW) {
-			/* Record found, link this graph node to it and increment existing record graph node's linked count. */
+			/* Record found, link this graph node to it and increment existing record's linked count. */
 			const int64_t linkedGoff = sqlite3_column_int64(db->sGetRecordGoffByHash,0);
-			struct ZTLF_DB_GraphNode *const linkedRecordGraphNode = (struct ZTLF_DB_GraphNode *)ZTLF_MappedFile_TryGet(&db->gf,(uintptr_t)linkedGoff,ZTLF_DB_MAX_GRAPH_NODE_SIZE);
-			if (linkedRecordGraphNode) { /* sanity check */
-				ZTLF_setu64_le(linkedRecordGraphNode->linkedCount,ZTLF_getu64_le(linkedRecordGraphNode->linkedCount) + 1ULL);
-				ZTLF_set64_le(graphNode->linkedRecordGoff[i],linkedGoff);
-			} else {
-				ZTLF_L_warning("database error linking to graph node of existing node, I/O error or database corrupt!");
+			sqlite3_reset(db->sIncRecordLinkedCountByGoff);
+			sqlite3_bind_int64(db->sIncRecordLinkedCountByGoff,1,(sqlite_int64)linkedGoff);
+			if (sqlite3_step(db->sIncRecordLinkedCountByGoff) != SQLITE_DONE) {
+				ZTLF_L_warning("database error incrementing linked count in child record");
 			}
+			ZTLF_set64_le(graphNode->linkedRecordGoff[i],linkedGoff);
 		} else {
 			/* If not found log record as wanted and log dangling link to indicate that record is incomplete. */
 			ZTLF_set64_le(graphNode->linkedRecordGoff[i],-1LL);
@@ -951,7 +918,11 @@ int ZTLF_DB_PutRecord(
 			if (ZTLF_get64_le(linkingRecordGraphNode->linkedRecordGoff[linkingIdx]) < 0) {
 				/* ZTLF_L_trace("updated graph node @%lld with pointer to this record's graph node",(long long)linkingGoff); */
 				ZTLF_set64_le(linkingRecordGraphNode->linkedRecordGoff[linkingIdx],goff);
-				ZTLF_setu64_le(graphNode->linkedCount,ZTLF_getu64_le(graphNode->linkedCount) + 1ULL);
+				sqlite3_reset(db->sIncRecordLinkedCountByGoff);
+				sqlite3_bind_int64(db->sIncRecordLinkedCountByGoff,1,(sqlite_int64)goff);
+				if (sqlite3_step(db->sIncRecordLinkedCountByGoff) != SQLITE_DONE) {
+					ZTLF_L_warning("database error incrementing linked count in record");
+				}
 			} else {
 				ZTLF_L_warning("dangling link to graph node %lld specifies node %lld index %d but that index appears already filled, likely database corruption!",(long long)goff,(long long)linkingGoff,linkingIdx);
 			}
@@ -1187,8 +1158,10 @@ uint64_t ZTLF_DB_CRC64(struct ZTLF_DB *db)
 			uint32_t w[3];
 			ZTLF_SUint96_Get(&db->wf,(uintptr_t)gn->weightsFileOffset,w,w + 1,w + 2);
 			_ZTLF_CRC64(crc,(const uint8_t *)w,sizeof(w));
-			_ZTLF_CRC64(crc,(const uint8_t *)&(gn->linkCount),sizeof(gn->linkedCount));
+			_ZTLF_CRC64(crc,(const uint8_t *)&(gn->linkCount),1);
 			crc = _ZTLF_CRC64(crc,(const uint8_t *)sqlite3_column_blob(db->sGetAllRecords,1),32);
+			int64_t linkedCount = (int64_t)sqlite3_column_int64(db->sGetAllRecords,2);
+			_ZTLF_CRC64(crc,(const uint8_t *)&linkedCount,sizeof(linkedCount));
 		}
 	}
 	pthread_mutex_unlock(&db->dbLock);
