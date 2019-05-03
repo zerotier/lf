@@ -678,6 +678,10 @@ func (n *Node) AddRecord(r *Record) error {
 	}
 
 	rhash := r.Hash()
+	rtype := RecordTypeDatum
+	if r.Type != nil {
+		rtype = *r.Type
+	}
 
 	// Check to see if we already have this record.
 	if n.db.hasRecord(rhash[:]) {
@@ -686,7 +690,11 @@ func (n *Node) AddRecord(r *Record) error {
 
 	// Check basic constraints first since this is less CPU intensive than signature
 	// and work validation.
+	if rtype == RecordTypeGenesis && !bytes.Equal(r.Owner, n.genesisOwner) {
+		return ErrRecordProhibited
+	}
 
+	// Genesis records can only come from the genesis owner
 	// Is record too big according to protocol or genesis parameter constraints?
 	rsize := uint(r.SizeBytes())
 	if rsize > RecordMaxSize || rsize > n.genesisParameters.RecordMaxSize {

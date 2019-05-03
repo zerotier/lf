@@ -9,7 +9,6 @@ package main
 
 import (
 	"bytes"
-	secrand "crypto/rand"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -705,24 +704,10 @@ func doOwner(cfg *lf.ClientConfig, basePath string, args []string) {
 
 // doMakeGenesis is currently code for making the default genesis records and isn't very useful to anyone else.
 func doMakeGenesis(cfg *lf.ClientConfig, basePath string, args []string) {
-	var nwKey [32]byte
-	secrand.Read(nwKey[:])
-	g := lf.GenesisParameters{
-		Name:                      "Sol",
-		Comment:                   "Global Public LF Data Store",
-		CertificateRequired:       false,
-		WorkRequired:              true,
-		LinkKey:                   nwKey,
-		TimestampFloor:            lf.TimeSec(),
-		RecordMinLinks:            3,
-		RecordMaxValueSize:        1024,
-		RecordMaxSize:             lf.RecordMaxSize,
-		RecordMaxForwardTimeDrift: 15,
-	}
+	g := &lf.SolGenesisParameters
+	fmt.Printf("Genesis parameters:\n%s\nCreating %d genesis records...\n", lf.PrettyJSON(g), g.RecordMinLinks)
 
-	fmt.Printf("Genesis parameters:\n%s\nCreating %d genesis records...\n", lf.PrettyJSON(&g), g.RecordMinLinks)
-
-	genesisRecords, genesisOwner, err := lf.CreateGenesisRecords(lf.OwnerTypeNistP384, &g)
+	genesisRecords, genesisOwner, err := lf.CreateGenesisRecords(lf.OwnerTypeNistP384, g)
 	if err != nil {
 		fmt.Printf("ERROR: %s\n", err.Error())
 		os.Exit(-1)
@@ -741,7 +726,7 @@ func doMakeGenesis(cfg *lf.ClientConfig, basePath string, args []string) {
 	}
 
 	ioutil.WriteFile("genesis.lf", grData.Bytes(), 0644)
-	ioutil.WriteFile("genesis.go", []byte(fmt.Sprintf("/*\n%s\n*/\nvar SolGenesisRecords = %#v\n", lf.PrettyJSON(g), grData.Bytes())), 0644)
+	ioutil.WriteFile("genesis.go", []byte(fmt.Sprintf("var SolGenesisRecords = %#v\n", grData.Bytes())), 0644)
 	if len(g.AmendableFields) > 0 {
 		ioutil.WriteFile("genesis.secret", genesisOwner.PrivateBytes(), 0600)
 	}

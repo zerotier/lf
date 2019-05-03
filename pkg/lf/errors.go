@@ -76,4 +76,5 @@ const (
 	ErrRecordTooOld                    ErrRecord = "record older than network timestamp floor"
 	ErrRecordCertificateInvalid        ErrRecord = "certificate invalid"
 	ErrRecordCertificateRequired       ErrRecord = "certificate required"
+	ErrRecordProhibited                ErrRecord = "record administratively prohibited"
 )
