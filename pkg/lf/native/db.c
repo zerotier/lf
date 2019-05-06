@@ -352,7 +352,7 @@ int ZTLF_DB_Open(
 	S(db->sIncWantedRetries,
 		"UPDATE wanted SET retries = (retries + 1) WHERE hash = ?");
 	S(db->sLogComment,
-		"INSERT OR IGNORE INTO comment (subject,object,by_record_doff,assertion,reason) VALUES (?,?,?,?,?)");
+		"INSERT OR IGNORE INTO comment (subject,by_record_doff,assertion,reason) VALUES (?,?,?,?)");
 	S(db->sQueryClearRecordSet,
 		"DELETE FROM tmp.rs");
 	S(db->sQueryOrSelectorRange,
