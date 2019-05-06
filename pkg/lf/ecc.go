@@ -14,7 +14,6 @@ import (
 	"math/big"
 
 	"github.com/codahale/rfc6979"
-	"golang.org/x/crypto/sha3"
 )
 
 var (
@@ -77,14 +76,24 @@ func ECCDecompressPublicKey(c elliptic.Curve, data []byte) (*big.Int, *big.Int, 
 	return &x, &y, nil
 }
 
-// ECDHAgree performs elliptic curve Diffie-Hellman key agreement and returns the sha3-256 digest of the resulting shared key.
+// ECDHAgree performs elliptic curve Diffie-Hellman key agreement and returns the sha256 digest of the resulting shared key.
 // This is just a simple wrapper function for clarity and brevity.
 func ECDHAgree(c elliptic.Curve, pubX, pubY *big.Int, priv []byte) ([32]byte, error) {
 	if !c.IsOnCurve(pubX, pubY) {
 		return [32]byte{}, ErrInvalidPublicKey
 	}
 	x, _ := c.ScalarMult(pubX, pubY, priv)
-	return sha3.Sum256(x.Bytes()), nil
+	return sha256.Sum256(x.Bytes()), nil
+}
+
+// ECDHAgreeECDSA is a version of ECDHAgree that takes an ECDSA-wrapped private and uses its curve parameter.
+// It's a shortcut for using priv.D.Bytes() as the private.
+func ECDHAgreeECDSA(pubX, pubY *big.Int, priv *ecdsa.PrivateKey) ([32]byte, error) {
+	if !priv.Curve.IsOnCurve(pubX, pubY) {
+		return [32]byte{}, ErrInvalidPublicKey
+	}
+	x, _ := priv.Curve.ScalarMult(pubX, pubY, priv.D.Bytes())
+	return sha256.Sum256(x.Bytes()), nil
 }
 
 // ECDSACompressPublicKey compresses an ECDSA public key using standard ECC point compression for prime curves.

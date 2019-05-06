@@ -352,8 +352,6 @@ int ZTLF_DB_Open(
 		"SELECT hash FROM wanted WHERE retries BETWEEN ? AND ? ORDER BY retries LIMIT ?");
 	S(db->sIncWantedRetries,
 		"UPDATE wanted SET retries = (retries + 1) WHERE hash = ?");
-	S(db->sGetReputableOwners,
-		"SELECT DISTINCT owner FROM record WHERE id = ? AND reputation > 0");
 	S(db->sLogComment,
 		"INSERT OR IGNORE INTO comment (subject,object,by_record_doff,assertion,reason) VALUES (?,?,?,?,?)");
 	S(db->sQueryClearRecordSet,
@@ -769,7 +767,6 @@ void ZTLF_DB_Close(struct ZTLF_DB *db)
 		if (db->sHaveDanglingLinks)                   sqlite3_finalize(db->sHaveDanglingLinks);
 		if (db->sGetWanted)                           sqlite3_finalize(db->sGetWanted);
 		if (db->sIncWantedRetries)                    sqlite3_finalize(db->sIncWantedRetries);
-		if (db->sGetReputableOwners)                  sqlite3_finalize(db->sGetReputableOwners);
 		if (db->sLogComment)                          sqlite3_finalize(db->sLogComment);
 		if (db->sQueryClearRecordSet)                 sqlite3_finalize(db->sQueryClearRecordSet);
 		if (db->sQueryOrSelectorRange)                sqlite3_finalize(db->sQueryOrSelectorRange);

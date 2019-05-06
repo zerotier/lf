@@ -13,6 +13,7 @@ import (
 	secrand "crypto/rand"
 	"crypto/x509"
 	"io"
+	"math/big"
 
 	"golang.org/x/crypto/ed25519"
 )
@@ -82,6 +83,9 @@ func NewOwner(ownerType int) (*Owner, error) { return newOwnerIntl(ownerType, se
 
 // NewOwnerFromBytes creates a new Owner object from a set of public Owner bytes (as returned by Bytes()).
 func NewOwnerFromBytes(publicBytes []byte) (*Owner, error) {
+	if len(publicBytes) == 0 {
+		return nil, ErrInvalidPublicKey
+	}
 	o := &Owner{
 		publicBytes:  publicBytes,
 		privateBytes: nil,
@@ -90,7 +94,21 @@ func NewOwnerFromBytes(publicBytes []byte) (*Owner, error) {
 	if o.Type() != OwnerTypeNil {
 		return o, nil
 	}
-	return nil, ErrInvalidParameter
+	return nil, ErrInvalidPublicKey
+}
+
+// newOwnerFromP384 creates a new owner from a NIST P-384 public key.
+func newOwnerFromP384(pubX, pubY *big.Int) (*Owner, error) {
+	pubBytes, err := ECCCompressPublicKey(elliptic.P384(), pubX, pubY)
+	if err != nil {
+		return nil, err
+	}
+	pubBytes[0] |= byte(OwnerTypeNistP384) << 2 // pack owner type into unused most significant 6 bits of compressed key
+	return &Owner{
+		publicBytes:  pubBytes,
+		privateBytes: nil,
+		privateECDSA: nil,
+	}, nil
 }
 
 // NewOwnerFromPrivateBytes creates a new Owner object from a set of private key bytes.
@@ -157,6 +175,51 @@ func (o *Owner) PrivateBytes() []byte {
 	return o.privateBytes
 }
 
+// getPrivateECDSA returns the private ECDSA key for this owner if it is of that type.
+// This returns nil for owners using ed25519 or any other non-ECDSA algorithm.
+func (o *Owner) getPrivateECDSA() *ecdsa.PrivateKey {
+	if len(o.privateBytes) == 0 || o.privateBytes[0] != OwnerTypeNistP384 {
+		return nil
+	}
+	if o.privateECDSA == nil {
+		priv, err := x509.ParseECPrivateKey(o.privateBytes[1:])
+		if err != nil {
+			return nil
+		}
+		o.privateECDSA = priv
+	}
+	return o.privateECDSA
+}
+
+// publicECDSA returns the public ECDSA key for this owner if it is of that type.
+// This return snil for owners using ed25519 or any other non-ECDSA algorithm.
+func (o *Owner) publicECDSA() *ecdsa.PublicKey {
+	if len(o.publicBytes) > 32 && (o.publicBytes[0]>>2) == OwnerTypeNistP384 {
+		pub, err := ECDSADecompressPublicKey(elliptic.P384(), o.publicBytes[1:])
+		if err != nil {
+			return nil
+		}
+		return pub
+	}
+	return nil
+}
+
+// rawPublicKeyBytes is a shortcut to decoding this owner's public key and encoding it as a byte array.
+// This returns nil if there is a problem or the owner object is not initialized.
+func (o *Owner) rawPublicKeyBytes() []byte {
+	if len(o.publicBytes) == 32 {
+		return o.publicBytes
+	}
+	pubec := o.publicECDSA()
+	if pubec != nil {
+		comp, err := ECDSACompressPublicKey(pubec)
+		if err == nil {
+			return comp
+		}
+	}
+	return nil
+}
+
 // Sign signs a hash (typically 32 bytes) with this key pair.
 // ErrorPrivateKeyRequired is returned if the private key is not present or invalid.
 func (o *Owner) Sign(hash []byte) ([]byte, error) {
@@ -170,17 +233,11 @@ func (o *Owner) Sign(hash []byte) ([]byte, error) {
 		}
 		return ed25519.Sign(o.privateBytes[1:], hash), nil
 	case OwnerTypeNistP384:
-		if o.privateECDSA == nil {
-			priv, err := x509.ParseECPrivateKey(o.privateBytes[1:])
-			if err != nil {
-				return nil, err
-			}
-			if priv.Curve.Params().Name != "P-384" {
-				return nil, ErrUnsupportedCurve
-			}
-			o.privateECDSA = priv
+		priv := o.getPrivateECDSA()
+		if priv == nil {
+			return nil, ErrInvalidPrivateKey
 		}
-		return ECDSASign(o.privateECDSA, hash)
+		return ECDSASign(priv, hash)
 	}
 	return nil, ErrPrivateKeyRequired
 }
@@ -190,15 +247,12 @@ func (o *Owner) Verify(hash, sig []byte) bool {
 	if len(o.publicBytes) == 0 {
 		return false
 	}
-	if len(o.publicBytes) == 32 {
+	if len(o.publicBytes) == 32 { // we assume 32-byte publics are ed25519
 		return ed25519.Verify(o.publicBytes, hash, sig)
 	}
-	if len(o.publicBytes) > 32 && (o.publicBytes[0]>>2) == OwnerTypeNistP384 {
-		pub, err := ECDSADecompressPublicKey(elliptic.P384(), o.publicBytes[1:])
-		if err != nil {
-			return false
-		}
-		return ECDSAVerify(pub, hash, sig)
+	pub := o.publicECDSA()
+	if pub == nil {
+		return false
 	}
-	return false
+	return ECDSAVerify(pub, hash, sig)
 }

@@ -128,7 +128,6 @@ struct ZTLF_DB
 	sqlite3_stmt *sHaveDanglingLinks;
 	sqlite3_stmt *sGetWanted;
 	sqlite3_stmt *sIncWantedRetries;
-	sqlite3_stmt *sGetReputableOwners;
 	sqlite3_stmt *sLogComment;
 	sqlite3_stmt *sQueryClearRecordSet;
 	sqlite3_stmt *sQueryOrSelectorRange;

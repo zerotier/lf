@@ -9,7 +9,6 @@ package lf
 
 import (
 	"bytes"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -62,11 +61,11 @@ type APIPeer struct {
 	PublicKey string
 }
 
-// PublicKeyBytes is a shortcut to un-base64-encode PublicKey.
+// PublicBytes is a shortcut to un-base58-encode PublicKey.
 // It returns nil if PublicKey is empty or invalid.
-func (p *APIPeer) PublicKeyBytes() []byte {
+func (p *APIPeer) PublicBytes() []byte {
 	if len(p.PublicKey) > 0 {
-		pkb, err := base64.RawURLEncoding.DecodeString(p.PublicKey)
+		pkb, err := Base58Decode(p.PublicKey)
 		if err != nil {
 			return nil
 		}
@@ -391,7 +390,7 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 			if apiIsTrusted(n, req) {
 				var m APIPeer
 				if apiReadObj(out, req, &m) == nil {
-					n.Connect(m.IP, m.Port, m.PublicKeyBytes())
+					n.Connect(m.IP, m.Port, m.PublicBytes())
 					apiSendObj(out, req, http.StatusOK, nil)
 				}
 			} else {
@@ -437,7 +436,7 @@ Peer Connections
 					if p.inbound {
 						inout = "<-"
 					}
-					out.Write([]byte(fmt.Sprintf("%s %-42s %s\n", inout, p.address, base64.RawURLEncoding.EncodeToString(p.remotePublicKey))))
+					out.Write([]byte(fmt.Sprintf("%s %-42s %s\n", inout, p.address, Base58Encode(p.remotePublic))))
 				}
 				n.peersLock.RUnlock()
 				out.Write([]byte("\n------------------------------------------------------------------------------\n"))

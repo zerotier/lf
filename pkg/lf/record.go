@@ -336,6 +336,14 @@ func (rb *recordBody) GetValue(maskingKey []byte) ([]byte, error) {
 	return unmaskedValue, nil
 }
 
+// GetType is a shortcut to both checking Type for nil and getting its value if not.
+func (rb *recordBody) GetType() byte {
+	if rb.Type == nil {
+		return RecordTypeDatum
+	}
+	return *rb.Type
+}
+
 //////////////////////////////////////////////////////////////////////////////
 
 // Record combines the record body with one or more selectors, work, and a signature.
