@@ -131,11 +131,10 @@ static void *_ZTLF_DB_graphThreadMain(void *arg);
 \
 "CREATE TABLE IF NOT EXISTS comment (" \
 "subject BLOB," \
-"object BLOB," \
 "by_record_doff INTEGER NOT NULL," \
 "assertion INTEGER NOT NULL," \
 "reason INTEGER NOT NULL," \
-"PRIMARY KEY(subject,object,by_record_doff,assertion,reason)" \
+"PRIMARY KEY(subject,by_record_doff,assertion,reason)" \
 ") WITHOUT ROWID;\n" \
 \
 "CREATE TABLE IF NOT EXISTS selector (" \
@@ -1350,7 +1349,7 @@ unsigned int ZTLF_DB_GetWanted(struct ZTLF_DB *db,void *buf,const unsigned int m
 	return count;
 }
 
-int ZTLF_DB_LogComment(struct ZTLF_DB *db,const int64_t byRecordDoff,const int assertion,const int reason,const void *const subject,const int subjectLen,const void *const object,const int objectLen)
+int ZTLF_DB_LogComment(struct ZTLF_DB *db,const int64_t byRecordDoff,const int assertion,const int reason,const void *const subject,const int subjectLen)
 {
 	pthread_mutex_lock(&db->dbLock);
 	sqlite3_reset(db->sLogComment);
@@ -1359,14 +1358,9 @@ int ZTLF_DB_LogComment(struct ZTLF_DB *db,const int64_t byRecordDoff,const int a
 	} else {
 		sqlite3_bind_null(db->sLogComment,1);
 	}
-	if (objectLen > 0) {
-		sqlite3_bind_blob(db->sLogComment,2,object,objectLen,SQLITE_STATIC);
-	} else {
-		sqlite3_bind_null(db->sLogComment,2);
-	}
-	sqlite3_bind_int64(db->sLogComment,3,byRecordDoff);
-	sqlite3_bind_int(db->sLogComment,4,assertion);
-	sqlite3_bind_int(db->sLogComment,5,reason);
+	sqlite3_bind_int64(db->sLogComment,2,byRecordDoff);
+	sqlite3_bind_int(db->sLogComment,3,assertion);
+	sqlite3_bind_int(db->sLogComment,4,reason);
 	const int ok = sqlite3_step(db->sLogComment);
 	pthread_mutex_unlock(&db->dbLock);
 	return (ok == SQLITE_DONE) ? 0 : ZTLF_POS(ok);

@@ -346,15 +346,12 @@ func (db *db) getWanted(max, retryCountMin, retryCountMax int, incrementRetryCou
 	return count, buf[0 : count*32]
 }
 
-func (db *db) logComment(byRecordDoff uint64, assertion, reason int, subject, object []byte) error {
-	var sub, obj unsafe.Pointer
+func (db *db) logComment(byRecordDoff uint64, assertion, reason int, subject []byte) error {
+	var sub unsafe.Pointer
 	if len(subject) > 0 {
 		sub = unsafe.Pointer(&subject[0])
 	}
-	if len(object) > 0 {
-		obj = unsafe.Pointer(&object[0])
-	}
-	e := C.ZTLF_DB_LogComment(db.cdb, C.int64_t(byRecordDoff), C.int(assertion), C.int(reason), sub, C.int(len(subject)), obj, C.int(len(object)))
+	e := C.ZTLF_DB_LogComment(db.cdb, C.int64_t(byRecordDoff), C.int(assertion), C.int(reason), sub, C.int(len(subject)))
 	if e != 0 {
 		return fmt.Errorf("database error %d", int(e))
 	}

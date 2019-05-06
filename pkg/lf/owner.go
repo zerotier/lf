@@ -24,7 +24,7 @@ const OwnerTypeNil = 0
 // OwnerTypeEd25519 represents an owner using Ed25519 signatures (this is the default).
 const OwnerTypeEd25519 = 1
 
-// OwnerTypeNistP384 represents an owner using ECDSA signatures over ECC curve NIST P-384 (for NSA Suite B users).
+// OwnerTypeNistP384 represents an owner using ECDSA signatures over ECC curve NIST P-384.
 const OwnerTypeNistP384 = 2
 
 // Owner represents a key pair that can own and sign LF records.
@@ -97,7 +97,7 @@ func NewOwnerFromBytes(publicBytes []byte) (*Owner, error) {
 	return nil, ErrInvalidPublicKey
 }
 
-// newOwnerFromP384 creates a new owner from a NIST P-384 public key.
+// newOwnerFromP384 creates a new P-384 owner from a NIST P-384 public key.
 func newOwnerFromP384(pubX, pubY *big.Int) (*Owner, error) {
 	pubBytes, err := ECCCompressPublicKey(elliptic.P384(), pubX, pubY)
 	if err != nil {
@@ -160,20 +160,14 @@ func (o *Owner) Type() int {
 }
 
 // HasPrivate returns true if this owner object includes its private key component.
-func (o *Owner) HasPrivate() bool {
-	return len(o.privateBytes) > 0
-}
+func (o *Owner) HasPrivate() bool { return len(o.privateBytes) > 0 }
 
 // Bytes returns this owner's public key bytes.
 // This is the literal value placed in a Record for its owner.
-func (o *Owner) Bytes() []byte {
-	return o.publicBytes
-}
+func (o *Owner) Bytes() []byte { return o.publicBytes }
 
 // PrivateBytes returns this owner's private key bytes prefixed by the owner type.
-func (o *Owner) PrivateBytes() []byte {
-	return o.privateBytes
-}
+func (o *Owner) PrivateBytes() []byte { return o.privateBytes }
 
 // getPrivateECDSA returns the private ECDSA key for this owner if it is of that type.
 // This returns nil for owners using ed25519 or any other non-ECDSA algorithm.

@@ -271,7 +271,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 		if bytes.Equal(n.genesisOwner, r.Owner) { // sanity check
 			rh := r.Hash()
 			if !n.db.hasRecord(rh[:]) {
-				n.log[LogLevelNormal].Printf("adding genesis record %x (not already in database)", rh)
+				n.log[LogLevelNormal].Printf("adding genesis record =%s (not already in database)", Base58Encode(rh[:]))
 				err = n.db.putRecord(&r)
 				if err != nil {
 					return nil, err
@@ -291,24 +291,25 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 	// Load any genesis records after those in genesis.lf (or compiled in default)
 	// TODO: to support revisions by the genesis owner we will need to handle new genesis
 	// owner records coming in. Right now Sol is fixed so this never happens for public net.
-	n.log[LogLevelNormal].Printf("loading genesis records from genesis owner %x", n.genesisOwner)
+	n.log[LogLevelNormal].Printf("loading genesis records from genesis owner @%s", Base58Encode(n.genesisOwner))
 	gotGenesis := false
 	n.db.getAllByOwner(n.genesisOwner, func(doff, dlen uint64) bool {
 		rdata, _ := n.db.getDataByOffset(doff, uint(dlen), nil)
 		if len(rdata) > 0 {
 			gr, err := NewRecordFromBytes(rdata)
 			if gr != nil && err == nil {
+				grHash := gr.Hash()
 				if gr.Type != nil && *gr.Type == RecordTypeGenesis {
 					rv, err := gr.GetValue(nil)
 					if err != nil {
-						n.log[LogLevelWarning].Printf("WARNING: genesis record %x contains an invalid value!", gr.Hash())
+						n.log[LogLevelWarning].Printf("WARNING: genesis record =%s contains an invalid value!", Base58Encode(grHash[:]))
 					} else if len(rv) > 0 {
-						n.log[LogLevelNormal].Printf("applying genesis configuration update from record %x", gr.Hash())
+						n.log[LogLevelNormal].Printf("applying genesis configuration update from record =%s", Base58Encode(grHash[:]))
 						n.genesisParameters.Update(rv)
 						gotGenesis = true
 					}
 				} else {
-					n.log[LogLevelWarning].Printf("WARNING: record %x by genesis owner ignored as it is not a genesis record", gr.Hash())
+					n.log[LogLevelWarning].Printf("WARNING: record =%s by genesis owner ignored as it is not a genesis record", Base58Encode(grHash[:]))
 				}
 			} else if err != nil {
 				n.log[LogLevelWarning].Print("error unmarshaling genesis record: " + err.Error())
@@ -320,7 +321,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 		return nil, errors.New("no genesis records found or none readable")
 	}
 	if len(n.genesisParameters.AmendableFields) > 0 {
-		n.log[LogLevelNormal].Printf("network '%s' permits changes to configuration fields %v by owner %x", n.genesisParameters.Name, n.genesisParameters.AmendableFields, n.genesisOwner)
+		n.log[LogLevelNormal].Printf("network '%s' permits changes to configuration fields %v by owner @%s", n.genesisParameters.Name, n.genesisParameters.AmendableFields, Base58Encode(n.genesisOwner))
 	} else {
 		n.log[LogLevelNormal].Printf("network '%s' genesis configuration is immutable (via any in-band mechanism)", n.genesisParameters.Name)
 	}
@@ -610,6 +611,8 @@ func (n *Node) internalHandleNewlySynchronizedRecord(doff uint64, dlen uint, has
 				}
 			}()
 
+			recordHashStr := Base58Encode(hash[:])
+
 			// Special processing for certain record types
 			rdata, err := n.db.getDataByOffset(doff, dlen, nil)
 			if len(rdata) > 0 && err == nil {
@@ -623,8 +626,8 @@ func (n *Node) internalHandleNewlySynchronizedRecord(doff uint64, dlen uint, has
 							for len(cdata) > 0 {
 								cdata, err = c.readFrom(cdata)
 								if err == nil {
-									n.log[LogLevelVerbose].Printf("commentary [%x]: %s", *hash, c.string())
-									n.db.logComment(doff, int(c.assertion), int(c.reason), c.subject, c.object)
+									n.log[LogLevelVerbose].Printf("commentary [=%s]: %s", recordHashStr, c.string())
+									n.db.logComment(doff, int(c.assertion), int(c.reason), c.subject)
 								} else {
 									break
 								}
@@ -659,7 +662,7 @@ func (n *Node) internalHandleNewlySynchronizedRecord(doff uint64, dlen uint, has
 				}
 				n.peersLock.RUnlock()
 
-				n.log[LogLevelVerbose].Printf("record %x synchronized, announced to %d peers", *hash, announcementCount)
+				n.log[LogLevelVerbose].Printf("record =%s synchronized, announced to %d peers", recordHashStr, announcementCount)
 
 				n.backgroundThreadWG.Done()
 			}()
@@ -805,7 +808,8 @@ func (n *Node) internalCommentaryGenerator() {
 							numLinks--
 						}
 
-						n.log[LogLevelVerbose].Printf("commentary record %x submitted with %d links (generation time: %f seconds)", rec.Hash(), len(links), float64(duration)/1000.0)
+						rhash := rec.Hash()
+						n.log[LogLevelVerbose].Printf("commentary record =%s submitted with %d links (generation time: %f seconds)", Base58Encode(rhash[:]), len(links), float64(duration)/1000.0)
 					} else {
 						n.log[LogLevelWarning].Printf("WARNING: error creating record: %s", err.Error())
 					}
