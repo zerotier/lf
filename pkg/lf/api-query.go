@@ -25,26 +25,25 @@ var troo = true
 // KeyRange method keeps selector names secret while the Name/Range method exposes them to the node or
 // proxy being queried.
 type APIQueryRange struct {
-	Name     Blob   `json:",omitempty"` // Name of selector (plain text)
-	Range    []Blob `json:",omitempty"` // Ordinal value if [1] or range if [2] in size
-	KeyRange []Blob `json:",omitempty"` // Selector key or key range, overrides Name and Range if present (allows queries without revealing name)
+	Name     []byte   `json:",omitempty"` // Name of selector (plain text)
+	Range    [][]byte `json:",omitempty"` // Ordinal value if [1] or range if [2] in size
+	KeyRange [][]byte `json:",omitempty"` // Selector key or key range, overrides Name and Range if present (allows queries without revealing name)
 }
 
 // APIQuery (request) describes a query for records in the form of an ordered series of selector ranges.
 type APIQuery struct {
 	Range      []APIQueryRange `json:",omitempty"` // Selectors or selector range(s)
 	TimeRange  []uint64        `json:",omitempty"` // If present, constrain record times to after first value (if [1]) or range (if [2])
-	MaskingKey Blob            `json:",omitempty"` // Masking key to unmask record value(s) server-side (if non-empty)
+	MaskingKey []byte          `json:",omitempty"` // Masking key to unmask record value(s) server-side (if non-empty)
 	Limit      int             `json:",omitempty"` // If non-zero, limit maximum lower trust records per result
 }
 
 // APIQueryResult (response, part of APIQueryResults) is a single query result.
 type APIQueryResult struct {
-	ID              [32]byte ``                  // Record ID (its unique selector set)
-	Hash            [32]byte ``                  // Hash of this specific unique record
+	Hash            HashBlob ``                  // Hash of this specific unique record
 	Size            int      ``                  // Size of this record in bytes
 	Record          *Record  `json:",omitempty"` // Record itself.
-	Value           Blob     `json:",omitempty"` // Unmasked value if masking key was included
+	Value           []byte   `json:",omitempty"` // Unmasked value if masking key was included
 	UnmaskingFailed *bool    `json:",omitempty"` // If true, unmasking failed due to invalid masking key in query (or invalid compressed data in valid)
 	LocalReputation int      ``                  // Local reputation at source node
 	Weight          string   `json:",omitempty"` // Record weight as a 128-bit hex value
@@ -134,7 +133,7 @@ func (m *APIQuery) execute(n *Node) (qr APIQueryResults, err *APIError) {
 	})
 
 	// Actually grab the records and populate the qr[] slice.
-	for id, rptr := range byID {
+	for _, rptr := range byID {
 		// Sort these results under this ID in descending order of local reputation followed by weight.
 		sort.Slice(*rptr, func(b, a int) bool {
 			x, y := &(*rptr)[a], &(*rptr)[b]
@@ -170,7 +169,6 @@ func (m *APIQuery) execute(n *Node) (qr APIQueryResults, err *APIError) {
 			wstr := fmt.Sprintf("%.16x%.16x", result.weightH, result.weightL)
 			if rn == 0 {
 				qr = append(qr, []APIQueryResult{APIQueryResult{
-					ID:              id,
 					Hash:            rec.Hash(),
 					Size:            int(result.dlen),
 					Record:          rec,
@@ -181,7 +179,6 @@ func (m *APIQuery) execute(n *Node) (qr APIQueryResults, err *APIError) {
 				}})
 			} else if m.Limit <= 0 || rn < m.Limit {
 				qr[len(qr)-1] = append(qr[len(qr)-1], APIQueryResult{
-					ID:              id,
 					Hash:            rec.Hash(),
 					Size:            int(result.dlen),
 					Record:          rec,

@@ -24,8 +24,8 @@ const ClientConfigName = "client.json"
 
 // ClientConfigOwner is a locally configured owner with private key information.
 type ClientConfigOwner struct {
-	Owner        Blob
-	OwnerPrivate Blob
+	Owner        []byte
+	OwnerPrivate []byte
 	Default      bool
 }
 

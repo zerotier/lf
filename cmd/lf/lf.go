@@ -353,11 +353,11 @@ func doGet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool
 		if len(unesc) > 0 {
 			tord := tokenizeStringWithEsc(unesc, '#', '\\')
 			if len(tord) == 1 {
-				ranges = append(ranges, lf.APIQueryRange{KeyRange: []lf.Blob{lf.MakeSelectorKey([]byte(tord[0]), nil)}})
+				ranges = append(ranges, lf.APIQueryRange{KeyRange: [][]byte{lf.MakeSelectorKey([]byte(tord[0]), nil)}})
 			} else if len(tord) == 2 {
-				ranges = append(ranges, lf.APIQueryRange{KeyRange: []lf.Blob{lf.MakeSelectorKey([]byte(tord[0]), []byte(tord[1]))}})
+				ranges = append(ranges, lf.APIQueryRange{KeyRange: [][]byte{lf.MakeSelectorKey([]byte(tord[0]), []byte(tord[1]))}})
 			} else if len(tord) == 3 {
-				ranges = append(ranges, lf.APIQueryRange{KeyRange: []lf.Blob{
+				ranges = append(ranges, lf.APIQueryRange{KeyRange: [][]byte{
 					lf.MakeSelectorKey([]byte(tord[0]), []byte(tord[1])),
 					lf.MakeSelectorKey([]byte(tord[0]), []byte(tord[2])),
 				}})
@@ -527,7 +527,7 @@ func doSet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool
 		value = vdata
 	}
 
-	var links [][32]byte
+	var links []lf.HashBlob
 	var rec *lf.Record
 	ts := lf.TimeSec()
 
@@ -584,7 +584,11 @@ func doSet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool
 		var o *lf.Owner
 		o, err = owner.GetOwner()
 		if err == nil {
-			rec, err = lf.NewRecord(lf.RecordTypeDatum, value, links, mk, plainTextSelectorNames, selectorOrdinals, nil, ts, lf.NewWharrgarblr(lf.RecordDefaultWharrgarblMemory, 0), o)
+			lnks := make([][32]byte, 0, len(links))
+			for _, l := range links {
+				lnks = append(lnks, l)
+			}
+			rec, err = lf.NewRecord(lf.RecordTypeDatum, value, lnks, mk, plainTextSelectorNames, selectorOrdinals, nil, ts, lf.NewWharrgarblr(lf.RecordDefaultWharrgarblMemory, 0), o)
 			if err == nil {
 				rb := rec.Bytes()
 				for _, u := range submitDirectly {

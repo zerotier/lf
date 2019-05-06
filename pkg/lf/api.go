@@ -142,7 +142,7 @@ func APIPostConnect(url string, ip net.IP, port int, publicKey string) error {
 
 // APIGetLinks queries this node for links to use to build a new record.
 // Passing 0 or a negative count causes the node to be asked for the default link count.
-func APIGetLinks(url string, count int) ([][32]byte, error) {
+func APIGetLinks(url string, count int) ([]HashBlob, error) {
 	if strings.HasSuffix(url, "/") {
 		url = url + "links"
 	} else {
@@ -160,7 +160,7 @@ func APIGetLinks(url string, count int) ([][32]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		var l [][32]byte
+		var l []HashBlob
 		for i := 0; (i + 32) <= len(body); i += 32 {
 			var h [32]byte
 			copy(h[:], body[i:i+32])

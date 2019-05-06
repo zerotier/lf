@@ -19,7 +19,7 @@ type GenesisParameters struct {
 	Name                       string   `json:",omitempty"` // Name of this LF network / data store
 	Contact                    string   `json:",omitempty"` // Contact info for this network (may be empty)
 	Comment                    string   `json:",omitempty"` // Optional comment
-	RootCertificateAuthorities []Blob   `json:",omitempty"` // X.509 certificates for master CAs for this data store (empty for an unbiased work-only data store)
+	RootCertificateAuthorities [][]byte `json:",omitempty"` // X.509 certificates for master CAs for this data store (empty for an unbiased work-only data store)
 	CertificateRequired        bool     `json:""`           // Is a certificate required? (must be false if there are no CAs, obviously)
 	WorkRequired               bool     `json:""`           // Is proof of work required?
 	LinkKey                    [32]byte `json:""`           // Static 32-byte key used to ensure that nodes in this network only connect to one another

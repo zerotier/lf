@@ -15,19 +15,19 @@ import (
 
 // APINewSelector (request, part of APINew) is a selector plain text name and an ordinal value (use zero if you don't care).
 type APINewSelector struct {
-	Name    Blob `json:",omitempty"` // Name of this selector (masked so as to be hidden from those that don't know it)
-	Ordinal Blob `json:",omitempty"` // A sortable public value (optional)
+	Name    []byte `json:",omitempty"` // Name of this selector (masked so as to be hidden from those that don't know it)
+	Ordinal []byte `json:",omitempty"` // A sortable public value (optional)
 }
 
 // APINew (request) asks the proxy or node to perform server-side record generation and proof of work.
 type APINew struct {
 	Selectors          []APINewSelector `json:",omitempty"` // Plain text selector names and ordinals
-	MaskingKey         Blob             `json:",omitempty"` // An arbitrary key used to mask the record's value from those that don't know what they're looking for
-	OwnerPrivateKey    Blob             `json:",omitempty"` // Full owner including private key (result of owner PrivateBytes() method)
-	OwnerSeed          Blob             `json:",omitempty"` // Seed to deterministically generate owner (used if ownerprivatekey is missing)
+	MaskingKey         []byte           `json:",omitempty"` // An arbitrary key used to mask the record's value from those that don't know what they're looking for
+	OwnerPrivateKey    []byte           `json:",omitempty"` // Full owner including private key (result of owner PrivateBytes() method)
+	OwnerSeed          []byte           `json:",omitempty"` // Seed to deterministically generate owner (used if ownerprivatekey is missing)
 	OwnerSeedOwnerType *byte            `json:",omitempty"` // Owner type for seeded owner mode (default: Ed25519 owner)
-	Links              [][32]byte       `json:",omitempty"` // Links to other records in the DAG
-	Value              Blob             `json:",omitempty"` // Plain text (unmasked, uncompressed) value for this record
+	Links              []HashBlob       `json:",omitempty"` // Links to other records in the DAG
+	Value              []byte           `json:",omitempty"` // Plain text (unmasked, uncompressed) value for this record
 	Timestamp          *uint64          `json:",omitempty"` // Record timestamp in SECONDS since epoch (server time is used if zero or omitted)
 }
 
@@ -84,7 +84,11 @@ func (m *APINew) execute(workFunction *Wharrgarblr) (*Record, *APIError) {
 		selord[i] = m.Selectors[i].Ordinal
 	}
 
-	rec, err := NewRecord(RecordTypeDatum, m.Value, m.Links, m.MaskingKey, sel, selord, nil, ts, workFunction, owner)
+	lnks := make([][32]byte, 0, len(m.Links))
+	for _, l := range m.Links {
+		lnks = append(lnks, l)
+	}
+	rec, err := NewRecord(RecordTypeDatum, m.Value, lnks, m.MaskingKey, sel, selord, nil, ts, workFunction, owner)
 	if err != nil {
 		return nil, &APIError{Code: http.StatusInternalServerError, Message: "record generation failed: " + err.Error()}
 	}

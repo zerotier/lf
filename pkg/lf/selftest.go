@@ -15,7 +15,6 @@ import (
 	secrand "crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -70,35 +69,6 @@ func TestCore(out io.Writer) bool {
 		fmt.Fprintf(out, "FAILED\n")
 		return false
 	}
-
-	fmt.Fprintf(out, "Testing Blob serialize/deserialize... ")
-	var bbbuf [1024]byte
-	for i := 1; i < 1024; i++ {
-		bb := bbbuf[0:i]
-		secrand.Read(bb)
-		bj, err := json.Marshal(Blob(bb))
-		if err != nil {
-			fmt.Fprintf(out, "FAILED (marshal %d)\n", i)
-			return false
-		}
-		var bb2 Blob
-		err = json.Unmarshal(bj, &bb2)
-		if err != nil {
-			fmt.Fprintf(out, "FAILED (unmarshal %d, %s)\n", i, err.Error())
-			return false
-		}
-		if !bytes.Equal(bb, bb2) {
-			fmt.Fprintf(out, "FAILED (unmarshal %d, values not equal)\n", i)
-			return false
-		}
-	}
-	var bFromStr Blob
-	err = bFromStr.UnmarshalJSON([]byte("\"Supercalifragilisticexpealidocious!\""))
-	if err != nil || string(bFromStr) != "Supercalifragilisticexpealidocious!" {
-		fmt.Fprintf(out, "FAILED (unmarshal from string)\n")
-		return false
-	}
-	fmt.Fprintf(out, "OK\n")
 
 	fmt.Fprintf(out, "Testing Shandwich256... ")
 	t0 := Shandwich256(testStr)
