@@ -112,7 +112,7 @@ type Node struct {
 	httpPort      int                        //
 	log           [logLevelCount]*log.Logger // Pointers to loggers for each log level (inoperative levels point to a discard logger)
 
-	owner             *Owner            // Owner for commentary and/or "mining" records
+	owner             *Owner            // Owner for commentary, key also currently used for ECDH on link
 	ownerPrivateKey   *ecdsa.PrivateKey // ECDSA private key for owner
 	ownerRawPublicKey []byte            // Compressed public key from owner key, used as link key
 
@@ -289,27 +289,15 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 	}
 
 	// Load any genesis records after those in genesis.lf (or compiled in default)
-	// TODO: to support revisions by the genesis owner we will need to handle new genesis
-	// owner records coming in. Right now Sol is fixed so this never happens for public net.
 	n.log[LogLevelNormal].Printf("loading genesis records from genesis owner @%s", Base58Encode(n.genesisOwner))
 	gotGenesis := false
 	n.db.getAllByOwner(n.genesisOwner, func(doff, dlen uint64) bool {
 		rdata, _ := n.db.getDataByOffset(doff, uint(dlen), nil)
 		if len(rdata) > 0 {
 			gr, err := NewRecordFromBytes(rdata)
-			if gr != nil && err == nil {
-				grHash := gr.Hash()
-				if gr.Type != nil && *gr.Type == RecordTypeGenesis {
-					rv, err := gr.GetValue(nil)
-					if err != nil {
-						n.log[LogLevelWarning].Printf("WARNING: genesis record =%s contains an invalid value!", Base58Encode(grHash[:]))
-					} else if len(rv) > 0 {
-						n.log[LogLevelNormal].Printf("applying genesis configuration update from record =%s", Base58Encode(grHash[:]))
-						n.genesisParameters.Update(rv)
-						gotGenesis = true
-					}
-				} else {
-					n.log[LogLevelWarning].Printf("WARNING: record =%s by genesis owner ignored as it is not a genesis record", Base58Encode(grHash[:]))
+			if gr != nil && err == nil && gr.GetType() == RecordTypeGenesis {
+				if n.internalHandleGenesisRecord(gr) {
+					gotGenesis = true
 				}
 			} else if err != nil {
 				n.log[LogLevelWarning].Print("error unmarshaling genesis record: " + err.Error())
@@ -594,6 +582,20 @@ func (n *Node) SetCommentaryEnabled(j bool) {
 	atomic.StoreUint32(&n.commentary, jj)
 }
 
+// internalHandleGenesisRecord handles new genesis records
+func (n *Node) internalHandleGenesisRecord(gr *Record) bool {
+	grHash := gr.Hash()
+	rv, err := gr.GetValue(nil)
+	if err != nil {
+		n.log[LogLevelWarning].Printf("WARNING: genesis record =%s contains an invalid value!", Base58Encode(grHash[:]))
+	} else if len(rv) > 0 {
+		n.log[LogLevelNormal].Printf("applying genesis configuration update from record =%s", Base58Encode(grHash[:]))
+		n.genesisParameters.Update(rv)
+		return true
+	}
+	return false
+}
+
 // internalHandleNewlySynchronizedRecord is called by db when records dependencies are fully satisfied all through the DAG.
 func (n *Node) internalHandleNewlySynchronizedRecord(doff uint64, dlen uint, hash *[32]byte) {
 	// This is the handler passed to 'db' to be called when records are fully synchronized, meaning
@@ -613,12 +615,14 @@ func (n *Node) internalHandleNewlySynchronizedRecord(doff uint64, dlen uint, has
 
 			recordHashStr := Base58Encode(hash[:])
 
-			// Special processing for certain record types
+			// Certain record types get special handling when they're synchronized.
 			rdata, err := n.db.getDataByOffset(doff, dlen, nil)
 			if len(rdata) > 0 && err == nil {
 				r, err := NewRecordFromBytes(rdata)
 				if err == nil && r.Type != nil {
 					switch *r.Type {
+					case RecordTypeGenesis:
+						n.internalHandleGenesisRecord(r)
 					case RecordTypeCommentary:
 						cdata, err := r.GetValue(nil)
 						if err == nil && len(cdata) > 0 {
