@@ -82,12 +82,13 @@ func TestCore(out io.Writer) bool {
 		return false
 	}
 
-	fmt.Fprintf(out, "Testing deterministic owner generation from seed... ")
+	fmt.Fprintf(out, "Testing deterministic owner generation from seed... P-384 ")
 	op384, _ := NewOwnerFromSeed(OwnerTypeNistP384, []byte("lol"))
 	if hex.EncodeToString(op384.Bytes()) != "0af36dd928ebaceb810601e5410f6cdde98ee88dc94d84dc8817e9e19e66119447641d3defcc555194f596078d329897a1" {
 		fmt.Fprintf(out, "FAILED %x\n", op384.Bytes())
 		return false
 	}
+	fmt.Fprint(out, "ed25519 ")
 	o25519, _ := NewOwnerFromSeed(OwnerTypeEd25519, []byte("lol"))
 	if hex.EncodeToString(o25519.Bytes()) != "95fe40b0b3a3e06e3d79d7e4630ed78be5d38d30b98b7e27cd469b2304d82012" {
 		fmt.Fprintf(out, "FAILED %x\n", o25519.Bytes())
@@ -128,7 +129,7 @@ func TestCore(out io.Writer) bool {
 			fmt.Fprintf(out, "  FAILED (sign): %s\n", err.Error())
 			return false
 		}
-		fmt.Fprintf(out, "  Signature: [%d] %x\n", len(sig), sig)
+		fmt.Fprintf(out, "  Signature: [%d] %x...\n", len(sig), sig[0:16])
 		if !ECDSAVerify(&priv.PublicKey, junk[:], sig) {
 			fmt.Fprintf(out, "  FAILED (verify): verify failed for correct message\n")
 			return false
@@ -149,7 +150,7 @@ func TestCore(out io.Writer) bool {
 			secrand.Read(junk[:])
 			sig, _ := ECDSASignEmbedRecoveryIndex(priv, junk[:])
 			if i == 0 {
-				fmt.Fprintf(out, "  Key Recoverable Signature: [%d] %x\n  Testing key recovery... ", len(sig), sig)
+				fmt.Fprintf(out, "  Key Recoverable Signature: [%d] %x...\n  Testing key recovery... ", len(sig), sig[0:16])
 			}
 			pub := ECDSARecover(curve, junk[:], sig)
 			if pub == nil {
