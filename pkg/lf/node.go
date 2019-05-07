@@ -97,9 +97,7 @@ type peer struct {
 type knownPeer struct {
 	APIPeer
 	FirstConnect               uint64
-	LastFailedConnection       uint64
 	LastSuccessfulConnection   uint64
-	TotalFailedConnections     int64
 	TotalSuccessfulConnections int64
 }
 
@@ -468,7 +466,6 @@ func (n *Node) Connect(ip net.IP, port int, nodePublic []byte) {
 				go n.p2pConnectionHandler(c, nodePublicOwner, false)
 			} else {
 				n.log[LogLevelNormal].Printf("P2P connection to %s failed: %s", ta.String(), err.Error())
-				n.updateKnownPeersWithConnectResult(ip, port, nodePublicOwner, false)
 			}
 		} else if c != nil {
 			c.Close()
@@ -978,7 +975,7 @@ func (p *peer) send(msg []byte) (err error) {
 }
 
 // updateKnownPeersWithConnectResult is called from p2pConnectionHandler to update n.knownPeers
-func (n *Node) updateKnownPeersWithConnectResult(ip net.IP, port int, nodePublic *Owner, success bool) bool {
+func (n *Node) updateKnownPeersWithConnectResult(ip net.IP, port int, nodePublic *Owner) bool {
 	n.knownPeersLock.Lock()
 	defer n.knownPeersLock.Unlock()
 	now := TimeMs()
@@ -988,36 +985,27 @@ func (n *Node) updateKnownPeersWithConnectResult(ip net.IP, port int, nodePublic
 		return true
 	}
 
-	// Update success or failure info for known peer record if we already have one.
 	for _, kp := range n.knownPeers {
 		if kp.IP.Equal(ip) && kp.Port == port && bytes.Equal(kp.PublicBytes(), nodePublicBytes) {
-			if success {
-				if kp.FirstConnect == 0 {
-					kp.FirstConnect = now
-				}
-				kp.LastSuccessfulConnection = now
-				kp.TotalSuccessfulConnections++
-			} else {
-				kp.LastFailedConnection = now
-				kp.TotalFailedConnections++
+			if kp.FirstConnect == 0 {
+				kp.FirstConnect = now
 			}
+			kp.LastSuccessfulConnection = now
+			kp.TotalSuccessfulConnections++
 			return true
 		}
 	}
 
-	// If there's no known peer record, create only on success.
-	if success {
-		n.knownPeers = append(n.knownPeers, &knownPeer{
-			APIPeer: APIPeer{
-				IP:        ip,
-				Port:      port,
-				PublicKey: Base58Encode(nodePublicBytes),
-			},
-			FirstConnect:               now,
-			LastSuccessfulConnection:   now,
-			TotalSuccessfulConnections: 1,
-		})
-	}
+	n.knownPeers = append(n.knownPeers, &knownPeer{
+		APIPeer: APIPeer{
+			IP:        ip,
+			Port:      port,
+			PublicKey: Base58Encode(nodePublicBytes),
+		},
+		FirstConnect:               now,
+		LastSuccessfulConnection:   now,
+		TotalSuccessfulConnections: 1,
+	})
 
 	return false
 }
@@ -1033,7 +1021,6 @@ func (n *Node) p2pConnectionHandler(c *net.TCPConn, nodePublic *Owner, inbound b
 		return
 	}
 	publicAddress := ipIsGlobalPublicUnicast(tcpAddr.IP)
-	success := false
 
 	defer func() {
 		e := recover()
@@ -1041,9 +1028,6 @@ func (n *Node) p2pConnectionHandler(c *net.TCPConn, nodePublic *Owner, inbound b
 			n.log[LogLevelWarning].Printf("WARNING: P2P connection to %s closed: caught panic: %v", peerAddressStr, e)
 		}
 
-		if !success {
-			n.updateKnownPeersWithConnectResult(tcpAddr.IP, tcpAddr.Port, nil, false)
-		}
 		c.Close()
 
 		n.connectionsInStartupLock.Lock()
@@ -1199,7 +1183,7 @@ func (n *Node) p2pConnectionHandler(c *net.TCPConn, nodePublic *Owner, inbound b
 	}
 	if redundant {
 		if !inbound {
-			n.updateKnownPeersWithConnectResult(tcpAddr.IP, tcpAddr.Port, remotePublicOwner, true) // we can still remember this peer
+			n.updateKnownPeersWithConnectResult(tcpAddr.IP, tcpAddr.Port, remotePublicOwner) // we can still remember this peer
 		}
 		n.log[LogLevelNormal].Printf("P2P connection to %s closed: closing redundant link to already connected peer", peerAddressStr)
 		return
@@ -1211,9 +1195,8 @@ func (n *Node) p2pConnectionHandler(c *net.TCPConn, nodePublic *Owner, inbound b
 	delete(n.connectionsInStartup, c)
 	n.connectionsInStartupLock.Unlock()
 
-	success = true
 	if !inbound {
-		n.updateKnownPeersWithConnectResult(tcpAddr.IP, tcpAddr.Port, remotePublicOwner, true)
+		n.updateKnownPeersWithConnectResult(tcpAddr.IP, tcpAddr.Port, remotePublicOwner)
 	}
 
 	n.log[LogLevelNormal].Printf("P2P connection established to %s:%s", peerAddressStr, remotePublicStr)
@@ -1290,7 +1273,7 @@ func (n *Node) p2pConnectionHandler(c *net.TCPConn, nodePublic *Owner, inbound b
 				// Test inbound connections for reachability in the opposite direction, and
 				// if they are reachable learn them and announce them. This helps the network
 				// as a whole learn new node addresses automatically.
-				if p.peerHelloMsg.P2PPort > 0 && !performedInboundReachabilityTest {
+				if inbound && p.peerHelloMsg.P2PPort > 0 && !performedInboundReachabilityTest {
 					performedInboundReachabilityTest = true
 					n.backgroundThreadWG.Add(1)
 					go func() {
@@ -1301,7 +1284,7 @@ func (n *Node) p2pConnectionHandler(c *net.TCPConn, nodePublic *Owner, inbound b
 						testConn, err := net.DialTCP("tcp", nil, testAddr)
 						if testConn != nil && err == nil {
 							n.log[LogLevelVerbose].Printf("reverse reachability test to port %d successful for inbound connection from %s", p.peerHelloMsg.P2PPort, tcpAddr.IP.String())
-							n.updateKnownPeersWithConnectResult(tcpAddr.IP, p.peerHelloMsg.P2PPort, remotePublicOwner, true)
+							n.updateKnownPeersWithConnectResult(tcpAddr.IP, p.peerHelloMsg.P2PPort, remotePublicOwner)
 							if atomic.LoadUint32(&n.shutdown) == 0 {
 								n.peersLock.RLock()
 								for _, otherPeer := range n.peers {
