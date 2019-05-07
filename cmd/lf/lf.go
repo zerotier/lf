@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/signal"
 	"path"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -26,6 +27,14 @@ import (
 
 	"../../pkg/lf"
 )
+
+//#if defined(_WIN32) || defined(WIN32) || defined(_WIN64) || defined(WIN64)
+//static inline int fork() { return -1; }
+//#else
+//#include <stdlib.h>
+//#include <unistd.h>
+//#endif
+import "C"
 
 var (
 	lfDefaultPath = func() string {
@@ -109,6 +118,20 @@ func escapeOrdinal(ord []byte) string {
 	return sb.String()
 }
 
+func stickAForkInIt() {
+	if strings.HasPrefix(runtime.GOOS, "windows") {
+		log.Printf("FATAL: fork not supported on Windows")
+		os.Exit(-1)
+	}
+	fr := int(C.fork())
+	if fr < 0 {
+		log.Printf("FATAL: fork into background failed")
+		os.Exit(-1)
+	} else if fr > 0 {
+		os.Exit(0)
+	}
+}
+
 func printHelp(cmd string) {
 	// NOTE: When editing make sure your editor doesn't indent help with
 	// tabs, otherwise it will format funny on a console. Also try to keep
@@ -136,6 +159,7 @@ Commands:
     -commentary                           Use spare CPU to publish commentary
     -loglevel <normal|verbose|trace>      Node log level
     -logstderr                            Log to stderr, not HOME/node.log
+    -fork                                 Fork into background (if supported)
   node-connect <ip> <port> [<key>]        Tell node to try a P2P endpoint
   proxy-start                             Start a proxy
   status                                  Get status from remote node/proxy
@@ -194,6 +218,7 @@ func doNodeStart(cfg *lf.ClientConfig, basePath string, args []string) {
 	commentary := nodeOpts.Bool("commentary", false, "")
 	logLevel := nodeOpts.String("loglevel", "verbose", "")
 	logToStderr := nodeOpts.Bool("logstderr", false, "")
+	forkToBackground := nodeOpts.Bool("fork", false, "")
 	nodeOpts.SetOutput(ioutil.Discard)
 	err := nodeOpts.Parse(args)
 	if err != nil {
@@ -228,6 +253,11 @@ func doNodeStart(cfg *lf.ClientConfig, basePath string, args []string) {
 			return
 		}
 		logger = log.New(logFile, "", log.LstdFlags)
+	}
+
+	// This must happen before gorountines are launched. It's only supported on *nix platforms.
+	if *forkToBackground {
+		stickAForkInIt()
 	}
 
 	osSignalChannel := make(chan os.Signal, 2)

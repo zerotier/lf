@@ -203,10 +203,10 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 		if err != nil {
 			return nil, err
 		}
-		n.ownerPrivateKey = n.owner.getPrivateECDSA()
-		if n.ownerPrivateKey == nil {
-			return nil, ErrInvalidPrivateKey
-		}
+	}
+	n.ownerPrivateKey = n.owner.getPrivateECDSA()
+	if n.ownerPrivateKey == nil {
+		return nil, ErrInvalidPrivateKey
 	}
 	n.ownerRawPublicKey, err = ECCCompressPublicKey(elliptic.P384(), n.ownerPrivateKey.PublicKey.X, n.ownerPrivateKey.PublicKey.Y)
 	if err != nil {
@@ -487,10 +487,7 @@ func (n *Node) AddRecord(r *Record) error {
 	}
 
 	rhash := r.Hash()
-	rtype := RecordTypeDatum
-	if r.Type != nil {
-		rtype = *r.Type
-	}
+	rtype := r.GetType()
 
 	// Check to see if we already have this record.
 	if n.db.hasRecord(rhash[:]) {
@@ -785,8 +782,8 @@ func (n *Node) internalCommentaryGenerator() {
 			if numLinks < n.genesisParameters.RecordMinLinks {
 				numLinks = n.genesisParameters.RecordMinLinks
 			}
-			if numLinks < 3 {
-				numLinks = 3
+			if numLinks < 2 {
+				numLinks = 2
 			}
 			if numLinks > RecordMaxLinks {
 				numLinks = RecordMaxLinks
@@ -800,20 +797,23 @@ func (n *Node) internalCommentaryGenerator() {
 				endTime := TimeMs()
 				if atomic.LoadUint32(&n.shutdown) == 0 {
 					if err == nil {
-						n.AddRecord(rec)
+						err = n.AddRecord(rec)
+						if err == nil {
+							// Tune number of links (and thus average record size) to try to make records that take about two
+							// minutes of work to create. Linking more parent records is generally always good, but we want
+							// an acceptable new record generation rate too.
+							duration := endTime - startTime
+							if duration < 120000 {
+								numLinks++
+							} else if duration > 120000 && numLinks > 0 {
+								numLinks--
+							}
 
-						// Tune number of links (and thus average record size) to try to make records that take about two
-						// minutes of work to create. Linking more parent records is generally always good, but we want
-						// an acceptable new record generation rate too.
-						duration := endTime - startTime
-						if duration < 120000 {
-							numLinks++
-						} else if duration > 120000 && numLinks > 0 {
-							numLinks--
+							rhash := rec.Hash()
+							n.log[LogLevelVerbose].Printf("commentary record =%s submitted with %d links (generation time: %f seconds)", Base58Encode(rhash[:]), len(links), float64(duration)/1000.0)
+						} else {
+							n.log[LogLevelWarning].Printf("WARNING: error creating record: %s", err.Error())
 						}
-
-						rhash := rec.Hash()
-						n.log[LogLevelVerbose].Printf("commentary record =%s submitted with %d links (generation time: %f seconds)", Base58Encode(rhash[:]), len(links), float64(duration)/1000.0)
 					} else {
 						n.log[LogLevelWarning].Printf("WARNING: error creating record: %s", err.Error())
 					}

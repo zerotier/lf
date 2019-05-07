@@ -78,7 +78,6 @@ func NewOwnerFromSeed(ownerType int, seed []byte) (*Owner, error) {
 }
 
 // NewOwner creates a new owner key pair.
-// Most users will want OwnerTypeEd25519. Only those that need ECDSA with NSA Suite B crypto will want to use OwnerTypeNistP384.
 func NewOwner(ownerType int) (*Owner, error) { return newOwnerIntl(ownerType, secrand.Reader) }
 
 // NewOwnerFromBytes creates a new Owner object from a set of public Owner bytes (as returned by Bytes()).
@@ -97,7 +96,7 @@ func NewOwnerFromBytes(publicBytes []byte) (*Owner, error) {
 	return nil, ErrInvalidPublicKey
 }
 
-// newOwnerFromP384 creates a new P-384 owner from a NIST P-384 public key.
+// newOwnerFromP384 creates a new P-384 owner (public keys only) from a NIST P-384 public key.
 func newOwnerFromP384(pubX, pubY *big.Int) (*Owner, error) {
 	pubBytes, err := ECCCompressPublicKey(elliptic.P384(), pubX, pubY)
 	if err != nil {
@@ -135,12 +134,13 @@ func NewOwnerFromPrivateBytes(privateBytes []byte) (*Owner, error) {
 		if priv.Curve.Params().Name != "P-384" {
 			return nil, ErrUnsupportedCurve
 		}
-		pub, err := ECDSACompressPublicKey(&priv.PublicKey)
+		pubBytes, err := ECDSACompressPublicKey(&priv.PublicKey)
 		if err != nil {
 			return nil, err
 		}
+		pubBytes[0] |= byte(OwnerTypeNistP384) << 2 // pack owner type into unused most significant 6 bits of compressed key
 		return &Owner{
-			publicBytes:  pub,
+			publicBytes:  pubBytes,
 			privateBytes: privateBytes,
 			privateECDSA: priv,
 		}, nil
@@ -172,10 +172,10 @@ func (o *Owner) PrivateBytes() []byte { return o.privateBytes }
 // getPrivateECDSA returns the private ECDSA key for this owner if it is of that type.
 // This returns nil for owners using ed25519 or any other non-ECDSA algorithm.
 func (o *Owner) getPrivateECDSA() *ecdsa.PrivateKey {
-	if len(o.privateBytes) == 0 || o.privateBytes[0] != OwnerTypeNistP384 {
-		return nil
-	}
 	if o.privateECDSA == nil {
+		if len(o.privateBytes) == 0 || o.privateBytes[0] != OwnerTypeNistP384 {
+			return nil
+		}
 		priv, err := x509.ParseECPrivateKey(o.privateBytes[1:])
 		if err != nil {
 			return nil
@@ -188,8 +188,8 @@ func (o *Owner) getPrivateECDSA() *ecdsa.PrivateKey {
 // publicECDSA returns the public ECDSA key for this owner if it is of that type.
 // This return snil for owners using ed25519 or any other non-ECDSA algorithm.
 func (o *Owner) publicECDSA() *ecdsa.PublicKey {
-	if len(o.publicBytes) > 32 && (o.publicBytes[0]>>2) == OwnerTypeNistP384 {
-		pub, err := ECDSADecompressPublicKey(elliptic.P384(), o.publicBytes[1:])
+	if o.Type() == OwnerTypeNistP384 {
+		pub, err := ECDSADecompressPublicKey(elliptic.P384(), o.publicBytes)
 		if err != nil {
 			return nil
 		}

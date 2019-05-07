@@ -712,7 +712,6 @@ func NewRecordAddWork(incompleteRecord *Record, workHash []byte, work []byte, wo
 func NewRecordComplete(incompleteRecord *Record, signingHash []byte, owner *Owner) (r *Record, err error) {
 	r = incompleteRecord
 	r.Signature, err = owner.Sign(signingHash)
-	r.selectorKeys = nil
 	return
 }
 
