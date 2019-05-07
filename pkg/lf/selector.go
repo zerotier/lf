@@ -32,7 +32,7 @@ const SelectorKeySize = 64
 
 // Selector is a non-forgeable range queryable identifier for records.
 type Selector struct {
-	Ordinal []byte   `json:",omitempty"` // A plain text sortable field that can be used for range queries against secret selectors
+	Ordinal Blob     `json:",omitempty"` // A plain text sortable field that can be used for range queries against secret selectors
 	Claim   [41]byte ``                  // 41-byte brainpoolP160t1 recoverable signature
 }
 

@@ -25,16 +25,16 @@ var troo = true
 // KeyRange method keeps selector names secret while the Name/Range method exposes them to the node or
 // proxy being queried.
 type APIQueryRange struct {
-	Name     []byte   `json:",omitempty"` // Name of selector (plain text)
-	Range    [][]byte `json:",omitempty"` // Ordinal value if [1] or range if [2] in size
-	KeyRange [][]byte `json:",omitempty"` // Selector key or key range, overrides Name and Range if present (allows queries without revealing name)
+	Name     Blob   `json:",omitempty"` // Name of selector (plain text)
+	Range    []Blob `json:",omitempty"` // Ordinal value if [1] or range if [2] in size
+	KeyRange []Blob `json:",omitempty"` // Selector key or key range, overrides Name and Range if present (allows queries without revealing name)
 }
 
 // APIQuery (request) describes a query for records in the form of an ordered series of selector ranges.
 type APIQuery struct {
 	Range      []APIQueryRange `json:",omitempty"` // Selectors or selector range(s)
 	TimeRange  []uint64        `json:",omitempty"` // If present, constrain record times to after first value (if [1]) or range (if [2])
-	MaskingKey []byte          `json:",omitempty"` // Masking key to unmask record value(s) server-side (if non-empty)
+	MaskingKey Blob            `json:",omitempty"` // Masking key to unmask record value(s) server-side (if non-empty)
 	Limit      int             `json:",omitempty"` // If non-zero, limit maximum lower trust records per result
 }
 
@@ -43,7 +43,7 @@ type APIQueryResult struct {
 	Hash            HashBlob ``                  // Hash of this specific unique record
 	Size            int      ``                  // Size of this record in bytes
 	Record          *Record  `json:",omitempty"` // Record itself.
-	Value           []byte   `json:",omitempty"` // Unmasked value if masking key was included
+	Value           Blob     `json:",omitempty"` // Unmasked value if masking key was included
 	UnmaskingFailed *bool    `json:",omitempty"` // If true, unmasking failed due to invalid masking key in query (or invalid compressed data in valid)
 	LocalReputation int      ``                  // Local reputation at source node
 	Weight          string   `json:",omitempty"` // Record weight as a 128-bit hex value

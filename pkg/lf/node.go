@@ -31,8 +31,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/NYTimes/gziphandler"
 )
 
 const (
@@ -223,7 +221,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 	}
 	n.httpServer = &http.Server{
 		MaxHeaderBytes: 4096,
-		Handler:        gziphandler.GzipHandler(apiCreateHTTPServeMux(n)),
+		Handler:        httpGzipHandler(apiCreateHTTPServeMux(n)),
 		IdleTimeout:    10 * time.Second,
 		ReadTimeout:    10 * time.Second,
 		WriteTimeout:   60 * time.Second,

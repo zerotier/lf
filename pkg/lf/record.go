@@ -127,7 +127,7 @@ func recordWharrgarblScore(cost uint32) uint32 {
 // recordBody represents the main body of a record including its value, owner public keys, etc.
 // It's included as part of Record but separated since in record construction we want to treat it as a separate element.
 type recordBody struct {
-	Value           []byte     `json:",omitempty"` // Record value (possibly masked and/or compressed, use GetValue() to get)
+	Value           Blob       `json:",omitempty"` // Record value (possibly masked and/or compressed, use GetValue() to get)
 	Owner           OwnerBlob  `json:",omitempty"` // Owner of this record (owner public bytes) in @base58string format
 	Certificate     *HashBlob  `json:",omitempty"` // Hash (256-bit) of exact record containing certificate for this owner (if CAs are enabled)
 	Links           []HashBlob `json:",omitempty"` // Links to previous records' hashes
@@ -352,9 +352,9 @@ type Record struct {
 	recordBody
 
 	Selectors     []Selector `json:",omitempty"` // Things that can be used to find the record
-	Work          []byte     `json:",omitempty"` // Proof of work computed on sha3-256(Body Signing Hash | Selectors) with work cost based on size of body and selectors
+	Work          Blob       `json:",omitempty"` // Proof of work computed on sha3-256(Body Signing Hash | Selectors) with work cost based on size of body and selectors
 	WorkAlgorithm byte       ``                  // Proof of work algorithm
-	Signature     []byte     `json:",omitempty"` // Signature of sha3-256(sha3-256(Body Signing Hash | Selectors) | Work | WorkAlgorithm)
+	Signature     Blob       `json:",omitempty"` // Signature of sha3-256(sha3-256(Body Signing Hash | Selectors) | Work | WorkAlgorithm)
 
 	selectorKeys [][]byte  // memoized selector keys
 	hash         *[32]byte // memoized hash

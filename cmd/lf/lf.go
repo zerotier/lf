@@ -383,11 +383,11 @@ func doGet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool
 		if len(unesc) > 0 {
 			tord := tokenizeStringWithEsc(unesc, '#', '\\')
 			if len(tord) == 1 {
-				ranges = append(ranges, lf.APIQueryRange{KeyRange: [][]byte{lf.MakeSelectorKey([]byte(tord[0]), nil)}})
+				ranges = append(ranges, lf.APIQueryRange{KeyRange: []lf.Blob{lf.MakeSelectorKey([]byte(tord[0]), nil)}})
 			} else if len(tord) == 2 {
-				ranges = append(ranges, lf.APIQueryRange{KeyRange: [][]byte{lf.MakeSelectorKey([]byte(tord[0]), []byte(tord[1]))}})
+				ranges = append(ranges, lf.APIQueryRange{KeyRange: []lf.Blob{lf.MakeSelectorKey([]byte(tord[0]), []byte(tord[1]))}})
 			} else if len(tord) == 3 {
-				ranges = append(ranges, lf.APIQueryRange{KeyRange: [][]byte{
+				ranges = append(ranges, lf.APIQueryRange{KeyRange: []lf.Blob{
 					lf.MakeSelectorKey([]byte(tord[0]), []byte(tord[1])),
 					lf.MakeSelectorKey([]byte(tord[0]), []byte(tord[2])),
 				}})

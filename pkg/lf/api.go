@@ -9,6 +9,7 @@ package lf
 
 import (
 	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -91,6 +92,7 @@ func APIPostRecord(url string, recordData []byte) error {
 		return nil
 	}
 	body, err := ioutil.ReadAll(&io.LimitedReader{R: resp.Body, N: 131072})
+	resp.Body.Close()
 	if err != nil {
 		return APIError{Code: resp.StatusCode}
 	}
@@ -127,6 +129,7 @@ func APIPostConnect(url string, ip net.IP, port int, publicKey string) error {
 		return nil
 	}
 	body, err := ioutil.ReadAll(&io.LimitedReader{R: resp.Body, N: 131072})
+	resp.Body.Close()
 	if err != nil {
 		return APIError{Code: resp.StatusCode}
 	}
@@ -157,6 +160,7 @@ func APIGetLinks(url string, count int) ([]HashBlob, error) {
 	}
 	if resp.StatusCode == 200 {
 		body, err := ioutil.ReadAll(&io.LimitedReader{R: resp.Body, N: 131072})
+		resp.Body.Close()
 		if err != nil {
 			return nil, err
 		}
@@ -180,11 +184,24 @@ func apiRun(url string, m interface{}) ([]byte, error) {
 		return nil, err
 	}
 
-	resp, err := http.Post(url, "application/json", bytes.NewReader(aq))
+	req, err := http.NewRequest("POST", url, bytes.NewReader(aq))
 	if err != nil {
 		return nil, err
 	}
-	body, err := ioutil.ReadAll(&io.LimitedReader{R: resp.Body, N: int64(APIMaxResponseSize)})
+	req.Header.Add("Accept-Encoding", "gzip")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader := resp.Body
+	if !resp.Uncompressed && strings.Contains(resp.Header.Get("Content-Encoding"), "gzip") {
+		bodyReader, err = gzip.NewReader(bodyReader)
+		if err != nil {
+			return nil, err
+		}
+	}
+	defer bodyReader.Close()
+	body, err := ioutil.ReadAll(&io.LimitedReader{R: bodyReader, N: int64(APIMaxResponseSize)})
 	if err != nil {
 		return nil, err
 	}
@@ -226,7 +243,6 @@ func apiSendObj(out http.ResponseWriter, req *http.Request, httpStatusCode int, 
 			return err
 		}
 	}
-	h.Set("Content-Length", strconv.FormatUint(uint64(len(j)), 10))
 	out.WriteHeader(httpStatusCode)
 	_, err = out.Write(j)
 	return err
@@ -344,7 +360,6 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 			}
 			_, links, _ := n.db.getLinks(desired)
 			out.Header().Set("Content-Type", "application/octet-stream")
-			out.Header().Set("Content-Length", strconv.FormatUint(uint64(len(links)), 10))
 			out.WriteHeader(http.StatusOK)
 			out.Write(links)
 		} else {
