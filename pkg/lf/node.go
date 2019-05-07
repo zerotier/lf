@@ -459,16 +459,16 @@ func (n *Node) Connect(ip net.IP, port int, nodePublic []byte) {
 
 		n.log[LogLevelNormal].Printf("P2P attempting to connect to %s:%s", ta.String(), Base58Encode(nodePublic))
 
-		c, err := net.DialTCP("tcp", nil, &ta)
+		conn, err := net.DialTimeout("tcp", ta.String(), time.Second*10)
 		if atomic.LoadUint32(&n.shutdown) == 0 {
 			if err == nil {
 				n.backgroundThreadWG.Add(1)
-				go n.p2pConnectionHandler(c, nodePublicOwner, false)
+				go n.p2pConnectionHandler(conn.(*net.TCPConn), nodePublicOwner, false)
 			} else {
 				n.log[LogLevelNormal].Printf("P2P connection to %s failed: %s", ta.String(), err.Error())
 			}
-		} else if c != nil {
-			c.Close()
+		} else if conn != nil {
+			conn.Close()
 		}
 	}()
 }
@@ -1281,7 +1281,7 @@ func (n *Node) p2pConnectionHandler(c *net.TCPConn, nodePublic *Owner, inbound b
 							IP:   tcpAddr.IP,
 							Port: p.peerHelloMsg.P2PPort,
 						}
-						testConn, err := net.DialTCP("tcp", nil, testAddr)
+						testConn, err := net.DialTimeout("tcp", testAddr.String(), time.Second*5)
 						if testConn != nil && err == nil {
 							n.log[LogLevelVerbose].Printf("reverse reachability test to port %d successful for inbound connection from %s", p.peerHelloMsg.P2PPort, tcpAddr.IP.String())
 							n.updateKnownPeersWithConnectResult(tcpAddr.IP, p.peerHelloMsg.P2PPort, remotePublicOwner)

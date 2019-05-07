@@ -94,9 +94,11 @@ func (b *HashBlob) UnmarshalJSON(j []byte) error {
 	i := 0
 	for i < len(bb) && i < 32 {
 		b[i] = bb[i]
+		i++
 	}
 	for i < 32 {
 		b[i] = 0
+		i++
 	}
 	return nil
 }
