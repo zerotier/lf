@@ -77,9 +77,9 @@ struct ZTLF_RecordList
 /**
  * Callback for when records are fully synchronized
  * 
- * Parameters are: database, record hash, data offset, data length, and an arbitrary argument.
+ * Parameters are: database, record hash, data offset, data length, reputation, and an arbitrary argument.
  */
-typedef void (*RecordSynchronizedCallback)(struct ZTLF_DB *,const void *,uint64_t,unsigned int,void *);
+typedef void (*RecordSynchronizedCallback)(struct ZTLF_DB *,const void *,uint64_t,unsigned int,int,void *);
 
 /**
  * An instance of the LF database (C side)

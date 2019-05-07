@@ -338,7 +338,7 @@ func TestDatabase(testBasePath string, out io.Writer) bool {
 	for i := range dbs {
 		p := path.Join(testBasePath, strconv.FormatInt(int64(i), 10))
 		os.MkdirAll(p, 0755)
-		err = dbs[i].open(p, [logLevelCount]*log.Logger{logger, logger, logger, logger, logger}, func(doff uint64, dlen uint, hash *[32]byte) {})
+		err = dbs[i].open(p, [logLevelCount]*log.Logger{logger, logger, logger, logger, logger}, func(doff uint64, dlen uint, reputation int, hash *[32]byte) {})
 		if err != nil {
 			fmt.Fprintf(out, "FAILED: %s\n", err.Error())
 			return false

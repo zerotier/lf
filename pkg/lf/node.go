@@ -593,7 +593,7 @@ func (n *Node) internalHandleGenesisRecord(gr *Record) bool {
 }
 
 // internalHandleNewlySynchronizedRecord is called by db when records dependencies are fully satisfied all through the DAG.
-func (n *Node) internalHandleNewlySynchronizedRecord(doff uint64, dlen uint, hash *[32]byte) {
+func (n *Node) internalHandleNewlySynchronizedRecord(doff uint64, dlen uint, reputation int, hash *[32]byte) {
 	// This is the handler passed to 'db' to be called when records are fully synchronized, meaning
 	// they have all their dependencies met and are ready to be replicated.
 	if atomic.LoadUint32(&n.shutdown) == 0 {
@@ -662,7 +662,7 @@ func (n *Node) internalHandleNewlySynchronizedRecord(doff uint64, dlen uint, has
 				}
 				n.peersLock.RUnlock()
 
-				n.log[LogLevelVerbose].Printf("record =%s synchronized, announced to %d peers", recordHashStr, announcementCount)
+				n.log[LogLevelVerbose].Printf("record =%s synchronized (subjective reputation %d), announced to %d peers", recordHashStr, reputation, announcementCount)
 
 				n.backgroundThreadWG.Done()
 			}()

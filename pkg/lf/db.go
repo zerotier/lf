@@ -13,7 +13,7 @@ package lf
 //#define ZTLF_GOLANG 1
 //struct ZTLF_DB;
 //extern void ztlfLogOutputCCallback(int,const char *,int,const char *,void *);
-//extern void ztlfSyncCCallback(struct ZTLF_DB *db,const void *,uint64_t,unsigned int,void *);
+//extern void ztlfSyncCCallback(struct ZTLF_DB *db,const void *,uint64_t,unsigned int,int,void *);
 // #include "./native/db.h"
 // #include "./native/db.c"
 import "C"
@@ -43,11 +43,11 @@ type db struct {
 var (
 	globalLoggers           [][logLevelCount]*log.Logger
 	globalLoggersLock       sync.Mutex
-	globalSyncCallbacks     []func(uint64, uint, *[32]byte)
+	globalSyncCallbacks     []func(uint64, uint, int, *[32]byte)
 	globalSyncCallbacksLock sync.RWMutex
 )
 
-func (db *db) open(basePath string, loggers [logLevelCount]*log.Logger, syncCallback func(uint64, uint, *[32]byte)) error {
+func (db *db) open(basePath string, loggers [logLevelCount]*log.Logger, syncCallback func(uint64, uint, int, *[32]byte)) error {
 	var errbuf [2048]byte
 	db.log = loggers
 	db.cdb = new(C.struct_ZTLF_DB)
