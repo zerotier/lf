@@ -17,6 +17,7 @@ import (
 	"net"
 	"os"
 	"time"
+	"unsafe"
 
 	"github.com/tidwall/pretty"
 )
@@ -96,32 +97,30 @@ func ipIsGlobalPublicUnicast(ip net.IP) bool {
 	return false
 }
 
-// paranoidSecureRandom is a secure random source that defends in depth against broken system random sources.
-type paranoidSecureRandom struct {
-	cipher cipher.Stream
-}
-
-func newParanoidSecureRandom() *paranoidSecureRandom {
-	var r paranoidSecureRandom
-	var cipherKey [32]byte
-	secrand.Read(cipherKey[:])
-	binary.LittleEndian.PutUint64(cipherKey[0:8], uint64(time.Now().UnixNano()))
-	binary.LittleEndian.PutUint32(cipherKey[8:12], uint32(os.Getpid()))
-	c, _ := aes.NewCipher(cipherKey[:])
-	r.cipher = cipher.NewCTR(c, cipherKey[0:16])
-	return &r
-}
+type paranoidSecureRandom struct{ cipher cipher.Stream }
 
 func (r *paranoidSecureRandom) Read(buf []byte) (int, error) {
 	_, err := io.ReadFull(secrand.Reader, nil)
 	if err == nil {
+		// Encrypting with a cipher initialized from some other sources of entropy
+		// defends in depth against broken/compromised system random sources.
 		r.cipher.XORKeyStream(buf, buf)
 		return len(buf), nil
 	}
 	return 0, err
 }
 
-var secureRandom = newParanoidSecureRandom()
+var secureRandom = func() *paranoidSecureRandom {
+	var r paranoidSecureRandom
+	var cipherKey [32]byte
+	binary.LittleEndian.PutUint64(cipherKey[0:8], uint64(time.Now().UnixNano()))
+	binary.LittleEndian.PutUint32(cipherKey[8:12], uint32(os.Getpid()))
+	binary.LittleEndian.PutUint32(cipherKey[12:16], uint32(uintptr(unsafe.Pointer(&cipherKey))))
+	secrand.Read(cipherKey[16:32])
+	c, _ := aes.NewCipher(cipherKey[0:16])
+	r.cipher = cipher.NewCFBEncrypter(c, cipherKey[16:32])
+	return &r
+}()
 
 var jsonPrettyOptions = pretty.Options{
 	Width:    2147483647, // always put arrays on one line
