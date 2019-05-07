@@ -178,7 +178,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 	n.recordsRequested = make(map[[32]byte]uintptr)
 
 	// Open node database and associated flat data files.
-	err := n.db.open(basePath, n.log, n.internalHandleNewlySynchronizedRecord)
+	err := n.db.open(basePath, n.log, n.handleSynchronizedRecord)
 	if err != nil {
 		return nil, err
 	}
@@ -295,7 +295,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 		if len(rdata) > 0 {
 			gr, err := NewRecordFromBytes(rdata)
 			if gr != nil && err == nil && gr.GetType() == RecordTypeGenesis {
-				if n.internalHandleGenesisRecord(gr) {
+				if n.handleGenesisRecord(gr) {
 					gotGenesis = true
 				}
 			} else if err != nil {
@@ -335,7 +335,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 			}
 			if c != nil {
 				n.backgroundThreadWG.Add(1)
-				go p2pConnectionHandler(n, c, nil, true)
+				go n.p2pConnectionHandler(c, nil, true)
 			}
 		}
 	}()
@@ -354,14 +354,14 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 	n.backgroundThreadWG.Add(1)
 	go func() {
 		defer n.backgroundThreadWG.Done()
-		n.internalBackgroundWorker()
+		n.backgroundWorkerMain()
 	}()
 
 	// Start background thread to add work to DAG and render commentary (if enabled)
 	n.backgroundThreadWG.Add(1)
 	go func() {
 		defer n.backgroundThreadWG.Done()
-		n.internalCommentaryGenerator()
+		n.commentaryGeneratorMain()
 	}()
 
 	// Add server's local URL to client config if there aren't any configured URLs.
@@ -465,7 +465,7 @@ func (n *Node) Connect(ip net.IP, port int, nodePublic []byte) {
 		if atomic.LoadUint32(&n.shutdown) == 0 {
 			if err == nil {
 				n.backgroundThreadWG.Add(1)
-				go p2pConnectionHandler(n, c, nodePublicOwner, false)
+				go n.p2pConnectionHandler(c, nodePublicOwner, false)
 			} else {
 				n.log[LogLevelNormal].Printf("P2P connection to %s failed: %s", ta.String(), err.Error())
 				n.updateKnownPeersWithConnectResult(ip, port, nodePublicOwner, false)
@@ -578,8 +578,8 @@ func (n *Node) SetCommentaryEnabled(j bool) {
 	atomic.StoreUint32(&n.commentary, jj)
 }
 
-// internalHandleGenesisRecord handles new genesis records
-func (n *Node) internalHandleGenesisRecord(gr *Record) bool {
+// handleGenesisRecord handles new genesis records
+func (n *Node) handleGenesisRecord(gr *Record) bool {
 	grHash := gr.Hash()
 	rv, err := gr.GetValue(nil)
 	if err != nil {
@@ -592,8 +592,8 @@ func (n *Node) internalHandleGenesisRecord(gr *Record) bool {
 	return false
 }
 
-// internalHandleNewlySynchronizedRecord is called by db when records dependencies are fully satisfied all through the DAG.
-func (n *Node) internalHandleNewlySynchronizedRecord(doff uint64, dlen uint, reputation int, hash *[32]byte) {
+// handleSynchronizedRecord is called by db when records dependencies are fully satisfied all through the DAG.
+func (n *Node) handleSynchronizedRecord(doff uint64, dlen uint, reputation int, hash *[32]byte) {
 	// This is the handler passed to 'db' to be called when records are fully synchronized, meaning
 	// they have all their dependencies met and are ready to be replicated.
 	if atomic.LoadUint32(&n.shutdown) == 0 {
@@ -618,7 +618,7 @@ func (n *Node) internalHandleNewlySynchronizedRecord(doff uint64, dlen uint, rep
 				if err == nil && r.Type != nil {
 					switch *r.Type {
 					case RecordTypeGenesis:
-						n.internalHandleGenesisRecord(r)
+						n.handleGenesisRecord(r)
 					case RecordTypeCommentary:
 						cdata, err := r.GetValue(nil)
 						if err == nil && len(cdata) > 0 {
@@ -670,8 +670,8 @@ func (n *Node) internalHandleNewlySynchronizedRecord(doff uint64, dlen uint, rep
 	}
 }
 
-// internalBackgroundWorker is run in a background gorountine to do various housekeeping tasks.
-func (n *Node) internalBackgroundWorker() {
+// backgroundWorkerMain is run in a background gorountine to do various housekeeping tasks.
+func (n *Node) backgroundWorkerMain() {
 	// Init this in background if it isn't already to speed up node readiness
 	WharrgarblInitTable(path.Join(n.basePath, "wharrgarbl-table.bin"))
 
@@ -772,8 +772,8 @@ func (n *Node) internalBackgroundWorker() {
 	}
 }
 
-// internalCommentaryGenerator is run to generate commentary and add work to the DAG (if enabled).
-func (n *Node) internalCommentaryGenerator() {
+// commentaryGeneratorMain is run to generate commentary and add work to the DAG (if enabled).
+func (n *Node) commentaryGeneratorMain() {
 	numLinks := uint(32)
 	for atomic.LoadUint32(&n.shutdown) == 0 {
 		time.Sleep(time.Second) // 1s pause between each new record
@@ -978,11 +978,15 @@ func (p *peer) send(msg []byte) (err error) {
 }
 
 // updateKnownPeersWithConnectResult is called from p2pConnectionHandler to update n.knownPeers
-func (n *Node) updateKnownPeersWithConnectResult(ip net.IP, port int, nodePublic *Owner, success bool) {
+func (n *Node) updateKnownPeersWithConnectResult(ip net.IP, port int, nodePublic *Owner, success bool) bool {
 	n.knownPeersLock.Lock()
 	defer n.knownPeersLock.Unlock()
 	now := TimeMs()
 	nodePublicBytes := nodePublic.Bytes()
+
+	if bytes.Equal(nodePublicBytes, n.owner.Bytes()) {
+		return true
+	}
 
 	// Update success or failure info for known peer record if we already have one.
 	for _, kp := range n.knownPeers {
@@ -997,7 +1001,7 @@ func (n *Node) updateKnownPeersWithConnectResult(ip net.IP, port int, nodePublic
 				kp.LastFailedConnection = now
 				kp.TotalFailedConnections++
 			}
-			return
+			return true
 		}
 	}
 
@@ -1014,9 +1018,11 @@ func (n *Node) updateKnownPeersWithConnectResult(ip net.IP, port int, nodePublic
 			TotalSuccessfulConnections: 1,
 		})
 	}
+
+	return false
 }
 
-func p2pConnectionHandler(n *Node, c *net.TCPConn, nodePublic *Owner, inbound bool) {
+func (n *Node) p2pConnectionHandler(c *net.TCPConn, nodePublic *Owner, inbound bool) {
 	var err error
 	var p *peer
 	var msgbuf []byte
@@ -1060,7 +1066,7 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, nodePublic *Owner, inbound bo
 		expectedRawPublicBytes = nodePublic.rawPublicKeyBytes()
 	}
 
-	c.SetKeepAlivePeriod(time.Second * 30)
+	c.SetKeepAlivePeriod(time.Second * 10)
 	c.SetKeepAlive(true)
 	c.SetLinger(0)
 	c.SetNoDelay(false)
@@ -1196,6 +1202,7 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, nodePublic *Owner, inbound bo
 			n.updateKnownPeersWithConnectResult(tcpAddr.IP, tcpAddr.Port, remotePublicOwner, true) // we can still remember this peer
 		}
 		n.log[LogLevelNormal].Printf("P2P connection to %s closed: closing redundant link to already connected peer", peerAddressStr)
+		return
 	}
 	n.peers[peerAddressStr] = p
 	n.peersLock.Unlock()
@@ -1211,7 +1218,7 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, nodePublic *Owner, inbound bo
 
 	n.log[LogLevelNormal].Printf("P2P connection established to %s:%s", peerAddressStr, remotePublicStr)
 
-	gotHello := false
+	performedInboundReachabilityTest := false
 	for atomic.LoadUint32(&n.shutdown) == 0 {
 		// Read size of message (varint)
 		msgSize, err := binary.ReadUvarint(reader)
@@ -1279,26 +1286,38 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, nodePublic *Owner, inbound bo
 		case p2pProtoMessageTypeHello:
 			if len(msg) > 0 {
 				json.Unmarshal(msg, &p.peerHelloMsg)
-				if inbound && publicAddress && !gotHello {
-					alreadyKnowPeer := false
-					n.knownPeersLock.Lock()
-					for _, kp := range n.knownPeers {
-						if remotePublicStr == kp.PublicKey {
-							alreadyKnowPeer = true
-							break
+
+				// Test inbound connections for reachability in the opposite direction, and
+				// if they are reachable learn them and announce them. This helps the network
+				// as a whole learn new node addresses automatically.
+				if p.peerHelloMsg.P2PPort > 0 && !performedInboundReachabilityTest {
+					performedInboundReachabilityTest = true
+					n.backgroundThreadWG.Add(1)
+					go func() {
+						testAddr := &net.TCPAddr{
+							IP:   tcpAddr.IP,
+							Port: p.peerHelloMsg.P2PPort,
 						}
-					}
-					n.knownPeersLock.Unlock()
-					if !alreadyKnowPeer {
-						// If we don't already know this peer, try connecting outbound to
-						// it at its source IP and its reported P2P port. This allows us
-						// to learn and announce peers with bidirectionally reachable IPs.
-						// Connection deduplication will reject these, but we'll still
-						// verify global port reachability.
-						n.Connect(tcpAddr.IP, tcpAddr.Port, remotePublicOwnerBytes)
-					}
+						testConn, err := net.DialTCP("tcp", nil, testAddr)
+						if testConn != nil && err == nil {
+							n.log[LogLevelVerbose].Printf("reverse reachability test to port %d successful for inbound connection from %s", p.peerHelloMsg.P2PPort, tcpAddr.IP.String())
+							n.updateKnownPeersWithConnectResult(tcpAddr.IP, p.peerHelloMsg.P2PPort, remotePublicOwner, true)
+							if atomic.LoadUint32(&n.shutdown) == 0 {
+								n.peersLock.RLock()
+								for _, otherPeer := range n.peers {
+									if &otherPeer != &p {
+										otherPeer.sendPeerAnnouncement(testAddr, p.remotePublic)
+									}
+								}
+								n.peersLock.RUnlock()
+							}
+							testConn.Close()
+						} else {
+							n.log[LogLevelVerbose].Printf("reverse reachability test to port %d unsuccessful for inbound connection from %s", p.peerHelloMsg.P2PPort, tcpAddr.IP.String())
+						}
+						n.backgroundThreadWG.Done()
+					}()
 				}
-				gotHello = true
 			}
 
 		case p2pProtoMessageTypeRecord:
