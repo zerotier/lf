@@ -14,7 +14,6 @@ import (
 	"crypto/cipher"
 	"crypto/ecdsa"
 	"crypto/elliptic"
-	secrand "crypto/rand"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -1131,7 +1130,7 @@ func p2pConnectionHandler(n *Node, c *net.TCPConn, nodePublic *Owner, inbound bo
 	// Exchange encrypted nonces (16 bytes are exchanged due to AES block size but only 12 bytes are used for AES-GCM)
 	// Technically encryption of the nonce is not required, but why not?
 	var encryptedOutgoingNonce, outgoingNonce, incomingNonce [16]byte
-	_, err = secrand.Read(outgoingNonce[:])
+	_, err = secureRandom.Read(outgoingNonce[:])
 	if err != nil {
 		n.log[LogLevelNormal].Printf("P2P connection to %s closed: %s", peerAddressStr, err.Error())
 		return

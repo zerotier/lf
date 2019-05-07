@@ -10,7 +10,6 @@ package lf
 import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
-	secrand "crypto/rand"
 	"crypto/sha256"
 	"math/big"
 )
@@ -115,7 +114,7 @@ func ECDSADecompressPublicKey(c elliptic.Curve, data []byte) (*ecdsa.PublicKey, 
 // packed into a fixed byte array of ECDSASignatureSize bytes. This is simpler and more
 // compact than ASN.1 but assumes that the verifier knows the curve.
 func ECDSASign(key *ecdsa.PrivateKey, hash []byte) ([]byte, error) {
-	r, s, err := ecdsa.Sign(secrand.Reader, key, hash)
+	r, s, err := ecdsa.Sign(secureRandom, key, hash)
 	if err != nil {
 		return nil, err
 	}
@@ -137,7 +136,7 @@ func ECDSASign(key *ecdsa.PrivateKey, hash []byte) ([]byte, error) {
 
 // ECDSASignEmbedRecoveryIndex creates a signature that also contains information required by ECDSARecover.
 func ECDSASignEmbedRecoveryIndex(key *ecdsa.PrivateKey, hash []byte) ([]byte, error) {
-	r, s, err := ecdsa.Sign(secrand.Reader, key, hash)
+	r, s, err := ecdsa.Sign(secureRandom, key, hash)
 	if err != nil {
 		return nil, err
 	}

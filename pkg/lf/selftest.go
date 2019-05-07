@@ -12,7 +12,6 @@ import (
 	"crypto/aes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
-	secrand "crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -101,7 +100,7 @@ func TestCore(out io.Writer) bool {
 		curve := curves[ci]
 
 		fmt.Fprintf(out, "Testing %s ECDSA...\n", curve.Params().Name)
-		priv, err := ecdsa.GenerateKey(curve, secrand.Reader)
+		priv, err := ecdsa.GenerateKey(curve, secureRandom)
 		if err != nil {
 			fmt.Fprintf(out, "  FAILED (generate): %s\n", err.Error())
 			return false
@@ -123,7 +122,7 @@ func TestCore(out io.Writer) bool {
 		}
 
 		var junk [32]byte
-		secrand.Read(junk[:])
+		secureRandom.Read(junk[:])
 		sig, err := ECDSASign(priv, junk[:])
 		if err != nil {
 			fmt.Fprintf(out, "  FAILED (sign): %s\n", err.Error())
@@ -147,7 +146,7 @@ func TestCore(out io.Writer) bool {
 		}
 
 		for i := 0; i < 32; i++ {
-			secrand.Read(junk[:])
+			secureRandom.Read(junk[:])
 			sig, _ := ECDSASignEmbedRecoveryIndex(priv, junk[:])
 			if i == 0 {
 				fmt.Fprintf(out, "  Key Recoverable Signature: [%d] %x...\n  Testing key recovery... ", len(sig), sig[0:16])
@@ -167,7 +166,7 @@ func TestCore(out io.Writer) bool {
 	fmt.Fprintf(out, "Testing Selector... ")
 	var testSelectors [256]Selector
 	var testSelectorClaimHash [32]byte
-	secrand.Read(testSelectorClaimHash[:])
+	secureRandom.Read(testSelectorClaimHash[:])
 	for k := range testSelectors {
 		testSelectors[k].set([]byte("name"), []byte(fmt.Sprintf("%.16x", k)), testSelectorClaimHash[:])
 		ts2, err := newSelectorFromBytes(testSelectors[k].bytes())
@@ -196,7 +195,7 @@ func TestCore(out io.Writer) bool {
 		var testLinks [][32]byte
 		for i := 0; i < 3; i++ {
 			var tmp [32]byte
-			secrand.Read(tmp[:])
+			secureRandom.Read(tmp[:])
 			testLinks = append(testLinks, tmp)
 		}
 		owner, err := NewOwner(OwnerTypeEd25519)
@@ -239,11 +238,11 @@ func TestCore(out io.Writer) bool {
 	var testLinks [][32]byte
 	for i := 0; i < 3; i++ {
 		var tmp [32]byte
-		secrand.Read(tmp[:])
+		secureRandom.Read(tmp[:])
 		testLinks = append(testLinks, tmp)
 	}
 	var testValue [32]byte
-	secrand.Read(testValue[:])
+	secureRandom.Read(testValue[:])
 	owner, err := NewOwner(OwnerTypeEd25519)
 	if err != nil {
 		fmt.Fprintf(out, "FAILED (create owner): %s\n", err.Error())

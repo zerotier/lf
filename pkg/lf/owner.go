@@ -10,7 +10,6 @@ package lf
 import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
-	secrand "crypto/rand"
 	"crypto/x509"
 	"io"
 	"math/big"
@@ -78,7 +77,7 @@ func NewOwnerFromSeed(ownerType int, seed []byte) (*Owner, error) {
 }
 
 // NewOwner creates a new owner key pair.
-func NewOwner(ownerType int) (*Owner, error) { return newOwnerIntl(ownerType, secrand.Reader) }
+func NewOwner(ownerType int) (*Owner, error) { return newOwnerIntl(ownerType, secureRandom) }
 
 // NewOwnerFromBytes creates a new Owner object from a set of public Owner bytes (as returned by Bytes()).
 func NewOwnerFromBytes(publicBytes []byte) (*Owner, error) {
