@@ -11,7 +11,6 @@ import (
 	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
-	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
 	"hash/crc32"
@@ -39,9 +38,10 @@ var (
 )
 
 const (
-	recordBodyFlagHasCertificate  byte = 0x01
-	recordBodyFlagValueCompressed byte = 0x02
-	recordBodyFlagHasType         byte = 0x04
+	recordBodyFlagHasCertificate byte = 0x01
+	recordBodyFlagHasType        byte = 0x02
+
+	recordValueFlagBrotliCompressed uint32 = 0x80000000
 
 	// RecordDefaultWharrgarblMemory is the default amount of memory to use for Wharrgarbl momentum-type PoW.
 	RecordDefaultWharrgarblMemory = 1024 * 1024 * 512
@@ -127,13 +127,12 @@ func recordWharrgarblScore(cost uint32) uint32 {
 // recordBody represents the main body of a record including its value, owner public keys, etc.
 // It's included as part of Record but separated since in record construction we want to treat it as a separate element.
 type recordBody struct {
-	Value           Blob       `json:",omitempty"` // Record value (possibly masked and/or compressed, use GetValue() to get)
-	Owner           OwnerBlob  `json:",omitempty"` // Owner of this record (owner public bytes) in @base58string format
-	Certificate     *HashBlob  `json:",omitempty"` // Hash (256-bit) of exact record containing certificate for this owner (if CAs are enabled)
-	Links           []HashBlob `json:",omitempty"` // Links to previous records' hashes
-	Timestamp       uint64     ``                  // Timestamp (and revision ID) in SECONDS since Unix epoch
-	ValueCompressed *bool      `json:",omitempty"` // If true, value is compressed (within encrypted envelope)
-	Type            *byte      `json:",omitempty"` // Record type byte, RecordTypeDatum (0) if nil
+	Value       Blob       `json:",omitempty"` // Record value (possibly masked and/or compressed, use GetValue() to get)
+	Owner       OwnerBlob  `json:",omitempty"` // Owner of this record (owner public bytes) in @base58string format
+	Certificate *HashBlob  `json:",omitempty"` // Hash (256-bit) of exact record containing certificate for this owner (if CAs are enabled)
+	Links       []HashBlob `json:",omitempty"` // Links to previous records' hashes
+	Timestamp   uint64     ``                  // Timestamp (and revision ID) in SECONDS since Unix epoch
+	Type        *byte      `json:",omitempty"` // Record type byte, RecordTypeDatum (0) if nil
 }
 
 func (rb *recordBody) unmarshalFrom(r io.Reader) error {
@@ -223,10 +222,6 @@ func (rb *recordBody) unmarshalFrom(r io.Reader) error {
 		return err
 	}
 
-	if (flags & recordBodyFlagValueCompressed) != 0 {
-		rb.ValueCompressed = &troo
-	}
-
 	return nil
 }
 
@@ -234,9 +229,6 @@ func (rb *recordBody) marshalTo(w io.Writer, hashAsProxyForValue bool) error {
 	var flags [2]byte
 	if rb.Certificate != nil {
 		flags[0] |= recordBodyFlagHasCertificate
-	}
-	if rb.ValueCompressed != nil && *rb.ValueCompressed {
-		flags[0] |= recordBodyFlagValueCompressed
 	}
 	if rb.Type != nil && *rb.Type != 0 {
 		flags[0] |= recordBodyFlagHasType
@@ -322,15 +314,16 @@ func (rb *recordBody) GetValue(maskingKey []byte) ([]byte, error) {
 	if len(rb.Owner) >= 8 {
 		copy(cfbIv[8:16], rb.Owner[0:8])
 	}
-	maskingKeyH := sha256.Sum256(maskingKey)
+	maskingKeyH := sha3.Sum256(maskingKey)
 	c, _ := aes.NewCipher(maskingKeyH[:])
 	cipher.NewCFBDecrypter(c, cfbIv[:]).XORKeyStream(unmaskedValue, rb.Value)
-	if crc32.ChecksumIEEE(unmaskedValue[4:]) != binary.BigEndian.Uint32(unmaskedValue[0:4]) {
+	flagsAndCrc := binary.BigEndian.Uint32(unmaskedValue[0:4])
+	if (crc32.ChecksumIEEE(unmaskedValue[4:]) & 0x0fffffff) != (flagsAndCrc & 0x0fffffff) {
 		return nil, ErrIncorrectKey
 	}
 	unmaskedValue = unmaskedValue[4:]
 
-	if rb.ValueCompressed != nil && *rb.ValueCompressed {
+	if (flagsAndCrc & recordValueFlagBrotliCompressed) != 0 {
 		return brotlidec.DecompressBuffer(unmaskedValue, make([]byte, 0, len(unmaskedValue)+(len(unmaskedValue)/3)))
 	}
 	return unmaskedValue, nil
@@ -605,6 +598,7 @@ func NewRecordStart(recordType byte, value []byte, links [][32]byte, maskingKey 
 
 	if len(value) > 0 {
 		// Attempt compression for values of non-trivial size.
+		var flags uint32
 		if len(value) > 24 {
 			bestOutput := value
 			for _, bp := range brotliParams { // tries both GENERIC and TEXT brotli parameters
@@ -616,7 +610,7 @@ func NewRecordStart(recordType byte, value []byte, links [][32]byte, maskingKey 
 			}
 			if len(bestOutput) < len(value) {
 				value = bestOutput
-				r.recordBody.ValueCompressed = &troo
+				flags = recordValueFlagBrotliCompressed
 			}
 		}
 
@@ -632,11 +626,11 @@ func NewRecordStart(recordType byte, value []byte, links [][32]byte, maskingKey 
 		if len(maskingKey) == 0 {
 			maskingKey = owner // all records are masked, use owner if no key given
 		}
-		maskingKeyH := sha256.Sum256(maskingKey)
+		maskingKeyH := sha3.Sum256(maskingKey)
 		c, _ := aes.NewCipher(maskingKeyH[:])
 		cfb := cipher.NewCFBEncrypter(c, cfbIv[:])
 		valueMasked := make([]byte, 4+len(value))
-		binary.BigEndian.PutUint32(valueMasked[0:4], crc32.ChecksumIEEE(value))
+		binary.BigEndian.PutUint32(valueMasked[0:4], (crc32.ChecksumIEEE(value)&0x0fffffff)|flags) // most significant 4 bits are used for flags
 		cfb.XORKeyStream(valueMasked[0:4], valueMasked[0:4])
 		cfb.XORKeyStream(valueMasked[4:], value)
 		r.recordBody.Value = valueMasked

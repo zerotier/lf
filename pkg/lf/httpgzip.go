@@ -43,15 +43,11 @@ func httpGzipHandler(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-
 		w.Header().Set("Content-Encoding", "gzip")
-
 		gz := gzPool.Get().(*gzip.Writer)
-		defer gzPool.Put(gz)
-
 		gz.Reset(w)
-		defer gz.Close()
-
 		next.ServeHTTP(&gzipResponseWriter{ResponseWriter: w, Writer: gz}, r)
+		gz.Close()
+		gzPool.Put(gz)
 	})
 }

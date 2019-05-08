@@ -224,7 +224,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 		Handler:        httpGzipHandler(apiCreateHTTPServeMux(n)),
 		IdleTimeout:    10 * time.Second,
 		ReadTimeout:    10 * time.Second,
-		WriteTimeout:   60 * time.Second,
+		WriteTimeout:   30 * time.Second,
 	}
 	n.httpServer.SetKeepAlivesEnabled(true)
 

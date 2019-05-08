@@ -10,10 +10,10 @@ package lf
 import (
 	"bytes"
 	"crypto/ecdsa"
-	"crypto/sha256"
-	"crypto/sha512"
 	"io"
 	"math/big"
+
+	"golang.org/x/crypto/sha3"
 )
 
 // SelectorTypeBP160 indicates a sortable selector built from the brainpoolP160t1 small elliptic curve.
@@ -68,7 +68,7 @@ func MakeSelectorKey(plainTextName, ordinal []byte) []byte {
 	var publicKeyHash [64]byte
 	pcomp, _ := ECDSACompressPublicKey(&priv.PublicKey)
 	if pcomp != nil {
-		publicKeyHash = sha512.Sum512(pcomp)
+		publicKeyHash = sha3.Sum512(pcomp)
 	}
 
 	addOrdinalToHash(&publicKeyHash, ordinal)
@@ -78,7 +78,7 @@ func MakeSelectorKey(plainTextName, ordinal []byte) []byte {
 
 // isNamed returns true if this selector's plain text name matches the argument.
 func (s *Selector) isNamed(hash, plainTextName []byte) bool {
-	sigHash := sha256.New()
+	sigHash := sha3.New256()
 	sigHash.Write(hash)
 	sigHash.Write(s.Ordinal)
 	var sigHashBuf [32]byte
@@ -97,7 +97,7 @@ func (s *Selector) isNamed(hash, plainTextName []byte) bool {
 // key returns the sortable and comparable database key for this selector.
 // This must be supplied with the hash that was used in set() to perform ECDSA key recovery.
 func (s *Selector) key(hash []byte) []byte {
-	sigHash := sha256.New()
+	sigHash := sha3.New256()
 	sigHash.Write(hash)
 	sigHash.Write(s.Ordinal)
 	var sigHashBuf [32]byte
@@ -107,7 +107,7 @@ func (s *Selector) key(hash []byte) []byte {
 	if pub != nil {
 		pcomp, _ := ECDSACompressPublicKey(pub)
 		if pcomp != nil {
-			publicKeyHash = sha512.Sum512(pcomp)
+			publicKeyHash = sha3.Sum512(pcomp)
 		}
 	}
 
@@ -199,7 +199,7 @@ func (s *Selector) set(plainTextName, ord, hash []byte) {
 	// visible, can't be forged without knowledge of the plain text name. Note that the
 	// claim is based on a signature computed from the plain text name, so that is
 	// a priori included too.
-	sigHash := sha256.New()
+	sigHash := sha3.New256()
 	sigHash.Write(hash)
 	sigHash.Write(ord)
 	var sigHashBuf [32]byte
