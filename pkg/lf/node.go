@@ -439,7 +439,7 @@ func (n *Node) Stop() {
 }
 
 // Connect attempts to establish a peer-to-peer connection to a remote node.
-func (n *Node) Connect(ip net.IP, port int, nodePublic []byte) {
+func (n *Node) Connect(ip net.IP, port int, identity []byte) {
 	n.backgroundThreadWG.Add(1)
 	go func() {
 		defer n.backgroundThreadWG.Done()
@@ -456,13 +456,13 @@ func (n *Node) Connect(ip net.IP, port int, nodePublic []byte) {
 		}
 		n.peersLock.RUnlock()
 
-		nodePublicOwner, err := NewOwnerFromBytes(nodePublic)
+		nodePublicOwner, err := NewOwnerFromBytes(identity)
 		if err != nil {
 			n.log[LogLevelNormal].Printf("P2P connection to %s failed: %s", ta.String(), err.Error())
 			return
 		}
 
-		n.log[LogLevelNormal].Printf("P2P attempting to connect to %s %d @%s", ip.String(), port, Base62Encode(nodePublic))
+		n.log[LogLevelNormal].Printf("P2P attempting to connect to %s %d @%s", ip.String(), port, Base62Encode(identity))
 
 		conn, err := net.DialTimeout("tcp", ta.String(), time.Second*10)
 		if atomic.LoadUint32(&n.shutdown) == 0 {
@@ -658,7 +658,7 @@ func (n *Node) handleSynchronizedRecord(doff uint64, dlen uint, reputation int, 
 						for len(cdata) > 0 {
 							cdata, err = c.readFrom(cdata)
 							if err == nil {
-								n.log[LogLevelVerbose].Printf("commentary [=%s]: %s", recordHashStr, c.string())
+								n.log[LogLevelVerbose].Printf("commentary: @%s: %s", Base62Encode(r.Owner), c.string())
 								n.db.logComment(doff, int(c.assertion), int(c.reason), c.subject)
 							} else {
 								break
@@ -864,7 +864,7 @@ func (n *Node) commentaryGeneratorMain() {
 						}
 
 						rhash := rec.Hash()
-						n.log[LogLevelVerbose].Printf("commentary record =%s submitted with %d comments and %d links (generation took %f seconds)", Base62Encode(rhash[:]), commentCount, len(links), float64(duration)/1000.0)
+						n.log[LogLevelVerbose].Printf("commentary: =%s submitted with %d comments and %d links (generation took %f seconds)", Base62Encode(rhash[:]), commentCount, len(links), float64(duration)/1000.0)
 					} else {
 						n.log[LogLevelWarning].Printf("WARNING: error creating record: %s", err.Error())
 					}

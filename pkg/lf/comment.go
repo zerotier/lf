@@ -43,7 +43,7 @@ func (c *comment) string() string {
 	case commentAssertionNil:
 		return "nil"
 	case commentAssertionRecordCollidesWithClaimedID:
-		return fmt.Sprintf("record %x collides with an already-claimed ID (%s)", c.subject, reason)
+		return fmt.Sprintf("=%s collides with previously claimed ID (%s)", Base62Encode(c.subject), reason)
 	}
 
 	return fmt.Sprintf("unknown assertion %.2x subject %x reason %.2x", c.assertion, c.subject, c.reason)
