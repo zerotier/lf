@@ -57,22 +57,9 @@ func (e APIError) Error() string {
 
 // APIPeer contains information about a peer
 type APIPeer struct {
-	IP        net.IP
-	Port      int
-	PublicKey string
-}
-
-// PublicBytes is a shortcut to un-base62-encode PublicKey.
-// It returns nil if PublicKey is empty or invalid.
-func (p *APIPeer) PublicBytes() []byte {
-	if len(p.PublicKey) > 0 {
-		pkb, err := Base62Decode(p.PublicKey)
-		if err != nil {
-			return nil
-		}
-		return pkb
-	}
-	return nil
+	IP       net.IP
+	Port     int
+	Identity OwnerBlob
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -107,16 +94,21 @@ func APIPostRecord(url string, recordData []byte) error {
 }
 
 // APIPostConnect submits an APIPeer record to /connect.
-func APIPostConnect(url string, ip net.IP, port int, publicKey string) error {
+func APIPostConnect(url string, ip net.IP, port int, identity string) error {
 	if strings.HasSuffix(url, "/") {
 		url = url + "connect"
 	} else {
 		url = url + "/connect"
 	}
+	var ob OwnerBlob
+	err := json.Unmarshal([]byte(identity), &ob)
+	if err != nil {
+		return err
+	}
 	apiPeerJSON, err := json.Marshal(&APIPeer{
-		IP:        ip,
-		Port:      port,
-		PublicKey: publicKey,
+		IP:       ip,
+		Port:     port,
+		Identity: ob,
 	})
 	if err != nil {
 		return err
@@ -405,7 +397,7 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 			if apiIsTrusted(n, req) {
 				var m APIPeer
 				if apiReadObj(out, req, &m) == nil {
-					n.Connect(m.IP, m.Port, m.PublicBytes())
+					n.Connect(m.IP, m.Port, m.Identity)
 					apiSendObj(out, req, http.StatusOK, nil)
 				}
 			} else {

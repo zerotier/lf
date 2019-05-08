@@ -32,10 +32,8 @@ func (b *Blob) UnmarshalJSON(j []byte) error {
 		if len(s) == 0 {
 			*b = nil
 		} else if s[0] == '\b' {
-			*b, err = Base62Decode(s[1:])
-			if err == nil {
-				return nil
-			}
+			*b = Base62Decode(s[1:])
+			return nil
 		} else {
 			*b = []byte(s)
 			return nil
@@ -73,14 +71,11 @@ func (b *OwnerBlob) UnmarshalJSON(j []byte) error {
 	var str string
 	err = json.Unmarshal(j, &str)
 	if err == nil {
-		if len(str) > 1 && str[0] == '@' {
-			*b, err = Base62Decode(str[1:])
-			if err == nil {
-				return nil
-			}
-		} else {
-			err = errors.New("base62 string not prefixed by @ (for owner)")
+		if len(str) > 0 && str[0] == '@' {
+			*b = Base62Decode(str[1:])
+			return nil
 		}
+		err = errors.New("base62 string not prefixed by @ (for owner)")
 	}
 
 	// Byte arrays are also accepted
@@ -119,7 +114,7 @@ func (b *HashBlob) UnmarshalJSON(j []byte) error {
 	err = json.Unmarshal(j, &str)
 	if err == nil {
 		if len(str) > 1 && str[0] == '=' {
-			bb, err = Base62Decode(str[1:])
+			bb = Base62Decode(str[1:])
 		} else {
 			err = errors.New("base62 string not prefixed by = (for exact record hash)")
 		}

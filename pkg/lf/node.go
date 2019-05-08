@@ -10,6 +10,7 @@ package lf
 import (
 	"bufio"
 	"bytes"
+	"container/list"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/ecdsa"
@@ -49,10 +50,13 @@ const (
 	p2pProtoMessageTypePeer                 byte = 5 // APIPeer (JSON)
 
 	// p2pProtoMaxRetries is the maximum number of times we'll try to retry a record
-	p2pProtoMaxRetries = 32
+	p2pProtoMaxRetries = 256
 
 	// p2pDesiredConnectionCount is how many P2P TCP connections we want to have open
 	p2pDesiredConnectionCount = 64
+
+	// Delete peers that haven't been used in this long.
+	p2pPeerExpiration = 432000000 // 5 days
 
 	// DefaultHTTPPort is the default LF HTTP API port
 	DefaultHTTPPort = 9980
@@ -123,6 +127,8 @@ type Node struct {
 	peersLock                sync.RWMutex          //
 	recordsRequested         map[[32]byte]uintptr  // When records were last requested
 	recordsRequestedLock     sync.Mutex            //
+	comments                 *list.List            // Accumulates commentary if commentary is enabled
+	commentsLock             sync.Mutex            //
 
 	httpTCPListener *net.TCPListener
 	httpServer      *http.Server
@@ -173,6 +179,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 	n.connectionsInStartup = make(map[*net.TCPConn]bool)
 	n.peers = make(map[string]*peer)
 	n.recordsRequested = make(map[[32]byte]uintptr)
+	n.comments = list.New()
 
 	// Open node database and associated flat data files.
 	err := n.db.open(basePath, n.log, n.handleSynchronizedRecord)
@@ -236,8 +243,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 		return nil, err
 	}
 
-	n.log[LogLevelNormal].Printf("listening on port %d for HTTP and %d for LF P2P", httpPort, p2pPort)
-	n.log[LogLevelNormal].Printf("node public: %s", nodePublicStr)
+	n.log[LogLevelNormal].Printf("@%s listening on P2P port %d and HTTP port %d", nodePublicStr, p2pPort, httpPort)
 
 	// Load genesis.lf or use compiled-in defaults for global LF network
 	var genesisReader io.Reader
@@ -287,7 +293,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 	// Load any genesis records after those in genesis.lf (or compiled in default)
 	n.log[LogLevelNormal].Printf("loading genesis records from genesis owner @%s", Base62Encode(n.genesisOwner))
 	gotGenesis := false
-	n.db.getAllByOwner(n.genesisOwner, func(doff, dlen uint64) bool {
+	n.db.getAllByOwner(n.genesisOwner, func(doff, dlen uint64, reputation int) bool {
 		rdata, _ := n.db.getDataByOffset(doff, uint(dlen), nil)
 		if len(rdata) > 0 {
 			gr, err := NewRecordFromBytes(rdata)
@@ -456,7 +462,7 @@ func (n *Node) Connect(ip net.IP, port int, nodePublic []byte) {
 			return
 		}
 
-		n.log[LogLevelNormal].Printf("P2P attempting to connect to %s:%s", ta.String(), Base62Encode(nodePublic))
+		n.log[LogLevelNormal].Printf("P2P attempting to connect to %s %d @%s", ip.String(), port, Base62Encode(nodePublic))
 
 		conn, err := net.DialTimeout("tcp", ta.String(), time.Second*10)
 		if atomic.LoadUint32(&n.shutdown) == 0 {
@@ -572,15 +578,20 @@ func (n *Node) SetCommentaryEnabled(j bool) {
 		jj = 1
 	}
 	atomic.StoreUint32(&n.commentary, jj)
+	if !j {
+		n.commentsLock.Lock()
+		n.comments = list.New()
+		n.commentsLock.Unlock()
+	}
 }
 
-// handleGenesisRecord handles new genesis records
+// handleGenesisRecord handles new genesis records when starting up or if they arrive over the net.
 func (n *Node) handleGenesisRecord(gr *Record) bool {
 	grHash := gr.Hash()
 	grHashStr := Base62Encode(grHash[:])
 	rv, err := gr.GetValue(nil)
 	if err != nil {
-		n.log[LogLevelWarning].Printf("WARNING: genesis record =%s contains an invalid value!", grHashStr)
+		n.log[LogLevelWarning].Printf("WARNING: genesis record =%s contains an invalid value, ignoring!", grHashStr)
 	} else if len(rv) > 0 {
 		if atomic.LoadUint64(&n.lastGenesisRecordTimestamp) < gr.Timestamp {
 			n.log[LogLevelNormal].Printf("applying genesis configuration update from record =%s", grHashStr)
@@ -593,63 +604,80 @@ func (n *Node) handleGenesisRecord(gr *Record) bool {
 	return false
 }
 
-// handleSynchronizedRecord is called by db when records dependencies are fully satisfied all through the DAG.
+// handleSynchronizedRecord is called by db when records' dependencies are fully satisfied all through the DAG.
 func (n *Node) handleSynchronizedRecord(doff uint64, dlen uint, reputation int, hash *[32]byte) {
 	// This is the handler passed to 'db' to be called when records are fully synchronized, meaning
 	// they have all their dependencies met and are ready to be replicated.
-	if atomic.LoadUint32(&n.shutdown) == 0 {
-		go func() {
-			if atomic.LoadUint32(&n.shutdown) != 0 {
-				return
+	n.backgroundThreadWG.Add(1)
+	go func() {
+		if atomic.LoadUint32(&n.shutdown) != 0 {
+			return
+		}
+
+		defer func() {
+			e := recover()
+			if e != nil && atomic.LoadUint32(&n.shutdown) != 0 {
+				n.log[LogLevelWarning].Printf("WARNING: unexpected panic replicating synchronized record: %s", e)
 			}
+			n.backgroundThreadWG.Done()
+		}()
 
-			defer func() {
-				e := recover()
-				if e != nil && atomic.LoadUint32(&n.shutdown) != 0 {
-					n.log[LogLevelWarning].Printf("WARNING: unexpected panic replicating synchronized record: %s", e)
+		recordHashStr := Base62Encode(hash[:])
+		rdata, err := n.db.getDataByOffset(doff, dlen, nil)
+		if len(rdata) > 0 && err == nil {
+			r, err := NewRecordFromBytes(rdata)
+			if err != nil {
+				// If this record's local reputation is bad, check and see if we have any good
+				// reputation local records with the same ID and owner. If so and if commenting
+				// is enabled, generate a comment record that we will publish under our owner.
+				if reputation <= 0 && atomic.LoadUint32(&n.commentary) != 0 {
+					rid := r.ID()
+					n.db.getAllByIDNotOwner(rid[:], r.Owner, func(_, _ uint64, reputation int) bool {
+						if reputation > 0 { // a positive reputation fully synchronized record with a different owner exists
+							n.commentsLock.Lock()
+							n.comments.PushBack(&comment{
+								subject:   hash[:],
+								assertion: commentAssertionRecordCollidesWithClaimedID,
+								reason:    commentReasonAutomaticallyFlagged,
+							})
+							n.commentsLock.Unlock()
+							return false // done scanning, all we need is one
+						}
+						return true
+					})
 				}
-			}()
 
-			recordHashStr := Base62Encode(hash[:])
-
-			// Certain record types get special handling when they're synchronized.
-			rdata, err := n.db.getDataByOffset(doff, dlen, nil)
-			if len(rdata) > 0 && err == nil {
-				r, err := NewRecordFromBytes(rdata)
-				if err == nil && r.Type != nil {
-					switch *r.Type {
-					case RecordTypeGenesis:
-						n.handleGenesisRecord(r)
-					case RecordTypeCommentary:
-						cdata, err := r.GetValue(nil)
-						if err == nil && len(cdata) > 0 {
-							var c comment
-							for len(cdata) > 0 {
-								cdata, err = c.readFrom(cdata)
-								if err == nil {
-									n.log[LogLevelVerbose].Printf("commentary [=%s]: %s", recordHashStr, c.string())
-									n.db.logComment(doff, int(c.assertion), int(c.reason), c.subject)
-								} else {
-									break
-								}
+				// Certain record types get special handling when they're synchronized.
+				switch r.GetType() {
+				case RecordTypeGenesis:
+					n.handleGenesisRecord(r)
+				case RecordTypeCommentary:
+					cdata, err := r.GetValue(nil)
+					if err == nil && len(cdata) > 0 {
+						var c comment
+						for len(cdata) > 0 {
+							cdata, err = c.readFrom(cdata)
+							if err == nil {
+								n.log[LogLevelVerbose].Printf("commentary [=%s]: %s", recordHashStr, c.string())
+								n.db.logComment(doff, int(c.assertion), int(c.reason), c.subject)
+							} else {
+								break
 							}
 						}
 					}
 				}
-			}
 
-			// Send announcements in background in case some kind of TCP hangup causes
-			// them to temporarily stall.
-			n.backgroundThreadWG.Add(1)
-			go func() {
+				// Announce that we have this record to connected peers (rumor/gossip propagation)
 				var msg [33]byte
 				msg[0] = p2pProtoMessageTypeHaveRecords
 				copy(msg[1:], hash[:])
-
 				announcementCount := 0
 				n.peersLock.RLock()
 				if len(n.peers) > 0 {
 					for _, p := range n.peers {
+						if atomic.LoadUint32(&n.shutdown) != 0 {
+							break
+						}
 						if p.peerHelloMsg.SubscribeToNewRecords {
 							p.hasRecordsLock.Lock()
 							_, hasRecord := p.hasRecords[*hash]
@@ -663,12 +691,14 @@ func (n *Node) handleSynchronizedRecord(doff uint64, dlen uint, reputation int, 
 				}
 				n.peersLock.RUnlock()
 
-				n.log[LogLevelVerbose].Printf("record =%s synchronized (subjective reputation %d), announced to %d peers", recordHashStr, reputation, announcementCount)
-
-				n.backgroundThreadWG.Done()
-			}()
-		}()
-	}
+				n.log[LogLevelVerbose].Printf("sync: =%s synchronized (subjective reputation %d), announced to %d peers", recordHashStr, reputation, announcementCount)
+			} else {
+				n.log[LogLevelWarning].Printf("WARNING: record =%s deserialization error: %s (is your node version too old?)", recordHashStr, err.Error())
+			}
+		} else {
+			n.log[LogLevelWarning].Printf("WARNING: unable to read record at byte index %d in data file", doff)
+		}
+	}()
 }
 
 // backgroundWorkerMain is run in a background gorountine to do various housekeeping tasks.
@@ -721,7 +751,7 @@ func (n *Node) backgroundWorkerMain() {
 			}
 		}
 
-		// Peroidically write peers.json
+		// Peroidically clean and write peers.json
 		if (ticker % 120) == 0 {
 			n.writeKnownPeers()
 		}
@@ -749,7 +779,7 @@ func (n *Node) backgroundWorkerMain() {
 						idx := rand.Int() % len(n.knownPeers)
 						if _, have := visited[idx]; !have {
 							kp := n.knownPeers[idx]
-							n.Connect(kp.IP, kp.Port, kp.PublicBytes())
+							n.Connect(kp.IP, kp.Port, kp.Identity)
 							visited[idx] = true
 						}
 					}
@@ -775,48 +805,71 @@ func (n *Node) backgroundWorkerMain() {
 
 // commentaryGeneratorMain is run to generate commentary and add work to the DAG (if enabled).
 func (n *Node) commentaryGeneratorMain() {
-	numLinks := uint(32)
+	var err error
+	desiredMinOverhead := 1024
 	for atomic.LoadUint32(&n.shutdown) == 0 {
 		time.Sleep(time.Second) // 1s pause between each new record
 		if atomic.LoadUint32(&n.commentary) != 0 && atomic.LoadUint32(&n.shutdown) == 0 {
-			if numLinks < n.genesisParameters.RecordMinLinks {
-				numLinks = n.genesisParameters.RecordMinLinks
+			overhead := desiredMinOverhead
+
+			var commentary []byte
+			commentCount := 0
+			n.commentsLock.Lock()
+			for n.comments.Len() > 0 {
+				f := n.comments.Front()
+				c := f.Value.(*comment)
+				s := c.sizeBytes()
+				if len(commentary)+s > int(n.genesisParameters.RecordMaxValueSize) {
+					break
+				}
+				commentary, err = c.appendTo(commentary)
+				if err != nil {
+					commentary = nil
+					break
+				}
+				commentCount++
+				overhead -= s
+				n.comments.Remove(f)
 			}
-			if numLinks < 2 {
-				numLinks = 2
+			n.commentsLock.Unlock()
+
+			if overhead < 0 {
+				overhead = 0
 			}
-			if numLinks > RecordMaxLinks {
-				numLinks = RecordMaxLinks
+			nlinks := uint(overhead / 32)
+			if nlinks < n.genesisParameters.RecordMinLinks {
+				nlinks = n.genesisParameters.RecordMinLinks
 			}
-			links, err := n.db.getLinks2(numLinks)
+			if nlinks < 1 {
+				nlinks = 1
+			} else if nlinks > RecordMaxLinks {
+				nlinks = RecordMaxLinks
+			}
+			links, err := n.db.getLinks2(nlinks)
 
 			if err == nil && len(links) > 0 {
-				// TODO: actual commentary is not implemented yet, so this just adds work for now!
 				startTime := TimeMs()
-				rec, err := NewRecord(RecordTypeCommentary, nil, links, nil, nil, nil, nil, TimeSec(), n.getBackgroundWorkFunction(), n.owner)
+				rec, err := NewRecord(RecordTypeCommentary, commentary, links, nil, nil, nil, nil, TimeSec(), n.getBackgroundWorkFunction(), n.owner)
 				endTime := TimeMs()
-				if atomic.LoadUint32(&n.shutdown) == 0 {
+				if err == nil {
+					err = n.AddRecord(rec)
 					if err == nil {
-						err = n.AddRecord(rec)
-						if err == nil {
-							// Tune number of links (and thus average record size) to try to make records that take about two
-							// minutes of work to create. Linking more parent records is generally always good, but we want
-							// an acceptable new record generation rate too.
-							duration := endTime - startTime
-							if duration < 120000 {
-								numLinks++
-							} else if duration > 120000 && numLinks > 0 {
-								numLinks--
-							}
-
-							rhash := rec.Hash()
-							n.log[LogLevelVerbose].Printf("commentary record =%s submitted with %d links (generation time: %f seconds)", Base62Encode(rhash[:]), len(links), float64(duration)/1000.0)
-						} else {
-							n.log[LogLevelWarning].Printf("WARNING: error creating record: %s", err.Error())
+						// Tune desired overhead to attempt to achieve a commentary rate of one
+						// new record every two minutes.
+						duration := endTime - startTime
+						if duration < 120000 {
+							desiredMinOverhead += 32
+						} else if duration > 120000 && desiredMinOverhead > 32 {
+							desiredMinOverhead -= 32
 						}
+
+						rhash := rec.Hash()
+						n.log[LogLevelVerbose].Printf("commentary record =%s submitted with %d comments and %d links (generation took %f seconds)", Base62Encode(rhash[:]), commentCount, len(links), float64(duration)/1000.0)
 					} else {
 						n.log[LogLevelWarning].Printf("WARNING: error creating record: %s", err.Error())
 					}
+				} else {
+					n.log[LogLevelWarning].Printf("WARNING: error creating record: %s", err.Error())
 				}
 			}
 		}
@@ -828,7 +881,7 @@ func (n *Node) requestWantedRecords(minRetries, maxRetries int) {
 	n.peersLock.RLock()
 	defer n.peersLock.RUnlock()
 	if len(n.peers) == 0 {
-		return
+		return // don't do anything if there are no open connections
 	}
 	count, hashes := n.db.getWanted(256, minRetries, maxRetries, true)
 	if len(hashes) >= 32 {
@@ -859,9 +912,23 @@ func (n *Node) writeKnownPeers() {
 	n.knownPeersLock.Lock()
 	defer n.knownPeersLock.Unlock()
 	if len(n.knownPeers) > 0 {
-		sort.Slice(n.knownPeers, func(a, b int) bool {
-			return n.knownPeers[b].TotalSuccessfulConnections < n.knownPeers[a].TotalSuccessfulConnections
+		// Clean old peers before writing
+		var p []*knownPeer
+		now := TimeMs()
+		for _, kp := range n.knownPeers {
+			if (now - kp.LastSuccessfulConnection) < p2pPeerExpiration {
+				p = append(p, kp)
+			}
+		}
+		if len(p) != len(n.knownPeers) {
+			n.knownPeers = p
+		}
+
+		// Peers are sorted in descending order of first connection
+		sort.Slice(n.knownPeers, func(b, a int) bool {
+			return n.knownPeers[b].FirstConnect < n.knownPeers[a].FirstConnect
 		})
+
 		ioutil.WriteFile(n.peersFilePath, []byte(PrettyJSON(&n.knownPeers)), 0644)
 	} else {
 		ioutil.WriteFile(n.peersFilePath, []byte("[]"), 0644)
@@ -894,8 +961,6 @@ func (n *Node) getAPIWorkFunction() (wf *Wharrgarblr) {
 }
 
 // getBackgroundWorkFunction gets (creating if needed) the work function for background work addition.
-// This is used in rendering commentary and yields a work function that leaves one spare core on
-// systems with more than one CPU core.
 func (n *Node) getBackgroundWorkFunction() (wf *Wharrgarblr) {
 	n.workFunctionLock.RLock()
 	if n.backgroundWorkFunction != nil {
@@ -906,13 +971,20 @@ func (n *Node) getBackgroundWorkFunction() (wf *Wharrgarblr) {
 	n.workFunctionLock.RUnlock()
 
 	if n.genesisParameters.WorkRequired {
+		// For background commentary generation don't use every core on N-core systems.
+		threads := runtime.NumCPU()
+		if threads >= 3 {
+			threads -= 2
+		} else {
+			threads = 1
+		}
 		n.workFunctionLock.Lock()
 		if n.backgroundWorkFunction != nil {
 			wf = n.backgroundWorkFunction
 			n.workFunctionLock.Unlock()
 			return
 		}
-		n.backgroundWorkFunction = NewWharrgarblr(RecordDefaultWharrgarblMemory, runtime.NumCPU()-1) // -1 to leave one thread always for other stuff
+		n.backgroundWorkFunction = NewWharrgarblr(RecordDefaultWharrgarblMemory, threads)
 		wf = n.backgroundWorkFunction
 		n.workFunctionLock.Unlock()
 	}
@@ -921,13 +993,11 @@ func (n *Node) getBackgroundWorkFunction() (wf *Wharrgarblr) {
 }
 
 // sendPeerAnnouncement sends a peer announcement to this peer for the given address and public key
-func (p *peer) sendPeerAnnouncement(tcpAddr *net.TCPAddr, publicKey []byte) error {
+func (p *peer) sendPeerAnnouncement(tcpAddr *net.TCPAddr, identity []byte) error {
 	var peerMsg APIPeer
 	peerMsg.IP = tcpAddr.IP
 	peerMsg.Port = tcpAddr.Port
-	if len(publicKey) > 0 {
-		peerMsg.PublicKey = Base62Encode(publicKey)
-	}
+	peerMsg.Identity = identity
 	json, err := json.Marshal(&peerMsg)
 	if err != nil {
 		return err
@@ -954,12 +1024,6 @@ func (p *peer) send(msg []byte) (err error) {
 		return
 	}
 
-	if int(msg[0]) < len(p2pProtoMessageNames) {
-		p.n.log[LogLevelTrace].Printf("TRACE: P2P >> %s %d %s", p.address, len(msg)-1, p2pProtoMessageNames[msg[0]])
-	} else {
-		p.n.log[LogLevelTrace].Printf("TRACE: P2P >> %s %d unknown message type %d", p.address, len(msg)-1, msg[0])
-	}
-
 	for i := 0; i < 12; i++ { // 12 == GCM standard nonce size
 		p.outgoingNonce[i]++
 		if p.outgoingNonce[i] != 0 {
@@ -971,6 +1035,7 @@ func (p *peer) send(msg []byte) (err error) {
 	buf = buf[0:binary.PutUvarint(buf, uint64(len(msg)))]
 	buf = p.cryptor.Seal(buf, p.outgoingNonce[0:12], msg, nil)
 
+	p.c.SetWriteDeadline(time.Now().Add(time.Second * 30))
 	_, err = p.c.Write(buf)
 	if err != nil {
 		p.c.Close()
@@ -979,18 +1044,18 @@ func (p *peer) send(msg []byte) (err error) {
 }
 
 // updateKnownPeersWithConnectResult is called from p2pConnectionHandler to update n.knownPeers
-func (n *Node) updateKnownPeersWithConnectResult(ip net.IP, port int, nodePublic *Owner) bool {
+func (n *Node) updateKnownPeersWithConnectResult(ip net.IP, port int, identity *Owner) bool {
 	n.knownPeersLock.Lock()
 	defer n.knownPeersLock.Unlock()
 	now := TimeMs()
-	nodePublicBytes := nodePublic.Bytes()
+	idBytes := identity.Bytes()
 
-	if bytes.Equal(nodePublicBytes, n.owner.Bytes()) {
+	if bytes.Equal(idBytes, n.owner.Bytes()) {
 		return true
 	}
 
 	for _, kp := range n.knownPeers {
-		if kp.IP.Equal(ip) && kp.Port == port && bytes.Equal(kp.PublicBytes(), nodePublicBytes) {
+		if kp.IP.Equal(ip) && kp.Port == port && bytes.Equal(kp.Identity, idBytes) {
 			if kp.FirstConnect == 0 {
 				kp.FirstConnect = now
 			}
@@ -1002,9 +1067,9 @@ func (n *Node) updateKnownPeersWithConnectResult(ip net.IP, port int, nodePublic
 
 	n.knownPeers = append(n.knownPeers, &knownPeer{
 		APIPeer: APIPeer{
-			IP:        ip,
-			Port:      port,
-			PublicKey: Base62Encode(nodePublicBytes),
+			IP:       ip,
+			Port:     port,
+			Identity: idBytes,
 		},
 		FirstConnect:               now,
 		LastSuccessfulConnection:   now,
@@ -1203,7 +1268,7 @@ func (n *Node) p2pConnectionHandler(c *net.TCPConn, nodePublic *Owner, inbound b
 		n.updateKnownPeersWithConnectResult(tcpAddr.IP, tcpAddr.Port, remotePublicOwner)
 	}
 
-	n.log[LogLevelNormal].Printf("P2P connection established to %s:%s", peerAddressStr, remotePublicStr)
+	n.log[LogLevelNormal].Printf("P2P connection established to %s %d @%s", tcpAddr.IP.String(), tcpAddr.Port, remotePublicStr)
 
 	performedInboundReachabilityTest := false
 	for atomic.LoadUint32(&n.shutdown) == 0 {
@@ -1261,12 +1326,6 @@ func (n *Node) p2pConnectionHandler(c *net.TCPConn, nodePublic *Owner, inbound b
 		}
 		incomingMessageType := msg[0]
 		msg = msg[1:]
-
-		if int(incomingMessageType) < len(p2pProtoMessageNames) {
-			n.log[LogLevelTrace].Printf("TRACE: P2P << %s %d %s", peerAddressStr, len(msg), p2pProtoMessageNames[incomingMessageType])
-		} else {
-			n.log[LogLevelTrace].Printf("TRACE: P2P << %s %d unknown message type %d", peerAddressStr, len(msg), incomingMessageType)
-		}
 
 		switch incomingMessageType {
 
@@ -1366,10 +1425,11 @@ func (n *Node) p2pConnectionHandler(c *net.TCPConn, nodePublic *Owner, inbound b
 			if len(msg) > 0 {
 				var peerMsg APIPeer
 				if json.Unmarshal(msg, &peerMsg) == nil {
-					if len(peerMsg.PublicKey) > 0 {
+					if len(peerMsg.Identity) > 0 {
 						var tmp net.TCPAddr
 						tmp.IP = peerMsg.IP
 						tmp.Port = peerMsg.Port
+
 						n.peersLock.RLock()
 						_, alreadyConnected := n.peers[tmp.String()]
 						connectionCount := len(n.peers)
@@ -1377,8 +1437,9 @@ func (n *Node) p2pConnectionHandler(c *net.TCPConn, nodePublic *Owner, inbound b
 						n.connectionsInStartupLock.Lock()
 						connectionCount += len(n.connectionsInStartup) // include this to prevent flooding attacks
 						n.connectionsInStartupLock.Unlock()
+
 						if !alreadyConnected && connectionCount < p2pDesiredConnectionCount {
-							n.Connect(peerMsg.IP, peerMsg.Port, peerMsg.PublicBytes())
+							n.Connect(peerMsg.IP, peerMsg.Port, peerMsg.Identity)
 							time.Sleep(time.Millisecond * 50) // also helps limit flooding, giving connects time to update connections in startup map
 						}
 					}

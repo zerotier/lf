@@ -125,7 +125,7 @@ static void *_ZTLF_DB_graphThreadMain(void *arg);
 "CREATE UNIQUE INDEX IF NOT EXISTS record_goff ON record(goff);\n" \
 "CREATE UNIQUE INDEX IF NOT EXISTS record_hash ON record(hash);\n" \
 "CREATE INDEX IF NOT EXISTS record_reputation_linked_count ON record(reputation,linked_count);\n" \
-"CREATE INDEX IF NOT EXISTS record_id_owner ON record(id,owner);\n" \
+"CREATE INDEX IF NOT EXISTS record_id_owner_ts ON record(id,owner,ts);\n" \
 "CREATE INDEX IF NOT EXISTS record_owner_ts ON record(owner,ts);\n" \
 "CREATE INDEX IF NOT EXISTS record_doff_selector_count_owner_id_ts ON record(doff,selector_count,owner,id,ts);\n" \
 \
@@ -268,8 +268,15 @@ int ZTLF_DB_Open(
 	S(db->sGetAllRecords,
 		"SELECT goff,hash,linked_count FROM record ORDER BY hash ASC");
 	S(db->sGetAllByOwner,
-		"SELECT r.doff,r.dlen FROM record AS r WHERE "
+		"SELECT r.doff,r.dlen,r.reputation FROM record AS r WHERE "
 		"r.owner = ? "
+		"AND NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) "
+		"AND NOT EXISTS (SELECT gp.record_goff FROM graph_pending AS gp WHERE gp.record_goff = r.goff) "
+		"ORDER BY r.ts ASC"); /* this ordering is important for things like genesis record playback */
+	S(db->sGetAllByIDNotOwner,
+		"SELECT r.doff,r.dlen,r.reputation FROM record AS r WHERE "
+		"r.id = ? "
+		"AND r.owner != ? "
 		"AND NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) "
 		"AND NOT EXISTS (SELECT gp.record_goff FROM graph_pending AS gp WHERE gp.record_goff = r.goff) "
 		"ORDER BY r.ts ASC"); /* this ordering is important for things like genesis record playback */
@@ -743,6 +750,7 @@ void ZTLF_DB_Close(struct ZTLF_DB *db)
 		if (db->sGetDataSize)                         sqlite3_finalize(db->sGetDataSize);
 		if (db->sGetAllRecords)                       sqlite3_finalize(db->sGetAllRecords);
 		if (db->sGetAllByOwner)                       sqlite3_finalize(db->sGetAllByOwner);
+		if (db->sGetAllByIDNotOwner)                  sqlite3_finalize(db->sGetAllByIDNotOwner);
 		if (db->sGetIDOwnerReputation)                sqlite3_finalize(db->sGetIDOwnerReputation);
 		if (db->sHaveRecordsWithIDNotOwner)           sqlite3_finalize(db->sHaveRecordsWithIDNotOwner);
 		if (db->sDemoteCollisions)                    sqlite3_finalize(db->sDemoteCollisions);
@@ -1235,6 +1243,43 @@ struct ZTLF_RecordList *ZTLF_DB_GetAllByOwner(struct ZTLF_DB *db,const void *own
 	while (sqlite3_step(db->sGetAllByOwner) == SQLITE_ROW) {
 		r->records[r->count].doff = (uint64_t)sqlite3_column_int64(db->sGetAllByOwner,0);
 		r->records[r->count].dlen = (uint64_t)sqlite3_column_int64(db->sGetAllByOwner,1);
+		r->records[r->count].reputation = sqlite3_column_int(db->sGetAllByOwner,2);
+		++r->count;
+		if (r->count >= rcap) {
+			void *const nr = realloc(r,sizeof(struct ZTLF_RecordList) + (sizeof(struct ZTLF_RecordIndex) * (rcap *= 2)));
+			if (!nr)
+				goto query_error;
+			r = (struct ZTLF_RecordList *)nr;
+		}
+	}
+
+	pthread_mutex_unlock(&db->dbLock);
+	return r;
+
+query_error:
+	pthread_mutex_unlock(&db->dbLock);
+	free(r);
+	return NULL;
+}
+
+struct ZTLF_RecordList *ZTLF_DB_GetAllByIDNotOwner(struct ZTLF_DB *db,const void *id,const void *owner,const unsigned int ownerLen)
+{
+	long rcap = 64;
+	struct ZTLF_RecordList *r = (struct ZTLF_RecordList *)malloc(sizeof(struct ZTLF_RecordList) + (sizeof(struct ZTLF_RecordIndex) * rcap));
+
+	pthread_mutex_lock(&db->dbLock);
+	if (!r)
+		goto query_error;
+
+	r->count = 0;
+
+	sqlite3_reset(db->sGetAllByIDNotOwner);
+	sqlite3_bind_blob(db->sGetAllByIDNotOwner,1,id,32,SQLITE_STATIC);
+	sqlite3_bind_blob(db->sGetAllByIDNotOwner,2,owner,(int)ownerLen,SQLITE_STATIC);
+	while (sqlite3_step(db->sGetAllByIDNotOwner) == SQLITE_ROW) {
+		r->records[r->count].doff = (uint64_t)sqlite3_column_int64(db->sGetAllByIDNotOwner,0);
+		r->records[r->count].dlen = (uint64_t)sqlite3_column_int64(db->sGetAllByIDNotOwner,1);
+		r->records[r->count].reputation = sqlite3_column_int(db->sGetAllByIDNotOwner,2);
 		++r->count;
 		if (r->count >= rcap) {
 			void *const nr = realloc(r,sizeof(struct ZTLF_RecordList) + (sizeof(struct ZTLF_RecordIndex) * (rcap *= 2)));

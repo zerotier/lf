@@ -312,8 +312,8 @@ func (db *db) query(tsMin, tsMax int64, selectorRanges [][2][]byte, f func(uint6
 }
 
 // getAllByOwner gets all (complete) records owned by a given owner key.
-// Results are returned in ascending order of timestamp.
-func (db *db) getAllByOwner(owner []byte, f func(uint64, uint64) bool) error {
+// Results are returned in ascending order of timestamp as: doff, dlen, reputation.
+func (db *db) getAllByOwner(owner []byte, f func(uint64, uint64, int) bool) error {
 	if len(owner) == 0 {
 		return nil
 	}
@@ -321,7 +321,29 @@ func (db *db) getAllByOwner(owner []byte, f func(uint64, uint64) bool) error {
 	if uintptr(unsafe.Pointer(results)) != 0 {
 		for i := C.long(0); i < results.count; i++ {
 			rec := (*C.struct_ZTLF_RecordIndex)(unsafe.Pointer(uintptr(unsafe.Pointer(&results.records[0])) + (uintptr(i) * unsafe.Sizeof(results.records[0]))))
-			if !f(uint64(rec.doff), uint64(rec.dlen)) {
+			if !f(uint64(rec.doff), uint64(rec.dlen), int(rec.reputation)) {
+				break
+			}
+		}
+		C.free(unsafe.Pointer(results))
+	}
+	return nil
+}
+
+// getAllByOwner gets all (complete) records owned by a given ID that do not have the specified owner.
+// Results are returned in ascending order of timestamp as: doff, dlen, reputation.
+func (db *db) getAllByIDNotOwner(id []byte, owner []byte, f func(uint64, uint64, int) bool) error {
+	if len(id) != 32 {
+		return ErrInvalidParameter
+	}
+	if len(owner) == 0 {
+		return nil
+	}
+	results := C.ZTLF_DB_GetAllByIDNotOwner(db.cdb, unsafe.Pointer(&id[0]), unsafe.Pointer(&owner[0]), C.uint(len(owner)))
+	if uintptr(unsafe.Pointer(results)) != 0 {
+		for i := C.long(0); i < results.count; i++ {
+			rec := (*C.struct_ZTLF_RecordIndex)(unsafe.Pointer(uintptr(unsafe.Pointer(&results.records[0])) + (uintptr(i) * unsafe.Sizeof(results.records[0]))))
+			if !f(uint64(rec.doff), uint64(rec.dlen), int(rec.reputation)) {
 				break
 			}
 		}

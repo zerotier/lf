@@ -63,9 +63,9 @@ func (e *baseXEncoding) encode(source []byte) string {
 	return res.String()
 }
 
-func (e *baseXEncoding) decode(source string) ([]byte, error) {
+func (e *baseXEncoding) decode(source string) []byte {
 	if len(source) == 0 {
-		return []byte{}, nil
+		return nil
 	}
 	runes := []rune(source)
 	bytes := []byte{0}
@@ -90,11 +90,11 @@ func (e *baseXEncoding) decode(source string) ([]byte, error) {
 	for i, j := 0, len(bytes)-1; i < j; i, j = i+1, j-1 {
 		bytes[i], bytes[j] = bytes[j], bytes[i]
 	}
-	return bytes, nil
+	return bytes
 }
 
 // Base62Encode encodes a byte array in base62 form
 func Base62Encode(in []byte) string { return base62Encoding.encode(in) }
 
-// Base62Decode decodes a base62 string into a byte array, ignoring all non-base62 characters
-func Base62Decode(in string) ([]byte, error) { return base62Encoding.decode(in) }
+// Base62Decode decodes a base62 string into a byte array, ignoring non-base62 characters
+func Base62Decode(in string) []byte { return base62Encoding.decode(in) }

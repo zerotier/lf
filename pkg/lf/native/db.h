@@ -64,6 +64,7 @@ struct ZTLF_RecordIndex
 {
 	uint64_t doff;
 	uint64_t dlen;
+	int reputation;
 };
 
 struct ZTLF_RecordList
@@ -103,6 +104,7 @@ struct ZTLF_DB
 	sqlite3_stmt *sGetDataSize;
 	sqlite3_stmt *sGetAllRecords;
 	sqlite3_stmt *sGetAllByOwner;
+	sqlite3_stmt *sGetAllByIDNotOwner;
 	sqlite3_stmt *sGetIDOwnerReputation;
 	sqlite3_stmt *sHaveRecordsWithIDNotOwner;
 	sqlite3_stmt *sDemoteCollisions;
@@ -188,6 +190,7 @@ int ZTLF_DB_PutRecord(
 struct ZTLF_QueryResults *ZTLF_DB_Query(struct ZTLF_DB *db,const int64_t tsMin,const int64_t tsMax,const void **sel,const unsigned int *selSize,const unsigned int selCount);
 
 struct ZTLF_RecordList *ZTLF_DB_GetAllByOwner(struct ZTLF_DB *db,const void *owner,const unsigned int ownerLen);
+struct ZTLF_RecordList *ZTLF_DB_GetAllByIDNotOwner(struct ZTLF_DB *db,const void *id,const void *owner,const unsigned int ownerLen);
 
 /* Gets the data offset and data length of a record by its hash (returns length, sets doff). */
 unsigned int ZTLF_DB_GetByHash(struct ZTLF_DB *db,const void *hash,uint64_t *doff);

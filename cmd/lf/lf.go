@@ -160,7 +160,7 @@ Commands:
     -loglevel <normal|verbose|trace>      Node log level
     -logstderr                            Log to stderr, not HOME/node.log
     -fork                                 Fork into background (if supported)
-  node-connect <ip> <port> [<key>]        Tell node to try a P2P endpoint
+  node-connect <ip> <port> <identity>     Tell node to try a P2P endpoint
   proxy-start                             Start a proxy
   status                                  Get status from remote node/proxy
   set [-...] <name[#ord]> [...] <value>   Set a value in the data store
