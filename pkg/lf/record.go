@@ -530,16 +530,9 @@ func (r *Record) ID() (id [32]byte) {
 	if len(r.Selectors) == 0 {
 		return r.Hash()
 	}
-
-	var selectorKeys [][]byte
-	for i := range r.Selectors {
-		selectorKeys = append(selectorKeys, r.SelectorKey(i))
-	}
-	sort.Slice(selectorKeys, func(a, b int) bool { return bytes.Compare(selectorKeys[a], selectorKeys[b]) < 0 })
-
 	h := sha3.New256()
-	for i := 0; i < len(selectorKeys); i++ {
-		h.Write(selectorKeys[i])
+	for i := 0; i < len(r.Selectors); i++ {
+		h.Write(r.SelectorKey(i))
 	}
 	h.Sum(id[:0])
 	return

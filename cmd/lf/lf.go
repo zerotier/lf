@@ -161,7 +161,6 @@ Commands:
     -logstderr                            Log to stderr, not HOME/node.log
     -fork                                 Fork into background (if supported)
   node-connect <ip> <port> <identity>     Tell node to try a P2P endpoint
-  proxy-start                             Start a proxy
   status                                  Get status from remote node/proxy
   set [-...] <name[#ord]> [...] <value>   Set a value in the data store
     -file                                 Value is a file path not a literal
@@ -307,11 +306,6 @@ func doNodeConnect(cfg *lf.ClientConfig, basePath string, args []string) {
 		log.Printf("ERROR: cannot send connect command to node: %s\n", err.Error())
 		return
 	}
-}
-
-func doProxyStart(cfg *lf.ClientConfig, basePath string, args []string) {
-	log.Printf("ERROR: not implemented yet!")
-	return
 }
 
 func doStatus(cfg *lf.ClientConfig, basePath string, args []string) {
@@ -844,9 +838,6 @@ func main() {
 
 	case "node-connect":
 		doNodeConnect(&cfg, *basePath, cmdArgs)
-
-	case "proxy-start":
-		doProxyStart(&cfg, *basePath, cmdArgs)
 
 	case "status":
 		doStatus(&cfg, *basePath, cmdArgs)

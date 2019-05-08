@@ -208,7 +208,7 @@ func (s *Selector) set(plainTextName, ord, hash []byte) {
 	sigHash.Write(ord)
 	var sigHashBuf [32]byte
 	cs, err := ECDSASignEmbedRecoveryIndex(priv, sigHash.Sum(sigHashBuf[:0]))
-	if err != nil || len(cs) != len(s.Claim) { // this would indicate a bug
+	if err != nil || len(cs) != 41 { // this would indicate a bug
 		panic("ECDSA signature for selector generation failed!")
 	}
 	s.Claim = cs
