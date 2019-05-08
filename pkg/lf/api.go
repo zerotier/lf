@@ -62,11 +62,11 @@ type APIPeer struct {
 	PublicKey string
 }
 
-// PublicBytes is a shortcut to un-base58-encode PublicKey.
+// PublicBytes is a shortcut to un-base62-encode PublicKey.
 // It returns nil if PublicKey is empty or invalid.
 func (p *APIPeer) PublicBytes() []byte {
 	if len(p.PublicKey) > 0 {
-		pkb, err := Base58Decode(p.PublicKey)
+		pkb, err := Base62Decode(p.PublicKey)
 		if err != nil {
 			return nil
 		}
@@ -451,7 +451,7 @@ Peer Connections
 					if p.inbound {
 						inout = "<-"
 					}
-					out.Write([]byte(fmt.Sprintf("%s %-42s %s\n", inout, p.address, Base58Encode(p.remotePublic))))
+					out.Write([]byte(fmt.Sprintf("%s %-42s %s\n", inout, p.address, Base62Encode(p.remotePublic))))
 				}
 				n.peersLock.RUnlock()
 				out.Write([]byte("\n------------------------------------------------------------------------------\n"))

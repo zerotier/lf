@@ -10,45 +10,18 @@ package lf
 import (
 	"encoding/json"
 	"errors"
+	"unicode/utf8"
 )
 
-var hexChars = [16]byte{48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 97, 98, 99, 100, 101, 102}
-
-// Blob is a byte array that serializes to a string.
+// Blob is a byte array that serializes to a string or a base62 string prefixed by \b (binary)
 type Blob []byte
 
-// MarshalJSON returns this blob marshaled as a string.
+// MarshalJSON returns this blob marshaled as a string using \b<base62> for non-UTF8 binary data.
 func (b Blob) MarshalJSON() ([]byte, error) {
-	ba := make([]byte, 1, len(b)*2)
-	ba[0] = 34
-	for _, c := range b {
-		switch c {
-		case 8:
-			ba = append(ba, 92, 98) // \b
-		case 9:
-			ba = append(ba, 92, 116) // \t
-		case 10:
-			ba = append(ba, 92, 110) // \n
-		case 12:
-			ba = append(ba, 92, 102) // \f
-		case 13:
-			ba = append(ba, 92, 114) // \r
-		case 34:
-			ba = append(ba, 92, 34) // \"
-		case 47:
-			ba = append(ba, 92, 47) // \/
-		case 92:
-			ba = append(ba, 92, 92) // \\
-		default:
-			if c >= 32 && c <= 126 {
-				ba = append(ba, c)
-			} else {
-				ba = append(ba, 92, 117, 48, 48, hexChars[c>>4], hexChars[c&0xf]) // \u00xx
-			}
-		}
+	if utf8.Valid(b) {
+		return json.Marshal(string(b))
 	}
-	ba = append(ba, 34)
-	return ba, nil
+	return []byte("\"\\b" + Base62Encode(b) + "\""), nil
 }
 
 // UnmarshalJSON unmarshals this blob from a string or byte array.
@@ -56,11 +29,17 @@ func (b *Blob) UnmarshalJSON(j []byte) error {
 	var s string
 	err := json.Unmarshal(j, &s)
 	if err == nil {
-		bb := make([]byte, 0, len(s))
-		for _, c := range s {
-			bb = append(bb, byte(c))
+		if len(s) == 0 {
+			*b = nil
+		} else if s[0] == '\b' {
+			*b, err = Base62Decode(s[1:])
+			if err == nil {
+				return nil
+			}
+		} else {
+			*b = []byte(s)
+			return nil
 		}
-		*b = bb
 	}
 
 	// Byte arrays are also accepted
@@ -74,12 +53,12 @@ func (b *Blob) UnmarshalJSON(j []byte) error {
 
 //////////////////////////////////////////////////////////////////////////////
 
-// OwnerBlob is a byte array that serializes to an @owner base58-encoded string.
+// OwnerBlob is a byte array that serializes to an @owner base62-encoded string.
 type OwnerBlob []byte
 
-// MarshalJSON returns this blob marshaled as a @owner base58-encoded string.
+// MarshalJSON returns this blob marshaled as a @owner base62-encoded string.
 func (b OwnerBlob) MarshalJSON() ([]byte, error) {
-	return []byte("\"@" + Base58Encode(b) + "\""), nil
+	return []byte("\"@" + Base62Encode(b) + "\""), nil
 }
 
 // UnmarshalJSON unmarshals this blob from a JSON array or string
@@ -89,18 +68,18 @@ func (b *OwnerBlob) UnmarshalJSON(j []byte) error {
 		return nil
 	}
 
-	// Default is @base58string
+	// Default is @base62string
 	var err error
 	var str string
 	err = json.Unmarshal(j, &str)
 	if err == nil {
 		if len(str) > 1 && str[0] == '@' {
-			*b, err = Base58Decode(str[1:])
+			*b, err = Base62Decode(str[1:])
 			if err == nil {
 				return nil
 			}
 		} else {
-			err = errors.New("base58 string not prefixed by @ (for owner)")
+			err = errors.New("base62 string not prefixed by @ (for owner)")
 		}
 	}
 
@@ -115,12 +94,12 @@ func (b *OwnerBlob) UnmarshalJSON(j []byte) error {
 
 //////////////////////////////////////////////////////////////////////////////
 
-// HashBlob is a 32-byte array that serializes to a =hash base58-encoded string.
+// HashBlob is a 32-byte array that serializes to a =hash base62-encoded string.
 type HashBlob [32]byte
 
 // MarshalJSON returns this blob marshaled as a byte array or a string
 func (b *HashBlob) MarshalJSON() ([]byte, error) {
-	return []byte("\"=" + Base58Encode(b[:]) + "\""), nil
+	return []byte("\"=" + Base62Encode(b[:]) + "\""), nil
 }
 
 // UnmarshalJSON unmarshals this blob from a JSON array or string
@@ -135,14 +114,14 @@ func (b *HashBlob) UnmarshalJSON(j []byte) error {
 	var err error
 	var bb []byte
 
-	// Default is =base58string
+	// Default is =base62string
 	var str string
 	err = json.Unmarshal(j, &str)
 	if err == nil {
 		if len(str) > 1 && str[0] == '=' {
-			bb, err = Base58Decode(str[1:])
+			bb, err = Base62Decode(str[1:])
 		} else {
-			err = errors.New("base58 string not prefixed by = (for exact record hash)")
+			err = errors.New("base62 string not prefixed by = (for exact record hash)")
 		}
 	}
 

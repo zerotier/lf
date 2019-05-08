@@ -12,7 +12,7 @@ import (
 	"errors"
 )
 
-var base58Encoding, _ = newBaseXEncoding("123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz")
+var base62Encoding, _ = newBaseXEncoding("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")
 
 type baseXEncoding struct {
 	base        int
@@ -93,8 +93,8 @@ func (e *baseXEncoding) decode(source string) ([]byte, error) {
 	return bytes, nil
 }
 
-// Base58Encode encodes a byte array in base58 form (using Bitcoin-style base58 alphabet)
-func Base58Encode(in []byte) string { return base58Encoding.encode(in) }
+// Base62Encode encodes a byte array in base62 form
+func Base62Encode(in []byte) string { return base62Encoding.encode(in) }
 
-// Base58Decode decodes a base62 string into a byte array, ignoring all non-base58 characters
-func Base58Decode(in string) ([]byte, error) { return base58Encoding.decode(in) }
+// Base62Decode decodes a base62 string into a byte array, ignoring all non-base62 characters
+func Base62Decode(in string) ([]byte, error) { return base62Encoding.decode(in) }

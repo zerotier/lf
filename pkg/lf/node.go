@@ -209,8 +209,8 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 		return nil, err
 	}
 
-	// Write base58 public, which isn't used here but is useful for user use in scripts etc.
-	nodePublicStr := Base58Encode(n.owner.Bytes())
+	// Write base62 public, which isn't used here but is useful for user use in scripts etc.
+	nodePublicStr := Base62Encode(n.owner.Bytes())
 	ioutil.WriteFile(path.Join(basePath, "node-p384.public"), []byte(nodePublicStr), 0644)
 
 	// Listen for HTTP connections
@@ -267,7 +267,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 		if bytes.Equal(n.genesisOwner, r.Owner) { // sanity check
 			rh := r.Hash()
 			if !n.db.hasRecord(rh[:]) {
-				n.log[LogLevelNormal].Printf("adding genesis record =%s (not already in database)", Base58Encode(rh[:]))
+				n.log[LogLevelNormal].Printf("adding genesis record =%s (not already in database)", Base62Encode(rh[:]))
 				err = n.db.putRecord(&r)
 				if err != nil {
 					return nil, err
@@ -285,7 +285,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 	}
 
 	// Load any genesis records after those in genesis.lf (or compiled in default)
-	n.log[LogLevelNormal].Printf("loading genesis records from genesis owner @%s", Base58Encode(n.genesisOwner))
+	n.log[LogLevelNormal].Printf("loading genesis records from genesis owner @%s", Base62Encode(n.genesisOwner))
 	gotGenesis := false
 	n.db.getAllByOwner(n.genesisOwner, func(doff, dlen uint64) bool {
 		rdata, _ := n.db.getDataByOffset(doff, uint(dlen), nil)
@@ -305,7 +305,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 		return nil, errors.New("no genesis records found or none readable")
 	}
 	if len(n.genesisParameters.AmendableFields) > 0 {
-		n.log[LogLevelNormal].Printf("network '%s' permits changes to configuration fields %v by owner @%s", n.genesisParameters.Name, n.genesisParameters.AmendableFields, Base58Encode(n.genesisOwner))
+		n.log[LogLevelNormal].Printf("network '%s' permits changes to configuration fields %v by owner @%s", n.genesisParameters.Name, n.genesisParameters.AmendableFields, Base62Encode(n.genesisOwner))
 	} else {
 		n.log[LogLevelNormal].Printf("network '%s' genesis configuration is immutable (via any in-band mechanism)", n.genesisParameters.Name)
 	}
@@ -456,7 +456,7 @@ func (n *Node) Connect(ip net.IP, port int, nodePublic []byte) {
 			return
 		}
 
-		n.log[LogLevelNormal].Printf("P2P attempting to connect to %s:%s", ta.String(), Base58Encode(nodePublic))
+		n.log[LogLevelNormal].Printf("P2P attempting to connect to %s:%s", ta.String(), Base62Encode(nodePublic))
 
 		conn, err := net.DialTimeout("tcp", ta.String(), time.Second*10)
 		if atomic.LoadUint32(&n.shutdown) == 0 {
@@ -577,7 +577,7 @@ func (n *Node) SetCommentaryEnabled(j bool) {
 // handleGenesisRecord handles new genesis records
 func (n *Node) handleGenesisRecord(gr *Record) bool {
 	grHash := gr.Hash()
-	grHashStr := Base58Encode(grHash[:])
+	grHashStr := Base62Encode(grHash[:])
 	rv, err := gr.GetValue(nil)
 	if err != nil {
 		n.log[LogLevelWarning].Printf("WARNING: genesis record =%s contains an invalid value!", grHashStr)
@@ -610,7 +610,7 @@ func (n *Node) handleSynchronizedRecord(doff uint64, dlen uint, reputation int, 
 				}
 			}()
 
-			recordHashStr := Base58Encode(hash[:])
+			recordHashStr := Base62Encode(hash[:])
 
 			// Certain record types get special handling when they're synchronized.
 			rdata, err := n.db.getDataByOffset(doff, dlen, nil)
@@ -810,7 +810,7 @@ func (n *Node) commentaryGeneratorMain() {
 							}
 
 							rhash := rec.Hash()
-							n.log[LogLevelVerbose].Printf("commentary record =%s submitted with %d links (generation time: %f seconds)", Base58Encode(rhash[:]), len(links), float64(duration)/1000.0)
+							n.log[LogLevelVerbose].Printf("commentary record =%s submitted with %d links (generation time: %f seconds)", Base62Encode(rhash[:]), len(links), float64(duration)/1000.0)
 						} else {
 							n.log[LogLevelWarning].Printf("WARNING: error creating record: %s", err.Error())
 						}
@@ -926,7 +926,7 @@ func (p *peer) sendPeerAnnouncement(tcpAddr *net.TCPAddr, publicKey []byte) erro
 	peerMsg.IP = tcpAddr.IP
 	peerMsg.Port = tcpAddr.Port
 	if len(publicKey) > 0 {
-		peerMsg.PublicKey = Base58Encode(publicKey)
+		peerMsg.PublicKey = Base62Encode(publicKey)
 	}
 	json, err := json.Marshal(&peerMsg)
 	if err != nil {
@@ -1004,7 +1004,7 @@ func (n *Node) updateKnownPeersWithConnectResult(ip net.IP, port int, nodePublic
 		APIPeer: APIPeer{
 			IP:        ip,
 			Port:      port,
-			PublicKey: Base58Encode(nodePublicBytes),
+			PublicKey: Base62Encode(nodePublicBytes),
 		},
 		FirstConnect:               now,
 		LastSuccessfulConnection:   now,
@@ -1107,7 +1107,7 @@ func (n *Node) p2pConnectionHandler(c *net.TCPConn, nodePublic *Owner, inbound b
 		return
 	}
 	remotePublicOwnerBytes := remotePublicOwner.Bytes()
-	remotePublicStr := Base58Encode(remotePublicOwnerBytes)
+	remotePublicStr := Base62Encode(remotePublicOwnerBytes)
 	remoteShared, err := ECDHAgreeECDSA(remotePubX, remotePubY, n.ownerPrivateKey)
 	if err != nil {
 		n.log[LogLevelNormal].Printf("P2P connection to %s closed: key agreement failed: %s", peerAddressStr, err.Error())

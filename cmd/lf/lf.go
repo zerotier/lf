@@ -640,7 +640,7 @@ func doSet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool
 		fmt.Println(lf.PrettyJSON(rec))
 	} else {
 		rh := rec.Hash()
-		fmt.Printf("=%s\n", lf.Base58Encode(rh[:]))
+		fmt.Printf("=%s\n", lf.Base62Encode(rh[:]))
 	}
 }
 
@@ -664,7 +664,7 @@ func doOwner(cfg *lf.ClientConfig, basePath string, args []string) {
 			if o.Default {
 				dfl = "*"
 			}
-			fmt.Printf("%-24s %s @%s\n", n, dfl, lf.Base58Encode(o.Owner))
+			fmt.Printf("%-24s %s @%s\n", n, dfl, lf.Base62Encode(o.Owner))
 		}
 
 	case "new":
@@ -689,7 +689,7 @@ func doOwner(cfg *lf.ClientConfig, basePath string, args []string) {
 		if isDfl {
 			dfl = "*"
 		}
-		fmt.Printf("%-24s %s @%s\n", name, dfl, lf.Base58Encode(owner.Bytes()))
+		fmt.Printf("%-24s %s @%s\n", name, dfl, lf.Base62Encode(owner.Bytes()))
 
 	case "default":
 		if len(args) < 2 {
@@ -705,7 +705,7 @@ func doOwner(cfg *lf.ClientConfig, basePath string, args []string) {
 			o.Default = (n == name)
 		}
 		cfg.Dirty = true
-		fmt.Printf("%-24s * @%s\n", name, lf.Base58Encode(cfg.Owners[name].Owner))
+		fmt.Printf("%-24s * @%s\n", name, lf.Base62Encode(cfg.Owners[name].Owner))
 
 	case "delete":
 		if len(args) < 2 {
