@@ -375,7 +375,7 @@ int ZTLF_DB_Open(
 		"DELETE FROM tmp.rs WHERE \"i\" NOT IN (SELECT record_doff FROM selector WHERE sel BETWEEN ? AND ? AND selidx = ? AND record_ts BETWEEN ? AND ?)");
 	S(db->sQueryGetResults,
 		"SELECT r.doff,r.dlen,r.goff,r.ts,r.reputation,r.id,r.owner FROM record AS r,tmp.rs AS rs WHERE "
-		"r.doff = rs.i AND r.selector_count = ? "
+		"r.doff = rs.i "
 		"AND NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) "
 		"AND NOT EXISTS (SELECT gp.record_goff FROM graph_pending AS gp WHERE gp.record_goff = r.goff) "
 		"ORDER BY r.owner,r.id,r.ts");
@@ -1150,7 +1150,6 @@ struct ZTLF_QueryResults *ZTLF_DB_Query(struct ZTLF_DB *db,const int64_t tsMin,c
 	/* Get final results */
 	r->count = -1; /* gets incremented on very first iteration */
 	sqlite3_reset(db->sQueryGetResults);
-	sqlite3_bind_int(db->sQueryGetResults,1,(int)selCount);
 	uint8_t lastOwner[ZTLF_DB_QUERY_MAX_OWNER_SIZE];
 	uint8_t lastId[32];
 	memset(lastOwner,0,sizeof(lastOwner));

@@ -415,12 +415,13 @@ func doGet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool
 	}
 
 	for _, ress := range results {
-		for _, res := range ress {
+		for rii, res := range ress {
 			res.Value, err = res.Record.GetValue(mk)
 			if err != nil {
 				res.Value = nil
 				res.UnmaskingFailed = &troo
 			}
+			ress[rii] = res
 		}
 	}
 

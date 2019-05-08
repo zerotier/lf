@@ -37,16 +37,18 @@ type Selector struct {
 }
 
 func addOrdinalToHash(h *[64]byte, ordinal []byte) {
-	var a, b big.Int
-	a.Add(a.SetBytes(h[:]), b.SetBytes(ordinal))
-	ab := a.Bytes()
-	if len(ab) >= 64 {
-		copy(h[:], ab[len(ab)-64:])
-	} else {
-		for i, j := 0, 64-len(ab); i < j; i++ {
-			h[i] = 0
+	if len(ordinal) > 0 {
+		var a, b big.Int
+		a.Add(a.SetBytes(h[:]), b.SetBytes(ordinal))
+		ab := a.Bytes()
+		if len(ab) >= 64 {
+			copy(h[:], ab[len(ab)-64:])
+		} else {
+			for i, j := 0, 64-len(ab); i < j; i++ {
+				h[i] = 0
+			}
+			copy(h[0:64-len(ab)], ab)
 		}
-		copy(h[0:64-len(ab)], ab)
 	}
 }
 
@@ -54,10 +56,6 @@ func addOrdinalToHash(h *[64]byte, ordinal []byte) {
 // If this name is not used with range queries use zero for the ordinal. This function exists
 // to allow selector database keys to be created separate from record creation if needed.
 func MakeSelectorKey(plainTextName, ordinal []byte) []byte {
-	if len(ordinal) > SelectorMaxOrdinalSize {
-		ordinal = ordinal[len(ordinal)-SelectorMaxOrdinalSize:]
-	}
-
 	var prng seededPrng
 	prng.seed(plainTextName)
 	priv, err := ecdsa.GenerateKey(ECCCurveBrainpoolP160T1, &prng)
@@ -71,6 +69,9 @@ func MakeSelectorKey(plainTextName, ordinal []byte) []byte {
 		publicKeyHash = sha3.Sum512(pcomp)
 	}
 
+	if len(ordinal) > SelectorMaxOrdinalSize {
+		ordinal = ordinal[len(ordinal)-SelectorMaxOrdinalSize:]
+	}
 	addOrdinalToHash(&publicKeyHash, ordinal)
 
 	return publicKeyHash[:]
