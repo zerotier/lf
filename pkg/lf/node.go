@@ -111,8 +111,9 @@ type Node struct {
 	ownerPrivateKey   *ecdsa.PrivateKey // ECDSA private key for owner
 	ownerRawPublicKey []byte            // Compressed public key from owner key, used as link key
 
-	genesisParameters GenesisParameters // Genesis configuration for this node's network
-	genesisOwner      []byte            // Owner of genesis record(s)
+	genesisParameters          GenesisParameters // Genesis configuration for this node's network
+	genesisOwner               []byte            // Owner of genesis record(s)
+	lastGenesisRecordTimestamp uint64            //
 
 	knownPeers               []*knownPeer          // Peers we know about
 	knownPeersLock           sync.Mutex            //
@@ -576,13 +577,18 @@ func (n *Node) SetCommentaryEnabled(j bool) {
 // handleGenesisRecord handles new genesis records
 func (n *Node) handleGenesisRecord(gr *Record) bool {
 	grHash := gr.Hash()
+	grHashStr := Base58Encode(grHash[:])
 	rv, err := gr.GetValue(nil)
 	if err != nil {
-		n.log[LogLevelWarning].Printf("WARNING: genesis record =%s contains an invalid value!", Base58Encode(grHash[:]))
+		n.log[LogLevelWarning].Printf("WARNING: genesis record =%s contains an invalid value!", grHashStr)
 	} else if len(rv) > 0 {
-		n.log[LogLevelNormal].Printf("applying genesis configuration update from record =%s", Base58Encode(grHash[:]))
-		n.genesisParameters.Update(rv)
-		return true
+		if atomic.LoadUint64(&n.lastGenesisRecordTimestamp) < gr.Timestamp {
+			n.log[LogLevelNormal].Printf("applying genesis configuration update from record =%s", grHashStr)
+			n.genesisParameters.Update(rv)
+			atomic.StoreUint64(&n.lastGenesisRecordTimestamp, gr.Timestamp)
+			return true
+		}
+		n.log[LogLevelNormal].Printf("ignoring genesis configuration update from record =%s: timestamp %d <= latest timestamp %d", grHashStr, gr.Timestamp, n.lastGenesisRecordTimestamp)
 	}
 	return false
 }
