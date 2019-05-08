@@ -11,6 +11,7 @@ import (
 	"fmt"
 )
 
+// These are protocol and database constants and can't be changed.
 const (
 	commentAssertionNil                         byte = 0
 	commentAssertionRecordCollidesWithClaimedID byte = 1

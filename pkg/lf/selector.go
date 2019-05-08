@@ -32,8 +32,8 @@ const SelectorKeySize = 64
 
 // Selector is a non-forgeable range queryable identifier for records.
 type Selector struct {
-	Ordinal Blob     `json:",omitempty"` // A plain text sortable field that can be used for range queries against secret selectors
-	Claim   [41]byte ``                  // 41-byte brainpoolP160t1 recoverable signature
+	Ordinal Blob `json:",omitempty"` // A plain text sortable field that can be used for range queries against secret selectors
+	Claim   Blob `json:",omitempty"` // 41-byte brainpoolP160t1 recoverable signature
 }
 
 func addOrdinalToHash(h *[64]byte, ordinal []byte) {
@@ -82,7 +82,7 @@ func (s *Selector) isNamed(hash, plainTextName []byte) bool {
 	sigHash.Write(hash)
 	sigHash.Write(s.Ordinal)
 	var sigHashBuf [32]byte
-	pub := ECDSARecover(ECCCurveBrainpoolP160T1, sigHash.Sum(sigHashBuf[:0]), s.Claim[:])
+	pub := ECDSARecover(ECCCurveBrainpoolP160T1, sigHash.Sum(sigHashBuf[:0]), s.Claim)
 
 	var prng seededPrng
 	prng.seed(plainTextName)
@@ -101,7 +101,7 @@ func (s *Selector) key(hash []byte) []byte {
 	sigHash.Write(hash)
 	sigHash.Write(s.Ordinal)
 	var sigHashBuf [32]byte
-	pub := ECDSARecover(ECCCurveBrainpoolP160T1, sigHash.Sum(sigHashBuf[:0]), s.Claim[:])
+	pub := ECDSARecover(ECCCurveBrainpoolP160T1, sigHash.Sum(sigHashBuf[:0]), s.Claim)
 
 	var publicKeyHash [64]byte
 	if pub != nil {
@@ -117,6 +117,9 @@ func (s *Selector) key(hash []byte) []byte {
 }
 
 func (s *Selector) marshalTo(out io.Writer) error {
+	if len(s.Claim) != 41 {
+		return ErrInvalidObject
+	}
 	if len(s.Ordinal) > SelectorMaxOrdinalSize || s.Claim[40] > 1 {
 		return ErrInvalidObject
 	}
@@ -169,6 +172,7 @@ func (s *Selector) unmarshalFrom(in io.Reader) error {
 	} else {
 		s.Ordinal = nil
 	}
+	s.Claim = make([]byte, 41)
 	if _, err := io.ReadFull(in, s.Claim[0:40]); err != nil {
 		return err
 	}
@@ -207,5 +211,5 @@ func (s *Selector) set(plainTextName, ord, hash []byte) {
 	if err != nil || len(cs) != len(s.Claim) { // this would indicate a bug
 		panic("ECDSA signature for selector generation failed!")
 	}
-	copy(s.Claim[:], cs)
+	s.Claim = cs
 }

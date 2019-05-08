@@ -229,7 +229,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 	}
 	n.httpServer = &http.Server{
 		MaxHeaderBytes: 4096,
-		Handler:        httpGzipHandler(apiCreateHTTPServeMux(n)),
+		Handler:        httpCompressionHandler(apiCreateHTTPServeMux(n)),
 		IdleTimeout:    10 * time.Second,
 		ReadTimeout:    10 * time.Second,
 		WriteTimeout:   30 * time.Second,

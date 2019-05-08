@@ -23,31 +23,32 @@ var gzPool = sync.Pool{
 	},
 }
 
-type gzipResponseWriter struct {
+type compressedResponseWriter struct {
 	io.Writer
 	http.ResponseWriter
 }
 
-func (w *gzipResponseWriter) WriteHeader(status int) {
+func (w *compressedResponseWriter) WriteHeader(status int) {
 	w.Header().Del("Content-Length")
 	w.ResponseWriter.WriteHeader(status)
 }
 
-func (w *gzipResponseWriter) Write(b []byte) (int, error) {
+func (w *compressedResponseWriter) Write(b []byte) (int, error) {
 	return w.Writer.Write(b)
 }
 
-func httpGzipHandler(next http.Handler) http.Handler {
+func httpCompressionHandler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+		ae := r.Header.Get("Accept-Encoding")
+		if strings.Contains(ae, "gzip") {
+			w.Header().Set("Content-Encoding", "gzip")
+			gz := gzPool.Get().(*gzip.Writer)
+			gz.Reset(w)
+			next.ServeHTTP(&compressedResponseWriter{ResponseWriter: w, Writer: gz}, r)
+			gz.Close()
+			gzPool.Put(gz)
+		} else {
 			next.ServeHTTP(w, r)
-			return
 		}
-		w.Header().Set("Content-Encoding", "gzip")
-		gz := gzPool.Get().(*gzip.Writer)
-		gz.Reset(w)
-		next.ServeHTTP(&gzipResponseWriter{ResponseWriter: w, Writer: gz}, r)
-		gz.Close()
-		gzPool.Put(gz)
 	})
 }

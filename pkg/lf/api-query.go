@@ -9,8 +9,9 @@ package lf
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/json"
-	"fmt"
+	"math"
 	"net/http"
 	"sort"
 	"strings"
@@ -45,8 +46,8 @@ type APIQueryResult struct {
 	Record          *Record  `json:",omitempty"` // Record itself.
 	Value           Blob     `json:",omitempty"` // Unmasked value if masking key was included
 	UnmaskingFailed *bool    `json:",omitempty"` // If true, unmasking failed due to invalid masking key in query (or invalid compressed data in valid)
-	LocalReputation int      ``                  // Local reputation at source node
-	Weight          string   `json:",omitempty"` // Record weight as a 128-bit hex value
+	Trust           int      ``                  // Trust metric from 0 to 1000 computed from local reputation and trusted commentary
+	Weight          [16]byte `json:",omitempty"` // Record weight as a 128-bit big-endian value
 }
 
 // APIQueryResults is a list of results to an API query.
@@ -134,21 +135,6 @@ func (m *APIQuery) execute(n *Node) (qr APIQueryResults, err *APIError) {
 
 	// Actually grab the records and populate the qr[] slice.
 	for _, rptr := range byID {
-		// Sort these results under this ID in descending order of local reputation followed by weight.
-		sort.Slice(*rptr, func(b, a int) bool {
-			x, y := &(*rptr)[a], &(*rptr)[b]
-			if x.localReputation < y.localReputation {
-				return true
-			} else if x.localReputation == y.localReputation {
-				if x.weightH < y.weightH {
-					return true
-				} else if x.weightH == y.weightH {
-					return x.weightL < y.weightL
-				}
-			}
-			return false
-		})
-
 		// Collate results and add to query result
 		for rn := 0; rn < len(*rptr); rn++ {
 			result := &(*rptr)[rn]
@@ -160,13 +146,23 @@ func (m *APIQuery) execute(n *Node) (qr APIQueryResults, err *APIError) {
 			if err != nil {
 				return nil, &APIError{http.StatusInternalServerError, "error retrieving record data: " + err.Error()}
 			}
+
 			var mkinv *bool
 			v, err := rec.GetValue(m.MaskingKey)
 			if err != nil {
 				v = nil
 				mkinv = &troo
 			}
-			wstr := fmt.Sprintf("%.16x%.16x", result.weightH, result.weightL)
+
+			var trust float64
+			if result.localReputation > 0 {
+				trust = 1.0
+			}
+			trustInt := int(math.Round(1000.0 * trust))
+
+			var weight [16]byte
+			binary.BigEndian.PutUint64(weight[0:8], result.weightH)
+			binary.BigEndian.PutUint64(weight[8:16], result.weightL)
 			if rn == 0 {
 				qr = append(qr, []APIQueryResult{APIQueryResult{
 					Hash:            rec.Hash(),
@@ -174,8 +170,8 @@ func (m *APIQuery) execute(n *Node) (qr APIQueryResults, err *APIError) {
 					Record:          rec,
 					Value:           v,
 					UnmaskingFailed: mkinv,
-					LocalReputation: result.localReputation,
-					Weight:          wstr,
+					Trust:           trustInt,
+					Weight:          weight,
 				}})
 			} else if m.Limit <= 0 || rn < m.Limit {
 				qr[len(qr)-1] = append(qr[len(qr)-1], APIQueryResult{
@@ -184,13 +180,25 @@ func (m *APIQuery) execute(n *Node) (qr APIQueryResults, err *APIError) {
 					Record:          rec,
 					Value:           v,
 					UnmaskingFailed: mkinv,
-					LocalReputation: result.localReputation,
-					Weight:          wstr,
+					Trust:           trustInt,
+					Weight:          weight,
 				})
 			} else {
 				break
 			}
 		}
+	}
+
+	// Sort each element in qr[] by trust metric and weight
+	for _, qrr := range qr {
+		sort.Slice(qrr, func(b, a int) bool {
+			if qrr[a].Trust < qrr[b].Trust {
+				return true
+			} else if qrr[a].Trust == qrr[b].Trust {
+				return bytes.Compare(qrr[a].Weight[:], qrr[b].Weight[:]) < 0
+			}
+			return false
+		})
 	}
 
 	// Sort root qr[] by selector ordinals.

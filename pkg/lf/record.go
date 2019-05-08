@@ -445,6 +445,12 @@ func (r *Record) MarshalTo(w io.Writer, hashAsProxyForValue bool) error {
 	return nil
 }
 
+// String returns =hash where hash is base62 encoded.
+func (r *Record) String() string {
+	h := r.Hash()
+	return "=" + Base62Encode(h[:])
+}
+
 // Bytes returns a byte serialized record.
 // The returned slice should not be modified since it's cached internally in Record to
 // make multiple calls to Bytes() faster.
