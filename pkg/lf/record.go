@@ -351,6 +351,7 @@ type Record struct {
 
 	selectorKeys [][]byte  // memoized selector keys
 	hash         *[32]byte // memoized hash
+	id           *[32]byte // memoized ID
 }
 
 // UnmarshalFrom deserializes this record from a reader.
@@ -405,6 +406,7 @@ func (r *Record) UnmarshalFrom(rdr io.Reader) error {
 
 	r.selectorKeys = nil
 	r.hash = nil
+	r.id = nil
 
 	return nil
 }
@@ -524,17 +526,24 @@ func (r *Record) SelectorIs(plainTextKey []byte, selectorIndex int) bool {
 	return false
 }
 
-// ID returns SHA3-256(selector keys) where selector keys are sorted in ascending order.
+// ID returns SHA3-256(selector IDs) where selector IDs are the recovered selector public keys.
 // If there are no selectors in this record, its ID is equal to its hash.
 func (r *Record) ID() (id [32]byte) {
-	if len(r.Selectors) == 0 {
-		return r.Hash()
+	if r.id != nil {
+		copy(id[:], r.id[:])
+		return
 	}
+	if len(r.Selectors) == 0 {
+		id = r.Hash()
+		return
+	}
+	selectorClaimSigningHash := r.recordBody.signingHash()
 	h := sha3.New256()
 	for i := 0; i < len(r.Selectors); i++ {
-		h.Write(r.SelectorKey(i))
+		h.Write(r.Selectors[i].id(selectorClaimSigningHash[:]))
 	}
 	h.Sum(id[:0])
+	r.id = &id
 	return
 }
 

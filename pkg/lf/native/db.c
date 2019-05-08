@@ -46,7 +46,8 @@ static void *_ZTLF_DB_graphThreadMain(void *arg);
  *   linked_count             number of records linking to this one
  *   selector_count           number of selectors for this record
  *   hash                     shandwich256(record data) (unique key)
- *   id                       sha256(selector keys)
+ *   id                       hash of selector IDs
+ *   ckey                     CRC64 of all selector keys
  *   owner                    owner of this record or NULL if same as previous
  *
  * comment
@@ -121,6 +122,7 @@ static void *_ZTLF_DB_graphThreadMain(void *arg);
 "selector_count INTEGER NOT NULL," \
 "hash BLOB NOT NULL," \
 "id BLOB NOT NULL," \
+"ckey INTEGER NOT NULL," \
 "owner BLOB NOT NULL" \
 ");\n" \
 \
@@ -129,7 +131,6 @@ static void *_ZTLF_DB_graphThreadMain(void *arg);
 "CREATE INDEX IF NOT EXISTS record_reputation_linked_count ON record(reputation,linked_count);\n" \
 "CREATE INDEX IF NOT EXISTS record_id_owner_ts ON record(id,owner,ts);\n" \
 "CREATE INDEX IF NOT EXISTS record_owner_ts ON record(owner,ts);\n" \
-"CREATE INDEX IF NOT EXISTS record_doff_selector_count_owner_id_ts ON record(doff,selector_count,owner,id,ts);\n" \
 \
 "CREATE TABLE IF NOT EXISTS comment (" \
 "subject BLOB," \
@@ -259,7 +260,7 @@ int ZTLF_DB_Open(
 	S(db->sGetConfig,
 		"SELECT \"v\" FROM config WHERE \"k\" = ?");
 	S(db->sAddRecord,
-		"INSERT INTO record (doff,dlen,goff,rtype,ts,score,link_count,reputation,linked_count,selector_count,hash,id,owner) VALUES (?,?,?,?,?,?,?,?,0,?,?,?,?)");
+		"INSERT INTO record (doff,dlen,goff,rtype,ts,score,link_count,reputation,linked_count,selector_count,hash,id,ckey,owner) VALUES (?,?,?,?,?,?,?,?,0,?,?,?,?,?)");
 	S(db->sIncRecordLinkedCountByGoff,
 		"UPDATE record SET linked_count = (linked_count + 1) WHERE goff = ?");
 	S(db->sAddSelector,
@@ -374,11 +375,11 @@ int ZTLF_DB_Open(
 	S(db->sQueryAndSelectorRange,
 		"DELETE FROM tmp.rs WHERE \"i\" NOT IN (SELECT record_doff FROM selector WHERE sel BETWEEN ? AND ? AND selidx = ? AND record_ts BETWEEN ? AND ?)");
 	S(db->sQueryGetResults,
-		"SELECT r.doff,r.dlen,r.goff,r.ts,r.reputation,r.id,r.owner FROM record AS r,tmp.rs AS rs WHERE "
+		"SELECT r.doff,r.dlen,r.goff,r.ts,r.reputation,r.ckey,r.owner FROM record AS r,tmp.rs AS rs WHERE "
 		"r.doff = rs.i "
 		"AND NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) "
 		"AND NOT EXISTS (SELECT gp.record_goff FROM graph_pending AS gp WHERE gp.record_goff = r.goff) "
-		"ORDER BY r.owner,r.id,r.ts");
+		"ORDER BY r.ckey,r.owner,r.ts");
 
 	/* Open and memory map graph and data files. */
 	snprintf(tmp,sizeof(tmp),"%s" ZTLF_PATH_SEPARATOR "graph.bin",path);
@@ -859,7 +860,6 @@ int ZTLF_DB_PutRecord(
 	const uint64_t ts,
 	const uint32_t score,
 	const void **sel,
-	const unsigned int *selSize,
 	const unsigned int selCount,
 	const void *links,
 	const unsigned int linkCount)
@@ -961,6 +961,12 @@ int ZTLF_DB_PutRecord(
 		}
 	}
 
+	/* Create composite selector key for grouping of ranged selectors on query */
+	uint64_t ckey = 0;
+	for(unsigned int i=0;i<selCount;++i) {
+		ckey = _ZTLF_CRC64(ckey,sel[i],32);
+	}
+
 	/* Add main record entry. */
 	sqlite3_reset(db->sAddRecord);
 	sqlite3_bind_int64(db->sAddRecord,1,doff);
@@ -974,7 +980,8 @@ int ZTLF_DB_PutRecord(
 	sqlite3_bind_int(db->sAddRecord,9,(int)selCount);
 	sqlite3_bind_blob(db->sAddRecord,10,hash,32,SQLITE_STATIC);
 	sqlite3_bind_blob(db->sAddRecord,11,id,32,SQLITE_STATIC);
-	sqlite3_bind_blob(db->sAddRecord,12,owner,ownerSize,SQLITE_STATIC);
+	sqlite3_bind_int64(db->sAddRecord,12,(sqlite_int64)ckey);
+	sqlite3_bind_blob(db->sAddRecord,13,owner,ownerSize,SQLITE_STATIC);
 	if ((e = sqlite3_step(db->sAddRecord)) != SQLITE_DONE) {
 		result = ZTLF_POS(e);
 		goto exit_putRecord;
@@ -983,7 +990,7 @@ int ZTLF_DB_PutRecord(
 	/* Add selectors for this record. */
 	for(unsigned int i=0;i<selCount;++i) {
 		sqlite3_reset(db->sAddSelector);
-		sqlite3_bind_blob(db->sAddSelector,1,sel[i],(int)selSize[i],SQLITE_STATIC);
+		sqlite3_bind_blob(db->sAddSelector,1,sel[i],32,SQLITE_STATIC);
 		sqlite3_bind_int(db->sAddSelector,2,(int)i);
 		sqlite3_bind_int64(db->sAddSelector,3,(sqlite3_int64)ts);
 		sqlite3_bind_int64(db->sAddSelector,4,doff);
@@ -1151,26 +1158,20 @@ struct ZTLF_QueryResults *ZTLF_DB_Query(struct ZTLF_DB *db,const int64_t tsMin,c
 	r->count = -1; /* gets incremented on very first iteration */
 	sqlite3_reset(db->sQueryGetResults);
 	uint8_t lastOwner[ZTLF_DB_QUERY_MAX_OWNER_SIZE];
-	uint8_t lastId[32];
+	sqlite_int64 lastKey = 0;
 	memset(lastOwner,0,sizeof(lastOwner));
-	memset(lastId,0,sizeof(lastId));
 	int lastOwnerSize = -1;
-	while (sqlite3_step(db->sQueryGetResults) == SQLITE_ROW) { /* columns: doff,dlen,goff,ts,reputation,id,owner */
-		const void *id = sqlite3_column_blob(db->sQueryGetResults,5);
+	while (sqlite3_step(db->sQueryGetResults) == SQLITE_ROW) { /* columns: doff,dlen,goff,ts,reputation,key,owner */
 		const void *owner = sqlite3_column_blob(db->sQueryGetResults,6);
 		const int ownerSize = sqlite3_column_bytes(db->sQueryGetResults,6);
 		if ((!owner)||(ownerSize <= 0)||(ownerSize > ZTLF_DB_QUERY_MAX_OWNER_SIZE))
 			continue;
 
-		/* Results are sorted by owner, id, and then timestamp. The ID is just a hash of all the
-		 * selectors. The final results are thus the latest timestamped records for each id,owner
-		 * tuple. Each time we encounter a new owner,id tuple we add a new result to the list.
-		 * Results within the same owner,id tuple update the latest result with that with the
-		 * latest timestamp. */
 		struct ZTLF_QueryResult *qr;
-		if ((lastOwnerSize != ownerSize)||(memcmp(lastOwner,owner,ownerSize) != 0)||(memcmp(lastId,id,32) != 0)) {
+		const sqlite_int64 key = sqlite3_column_int64(db->sQueryGetResults,5);
+		if ((lastKey != key)||(lastOwnerSize != ownerSize)||(memcmp(lastOwner,owner,ownerSize) != 0)) {
+			lastKey = key;
 			memcpy(lastOwner,owner,ownerSize);
-			memcpy(lastId,id,32);
 			lastOwnerSize = ownerSize;
 
 			++r->count;
@@ -1190,7 +1191,7 @@ struct ZTLF_QueryResults *ZTLF_DB_Query(struct ZTLF_DB *db,const int64_t tsMin,c
 			qr->weightH = 0;
 			qr->ownerSize = (unsigned int)ownerSize;
 			qr->localReputation = 0;
-			memcpy(qr->id,id,32);
+			qr->key = (uint64_t)key;
 			memcpy(qr->owner,owner,ownerSize);
 		} else {
 			qr = &(r->results[r->count]);

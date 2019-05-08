@@ -50,7 +50,7 @@ struct ZTLF_QueryResult
 	unsigned int dlen;
 	unsigned int ownerSize;
 	int localReputation;
-	uint8_t id[32];
+	uint64_t key;
 	uint8_t owner[ZTLF_DB_QUERY_MAX_OWNER_SIZE];
 };
 
@@ -182,7 +182,6 @@ int ZTLF_DB_PutRecord(
 	const uint64_t ts,
 	const uint32_t score,
 	const void **sel,
-	const unsigned int *selSize,
 	const unsigned int selCount,
 	const void *links,
 	const unsigned int linkCount);
@@ -253,12 +252,11 @@ static inline int ZTLF_DB_PutRecord_fromGo(
 	const uint64_t ts,
 	const uint32_t score,
 	const uintptr_t sel,
-	const unsigned int *selSize,
 	const unsigned int selCount,
 	const void *links,
 	const unsigned int linkCount)
 {
-	return ZTLF_DB_PutRecord(db,rec,rsize,rtype,owner,ownerSize,hash,id,ts,score,(const void **)sel,selSize,selCount,links,linkCount);
+	return ZTLF_DB_PutRecord(db,rec,rsize,rtype,owner,ownerSize,hash,id,ts,score,(const void **)sel,selCount,links,linkCount);
 }
 static inline struct ZTLF_QueryResults *ZTLF_DB_Query_fromGo(struct ZTLF_DB *db,const int64_t tsMin,const int64_t tsMax,const uintptr_t sel,const unsigned int *selSize,const unsigned int selCount)
 {

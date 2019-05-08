@@ -10,8 +10,9 @@ package lf
 import (
 	"bytes"
 	"crypto/ecdsa"
+	"crypto/sha256"
+	"encoding/binary"
 	"io"
-	"math/big"
 
 	"golang.org/x/crypto/sha3"
 )
@@ -23,12 +24,12 @@ const SelectorTypeBP160 byte = 0 // valid range: 0..3
 // SelectorMaxOrdinalSize is the maximum length of an ordinal.
 // Functions will take larger ordinals but bytes to the left of this size are ignored.
 // This is a protocol constant and cannot be changed.
-const SelectorMaxOrdinalSize = 31
+const SelectorMaxOrdinalSize = 24
 
 // SelectorKeySize is the size of the sortable ordinal-modified hash used for DB queries and range queries.
 // It's computed by adding the ordinal to the SHA512 hash of the deterministic selector public key.
 // This is a protocol constant and cannot be changed.
-const SelectorKeySize = 64
+const SelectorKeySize = 32
 
 // Selector is a non-forgeable range queryable identifier for records.
 type Selector struct {
@@ -36,19 +37,32 @@ type Selector struct {
 	Claim   Blob `json:",omitempty"` // 41-byte brainpoolP160t1 recoverable signature
 }
 
-func addOrdinalToHash(h *[64]byte, ordinal []byte) {
+func addOrdinalToHash(h *[SelectorKeySize]byte, ordinal []byte) {
 	if len(ordinal) > 0 {
-		var a, b big.Int
-		a.Add(a.SetBytes(h[:]), b.SetBytes(ordinal))
-		ab := a.Bytes()
-		if len(ab) >= 64 {
-			copy(h[:], ab[len(ab)-64:])
+		var ord [SelectorMaxOrdinalSize]byte
+		if len(ordinal) > SelectorMaxOrdinalSize {
+			copy(ord[:], ordinal[len(ordinal)-SelectorMaxOrdinalSize:])
 		} else {
-			for i, j := 0, 64-len(ab); i < j; i++ {
-				h[i] = 0
-			}
-			copy(h[0:64-len(ab)], ab)
+			copy(ord[SelectorMaxOrdinalSize-len(ordinal):], ordinal)
 		}
+		a, b, c, d := binary.BigEndian.Uint64(h[0:8]), binary.BigEndian.Uint64(h[8:16]), binary.BigEndian.Uint64(h[16:24]), binary.BigEndian.Uint64(h[24:32])
+		ob, oc, od := b, c, d
+		d += binary.BigEndian.Uint64(ord[16:24])
+		if d < od {
+			c++
+		}
+		c += binary.BigEndian.Uint64(ord[8:16])
+		if c < oc {
+			b++
+		}
+		b += binary.BigEndian.Uint64(ord[0:8])
+		if b < ob {
+			a++
+		}
+		binary.BigEndian.PutUint64(h[0:8], a)
+		binary.BigEndian.PutUint64(h[8:16], b)
+		binary.BigEndian.PutUint64(h[16:24], c)
+		binary.BigEndian.PutUint64(h[24:32], d)
 	}
 }
 
@@ -63,15 +77,12 @@ func MakeSelectorKey(plainTextName, ordinal []byte) []byte {
 		panic(err)
 	}
 
-	var publicKeyHash [64]byte
+	var publicKeyHash [SelectorKeySize]byte
 	pcomp, _ := ECDSACompressPublicKey(&priv.PublicKey)
 	if pcomp != nil {
-		publicKeyHash = sha3.Sum512(pcomp)
+		publicKeyHash = sha256.Sum256(pcomp)
 	}
 
-	if len(ordinal) > SelectorMaxOrdinalSize {
-		ordinal = ordinal[len(ordinal)-SelectorMaxOrdinalSize:]
-	}
 	addOrdinalToHash(&publicKeyHash, ordinal)
 
 	return publicKeyHash[:]
@@ -95,7 +106,22 @@ func (s *Selector) isNamed(hash, plainTextName []byte) bool {
 	return pub.X.Cmp(priv.PublicKey.X) == 0 && pub.Y.Cmp(priv.PublicKey.Y) == 0
 }
 
+// id returns the public key recovered from the claim signature or nil if there is an error.
+func (s *Selector) id(hash []byte) []byte {
+	sigHash := sha3.New256()
+	sigHash.Write(hash)
+	sigHash.Write(s.Ordinal)
+	var sigHashBuf [32]byte
+	pub := ECDSARecover(ECCCurveBrainpoolP160T1, sigHash.Sum(sigHashBuf[:0]), s.Claim)
+	if pub != nil {
+		pcomp, _ := ECDSACompressPublicKey(pub)
+		return pcomp
+	}
+	return nil
+}
+
 // key returns the sortable and comparable database key for this selector.
+// The key is the hash of the ID plus the ordinal.
 // This must be supplied with the hash that was used in set() to perform ECDSA key recovery.
 func (s *Selector) key(hash []byte) []byte {
 	sigHash := sha3.New256()
@@ -104,11 +130,11 @@ func (s *Selector) key(hash []byte) []byte {
 	var sigHashBuf [32]byte
 	pub := ECDSARecover(ECCCurveBrainpoolP160T1, sigHash.Sum(sigHashBuf[:0]), s.Claim)
 
-	var publicKeyHash [64]byte
+	var publicKeyHash [SelectorKeySize]byte
 	if pub != nil {
 		pcomp, _ := ECDSACompressPublicKey(pub)
 		if pcomp != nil {
-			publicKeyHash = sha3.Sum512(pcomp)
+			publicKeyHash = sha256.Sum256(pcomp)
 		}
 	}
 

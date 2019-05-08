@@ -117,18 +117,14 @@ func (db *db) putRecord(r *Record) error {
 	rid := r.ID()
 
 	var selectorsPtr C.uintptr_t
-	var selectorSizesPtr *C.uint
 	selectorKeys := make([][]byte, len(r.Selectors))
 	selectors := make([]uintptr, len(r.Selectors))
-	selectorSizes := make([]C.uint, len(r.Selectors))
 	if len(r.Selectors) > 0 {
 		for i := 0; i < len(r.Selectors); i++ {
 			selectorKeys[i] = r.SelectorKey(i)
 			selectors[i] = uintptr(unsafe.Pointer(&selectorKeys[i][0]))
-			selectorSizes[i] = C.uint(len(selectorKeys[i]))
 		}
 		selectorsPtr = C.uintptr_t(uintptr(unsafe.Pointer(&selectors[0])))
-		selectorSizesPtr = &selectorSizes[0]
 	}
 
 	var lptr unsafe.Pointer
@@ -158,7 +154,6 @@ func (db *db) putRecord(r *Record) error {
 		C.uint64_t(r.recordBody.Timestamp),
 		C.uint32_t(r.Score()),
 		selectorsPtr,
-		selectorSizesPtr,
 		C.uint(len(selectors)),
 		lptr,
 		C.uint(len(r.recordBody.Links)))
@@ -267,7 +262,7 @@ func (db *db) haveDanglingLinks(ignoreAfterNRetries int) bool {
 // results not sorted. The loop is broken if the function returns false. The owner is passed as a pointer to
 // an array that is reused, so a copy must be made if you want to keep it. The arguments to the function are:
 // timestamp, weight (low), weight (high), data offset, data length, local reputation, id, owner.
-func (db *db) query(tsMin, tsMax int64, selectorRanges [][2][]byte, f func(uint64, uint64, uint64, uint64, uint64, int, *[32]byte, []byte) bool) error {
+func (db *db) query(tsMin, tsMax int64, selectorRanges [][2][]byte, f func(uint64, uint64, uint64, uint64, uint64, int, uint64, []byte) bool) error {
 	if len(selectorRanges) == 0 {
 		return nil
 	}
@@ -289,18 +284,14 @@ func (db *db) query(tsMin, tsMax int64, selectorRanges [][2][]byte, f func(uint6
 	cresults := C.ZTLF_DB_Query_fromGo(db.cdb, C.int64_t(tsMin), C.int64_t(tsMax), C.uintptr_t(uintptr(unsafe.Pointer(&sel[0]))), &selSizes[0], C.uint(len(selectorRanges)))
 	if uintptr(unsafe.Pointer(cresults)) != 0 {
 		var owner [dbMaxOwnerSize]byte
-		var id [32]byte
 		for i := C.long(0); i < cresults.count; i++ {
 			cr := (*C.struct_ZTLF_QueryResult)(unsafe.Pointer(uintptr(unsafe.Pointer(&cresults.results[0])) + (uintptr(i) * unsafe.Sizeof(cresults.results[0]))))
 			ownerSize := uint(cr.ownerSize)
 			if ownerSize > 0 && ownerSize <= dbMaxOwnerSize && cr.dlen > 0 {
-				for j := 0; j < 32; j++ {
-					id[j] = byte(cr.id[j])
-				}
 				for j := uint(0); j < ownerSize; j++ {
 					owner[j] = byte(cr.owner[j])
 				}
-				if !f(uint64(cr.ts), uint64(cr.weightL), uint64(cr.weightH), uint64(cr.doff), uint64(cr.dlen), int(cr.localReputation), &id, owner[0:ownerSize]) {
+				if !f(uint64(cr.ts), uint64(cr.weightL), uint64(cr.weightH), uint64(cr.doff), uint64(cr.dlen), int(cr.localReputation), uint64(cr.key), owner[0:ownerSize]) {
 					break
 				}
 			}

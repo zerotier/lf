@@ -120,21 +120,21 @@ func (m *APIQuery) execute(n *Node) (qr APIQueryResults, err *APIError) {
 		tsMax = int64(m.TimeRange[1])
 	}
 
-	// Get all results grouped by ID (all selectors)
-	byID := make(map[[32]byte]*[]apiQueryResultTmp)
-	n.db.query(tsMin, tsMax, selectorRanges, func(ts, weightL, weightH, doff, dlen uint64, localReputation int, id *[32]byte, owner []byte) bool {
-		rptr := byID[*id]
+	// Get all results grouped by selector key
+	bySelectorKey := make(map[uint64]*[]apiQueryResultTmp)
+	n.db.query(tsMin, tsMax, selectorRanges, func(ts, weightL, weightH, doff, dlen uint64, localReputation int, key uint64, owner []byte) bool {
+		rptr := bySelectorKey[key]
 		if rptr == nil {
 			tmp := make([]apiQueryResultTmp, 0, 4)
 			rptr = &tmp
-			byID[*id] = rptr
+			bySelectorKey[key] = rptr
 		}
 		*rptr = append(*rptr, apiQueryResultTmp{weightL, weightH, doff, dlen, localReputation})
 		return true
 	})
 
 	// Actually grab the records and populate the qr[] slice.
-	for _, rptr := range byID {
+	for _, rptr := range bySelectorKey {
 		// Collate results and add to query result
 		for rn := 0; rn < len(*rptr); rn++ {
 			result := &(*rptr)[rn]
@@ -163,6 +163,7 @@ func (m *APIQuery) execute(n *Node) (qr APIQueryResults, err *APIError) {
 			var weight [16]byte
 			binary.BigEndian.PutUint64(weight[0:8], result.weightH)
 			binary.BigEndian.PutUint64(weight[8:16], result.weightL)
+
 			if rn == 0 {
 				qr = append(qr, []APIQueryResult{APIQueryResult{
 					Hash:            rec.Hash(),
