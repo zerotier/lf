@@ -100,10 +100,11 @@ func APIPostConnect(url string, ip net.IP, port int, identity string) error {
 	} else {
 		url = url + "/connect"
 	}
-	var ob OwnerBlob
-	err := json.Unmarshal([]byte(identity), &ob)
-	if err != nil {
-		return err
+	var ob []byte
+	if len(identity) > 0 && identity[0] == '@' {
+		ob = Base62Decode(identity[1:])
+	} else {
+		return ErrInvalidParameter
 	}
 	apiPeerJSON, err := json.Marshal(&APIPeer{
 		IP:       ip,

@@ -626,7 +626,7 @@ func (n *Node) handleSynchronizedRecord(doff uint64, dlen uint, reputation int, 
 		rdata, err := n.db.getDataByOffset(doff, dlen, nil)
 		if len(rdata) > 0 && err == nil {
 			r, err := NewRecordFromBytes(rdata)
-			if err != nil {
+			if err == nil {
 				// If this record's local reputation is bad, check and see if we have any good
 				// reputation local records with the same ID and owner. If so and if commenting
 				// is enabled, generate a comment record that we will publish under our owner.
@@ -691,7 +691,7 @@ func (n *Node) handleSynchronizedRecord(doff uint64, dlen uint, reputation int, 
 				}
 				n.peersLock.RUnlock()
 
-				n.log[LogLevelVerbose].Printf("sync: =%s synchronized (subjective reputation %d), announced to %d peers", recordHashStr, reputation, announcementCount)
+				n.log[LogLevelNormal].Printf("sync: =%s synchronized (subjective reputation %d), announced to %d peers", recordHashStr, reputation, announcementCount)
 			} else {
 				n.log[LogLevelWarning].Printf("WARNING: record =%s deserialization error: %s (is your node version too old?)", recordHashStr, err.Error())
 			}

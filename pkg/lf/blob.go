@@ -113,7 +113,7 @@ func (b *HashBlob) UnmarshalJSON(j []byte) error {
 	var str string
 	err = json.Unmarshal(j, &str)
 	if err == nil {
-		if len(str) > 1 && str[0] == '=' {
+		if len(str) > 0 && str[0] == '=' {
 			bb = Base62Decode(str[1:])
 		} else {
 			err = errors.New("base62 string not prefixed by = (for exact record hash)")
