@@ -207,7 +207,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 			return nil, err
 		}
 	}
-	n.ownerPrivateKey = n.owner.getPrivateECDSA()
+	n.ownerPrivateKey = n.owner.privateECDSA()
 	if n.ownerPrivateKey == nil {
 		return nil, ErrInvalidPrivateKey
 	}

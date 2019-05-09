@@ -133,6 +133,8 @@ type recordBody struct {
 	Links       []HashBlob `json:",omitempty"` // Links to previous records' hashes
 	Timestamp   uint64     ``                  // Timestamp (and revision ID) in SECONDS since Unix epoch
 	Type        *byte      `json:",omitempty"` // Record type byte, RecordTypeDatum (0) if nil
+
+	sigHash *[32]byte
 }
 
 func (rb *recordBody) unmarshalFrom(r io.Reader) error {
@@ -222,6 +224,8 @@ func (rb *recordBody) unmarshalFrom(r io.Reader) error {
 		return err
 	}
 
+	rb.sigHash = nil
+
 	return nil
 }
 
@@ -283,9 +287,14 @@ func (rb *recordBody) marshalTo(w io.Writer, hashAsProxyForValue bool) error {
 }
 
 func (rb *recordBody) signingHash() (hb [32]byte) {
-	h := NewShandwich256()
-	rb.marshalTo(h, true)
-	h.Sum(hb[:0])
+	if rb.sigHash == nil {
+		h := NewShandwich256()
+		rb.marshalTo(h, true)
+		h.Sum(hb[:0])
+		rb.sigHash = &hb
+		return
+	}
+	hb = *rb.sigHash
 	return
 }
 
@@ -349,9 +358,7 @@ type Record struct {
 	WorkAlgorithm byte       ``                  // Proof of work algorithm
 	Signature     Blob       `json:",omitempty"` // Signature of sha3-256(sha3-256(Body Signing Hash | Selectors) | Work | WorkAlgorithm)
 
-	selectorKeys [][]byte  // memoized selector keys
-	hash         *[32]byte // memoized hash
-	id           *[32]byte // memoized ID
+	hash, id *[32]byte
 }
 
 // UnmarshalFrom deserializes this record from a reader.
@@ -404,7 +411,6 @@ func (r *Record) UnmarshalFrom(rdr io.Reader) error {
 		return err
 	}
 
-	r.selectorKeys = nil
 	r.hash = nil
 	r.id = nil
 
@@ -447,12 +453,6 @@ func (r *Record) MarshalTo(w io.Writer, hashAsProxyForValue bool) error {
 	return nil
 }
 
-// String returns =hash where hash is base62 encoded.
-func (r *Record) String() string {
-	h := r.Hash()
-	return "=" + Base62Encode(h[:])
-}
-
 // Bytes returns a byte serialized record.
 // The returned slice should not be modified since it's cached internally in Record to
 // make multiple calls to Bytes() faster.
@@ -486,6 +486,12 @@ func (r *Record) Hash() (hb [32]byte) {
 	return
 }
 
+// HashString returns =hash where hash is base62 encoded.
+func (r *Record) HashString() string {
+	h := r.Hash()
+	return "=" + Base62Encode(h[:])
+}
+
 // Score returns this record's work score, which is algorithm dependent.
 // The returned value is scaled to the range of uint32 so that future algorithms can coexist with or at least
 // be comparable relative to current ones.
@@ -500,18 +506,10 @@ func (r *Record) Score() uint32 {
 }
 
 // SelectorKey returns the selector key for a given selector at a given index in []Selectors.
-// This is easier than getting the record body hash and calling the selector's Key method and
-// also caches keys for faster retrieval later.
 func (r *Record) SelectorKey(selectorIndex int) []byte {
 	if selectorIndex >= 0 && selectorIndex < len(r.Selectors) {
-		if len(r.selectorKeys) != len(r.Selectors) {
-			r.selectorKeys = make([][]byte, len(r.Selectors))
-			selectorClaimSigningHash := r.recordBody.signingHash()
-			for si := range r.Selectors {
-				r.selectorKeys[si] = r.Selectors[si].key(selectorClaimSigningHash[:])
-			}
-		}
-		return r.selectorKeys[selectorIndex]
+		selectorClaimSigningHash := r.recordBody.signingHash()
+		return r.Selectors[selectorIndex].key(selectorClaimSigningHash[:])
 	}
 	return nil
 }

@@ -66,9 +66,7 @@ func addOrdinalToHash(h *[SelectorKeySize]byte, ordinal []byte) {
 	}
 }
 
-// MakeSelectorKey generates a masked selector database key from a plain text name.
-// If this name is not used with range queries use zero for the ordinal. This function exists
-// to allow selector database keys to be created separate from record creation if needed.
+// MakeSelectorKey obtains a sortable database key from a plain text name and ordinal.
 func MakeSelectorKey(plainTextName, ordinal []byte) []byte {
 	var prng seededPrng
 	prng.seed(plainTextName)
@@ -88,31 +86,30 @@ func MakeSelectorKey(plainTextName, ordinal []byte) []byte {
 	return publicKeyHash[:]
 }
 
-// isNamed returns true if this selector's plain text name matches the argument.
-func (s *Selector) isNamed(hash, plainTextName []byte) bool {
+// claimKey recovers the public key from this selector's claim and the hash used to generate it.
+func (s *Selector) claimKey(hash []byte) *ecdsa.PublicKey {
 	sigHash := sha3.New256()
 	sigHash.Write(hash)
 	sigHash.Write(s.Ordinal)
 	var sigHashBuf [32]byte
-	pub := ECDSARecover(ECCCurveBrainpoolP160T1, sigHash.Sum(sigHashBuf[:0]), s.Claim)
+	return ECDSARecover(ECCCurveBrainpoolP160T1, sigHash.Sum(sigHashBuf[:0]), s.Claim)
+}
 
+// isNamed returns true if this selector's plain text name matches the argument.
+func (s *Selector) isNamed(hash, plainTextName []byte) bool {
 	var prng seededPrng
 	prng.seed(plainTextName)
 	priv, err := ecdsa.GenerateKey(ECCCurveBrainpoolP160T1, &prng)
 	if err != nil {
 		return false
 	}
-
+	pub := s.claimKey(hash)
 	return pub.X.Cmp(priv.PublicKey.X) == 0 && pub.Y.Cmp(priv.PublicKey.Y) == 0
 }
 
 // id returns the public key recovered from the claim signature or nil if there is an error.
 func (s *Selector) id(hash []byte) []byte {
-	sigHash := sha3.New256()
-	sigHash.Write(hash)
-	sigHash.Write(s.Ordinal)
-	var sigHashBuf [32]byte
-	pub := ECDSARecover(ECCCurveBrainpoolP160T1, sigHash.Sum(sigHashBuf[:0]), s.Claim)
+	pub := s.claimKey(hash)
 	if pub != nil {
 		pcomp, _ := ECDSACompressPublicKey(pub)
 		return pcomp
@@ -121,15 +118,8 @@ func (s *Selector) id(hash []byte) []byte {
 }
 
 // key returns the sortable and comparable database key for this selector.
-// The key is the hash of the ID plus the ordinal.
-// This must be supplied with the hash that was used in set() to perform ECDSA key recovery.
 func (s *Selector) key(hash []byte) []byte {
-	sigHash := sha3.New256()
-	sigHash.Write(hash)
-	sigHash.Write(s.Ordinal)
-	var sigHashBuf [32]byte
-	pub := ECDSARecover(ECCCurveBrainpoolP160T1, sigHash.Sum(sigHashBuf[:0]), s.Claim)
-
+	pub := s.claimKey(hash)
 	var publicKeyHash [SelectorKeySize]byte
 	if pub != nil {
 		pcomp, _ := ECDSACompressPublicKey(pub)
@@ -137,9 +127,7 @@ func (s *Selector) key(hash []byte) []byte {
 			publicKeyHash = sha256.Sum256(pcomp)
 		}
 	}
-
 	addOrdinalToHash(&publicKeyHash, s.Ordinal)
-
 	return publicKeyHash[:]
 }
 

@@ -8,9 +8,11 @@
 package lf
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/sha256"
+	"encoding/binary"
 	"sync"
-
-	"golang.org/x/crypto/sha3"
 )
 
 // seededPrng is a deterministic cryptographic random Reader used to generate key pairs from specific seeds.
@@ -19,29 +21,31 @@ import (
 // a known-seed attack scenario. The only goal is to generate a random stream from a seed in a reproducible
 // and strongly random way.
 type seededPrng struct {
-	lock  sync.Mutex
-	state [64]byte // private state
-	buf   [32]byte // public buffer filled from state
-	i     uint
+	lock sync.Mutex
+	c    cipher.Block
+	n    uint64
+	i    uint
+	b    [16]byte
 }
 
 func (s *seededPrng) seed(b []byte) {
-	s.lock.Lock()
-	s.state = sha3.Sum512(b)
-	s.buf = sha3.Sum256(s.state[:])
-	s.i = 0
-	s.lock.Unlock()
+	k := sha256.Sum256(b)
+	s.c, _ = aes.NewCipher(k[:])
+	s.n = 0
+	s.i = 16
 }
 
 func (s *seededPrng) Read(b []byte) (int, error) {
+	var tmp [16]byte
 	s.lock.Lock()
 	for i := 0; i < len(b); i++ {
-		if s.i == 32 {
+		if s.i == 16 {
 			s.i = 0
-			s.state = sha3.Sum512(s.state[:])
-			s.buf = sha3.Sum256(s.state[:])
+			binary.LittleEndian.PutUint64(tmp[0:8], s.n)
+			s.n++
+			s.c.Encrypt(s.b[:], tmp[:])
 		}
-		b[i] = s.buf[s.i]
+		b[i] = s.b[s.i]
 		s.i++
 	}
 	s.lock.Unlock()
