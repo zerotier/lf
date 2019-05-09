@@ -2,7 +2,26 @@
  * LF: Global Fully Replicated Key/Value Store
  * Copyright (C) 2018-2019  ZeroTier, Inc.  https://www.zerotier.com/
  *
- * Licensed under the terms of the MIT license (see LICENSE.txt).
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <http://www.gnu.org/licenses/>.
+ *
+ * --
+ *
+ * You can be released from the requirements of the license by purchasing
+ * a commercial license. Buying such a license is mandatory as soon as you
+ * develop commercial closed-source software that incorporates or links
+ * directly against ZeroTier software without disclosing the source code
+ * of your own application.
  */
 
 package lf
@@ -35,18 +54,20 @@ var SelectorMaxOrdinal = []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 
 const SelectorKeySize = 32
 
 // Selector is a non-forgeable range queryable identifier for records.
+// It can also rewind on request from the MC.
 type Selector struct {
 	Ordinal Blob `json:",omitempty"` // A plain text sortable field that can be used for range queries against secret selectors
 	Claim   Blob `json:",omitempty"` // 41-byte brainpoolP160t1 recoverable signature
 }
 
-func addOrdinalToHash(h *[SelectorKeySize]byte, ordinal []byte) {
+// addOrdinalToHash adds a 24-byte public ordinal to a 32-byte key hash.
+func addOrdinalToHash(h *[32]byte, ordinal []byte) {
 	if len(ordinal) > 0 {
-		var ord [SelectorMaxOrdinalSize]byte
-		if len(ordinal) > SelectorMaxOrdinalSize {
-			copy(ord[:], ordinal[len(ordinal)-SelectorMaxOrdinalSize:])
+		var ord [24]byte
+		if len(ordinal) > 24 {
+			copy(ord[:], ordinal[len(ordinal)-24:])
 		} else {
-			copy(ord[SelectorMaxOrdinalSize-len(ordinal):], ordinal)
+			copy(ord[24-len(ordinal):], ordinal)
 		}
 		a, b, c, d := binary.BigEndian.Uint64(h[0:8]), binary.BigEndian.Uint64(h[8:16]), binary.BigEndian.Uint64(h[16:24]), binary.BigEndian.Uint64(h[24:32])
 		ob, oc, od := b, c, d
@@ -69,7 +90,8 @@ func addOrdinalToHash(h *[SelectorKeySize]byte, ordinal []byte) {
 	}
 }
 
-// MakeSelectorKey obtains a sortable database key from a plain text name and ordinal.
+// MakeSelectorKey obtains a sortable database/query key from a plain text name and ordinal.
+// This can be used when using the API to avoid revealing plain text names to outsiders.
 func MakeSelectorKey(plainTextName, ordinal []byte) []byte {
 	var prng seededPrng
 	prng.seed(plainTextName)
@@ -89,7 +111,7 @@ func MakeSelectorKey(plainTextName, ordinal []byte) []byte {
 	return publicKeyHash[:]
 }
 
-// claimKey recovers the public key from this selector's claim and the hash used to generate it.
+// claimKey recovers the public key from this selector's claim and the record body hash used to generate it.
 func (s *Selector) claimKey(hash []byte) *ecdsa.PublicKey {
 	sigHash := sha3.New256()
 	sigHash.Write(hash)
@@ -145,19 +167,50 @@ func (s *Selector) marshalTo(out io.Writer) error {
 	// This packs the ordinal length, selector type, and the last byte of the claim signature
 	// into the first byte. The last byte of the claim signature holds either 0 or 1 to select
 	// which key recovery index should be used. This saves a few bytes per selector which can
-	// add up with records with multiple selectors.
-	if _, err := out.Write([]byte{(byte(len(s.Ordinal)) << 3) | (SelectorTypeBP160 << 1) | s.Claim[40]}); err != nil {
+	// add up with records with multiple selectors. Note that different selector types might
+	// imply different meanings for the most significant 6 bits of the first byte, but that's
+	// fine since future selector types (if any) may be fundamentally different as they'd
+	// probably use some kind of post-quantum scheme.
+	if _, err := out.Write([]byte{(byte(len(s.Ordinal)) << 3) | ((s.Claim[40] & 1) << 2) | SelectorTypeBP160}); err != nil {
 		return err
 	}
+
 	if len(s.Ordinal) > 0 {
 		if _, err := out.Write(s.Ordinal); err != nil {
 			return err
 		}
 	}
+
 	if _, err := out.Write(s.Claim[0:40]); err != nil {
 		return err
 	}
 
+	return nil
+}
+
+func (s *Selector) unmarshalFrom(in io.Reader) error {
+	var typeOrdinalLenClaimSignatureRecoveryIndex [1]byte
+	if _, err := io.ReadFull(in, typeOrdinalLenClaimSignatureRecoveryIndex[:]); err != nil {
+		return err
+	}
+	if (typeOrdinalLenClaimSignatureRecoveryIndex[0] & 3) != SelectorTypeBP160 {
+		return ErrInvalidObject
+	}
+	ordSize := uint(typeOrdinalLenClaimSignatureRecoveryIndex[0] >> 3)
+	if ordSize > 0 {
+		s.Ordinal = make([]byte, ordSize)
+		if _, err := io.ReadFull(in, s.Ordinal); err != nil {
+			return err
+		}
+	} else {
+		s.Ordinal = nil
+	}
+	var cl [41]byte
+	if _, err := io.ReadFull(in, cl[0:40]); err != nil {
+		return err
+	}
+	cl[40] = (typeOrdinalLenClaimSignatureRecoveryIndex[0] >> 2) & 1 // key recovery index
+	s.Claim = cl[:]
 	return nil
 }
 
@@ -171,31 +224,6 @@ func (s *Selector) bytes() []byte {
 	var b bytes.Buffer
 	s.marshalTo(&b)
 	return b.Bytes()
-}
-
-func (s *Selector) unmarshalFrom(in io.Reader) error {
-	var typeOrdinalLenClaimSignatureRecoveryIndex [1]byte
-	if _, err := io.ReadFull(in, typeOrdinalLenClaimSignatureRecoveryIndex[:]); err != nil {
-		return err
-	}
-	if ((typeOrdinalLenClaimSignatureRecoveryIndex[0] >> 1) & 3) != SelectorTypeBP160 {
-		return ErrInvalidObject
-	}
-	ordSize := uint(typeOrdinalLenClaimSignatureRecoveryIndex[0] >> 3)
-	if ordSize > 0 {
-		s.Ordinal = make([]byte, ordSize)
-		if _, err := io.ReadFull(in, s.Ordinal); err != nil {
-			return err
-		}
-	} else {
-		s.Ordinal = nil
-	}
-	s.Claim = make([]byte, 41)
-	if _, err := io.ReadFull(in, s.Claim[0:40]); err != nil {
-		return err
-	}
-	s.Claim[40] = typeOrdinalLenClaimSignatureRecoveryIndex[0] & 1
-	return nil
 }
 
 // set sets this selector to a given plain text name, ordinal, and record body hash.
