@@ -27,20 +27,19 @@
 package lf
 
 import (
+	"crypto/x509"
 	"encoding/json"
 	"strings"
 )
 
 // GenesisParameters is the payload (JSON encoded) of the first RecordMinLinks records in a global data store.
 type GenesisParameters struct {
-	initialized bool
-
 	Name                       string   `json:",omitempty"` // Name of this LF network / data store
 	Contact                    string   `json:",omitempty"` // Contact info for this network (may be empty)
 	Comment                    string   `json:",omitempty"` // Optional comment
-	RootCertificateAuthorities [][]byte `json:",omitempty"` // X.509 certificates for master CAs for this data store (empty for an unbiased work-only data store)
+	RootCertificateAuthorities Blob     `json:",omitempty"` // X.509 certificate(s) for master CAs for this data store (ASN.1 records)
 	CertificateRequired        bool     `json:""`           // Is a certificate required? (must be false if there are no CAs, obviously)
-	WorkRequired               bool     `json:""`           // Is proof of work required?
+	WorkRequired               bool     `json:""`           // Is proof of work required? (assuming no certificate allowing reduced or no work)
 	LinkKey                    [32]byte `json:""`           // Static 32-byte key used to ensure that nodes in this network only connect to one another
 	TimestampFloor             uint64   `json:""`           // Floor for network record timestamps (seconds)
 	RecordMinLinks             uint     `json:""`           // Minimum number of links required for non-genesis records
@@ -48,6 +47,9 @@ type GenesisParameters struct {
 	RecordMaxSize              uint     `json:""`           // Maximum size of records (up to the RecordMaxSize constant)
 	RecordMaxForwardTimeDrift  uint     `json:""`           // Maximum number of seconds in the future a record can be timestamped
 	AmendableFields            []string `json:",omitempty"` // List of json field names that the genesis owner can change by posting non-empty records
+
+	certs       []*x509.Certificate
+	initialized bool
 }
 
 // Update updates these GenesisParameters from a JSON encoded parameter set.
@@ -89,6 +91,7 @@ func (gp *GenesisParameters) Update(jsonValue []byte) error {
 				gp.Comment = ngp.Comment
 			case "rootcertificateauthorities":
 				gp.RootCertificateAuthorities = ngp.RootCertificateAuthorities
+				gp.certs = nil // forget previously cached certs
 			case "certificaterequired":
 				gp.CertificateRequired = ngp.CertificateRequired
 			case "workrequired":
@@ -110,9 +113,26 @@ func (gp *GenesisParameters) Update(jsonValue []byte) error {
 			}
 		}
 	}
+
 	gp.initialized = true
 
 	return nil
+}
+
+// RootCAs returns the fully deserialized root CAs in this parameter set.
+func (gp *GenesisParameters) RootCAs() ([]*x509.Certificate, error) {
+	if len(gp.certs) > 0 {
+		return gp.certs, nil
+	}
+	if len(gp.RootCertificateAuthorities) == 0 {
+		return nil, nil
+	}
+	certs, err := x509.ParseCertificates(gp.RootCertificateAuthorities)
+	if err != nil {
+		return nil, err
+	}
+	gp.certs = certs
+	return certs, nil
 }
 
 // CreateGenesisRecords creates a set of genesis records for a new LF data store.

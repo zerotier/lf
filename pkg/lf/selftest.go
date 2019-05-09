@@ -114,7 +114,7 @@ func TestCore(out io.Writer) bool {
 	}
 	fmt.Fprintf(out, "OK\n")
 
-	curves := []elliptic.Curve{elliptic.P521(), elliptic.P384(), ECCCurveBrainpoolP160T1}
+	curves := []elliptic.Curve{ECCCurveBrainpoolP512T1, elliptic.P384(), ECCCurveBrainpoolP160T1}
 	for ci := range curves {
 		curve := curves[ci]
 
@@ -129,7 +129,7 @@ func TestCore(out io.Writer) bool {
 			fmt.Fprintf(out, "  FAILED (compress): %s\n", err.Error())
 			return false
 		}
-		fmt.Fprintf(out, "  Public Key: [%d] %x\n", len(pub), pub)
+		fmt.Fprintf(out, "  Public Key: [%d] %x...\n", len(pub), pub[0:16])
 		pub2, err := ECDSADecompressPublicKey(curve, pub)
 		if err != nil {
 			fmt.Fprintf(out, "  FAILED (decompress): %s\n", err.Error())
