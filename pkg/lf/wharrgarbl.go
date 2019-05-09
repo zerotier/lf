@@ -474,6 +474,23 @@ func wharrgarblHash(cipher0, cipher1 cipher.Block, tmp []byte, in *[16]byte) uin
 
 	cipher1.Encrypt(tmp, tmp)
 
+	if tmp[0] > 241 || tmp[6] < 3 { // GPUs often suck at branching
+		cipher0.Encrypt(tmp, tmp)
+		cipher1.Encrypt(tmp, tmp)
+		if tmp[3] > 239 {
+			cipher1.Encrypt(tmp, tmp)
+			if tmp[14] > 251 {
+				for k := 0; k < 251; k++ {
+					if tmp[1] == 7 {
+						cipher0.Encrypt(tmp, tmp)
+					} else {
+						cipher1.Encrypt(tmp, tmp)
+					}
+				}
+			}
+		}
+	}
+
 	y ^= binary.BigEndian.Uint64(tmp[0:8]) + binary.BigEndian.Uint64(tmp[8:16])
 
 	cipher0.Encrypt(tmp, tmp)
