@@ -64,7 +64,7 @@ struct ZTLF_RecordIndex
 {
 	uint64_t doff;
 	uint64_t dlen;
-	int reputation;
+	int localReputation;
 };
 
 struct ZTLF_RecordList
@@ -181,7 +181,7 @@ int ZTLF_DB_PutRecord(
 	const void *id,
 	const uint64_t ts,
 	const uint32_t score,
-	const void **sel,
+	const void **selKey,
 	const unsigned int selCount,
 	const void *links,
 	const unsigned int linkCount);
@@ -251,12 +251,12 @@ static inline int ZTLF_DB_PutRecord_fromGo(
 	const void *id,
 	const uint64_t ts,
 	const uint32_t score,
-	const uintptr_t sel,
+	const uintptr_t selKey,
 	const unsigned int selCount,
 	const void *links,
 	const unsigned int linkCount)
 {
-	return ZTLF_DB_PutRecord(db,rec,rsize,rtype,owner,ownerSize,hash,id,ts,score,(const void **)sel,selCount,links,linkCount);
+	return ZTLF_DB_PutRecord(db,rec,rsize,rtype,owner,ownerSize,hash,id,ts,score,(const void **)selKey,selCount,links,linkCount);
 }
 static inline struct ZTLF_QueryResults *ZTLF_DB_Query_fromGo(struct ZTLF_DB *db,const int64_t tsMin,const int64_t tsMax,const uintptr_t sel,const unsigned int *selSize,const unsigned int selCount)
 {

@@ -26,6 +26,9 @@ const SelectorTypeBP160 byte = 0 // valid range: 0..3
 // This is a protocol constant and cannot be changed.
 const SelectorMaxOrdinalSize = 24
 
+// SelectorMaxOrdinal is the maximum possible ordinal value (24 0xff bytes).
+var SelectorMaxOrdinal = []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}
+
 // SelectorKeySize is the size of the sortable ordinal-modified hash used for DB queries and range queries.
 // It's computed by adding the ordinal to the SHA512 hash of the deterministic selector public key.
 // This is a protocol constant and cannot be changed.

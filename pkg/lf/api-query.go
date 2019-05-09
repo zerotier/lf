@@ -17,8 +17,6 @@ import (
 	"strings"
 )
 
-var troo = true
-
 // APIQueryRange (request, part of APIQuery) specifies a selector or selector range.
 // Selector ranges can be specified in one of two ways. If KeyRange is non-empty it contains a single
 // masked selector key or a range of keys. If KeyRange is empty then Name contains the plain text name
@@ -36,18 +34,18 @@ type APIQuery struct {
 	Range      []APIQueryRange `json:",omitempty"` // Selectors or selector range(s)
 	TimeRange  []uint64        `json:",omitempty"` // If present, constrain record times to after first value (if [1]) or range (if [2])
 	MaskingKey Blob            `json:",omitempty"` // Masking key to unmask record value(s) server-side (if non-empty)
-	Limit      int             `json:",omitempty"` // If non-zero, limit maximum lower trust records per result
+	Limit      int             ``                  // If non-zero, limit maximum lower trust records per result
+	SortOrder  string          `json:",omitempty"` // Sort order within each result
 }
 
 // APIQueryResult (response, part of APIQueryResults) is a single query result.
 type APIQueryResult struct {
-	Hash            HashBlob ``                  // Hash of this specific unique record
-	Size            int      ``                  // Size of this record in bytes
-	Record          *Record  `json:",omitempty"` // Record itself.
-	Value           Blob     `json:",omitempty"` // Unmasked value if masking key was included
-	UnmaskingFailed *bool    `json:",omitempty"` // If true, unmasking failed due to invalid masking key in query (or invalid compressed data in valid)
-	Trust           int      ``                  // Trust metric from 0 to 1000 computed from local reputation and trusted commentary
-	Weight          [16]byte `json:",omitempty"` // Record weight as a 128-bit big-endian value
+	Hash   HashBlob ``                  // Hash of this specific unique record
+	Size   int      ``                  // Size of this record in bytes
+	Record *Record  `json:",omitempty"` // Record itself.
+	Value  Blob     `json:",omitempty"` // Unmasked value if masking key was included and valid
+	Trust  int      ``                  // Trust metric from 0 to 1000 computed from local reputation and trusted commentary
+	Weight [16]byte `json:",omitempty"` // Record weight as a 128-bit big-endian value
 }
 
 // APIQueryResults is a list of results to an API query.
@@ -147,11 +145,9 @@ func (m *APIQuery) execute(n *Node) (qr APIQueryResults, err *APIError) {
 				return nil, &APIError{http.StatusInternalServerError, "error retrieving record data: " + err.Error()}
 			}
 
-			var mkinv *bool
 			v, err := rec.GetValue(m.MaskingKey)
 			if err != nil {
 				v = nil
-				mkinv = &troo
 			}
 
 			var trust float64
@@ -166,43 +162,54 @@ func (m *APIQuery) execute(n *Node) (qr APIQueryResults, err *APIError) {
 
 			if rn == 0 {
 				qr = append(qr, []APIQueryResult{APIQueryResult{
-					Hash:            rec.Hash(),
-					Size:            int(result.dlen),
-					Record:          rec,
-					Value:           v,
-					UnmaskingFailed: mkinv,
-					Trust:           trustInt,
-					Weight:          weight,
+					Hash:   rec.Hash(),
+					Size:   int(result.dlen),
+					Record: rec,
+					Value:  v,
+					Trust:  trustInt,
+					Weight: weight,
 				}})
-			} else if m.Limit <= 0 || rn < m.Limit {
-				qr[len(qr)-1] = append(qr[len(qr)-1], APIQueryResult{
-					Hash:            rec.Hash(),
-					Size:            int(result.dlen),
-					Record:          rec,
-					Value:           v,
-					UnmaskingFailed: mkinv,
-					Trust:           trustInt,
-					Weight:          weight,
-				})
 			} else {
-				break
+				qr[len(qr)-1] = append(qr[len(qr)-1], APIQueryResult{
+					Hash:   rec.Hash(),
+					Size:   int(result.dlen),
+					Record: rec,
+					Value:  v,
+					Trust:  trustInt,
+					Weight: weight,
+				})
 			}
 		}
 	}
 
-	// Sort each element in qr[] by trust metric and weight
-	for _, qrr := range qr {
-		sort.Slice(qrr, func(b, a int) bool {
-			if qrr[a].Trust < qrr[b].Trust {
-				return true
-			} else if qrr[a].Trust == qrr[b].Trust {
+	// Sort within each result
+	for qri, qrr := range qr {
+		if len(m.SortOrder) == 0 || m.SortOrder == "trust" {
+			sort.Slice(qrr, func(b, a int) bool {
+				if qrr[a].Trust < qrr[b].Trust {
+					return true
+				} else if qrr[a].Trust == qrr[b].Trust {
+					return bytes.Compare(qrr[a].Weight[:], qrr[b].Weight[:]) < 0
+				}
+				return false
+			})
+		} else if m.SortOrder == "weight" {
+			sort.Slice(qrr, func(b, a int) bool {
 				return bytes.Compare(qrr[a].Weight[:], qrr[b].Weight[:]) < 0
-			}
-			return false
-		})
+			})
+		} else if m.SortOrder == "timestamp" {
+			sort.Slice(qrr, func(b, a int) bool {
+				return qrr[a].Record.Timestamp < qrr[b].Record.Timestamp
+			})
+		} else {
+			return nil, &APIError{http.StatusBadRequest, "valid sort order values: trust (default), weight, timestamp"}
+		}
+		if m.Limit > 0 && len(qrr) > m.Limit {
+			qr[qri] = qrr[0:m.Limit]
+		}
 	}
 
-	// Sort root qr[] by selector ordinals.
+	// Sort overall results
 	sort.Slice(qr, func(a, b int) bool {
 		sa := qr[a][0].Record.Selectors
 		sb := qr[b][0].Record.Selectors

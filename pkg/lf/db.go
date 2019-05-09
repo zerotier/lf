@@ -312,7 +312,7 @@ func (db *db) getAllByOwner(owner []byte, f func(uint64, uint64, int) bool) erro
 	if uintptr(unsafe.Pointer(results)) != 0 {
 		for i := C.long(0); i < results.count; i++ {
 			rec := (*C.struct_ZTLF_RecordIndex)(unsafe.Pointer(uintptr(unsafe.Pointer(&results.records[0])) + (uintptr(i) * unsafe.Sizeof(results.records[0]))))
-			if !f(uint64(rec.doff), uint64(rec.dlen), int(rec.reputation)) {
+			if !f(uint64(rec.doff), uint64(rec.dlen), int(rec.localReputation)) {
 				break
 			}
 		}
@@ -334,7 +334,7 @@ func (db *db) getAllByIDNotOwner(id []byte, owner []byte, f func(uint64, uint64,
 	if uintptr(unsafe.Pointer(results)) != 0 {
 		for i := C.long(0); i < results.count; i++ {
 			rec := (*C.struct_ZTLF_RecordIndex)(unsafe.Pointer(uintptr(unsafe.Pointer(&results.records[0])) + (uintptr(i) * unsafe.Sizeof(results.records[0]))))
-			if !f(uint64(rec.doff), uint64(rec.dlen), int(rec.reputation)) {
+			if !f(uint64(rec.doff), uint64(rec.dlen), int(rec.localReputation)) {
 				break
 			}
 		}

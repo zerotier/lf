@@ -42,9 +42,8 @@ static void *_ZTLF_DB_graphThreadMain(void *arg);
  *   ts                       record timestamp
  *   score                    score of this record (alone, not with weight from links)
  *   link_count               number of links from this record (actual links are in graph node)
- *   reputation               records will only be linked if greater than 0
+ *   reputation               records will only be linked TO if greater than 0
  *   linked_count             number of records linking to this one
- *   selector_count           number of selectors for this record
  *   hash                     shandwich256(record data) (unique key)
  *   id                       hash of selector IDs
  *   ckey                     CRC64 of all selector keys
@@ -119,7 +118,6 @@ static void *_ZTLF_DB_graphThreadMain(void *arg);
 "link_count INTEGER NOT NULL," \
 "reputation INTEGER NOT NULL," \
 "linked_count INTEGER NOT NULL," \
-"selector_count INTEGER NOT NULL," \
 "hash BLOB NOT NULL," \
 "id BLOB NOT NULL," \
 "ckey INTEGER NOT NULL," \
@@ -260,7 +258,7 @@ int ZTLF_DB_Open(
 	S(db->sGetConfig,
 		"SELECT \"v\" FROM config WHERE \"k\" = ?");
 	S(db->sAddRecord,
-		"INSERT INTO record (doff,dlen,goff,rtype,ts,score,link_count,reputation,linked_count,selector_count,hash,id,ckey,owner) VALUES (?,?,?,?,?,?,?,?,0,?,?,?,?,?)");
+		"INSERT INTO record (doff,dlen,goff,rtype,ts,score,link_count,reputation,linked_count,hash,id,ckey,owner) VALUES (?,?,?,?,?,?,?,?,0,?,?,?,?)");
 	S(db->sIncRecordLinkedCountByGoff,
 		"UPDATE record SET linked_count = (linked_count + 1) WHERE goff = ?");
 	S(db->sAddSelector,
@@ -290,7 +288,7 @@ int ZTLF_DB_Open(
 		"AND r.owner = ? "
 		"AND NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) "
 		"AND NOT EXISTS (SELECT gp.record_goff FROM graph_pending AS gp WHERE gp.record_goff = r.goff) "
-		"ORDER BY r.reputation DESC LIMIT 1"); /* we want no rows at all if there aren't any and MAX() == NULL in this case */
+		"ORDER BY r.reputation ASC LIMIT 1"); /* get minimum reputation for ID/owner combo */
 	S(db->sHaveRecordsWithIDNotOwner,
 		"SELECT doff FROM record WHERE id = ? AND owner != ? LIMIT 1");
 	S(db->sDemoteCollisions,
@@ -859,7 +857,7 @@ int ZTLF_DB_PutRecord(
 	const void *id,
 	const uint64_t ts,
 	const uint32_t score,
-	const void **sel,
+	const void **selKey,
 	const unsigned int selCount,
 	const void *links,
 	const unsigned int linkCount)
@@ -961,10 +959,13 @@ int ZTLF_DB_PutRecord(
 		}
 	}
 
-	/* Create composite selector key for grouping of ranged selectors on query */
+	/* Create composite selector key for grouping of ranged selectors on query.
+	 * A secure hash is not important here since these are themselves hashes
+	 * (making collisions hard) and this is only used for disambiguation of
+	 * selector combos within a given owner anyway. */
 	uint64_t ckey = 0;
 	for(unsigned int i=0;i<selCount;++i) {
-		ckey = _ZTLF_CRC64(ckey,sel[i],32);
+		ckey = _ZTLF_CRC64(ckey,(const uint8_t *)(selKey[i]),32);
 	}
 
 	/* Add main record entry. */
@@ -977,11 +978,10 @@ int ZTLF_DB_PutRecord(
 	sqlite3_bind_int64(db->sAddRecord,6,(sqlite3_int64)score);
 	sqlite3_bind_int(db->sAddRecord,7,(int)linkCount);
 	sqlite3_bind_int(db->sAddRecord,8,reputation);
-	sqlite3_bind_int(db->sAddRecord,9,(int)selCount);
-	sqlite3_bind_blob(db->sAddRecord,10,hash,32,SQLITE_STATIC);
-	sqlite3_bind_blob(db->sAddRecord,11,id,32,SQLITE_STATIC);
-	sqlite3_bind_int64(db->sAddRecord,12,(sqlite_int64)ckey);
-	sqlite3_bind_blob(db->sAddRecord,13,owner,ownerSize,SQLITE_STATIC);
+	sqlite3_bind_blob(db->sAddRecord,9,hash,32,SQLITE_STATIC);
+	sqlite3_bind_blob(db->sAddRecord,10,id,32,SQLITE_STATIC);
+	sqlite3_bind_int64(db->sAddRecord,11,(sqlite_int64)ckey);
+	sqlite3_bind_blob(db->sAddRecord,12,owner,ownerSize,SQLITE_STATIC);
 	if ((e = sqlite3_step(db->sAddRecord)) != SQLITE_DONE) {
 		result = ZTLF_POS(e);
 		goto exit_putRecord;
@@ -990,7 +990,7 @@ int ZTLF_DB_PutRecord(
 	/* Add selectors for this record. */
 	for(unsigned int i=0;i<selCount;++i) {
 		sqlite3_reset(db->sAddSelector);
-		sqlite3_bind_blob(db->sAddSelector,1,sel[i],32,SQLITE_STATIC);
+		sqlite3_bind_blob(db->sAddSelector,1,selKey[i],32,SQLITE_STATIC);
 		sqlite3_bind_int(db->sAddSelector,2,(int)i);
 		sqlite3_bind_int64(db->sAddSelector,3,(sqlite3_int64)ts);
 		sqlite3_bind_int64(db->sAddSelector,4,doff);
@@ -1123,21 +1123,7 @@ struct ZTLF_QueryResults *ZTLF_DB_Query(struct ZTLF_DB *db,const int64_t tsMin,c
 	}
 
 	for(unsigned int i=0,j=0;i<selCount;++i) {
-		if (i > 0) {
-			/* Subsequent iterations are "AND" queries that remove non-matching records (set union). */
-			sqlite3_reset(db->sQueryAndSelectorRange);
-			sqlite3_bind_blob(db->sQueryAndSelectorRange,1,sel[j],(int)selSize[j],SQLITE_STATIC);
-			++j;
-			sqlite3_bind_blob(db->sQueryAndSelectorRange,2,sel[j],(int)selSize[j],SQLITE_STATIC);
-			++j;
-			sqlite3_bind_int(db->sQueryAndSelectorRange,3,(int)i);
-			sqlite3_bind_int64(db->sQueryAndSelectorRange,4,(sqlite_int64)tsMin);
-			sqlite3_bind_int64(db->sQueryAndSelectorRange,5,(sqlite_int64)tsMax);
-			if (sqlite3_step(db->sQueryAndSelectorRange) != SQLITE_DONE) {
-				ZTLF_L_warning("database error querying selector range into record ID cache (AND): %s",sqlite3_errmsg(db->dbc));
-				goto query_error;
-			}
-		} else {
+		if (i == 0) {
 			/* The first iteration uses the "OR" query which adds matching records to the temporary table. */
 			sqlite3_reset(db->sQueryOrSelectorRange);
 			sqlite3_bind_blob(db->sQueryOrSelectorRange,1,sel[j],(int)selSize[j],SQLITE_STATIC);
@@ -1151,16 +1137,30 @@ struct ZTLF_QueryResults *ZTLF_DB_Query(struct ZTLF_DB *db,const int64_t tsMin,c
 				ZTLF_L_warning("database error querying selector range into record ID cache: %s",sqlite3_errmsg(db->dbc));
 				goto query_error;
 			}
+		} else {
+			/* Subsequent iterations are "AND" queries that remove non-matching records from the temporary table (set union). */
+			sqlite3_reset(db->sQueryAndSelectorRange);
+			sqlite3_bind_blob(db->sQueryAndSelectorRange,1,sel[j],(int)selSize[j],SQLITE_STATIC);
+			++j;
+			sqlite3_bind_blob(db->sQueryAndSelectorRange,2,sel[j],(int)selSize[j],SQLITE_STATIC);
+			++j;
+			sqlite3_bind_int(db->sQueryAndSelectorRange,3,(int)i);
+			sqlite3_bind_int64(db->sQueryAndSelectorRange,4,(sqlite_int64)tsMin);
+			sqlite3_bind_int64(db->sQueryAndSelectorRange,5,(sqlite_int64)tsMax);
+			if (sqlite3_step(db->sQueryAndSelectorRange) != SQLITE_DONE) {
+				ZTLF_L_warning("database error querying selector range into record ID cache (AND): %s",sqlite3_errmsg(db->dbc));
+				goto query_error;
+			}
 		}
 	}
 
 	/* Get final results */
 	r->count = -1; /* gets incremented on very first iteration */
-	sqlite3_reset(db->sQueryGetResults);
 	uint8_t lastOwner[ZTLF_DB_QUERY_MAX_OWNER_SIZE];
 	sqlite_int64 lastKey = 0;
 	memset(lastOwner,0,sizeof(lastOwner));
 	int lastOwnerSize = -1;
+	sqlite3_reset(db->sQueryGetResults);
 	while (sqlite3_step(db->sQueryGetResults) == SQLITE_ROW) { /* columns: doff,dlen,goff,ts,reputation,key,owner */
 		const void *owner = sqlite3_column_blob(db->sQueryGetResults,6);
 		const int ownerSize = sqlite3_column_bytes(db->sQueryGetResults,6);
@@ -1190,7 +1190,7 @@ struct ZTLF_QueryResults *ZTLF_DB_Query(struct ZTLF_DB *db,const int64_t tsMin,c
 			qr->weightL = 0;
 			qr->weightH = 0;
 			qr->ownerSize = (unsigned int)ownerSize;
-			qr->localReputation = 0;
+			qr->localReputation = 1; /* this gets set to minimum of all records in a group */
 			qr->key = (uint64_t)key;
 			memcpy(qr->owner,owner,ownerSize);
 		} else {
@@ -1200,16 +1200,19 @@ struct ZTLF_QueryResults *ZTLF_DB_Query(struct ZTLF_DB *db,const int64_t tsMin,c
 		const struct ZTLF_DB_GraphNode *const gn = (struct ZTLF_DB_GraphNode *)ZTLF_MappedFile_TryGet(&db->gf,(uintptr_t)sqlite3_column_int64(db->sQueryGetResults,2),ZTLF_DB_MAX_GRAPH_NODE_SIZE);
 		if (gn) { /* sanity check, should be impossible to be NULL */
 			qr->ts = (uint64_t)sqlite3_column_int64(db->sQueryGetResults,3);
+
+			/* Add this record's weight to total weight. */
 			uint32_t w96l,w96m,w96h;
 			ZTLF_SUint96_Get(&db->wf,(uintptr_t)gn->weightsFileOffset,&w96l,&w96m,&w96h);
 			uint64_t oldwl = qr->weightL;
-			qr->weightH += (uint64_t)((qr->weightL += w96l) < oldwl);
+			qr->weightH += (uint64_t)((qr->weightL += w96l) < oldwl); /* add least significant 32 to least significant 64 with carry */
 			oldwl = qr->weightL;
-			qr->weightH += (uint64_t)((qr->weightL += ((uint64_t)w96m) << 32) < oldwl) + (uint64_t)w96h;
+			qr->weightH += (uint64_t)((qr->weightL += ((uint64_t)w96m) << 32) < oldwl) + (uint64_t)w96h; /* add middle 32 to least significant 64 with carry, then add most significant 32 to most significant 64 */
+
 			qr->doff = (uint64_t)sqlite3_column_int64(db->sQueryGetResults,0);
 			qr->dlen = (unsigned int)sqlite3_column_int(db->sQueryGetResults,1);
 			const int rep = sqlite3_column_int(db->sQueryGetResults,4);
-			if (rep > qr->localReputation)
+			if (rep < qr->localReputation)
 				qr->localReputation = rep;
 		}
 	}
@@ -1250,7 +1253,7 @@ struct ZTLF_RecordList *ZTLF_DB_GetAllByOwner(struct ZTLF_DB *db,const void *own
 	while (sqlite3_step(db->sGetAllByOwner) == SQLITE_ROW) {
 		r->records[r->count].doff = (uint64_t)sqlite3_column_int64(db->sGetAllByOwner,0);
 		r->records[r->count].dlen = (uint64_t)sqlite3_column_int64(db->sGetAllByOwner,1);
-		r->records[r->count].reputation = sqlite3_column_int(db->sGetAllByOwner,2);
+		r->records[r->count].localReputation = sqlite3_column_int(db->sGetAllByOwner,2);
 		++r->count;
 		if (r->count >= rcap) {
 			void *const nr = realloc(r,sizeof(struct ZTLF_RecordList) + (sizeof(struct ZTLF_RecordIndex) * (rcap *= 2)));
@@ -1286,7 +1289,7 @@ struct ZTLF_RecordList *ZTLF_DB_GetAllByIDNotOwner(struct ZTLF_DB *db,const void
 	while (sqlite3_step(db->sGetAllByIDNotOwner) == SQLITE_ROW) {
 		r->records[r->count].doff = (uint64_t)sqlite3_column_int64(db->sGetAllByIDNotOwner,0);
 		r->records[r->count].dlen = (uint64_t)sqlite3_column_int64(db->sGetAllByIDNotOwner,1);
-		r->records[r->count].reputation = sqlite3_column_int(db->sGetAllByIDNotOwner,2);
+		r->records[r->count].localReputation = sqlite3_column_int(db->sGetAllByIDNotOwner,2);
 		++r->count;
 		if (r->count >= rcap) {
 			void *const nr = realloc(r,sizeof(struct ZTLF_RecordList) + (sizeof(struct ZTLF_RecordIndex) * (rcap *= 2)));
