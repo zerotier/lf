@@ -28,7 +28,6 @@ package lf
 
 import (
 	"bytes"
-	"crypto/aes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/sha256"
@@ -44,6 +43,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"../../third_party/lfmd5"
 	"golang.org/x/crypto/sha3"
 )
 
@@ -60,10 +60,11 @@ func sliceContainsUInt(s []uint, e uint) bool {
 
 // TestCore tests various core functions and helpers.
 func TestCore(out io.Writer) bool {
+	testStr := []byte("My hovercraft is full of eels.") // input for hash tests
+
 	// This checks to make sure the Sum method of hashes fills arrays as expected.
 	// This is sort of an ambiguous behavior in the API docs, so we want to detect
 	// if the actual behavior changes. If it does we'll have to change a few spots.
-	testStr := []byte("My hovercraft is full of eels.")
 	fmt.Fprintf(out, "Testing hash slice filling behavior (API behavior check)... ")
 	ref := sha256.Sum256(testStr)
 	th := sha256.New()
@@ -87,6 +88,18 @@ func TestCore(out io.Writer) bool {
 		fmt.Fprintf(out, "FAILED\n")
 		return false
 	}
+
+	fmt.Fprintf(out, "Testing built-in fork of MD5 (used in proof of work function)... ")
+	var mymd5test lfmd5.Digest
+	mymd5test.Reset()
+	mymd5test.Write(testStr)
+	var mymd5out [16]byte
+	mymd5test.FastSum(mymd5out[:])
+	if hex.EncodeToString(mymd5out[:]) != "d464064618e61b35dca3e5dee84c7b56" {
+		fmt.Fprintf(out, "FAILED %x\n", mymd5out)
+		return false
+	}
+	fmt.Fprintf(out, "OK\n")
 
 	fmt.Fprintf(out, "Testing Shandwich256... ")
 	t0 := Shandwich256(testStr)
@@ -294,23 +307,6 @@ func TestWharrgarbl(out io.Writer) bool {
 
 	// Have to do this here to generate the table
 	wg := NewWharrgarblr(RecordDefaultWharrgarblMemory, 0)
-
-	// Test Wharrgarbl's internal collision hash to make sure it's generating consistent results across platforms
-	junk = sha256.Sum256([]byte("asdfasdf"))
-	tc0, _ := aes.NewCipher(junk[:])
-	tc1, _ := aes.NewCipher(junk[:])
-	var testIn [16]byte
-	for i := 0; i < 16; i++ {
-		testIn[i] = byte(i)
-	}
-	th := wharrgarblHash(tc0, tc1, make([]byte, 16), &testIn)
-	fmt.Fprintf(out, "Testing Wharrgarbl keyed 64-bit hash function... %.16x ", th)
-	if th == 0x09b4a1fcb53537e6 {
-		fmt.Fprintf(out, "OK\n")
-	} else {
-		fmt.Fprintf(out, "FAILED\n")
-		return false
-	}
 
 	fmt.Fprintf(out, "Wharrgarbl cost and score:\n")
 	for s := uint(1); s <= RecordMaxSize; s *= 2 {

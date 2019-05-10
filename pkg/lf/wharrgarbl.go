@@ -39,12 +39,14 @@ import (
 	"runtime"
 	"sync"
 	"sync/atomic"
+
+	"../../third_party/lfmd5"
 )
 
 // wharrgarblTableSize is the size of the static table used by wharrgarblHash
 const wharrgarblTableSize = 0x8000000
 
-// wharrgarblTableMask is the mask to constrain a value to 0..wharrgarblTableSize
+// wharrgarblTableMask is the mask to constrain a value to 0..wharrgarblTableSize (faster than modulus)
 const wharrgarblTableMask = 0x7ffffff
 
 var wharrgarblTable *[wharrgarblTableSize]byte
@@ -61,449 +63,79 @@ type Wharrgarblr struct {
 	done        uint32
 }
 
-// wharrgarblHash is a loosely Matyer-Meyer-Oseas inspired keyed 64-bit single block hash.
-// This is only used for Wharrgarbl, not as a hash for authentication or other "harder" security needs.
-func wharrgarblHash(cipher0, cipher1 cipher.Block, tmp []byte, in *[16]byte) uint64 {
+// wharrgarblFrankenhash combines AES and MD5 with random accesses to a big static memory table for an
+// intentionally slow keyed (via AES) collision target hash. MD5's security issues don't matter here.
+// It was chosen because it's fast on many architectures and ASM implementations are readily available.
+// A forked MD5 implementation is used that's been hacked for better performance as a short input hash.
+func wharrgarblFrankenhash(md5 *lfmd5.Digest, cipher0, cipher1 cipher.Block, tmp []byte, in *[16]byte) uint64 {
 	_ = tmp[15]
-	_ = wharrgarblTable[wharrgarblTableSize-1]
-
-	////////////////////////////////////////////////////////////////////////////
 
 	cipher0.Encrypt(tmp, in[:])
 	cipher1.Encrypt(tmp, tmp)
 
-	x := binary.BigEndian.Uint64(tmp[0:8]) + binary.BigEndian.Uint64(tmp[8:16])
-	xorShift64Const := uint64(0x2545f4914f6cdd1d)
-
-	cipher1.Encrypt(tmp, tmp)
-	cipher0.Encrypt(tmp, tmp)
-
-	////////////////////////////////////////////////////////////////////////////
-
-	tmp[0] ^= in[0] + wharrgarblTable[x&wharrgarblTableMask]
-
-	x ^= x >> 12
-	x ^= x << 25
-	x ^= x >> 27
-	x *= xorShift64Const
-	x += uint64(tmp[0])
-
-	tmp[1] ^= in[1] - wharrgarblTable[x&wharrgarblTableMask]
-
-	x ^= x >> 12
-	x ^= x << 25
-	x ^= x >> 27
-	x *= xorShift64Const
-	x += uint64(tmp[1])
-
-	tmp[2] ^= in[2] + wharrgarblTable[x&wharrgarblTableMask]
-
-	x ^= x >> 12
-	x ^= x << 25
-	x ^= x >> 27
-	x *= xorShift64Const
-	x += uint64(tmp[2])
-
-	tmp[3] ^= in[3] - wharrgarblTable[x&wharrgarblTableMask]
-
-	x ^= x >> 12
-	x ^= x << 25
-	x ^= x >> 27
-	x *= xorShift64Const
-	x += uint64(tmp[3])
-
-	tmp[4] ^= in[4] + wharrgarblTable[x&wharrgarblTableMask]
-
-	x ^= x >> 12
-	x ^= x << 25
-	x ^= x >> 27
-	x *= xorShift64Const
-	x += uint64(tmp[4])
-
-	tmp[5] ^= in[5] - wharrgarblTable[x&wharrgarblTableMask]
-
-	x ^= x >> 12
-	x ^= x << 25
-	x ^= x >> 27
-	x *= xorShift64Const
-	x += uint64(tmp[5])
-
-	tmp[6] ^= in[6] + wharrgarblTable[x&wharrgarblTableMask]
-
-	x ^= x >> 12
-	x ^= x << 25
-	x ^= x >> 27
-	x *= xorShift64Const
-	x += uint64(tmp[6])
-
-	tmp[7] ^= in[7] - wharrgarblTable[x&wharrgarblTableMask]
-
-	x ^= x >> 12
-	x ^= x << 25
-	x ^= x >> 27
-	x *= xorShift64Const
-	x += uint64(tmp[7])
-
-	tmp[8] ^= in[8] + wharrgarblTable[x&wharrgarblTableMask]
-
-	x ^= x >> 12
-	x ^= x << 25
-	x ^= x >> 27
-	x *= xorShift64Const
-	x += uint64(tmp[8])
-
-	tmp[9] ^= in[9] - wharrgarblTable[x&wharrgarblTableMask]
-
-	x ^= x >> 12
-	x ^= x << 25
-	x ^= x >> 27
-	x *= xorShift64Const
-	x += uint64(tmp[9])
-
-	tmp[10] ^= in[10] + wharrgarblTable[x&wharrgarblTableMask]
-
-	x ^= x >> 12
-	x ^= x << 25
-	x ^= x >> 27
-	x *= xorShift64Const
-	x += uint64(tmp[10])
-
-	tmp[11] ^= in[11] - wharrgarblTable[x&wharrgarblTableMask]
-
-	x ^= x >> 12
-	x ^= x << 25
-	x ^= x >> 27
-	x *= xorShift64Const
-	x += uint64(tmp[11])
-
-	tmp[12] ^= in[12] + wharrgarblTable[x&wharrgarblTableMask]
-
-	x ^= x >> 12
-	x ^= x << 25
-	x ^= x >> 27
-	x *= xorShift64Const
-	x += uint64(tmp[12])
-
-	tmp[13] ^= in[13] - wharrgarblTable[x&wharrgarblTableMask]
-
-	x ^= x >> 12
-	x ^= x << 25
-	x ^= x >> 27
-	x *= xorShift64Const
-	x += uint64(tmp[13])
-
-	tmp[14] ^= in[14] + wharrgarblTable[x&wharrgarblTableMask]
-
-	x ^= x >> 12
-	x ^= x << 25
-	x ^= x >> 27
-	x *= xorShift64Const
-	x += uint64(tmp[14])
-
-	tmp[15] ^= in[15] - wharrgarblTable[x&wharrgarblTableMask]
-
-	////////////////////////////////////////////////////////////////////////////
-
-	cipher1.Encrypt(tmp, tmp)
-	cipher0.Encrypt(tmp, tmp)
-
-	y := binary.BigEndian.Uint64(tmp[0:8]) + binary.BigEndian.Uint64(tmp[8:16])
-
-	cipher0.Encrypt(tmp, tmp)
-	cipher1.Encrypt(tmp, tmp)
-
-	////////////////////////////////////////////////////////////////////////////
-
-	tmp[0] ^= in[0] + wharrgarblTable[x&wharrgarblTableMask]
-
-	x ^= x >> 12
-	x ^= x << 25
-	x ^= x >> 27
-	x *= xorShift64Const
-	x += uint64(tmp[0])
-
-	tmp[1] ^= in[1] - wharrgarblTable[x&wharrgarblTableMask]
-
-	x ^= x >> 12
-	x ^= x << 25
-	x ^= x >> 27
-	x *= xorShift64Const
-	x += uint64(tmp[1])
-
-	tmp[2] ^= in[2] + wharrgarblTable[x&wharrgarblTableMask]
-
-	x ^= x >> 12
-	x ^= x << 25
-	x ^= x >> 27
-	x *= xorShift64Const
-	x += uint64(tmp[2])
-
-	tmp[3] ^= in[3] - wharrgarblTable[x&wharrgarblTableMask]
-
-	x ^= x >> 12
-	x ^= x << 25
-	x ^= x >> 27
-	x *= xorShift64Const
-	x += uint64(tmp[3])
-
-	tmp[4] ^= in[4] + wharrgarblTable[x&wharrgarblTableMask]
-
-	x ^= x >> 12
-	x ^= x << 25
-	x ^= x >> 27
-	x *= xorShift64Const
-	x += uint64(tmp[4])
-
-	tmp[5] ^= in[5] - wharrgarblTable[x&wharrgarblTableMask]
-
-	x ^= x >> 12
-	x ^= x << 25
-	x ^= x >> 27
-	x *= xorShift64Const
-	x += uint64(tmp[5])
-
-	tmp[6] ^= in[6] + wharrgarblTable[x&wharrgarblTableMask]
-
-	x ^= x >> 12
-	x ^= x << 25
-	x ^= x >> 27
-	x *= xorShift64Const
-	x += uint64(tmp[6])
-
-	tmp[7] ^= in[7] - wharrgarblTable[x&wharrgarblTableMask]
-
-	x ^= x >> 12
-	x ^= x << 25
-	x ^= x >> 27
-	x *= xorShift64Const
-	x += uint64(tmp[7])
-
-	tmp[8] ^= in[8] + wharrgarblTable[x&wharrgarblTableMask]
-
-	x ^= x >> 12
-	x ^= x << 25
-	x ^= x >> 27
-	x *= xorShift64Const
-	x += uint64(tmp[8])
-
-	tmp[9] ^= in[9] - wharrgarblTable[x&wharrgarblTableMask]
-
-	x ^= x >> 12
-	x ^= x << 25
-	x ^= x >> 27
-	x *= xorShift64Const
-	x += uint64(tmp[9])
-
-	tmp[10] ^= in[10] + wharrgarblTable[x&wharrgarblTableMask]
-
-	x ^= x >> 12
-	x ^= x << 25
-	x ^= x >> 27
-	x *= xorShift64Const
-	x += uint64(tmp[10])
-
-	tmp[11] ^= in[11] - wharrgarblTable[x&wharrgarblTableMask]
-
-	x ^= x >> 12
-	x ^= x << 25
-	x ^= x >> 27
-	x *= xorShift64Const
-	x += uint64(tmp[11])
-
-	tmp[12] ^= in[12] + wharrgarblTable[x&wharrgarblTableMask]
-
-	x ^= x >> 12
-	x ^= x << 25
-	x ^= x >> 27
-	x *= xorShift64Const
-	x += uint64(tmp[12])
-
-	tmp[13] ^= in[13] - wharrgarblTable[x&wharrgarblTableMask]
-
-	x ^= x >> 12
-	x ^= x << 25
-	x ^= x >> 27
-	x *= xorShift64Const
-	x += uint64(tmp[13])
-
-	tmp[14] ^= in[14] + wharrgarblTable[x&wharrgarblTableMask]
-
-	x ^= x >> 12
-	x ^= x << 25
-	x ^= x >> 27
-	x *= xorShift64Const
-	x += uint64(tmp[14])
-
-	tmp[15] ^= in[15] - wharrgarblTable[x&wharrgarblTableMask]
-
-	////////////////////////////////////////////////////////////////////////////
-
-	cipher0.Encrypt(tmp, tmp)
-	cipher1.Encrypt(tmp, tmp)
-
-	y ^= binary.BigEndian.Uint64(tmp[0:8]) + binary.BigEndian.Uint64(tmp[8:16])
-
-	cipher1.Encrypt(tmp, tmp)
-	cipher0.Encrypt(tmp, tmp)
-
-	////////////////////////////////////////////////////////////////////////////
-
-	tmp[0] ^= in[0] + wharrgarblTable[x&wharrgarblTableMask]
-
-	x ^= x >> 12
-	x ^= x << 25
-	x ^= x >> 27
-	x *= xorShift64Const
-	x += uint64(tmp[0])
-
-	tmp[1] ^= in[1] - wharrgarblTable[x&wharrgarblTableMask]
-
-	x ^= x >> 12
-	x ^= x << 25
-	x ^= x >> 27
-	x *= xorShift64Const
-	x += uint64(tmp[1])
-
-	tmp[2] ^= in[2] + wharrgarblTable[x&wharrgarblTableMask]
-
-	x ^= x >> 12
-	x ^= x << 25
-	x ^= x >> 27
-	x *= xorShift64Const
-	x += uint64(tmp[2])
-
-	tmp[3] ^= in[3] - wharrgarblTable[x&wharrgarblTableMask]
-
-	x ^= x >> 12
-	x ^= x << 25
-	x ^= x >> 27
-	x *= xorShift64Const
-	x += uint64(tmp[3])
-
-	tmp[4] ^= in[4] + wharrgarblTable[x&wharrgarblTableMask]
-
-	x ^= x >> 12
-	x ^= x << 25
-	x ^= x >> 27
-	x *= xorShift64Const
-	x += uint64(tmp[4])
-
-	tmp[5] ^= in[5] - wharrgarblTable[x&wharrgarblTableMask]
-
-	x ^= x >> 12
-	x ^= x << 25
-	x ^= x >> 27
-	x *= xorShift64Const
-	x += uint64(tmp[5])
-
-	tmp[6] ^= in[6] + wharrgarblTable[x&wharrgarblTableMask]
-
-	x ^= x >> 12
-	x ^= x << 25
-	x ^= x >> 27
-	x *= xorShift64Const
-	x += uint64(tmp[6])
-
-	tmp[7] ^= in[7] - wharrgarblTable[x&wharrgarblTableMask]
-
-	x ^= x >> 12
-	x ^= x << 25
-	x ^= x >> 27
-	x *= xorShift64Const
-	x += uint64(tmp[7])
-
-	tmp[8] ^= in[8] + wharrgarblTable[x&wharrgarblTableMask]
-
-	x ^= x >> 12
-	x ^= x << 25
-	x ^= x >> 27
-	x *= xorShift64Const
-	x += uint64(tmp[8])
-
-	tmp[9] ^= in[9] - wharrgarblTable[x&wharrgarblTableMask]
-
-	x ^= x >> 12
-	x ^= x << 25
-	x ^= x >> 27
-	x *= xorShift64Const
-	x += uint64(tmp[9])
-
-	tmp[10] ^= in[10] + wharrgarblTable[x&wharrgarblTableMask]
-
-	x ^= x >> 12
-	x ^= x << 25
-	x ^= x >> 27
-	x *= xorShift64Const
-	x += uint64(tmp[10])
-
-	tmp[11] ^= in[11] - wharrgarblTable[x&wharrgarblTableMask]
-
-	x ^= x >> 12
-	x ^= x << 25
-	x ^= x >> 27
-	x *= xorShift64Const
-	x += uint64(tmp[11])
-
-	tmp[12] ^= in[12] + wharrgarblTable[x&wharrgarblTableMask]
-
-	x ^= x >> 12
-	x ^= x << 25
-	x ^= x >> 27
-	x *= xorShift64Const
-	x += uint64(tmp[12])
-
-	tmp[13] ^= in[13] - wharrgarblTable[x&wharrgarblTableMask]
-
-	x ^= x >> 12
-	x ^= x << 25
-	x ^= x >> 27
-	x *= xorShift64Const
-	x += uint64(tmp[13])
-
-	tmp[14] ^= in[14] + wharrgarblTable[x&wharrgarblTableMask]
-
-	x ^= x >> 12
-	x ^= x << 25
-	x ^= x >> 27
-	x *= xorShift64Const
-	x += uint64(tmp[14])
-
-	tmp[15] ^= in[15] - wharrgarblTable[x&wharrgarblTableMask]
-
-	////////////////////////////////////////////////////////////////////////////
-
-	cipher1.Encrypt(tmp, tmp)
-
-	if tmp[0] > 241 || tmp[6] < 3 { // GPUs often suck at branching
-		cipher0.Encrypt(tmp, tmp)
-		cipher1.Encrypt(tmp, tmp)
-		if tmp[3] > 239 {
+	md5.Reset()
+	md5.Write(in[:])
+	md5.Write(tmp)
+
+	for k, nn := 0, 1+(int(tmp[0])%6); k < nn; k++ {
+		for i := 0; i < 8; i++ {
+			tmp[i] ^= wharrgarblTable[binary.LittleEndian.Uint32(tmp)&wharrgarblTableMask]
+			cipher0.Encrypt(tmp, tmp)
+		}
+		md5.Write(tmp)
+
+		for i := 0; i < 8; i++ {
+			tmp[i] ^= wharrgarblTable[binary.LittleEndian.Uint32(tmp)&wharrgarblTableMask]
 			cipher1.Encrypt(tmp, tmp)
-			if tmp[14] > 251 {
-				for k := 0; k < 251; k++ {
-					if tmp[1] == 7 {
-						cipher0.Encrypt(tmp, tmp)
-					} else {
-						cipher1.Encrypt(tmp, tmp)
-					}
-				}
+		}
+		md5.Write(tmp)
+
+		// GPUs generally suck at branching
+		switch tmp[0] & 7 {
+		case 0:
+			md5.Write(tmp)
+		case 1:
+			md5.Write(in[:])
+			md5.Write(tmp)
+			md5.Write(in[:])
+			md5.Write(tmp)
+		case 2:
+			cipher0.Encrypt(tmp, tmp)
+		case 3:
+			cipher1.Encrypt(tmp, tmp)
+			cipher0.Encrypt(tmp, tmp)
+		case 4:
+			cipher1.Encrypt(tmp, tmp)
+			cipher0.Encrypt(tmp, tmp)
+			cipher1.Encrypt(tmp, tmp)
+			cipher1.Encrypt(tmp, tmp)
+			cipher0.Encrypt(tmp, tmp)
+		case 5:
+			cipher1.Encrypt(tmp, tmp)
+			md5.Write(tmp)
+			cipher0.Encrypt(tmp, tmp)
+			md5.Write(tmp)
+			cipher1.Encrypt(tmp, tmp)
+			md5.Write(tmp)
+			cipher0.Encrypt(tmp, tmp)
+			md5.Write(tmp)
+		case 6:
+			for i := 1; i < 16; i++ {
+				tmp[i] += tmp[i-1]
 			}
+		case 7:
+			binary.LittleEndian.PutUint64(tmp, binary.LittleEndian.Uint64(tmp)+(binary.LittleEndian.Uint64(tmp)/(binary.LittleEndian.Uint64(tmp[8:16])|1)))
+		}
+		md5.Write(tmp)
+
+		// More branching triggering an occasional big memory read
+		if tmp[1] == 17 && tmp[7] < 7 && tmp[13] > 251 {
+			md5.Write(wharrgarblTable[:])
 		}
 	}
 
-	y ^= binary.BigEndian.Uint64(tmp[0:8]) + binary.BigEndian.Uint64(tmp[8:16])
-
-	cipher0.Encrypt(tmp, tmp)
-
-	y ^= binary.BigEndian.Uint64(tmp[0:8]) + binary.BigEndian.Uint64(tmp[8:16])
-
-	cipher0.Encrypt(tmp, tmp)
-
-	y ^= binary.BigEndian.Uint64(tmp[0:8]) + binary.BigEndian.Uint64(tmp[8:16])
-
-	cipher1.Encrypt(tmp, tmp)
-
-	return (binary.BigEndian.Uint64(tmp[0:8]) + binary.BigEndian.Uint64(tmp[8:16])) ^ y
+	md5.FastSum(tmp)
+	return binary.LittleEndian.Uint64(tmp[0:8]) ^ binary.LittleEndian.Uint64(tmp[8:16])
 }
 
 // WharrgarblInitTable initializes the internal memory table if it's not already.
@@ -574,6 +206,7 @@ func (wg *Wharrgarblr) internalWorkerFunc(mmoCipher0, mmoCipher1 cipher.Block, r
 	var tmpm [16]byte
 	var collisionHashIn [16]byte
 	var iter uint64
+	md5 := new(lfmd5.Digest)
 	tmp := tmpm[:]
 	ct := wg.memory
 	ctlen := uint(len(ct))
@@ -593,7 +226,7 @@ func (wg *Wharrgarblr) internalWorkerFunc(mmoCipher0, mmoCipher1 cipher.Block, r
 		collisionHashIn[5] = byte(thisCollider >> 16)
 		collisionHashIn[6] = byte(thisCollider >> 8)
 		collisionHashIn[7] = byte(thisCollider)
-		thisCollision := wharrgarblHash(mmoCipher0, mmoCipher1, tmp, &collisionHashIn) % diff64
+		thisCollision := wharrgarblFrankenhash(md5, mmoCipher0, mmoCipher1, tmp, &collisionHashIn) % diff64
 
 		// The collision table contains 64-bit entries indexed by collision. These contain
 		// the collider (least significant 40 bits) and 24 bits of the other collision. We
@@ -611,7 +244,7 @@ func (wg *Wharrgarblr) internalWorkerFunc(mmoCipher0, mmoCipher1 cipher.Block, r
 				collisionHashIn[5] = byte(otherCollider >> 16)
 				collisionHashIn[6] = byte(otherCollider >> 8)
 				collisionHashIn[7] = byte(otherCollider)
-				if (wharrgarblHash(mmoCipher0, mmoCipher1, tmp, &collisionHashIn) % diff64) == thisCollision {
+				if (wharrgarblFrankenhash(md5, mmoCipher0, mmoCipher1, tmp, &collisionHashIn) % diff64) == thisCollision {
 					atomic.StoreUint32(&wg.done, 1)
 					outLock.Lock()
 					out[0] = byte(thisCollider >> 32)
@@ -709,9 +342,10 @@ func WharrgarblVerify(work []byte, in []byte) uint32 {
 	diff64 := (uint64(difficulty) << 29) | 0x000000001fffffff
 	var collisions [2]uint64
 	var tmp [16]byte
+	var md5 lfmd5.Digest
 	for i := 0; i < 2; i++ {
 		binary.BigEndian.PutUint64(collisionHashIn[0:8], colliders[i])
-		collisions[i] = wharrgarblHash(mmoCipher0, mmoCipher1, tmp[:], &collisionHashIn) % diff64
+		collisions[i] = wharrgarblFrankenhash(&md5, mmoCipher0, mmoCipher1, tmp[:], &collisionHashIn) % diff64
 	}
 
 	if collisions[0] == collisions[1] {
