@@ -45,21 +45,17 @@ var (
 	b1_0 = []byte{0x00}
 	b1_1 = []byte{0x01}
 
-	brotliParams = func() (bp [2]*brotlienc.BrotliParams) {
-		bp[0] = brotlienc.NewBrotliParams()
-		bp[0].SetQuality(11)
-		bp[0].SetMode(brotlienc.TEXT)
-		bp[1] = brotlienc.NewBrotliParams()
-		bp[1].SetQuality(11)
-		bp[1].SetMode(brotlienc.GENERIC)
+	brotliParams = func() (bp *brotlienc.BrotliParams) {
+		bp = brotlienc.NewBrotliParams()
+		bp.SetQuality(11)
+		bp.SetMode(brotlienc.GENERIC)
 		return
 	}()
 )
 
 const (
-	recordBodyFlagHasCertificate byte = 0x01
-	recordBodyFlagHasType        byte = 0x02
-
+	// Flags are protocol constants and can't be changed.
+	recordBodyFlagHasType           byte   = 0x01
 	recordValueFlagBrotliCompressed uint32 = 0x80000000
 
 	// RecordDefaultWharrgarblMemory is the default amount of memory to use for Wharrgarbl momentum-type PoW.
@@ -77,7 +73,7 @@ const (
 	// This is a protocol constant and can't be changed.
 	RecordMaxSelectors = 16
 
-	// RecordWorkAlgorithmNone indicates no work algorithm (not allowed on main network but can exist in testing or private networks that are CA-only).
+	// RecordWorkAlgorithmNone indicates no work algorithm.
 	// This is a protocol constant and can't be changed.
 	RecordWorkAlgorithmNone byte = 0
 
@@ -146,12 +142,11 @@ func recordWharrgarblScore(cost uint32) uint32 {
 // recordBody represents the main body of a record including its value, owner public keys, etc.
 // It's included as part of Record but separated since in record construction we want to treat it as a separate element.
 type recordBody struct {
-	Value       Blob       `json:",omitempty"` // Record value (possibly masked and/or compressed, use GetValue() to get)
-	Owner       OwnerBlob  `json:",omitempty"` // Owner of this record (owner public bytes) in @base58string format
-	Certificate *HashBlob  `json:",omitempty"` // Hash (256-bit) of exact record containing certificate for this owner (if CAs are enabled)
-	Links       []HashBlob `json:",omitempty"` // Links to previous records' hashes
-	Timestamp   uint64     ``                  // Timestamp (and revision ID) in SECONDS since Unix epoch
-	Type        *byte      `json:",omitempty"` // Record type byte, RecordTypeDatum (0) if nil
+	Value     Blob       `json:",omitempty"` // Record value (possibly masked and/or compressed, use GetValue() to get)
+	Owner     OwnerBlob  `json:",omitempty"` // Owner of this record (owner public bytes) in @base58string format
+	Links     []HashBlob `json:",omitempty"` // Links to previous records' hashes
+	Timestamp uint64     ``                  // Timestamp (and revision ID) in SECONDS since Unix epoch
+	Type      *byte      `json:",omitempty"` // Record type byte, RecordTypeDatum (0) if nil
 
 	sigHash *[32]byte
 }
@@ -208,17 +203,6 @@ func (rb *recordBody) unmarshalFrom(r io.Reader) error {
 		rb.Owner = nil
 	}
 
-	if (flags & recordBodyFlagHasCertificate) != 0 {
-		var cert HashBlob
-		_, err = io.ReadFull(&rr, cert[:])
-		if err != nil {
-			return err
-		}
-		rb.Certificate = &cert
-	} else {
-		rb.Certificate = nil
-	}
-
 	l, err = binary.ReadUvarint(&rr)
 	if err != nil {
 		return err
@@ -249,18 +233,12 @@ func (rb *recordBody) unmarshalFrom(r io.Reader) error {
 }
 
 func (rb *recordBody) marshalTo(w io.Writer, hashAsProxyForValue bool) error {
-	var flags [2]byte
-	if rb.Certificate != nil {
-		flags[0] |= recordBodyFlagHasCertificate
-	}
 	if rb.Type != nil && *rb.Type != 0 {
-		flags[0] |= recordBodyFlagHasType
-		flags[1] = *rb.Type
-		if _, err := w.Write(flags[0:2]); err != nil {
+		if _, err := w.Write([]byte{recordBodyFlagHasType, *rb.Type}); err != nil {
 			return err
 		}
 	} else {
-		if _, err := w.Write(flags[0:1]); err != nil {
+		if _, err := w.Write([]byte{0}); err != nil {
 			return err
 		}
 	}
@@ -284,12 +262,6 @@ func (rb *recordBody) marshalTo(w io.Writer, hashAsProxyForValue bool) error {
 	}
 	if _, err := w.Write(rb.Owner); err != nil {
 		return err
-	}
-
-	if rb.Certificate != nil {
-		if _, err := w.Write(rb.Certificate[:]); err != nil {
-			return err
-		}
 	}
 
 	if _, err := writeUVarint(w, uint64(len(rb.Links))); err != nil {
@@ -618,23 +590,16 @@ func (r *Record) Validate() (err error) {
 // NewRecordStart creates an incomplete record with its body and selectors filled out but no work or final signature.
 // This can be used to do the first step of a three-phase record creation process with the next two phases being NewRecordAddWork
 // and NewRecordComplete. This is useful of record creation needs to be split among systems or participants.
-func NewRecordStart(recordType byte, value []byte, links [][32]byte, maskingKey []byte, plainTextSelectorNames [][]byte, selectorOrdinals [][]byte, owner, certificateRecordHash []byte, ts uint64) (r *Record, workHash [32]byte, workBillableBytes uint, err error) {
+func NewRecordStart(recordType byte, value []byte, links [][32]byte, maskingKey []byte, plainTextSelectorNames [][]byte, selectorOrdinals [][]byte, owner, certificate []byte, ts uint64) (r *Record, workHash [32]byte, workBillableBytes uint, err error) {
 	r = new(Record)
 
 	if len(value) > 0 {
 		// Attempt compression for values of non-trivial size.
 		var flags uint32
 		if len(value) > 24 {
-			bestOutput := value
-			for _, bp := range brotliParams { // tries both GENERIC and TEXT brotli parameters
-				var cout []byte
-				cout, err = brotlienc.CompressBuffer(bp, value, make([]byte, 0, len(value)+4))
-				if err == nil && len(cout) > 0 && len(cout) < len(bestOutput) {
-					bestOutput = cout
-				}
-			}
-			if len(bestOutput) < len(value) {
-				value = bestOutput
+			cout, err := brotlienc.CompressBuffer(brotliParams, value, make([]byte, 0, len(value)+4))
+			if err == nil && len(cout) > 0 && len(cout) < len(value) {
+				value = cout
 				flags = recordValueFlagBrotliCompressed
 			}
 		}
@@ -662,11 +627,6 @@ func NewRecordStart(recordType byte, value []byte, links [][32]byte, maskingKey 
 	}
 
 	r.recordBody.Owner = append(r.recordBody.Owner, owner...)
-	if len(certificateRecordHash) == 32 {
-		var cert HashBlob
-		copy(cert[:], certificateRecordHash)
-		r.recordBody.Certificate = &cert
-	}
 
 	if len(links) > 0 {
 		r.recordBody.Links = make([]HashBlob, 0, len(links))

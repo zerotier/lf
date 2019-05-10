@@ -137,6 +137,39 @@ func escapeOrdinal(ord []byte) string {
 	return sb.String()
 }
 
+func prompt(prompt string, required bool, dfl string) string {
+	var b [1]byte
+	var s strings.Builder
+	fmt.Print(prompt)
+	for {
+		n, err := os.Stdin.Read(b[:])
+		if err != nil || n != 1 {
+			return dfl
+		}
+		if b[0] == '\n' {
+			ss := strings.TrimSpace(s.String())
+			if len(ss) == 0 {
+				if required {
+					fmt.Print(prompt)
+					s.Reset()
+				} else {
+					return dfl
+				}
+			}
+			return ss
+		} else if b[0] == '\b' {
+			ss := s.String()
+			s.Reset()
+			if len(ss) > 1 {
+				s.WriteString(ss[0 : len(ss)-2])
+			}
+		} else if b[0] != '\r' {
+			s.WriteByte(b[0])
+		}
+	}
+}
+
+// HACK warning: can only be called before any goroutines start...
 func stickAForkInIt() {
 	if strings.HasPrefix(runtime.GOOS, "windows") {
 		log.Printf("FATAL: fork not supported on Windows")
@@ -217,6 +250,8 @@ Default home path is ` + lfDefaultPath + ` unless overriden with -path.
 
 `)
 }
+
+//////////////////////////////////////////////////////////////////////////////
 
 func doNodeStart(cfg *lf.ClientConfig, basePath string, args []string) {
 	var logFile *os.File
@@ -299,6 +334,8 @@ func doNodeStart(cfg *lf.ClientConfig, basePath string, args []string) {
 	node.Stop()
 }
 
+//////////////////////////////////////////////////////////////////////////////
+
 func doNodeConnect(cfg *lf.ClientConfig, basePath string, args []string) {
 	if len(args) != 3 {
 		printHelp("")
@@ -347,6 +384,8 @@ func doStatus(cfg *lf.ClientConfig, basePath string, args []string) {
 	}
 	fmt.Println(lf.PrettyJSON(stat))
 }
+
+//////////////////////////////////////////////////////////////////////////////
 
 func doGet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool) {
 	getOpts := flag.NewFlagSet("get", flag.ContinueOnError)
@@ -477,6 +516,8 @@ func doGet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool
 		}
 	}
 }
+
+//////////////////////////////////////////////////////////////////////////////
 
 func doSet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool) {
 	setOpts := flag.NewFlagSet("set", flag.ContinueOnError)
@@ -655,6 +696,8 @@ func doSet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool
 	}
 }
 
+//////////////////////////////////////////////////////////////////////////////
+
 func doOwner(cfg *lf.ClientConfig, basePath string, args []string) {
 	if len(args) == 0 {
 		printHelp("")
@@ -756,6 +799,99 @@ func doOwner(cfg *lf.ClientConfig, basePath string, args []string) {
 	}
 }
 
+//////////////////////////////////////////////////////////////////////////////
+
+/*
+func doCert(cfg *lf.ClientConfig, basePath string, args []string) {
+	if len(args) == 0 {
+		printHelp("")
+		return
+	}
+
+	switch args[0] {
+
+	case "new":
+		if len(args) != 3 {
+			printHelp("")
+			return
+		}
+
+		ttlDays := prompt("Time to live in days [36500]: ", false, "36500")
+		ttl, err := strconv.ParseUint(ttlDays, 10, 64)
+		if err != nil {
+			log.Printf("ERROR: invalid value: %s", err.Error())
+			return
+		}
+		if ttl <= 0 {
+			log.Printf("ERROR: invalid value: must be >0")
+			return
+		}
+
+		ecCurve := prompt("Elliptic curve (P-384, P-521) [P-521]: ", false, "P-521")
+		var curve elliptic.Curve
+		switch ecCurve {
+		case "P-384":
+			curve = elliptic.P384()
+		case "P-521":
+			curve = elliptic.P521()
+		default:
+			log.Printf("ERROR: unrecognized curve name")
+			return
+		}
+
+		key, err := ecdsa.GenerateKey(curve, secrand.Reader)
+		if err != nil {
+			log.Printf("ERROR: unable to generate ECDSA key pair: %s", err.Error())
+			return
+		}
+		compressedPublicKey, err := lf.ECDSACompressPublicKey(&key.PublicKey)
+		if err != nil {
+			log.Printf("ERROR: unable to generate ECDSA key pair: %s", err.Error())
+			return
+		}
+		serialNo := sha256.Sum256(compressedPublicKey)
+
+		cert := &x509.Certificate{
+			SerialNumber:          new(big.Int).SetBytes(serialNo[:]),
+			Subject:               pkix.Name{},
+			NotBefore:             time.Now(),
+			NotAfter:              time.Now().Add(time.Hour * time.Duration(24) * time.Duration(ttl)),
+			IsCA:                  true,
+			ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageTimeStamping},
+			KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+			BasicConstraintsValid: true,
+		}
+
+		certBytes, err := x509.CreateCertificate(secrand.Reader, cert, cert, &key.PublicKey, key)
+		if err != nil {
+			log.Printf("ERROR: unable to create CA certificate: %s", err.Error())
+			return
+		}
+		certPem := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certBytes})
+		keyBytes, err := x509.MarshalECPrivateKey(key)
+		if err != nil {
+			log.Printf("ERROR: unable to x509 encode ECDSA private key: %s", err.Error())
+			return
+		}
+		keyPem := pem.EncodeToMemory(&pem.Block{Type: "ECDSA PRIVATE KEY", Bytes: keyBytes})
+
+		err = ioutil.WriteFile(args[1], certPem, 0644)
+		if err != nil {
+			log.Printf("ERROR: unable to write to %s: %s", args[1], err.Error())
+			return
+		}
+		err = ioutil.WriteFile(args[2], keyPem, 0600)
+		if err != nil {
+			log.Printf("ERROR: unable to write to %s: %s", args[2], err.Error())
+			return
+		}
+
+	case "sign":
+
+	}
+}
+*/
+
 // doMakeGenesis is currently code for making the default genesis records and isn't very useful to anyone else.
 func doMakeGenesis(cfg *lf.ClientConfig, basePath string, args []string) {
 	g := &lf.SolGenesisParameters
@@ -787,6 +923,8 @@ func doMakeGenesis(cfg *lf.ClientConfig, basePath string, args []string) {
 
 	fmt.Printf("\nWrote genesis.lf, genesis.go, and genesis.secret (if amendable) to current directory.\n")
 }
+
+//////////////////////////////////////////////////////////////////////////////
 
 func main() {
 	globalOpts := flag.NewFlagSet("global", flag.ContinueOnError)

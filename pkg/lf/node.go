@@ -563,14 +563,6 @@ func (n *Node) AddRecord(r *Record) error {
 		return ErrRecordInsufficientWork
 	}
 
-	// Sanity check certificate field: no certs if no roots, must have cert if required
-	if r.Certificate != nil && len(n.genesisParameters.RootCertificateAuthorities) == 0 {
-		return ErrRecordCertificateInvalid
-	}
-	if r.Certificate == nil && n.genesisParameters.CertificateRequired {
-		return ErrRecordCertificateRequired
-	}
-
 	// Validate record's internal structure and check signatures and work.
 	err := r.Validate()
 	if err != nil {
