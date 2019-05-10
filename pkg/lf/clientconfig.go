@@ -81,7 +81,8 @@ func (c *ClientConfig) Load(path string) error {
 		if u != nil && len(u.Username) > 0 {
 			dflName = strings.ReplaceAll(u.Username, " ", "") // use the current login user name if it can be determined
 		}
-		priv, err := owner.PrivateBytes()
+		var priv []byte
+		priv, err = owner.PrivateBytes()
 		if err != nil {
 			return err
 		}
