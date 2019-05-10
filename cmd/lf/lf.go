@@ -989,6 +989,7 @@ func main() {
 		default:
 			printHelp("")
 		}
+		os.Exit(0)
 
 	case "node-start":
 		doNodeStart(&cfg, *basePath, cmdArgs)
