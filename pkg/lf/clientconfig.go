@@ -75,15 +75,19 @@ func (c *ClientConfig) Load(path string) error {
 	// If the file didn't exist, init config with defaults.
 	if err != nil && os.IsNotExist(err) {
 		c.Urls = nil // TODO: use acceptable defaults
-		owner, _ := NewOwner(OwnerTypeEd25519)
+		owner, _ := NewOwner(OwnerTypeNistP224)
 		dflName := "user"
 		u, _ := user.Current()
 		if u != nil && len(u.Username) > 0 {
 			dflName = strings.ReplaceAll(u.Username, " ", "") // use the current login user name if it can be determined
 		}
+		priv, err := owner.PrivateBytes()
+		if err != nil {
+			return err
+		}
 		c.Owners[dflName] = &ClientConfigOwner{
-			Owner:        owner.Bytes(),
-			OwnerPrivate: owner.PrivateBytes(),
+			Owner:        owner.Public,
+			OwnerPrivate: priv,
 			Default:      true,
 		}
 		c.Dirty = true

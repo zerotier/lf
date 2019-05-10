@@ -115,19 +115,38 @@ func TestCore(out io.Writer) bool {
 
 	fmt.Fprintf(out, "Testing deterministic owner generation from seed... P-384 ")
 	op384, _ := NewOwnerFromSeed(OwnerTypeNistP384, []byte("lol"))
-	if hex.EncodeToString(op384.Bytes()) != "0b2fbb1d8758e6592e34d3788d7ce99b35d103b1cfacd8e3816f30f1a8c46145cdc26f7f7f2ac31cfbd34b15bcf400de6a" {
-		fmt.Fprintf(out, "FAILED %x\n", op384.Bytes())
+	if hex.EncodeToString(op384.Public) != "1107221cb800b7bef6366c8404a03a850cb122f18ce0811d3a54533c" {
+		fmt.Fprintf(out, "FAILED %x\n", op384.Public)
 		return false
 	}
-	fmt.Fprint(out, "ed25519 ")
-	o25519, _ := NewOwnerFromSeed(OwnerTypeEd25519, []byte("lol"))
-	if hex.EncodeToString(o25519.Bytes()) != "f49e48675d885cabdfd6c84b47ee0017948699ecf356e9902d786cad245450c2" {
-		fmt.Fprintf(out, "FAILED %x\n", o25519.Bytes())
+	testSigHash := sha256.Sum256(testStr)
+	sig, err := op384.Sign(testSigHash[:])
+	if err != nil {
+		fmt.Fprintf(out, "FAILED (sign)\n")
+		return false
+	}
+	if !op384.Verify(testSigHash[:], sig) {
+		fmt.Fprintf(out, "FAILED (verify)\n")
+		return false
+	}
+	fmt.Fprint(out, "P-224 ")
+	op224, _ := NewOwnerFromSeed(OwnerTypeNistP224, []byte("lol"))
+	if hex.EncodeToString(op224.Public) != "0f97e9a12f79cdc5da538443a71ffa5c1c8af8cbd7317e6a7445c593" {
+		fmt.Fprintf(out, "FAILED %x\n", op224.Public)
+		return false
+	}
+	sig, err = op224.Sign(testSigHash[:])
+	if err != nil {
+		fmt.Fprintf(out, "FAILED (sign)\n")
+		return false
+	}
+	if !op224.Verify(testSigHash[:], sig) {
+		fmt.Fprintf(out, "FAILED (verify)\n")
 		return false
 	}
 	fmt.Fprintf(out, "OK\n")
 
-	curves := []elliptic.Curve{elliptic.P521(), elliptic.P384(), ECCCurveBrainpoolP160T1}
+	curves := []elliptic.Curve{elliptic.P521(), elliptic.P384(), elliptic.P224(), ECCCurveBrainpoolP160T1}
 	for ci := range curves {
 		curve := curves[ci]
 
@@ -230,7 +249,7 @@ func TestCore(out io.Writer) bool {
 			secureRandom.Read(tmp[:])
 			testLinks = append(testLinks, tmp)
 		}
-		owner, err := NewOwner(OwnerTypeEd25519)
+		owner, err := NewOwner(OwnerTypeNistP224)
 		if err != nil {
 			fmt.Fprintf(out, "FAILED (create owner): %s\n", err.Error())
 			return false
@@ -275,7 +294,7 @@ func TestCore(out io.Writer) bool {
 	}
 	var testValue [32]byte
 	secureRandom.Read(testValue[:])
-	owner, err := NewOwner(OwnerTypeEd25519)
+	owner, err := NewOwner(OwnerTypeNistP224)
 	if err != nil {
 		fmt.Fprintf(out, "FAILED (create owner): %s\n", err.Error())
 		return false
@@ -370,7 +389,7 @@ func TestDatabase(testBasePath string, out io.Writer) bool {
 	fmt.Fprintf(out, "Generating %d owner public/private key pairs... ", testDatabaseOwners)
 	var owners [testDatabaseOwners]*Owner
 	for i := range owners {
-		owners[i], err = NewOwner(OwnerTypeEd25519)
+		owners[i], err = NewOwner(OwnerTypeNistP224)
 		if err != nil {
 			fmt.Fprintf(out, "FAILED: %s\n", err.Error())
 			return false

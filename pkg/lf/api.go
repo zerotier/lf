@@ -78,7 +78,7 @@ func (e APIError) Error() string {
 type APIPeer struct {
 	IP       net.IP
 	Port     int
-	Identity OwnerBlob
+	Identity Blob
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -463,7 +463,7 @@ Peer Connections
 					if p.inbound {
 						inout = "<-"
 					}
-					out.Write([]byte(fmt.Sprintf("%s %-42s %s\n", inout, p.address, Base62Encode(p.remotePublic))))
+					out.Write([]byte(fmt.Sprintf("%s %-42s %s\n", inout, p.address, Base62Encode(p.identity))))
 				}
 				n.peersLock.RUnlock()
 				out.Write([]byte("\n------------------------------------------------------------------------------\n"))

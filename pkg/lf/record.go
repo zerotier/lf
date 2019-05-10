@@ -571,15 +571,12 @@ func (r *Record) Validate() (err error) {
 		return ErrRecordInsufficientWork
 	}
 
-	owner, err := NewOwnerFromBytes(r.recordBody.Owner)
-	if err != nil {
-		return ErrRecordOwnerSignatureCheckFailed
-	}
 	finalHash := sha3.New256()
 	finalHash.Write(workHash[:])
 	finalHash.Write(r.Work)
 	finalHash.Write([]byte{r.WorkAlgorithm})
 	var hb [32]byte
+	owner := Owner{Public: r.recordBody.Owner}
 	if !owner.Verify(finalHash.Sum(hb[:0]), r.Signature) {
 		return ErrRecordOwnerSignatureCheckFailed
 	}
@@ -699,7 +696,7 @@ func NewRecordComplete(incompleteRecord *Record, signingHash []byte, owner *Owne
 func NewRecord(recordType byte, value []byte, links [][32]byte, maskingKey []byte, plainTextSelectorNames [][]byte, selectorOrdinals [][]byte, certificateRecordHash []byte, ts uint64, workFunction *Wharrgarblr, owner *Owner) (r *Record, err error) {
 	var wh, sh [32]byte
 	var wb uint
-	r, wh, wb, err = NewRecordStart(recordType, value, links, maskingKey, plainTextSelectorNames, selectorOrdinals, owner.Bytes(), certificateRecordHash, ts)
+	r, wh, wb, err = NewRecordStart(recordType, value, links, maskingKey, plainTextSelectorNames, selectorOrdinals, owner.Public, certificateRecordHash, ts)
 	if err != nil {
 		return
 	}

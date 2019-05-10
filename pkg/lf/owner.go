@@ -27,242 +27,163 @@
 package lf
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
+	"crypto/sha256"
 	"crypto/x509"
 	"io"
-	"math/big"
-
-	"golang.org/x/crypto/ed25519"
 )
 
-// OwnerTypeNil represents an invalid or uninitialized owner type.
-const OwnerTypeNil = 0
+// NOTE: max owner type is 15
 
-// OwnerTypeEd25519 represents an owner using Ed25519 signatures (this is the default).
-const OwnerTypeEd25519 = 1
+// OwnerTypeNistP224 indicates an owner based on the NIST P-224 elliptic curve.
+const OwnerTypeNistP224 byte = 0
 
-// OwnerTypeNistP384 represents an owner using ECDSA signatures over ECC curve NIST P-384.
-const OwnerTypeNistP384 = 2
+// OwnerTypeNistP384 indicates an owner based on the NIST P-384 elliptic curve.
+const OwnerTypeNistP384 byte = 1
 
-// Owner represents a key pair that can own and sign LF records.
+// Owner represents an entity capable of creating LF records.
 type Owner struct {
-	publicBytes     []byte
-	privateBytes    []byte
-	ecdsaPrivateKey *ecdsa.PrivateKey // an ECDSA private key if this owner happens to be of that type
+	Private *ecdsa.PrivateKey
+	Public  []byte
 }
 
-func newOwnerIntl(ownerType int, prng io.Reader) (*Owner, error) {
+func internalSha224HashPublic(pub *ecdsa.PublicKey) (h [28]byte) {
+	f := sha256.New224()
+	f.Write(pub.X.Bytes())
+	f.Write(pub.Y.Bytes())
+	f.Sum(h[:0])
+	return
+}
+
+func internalNewOwner(ownerType byte, prng io.Reader) (*Owner, error) {
+	var curve elliptic.Curve
 	switch ownerType {
-	case OwnerTypeEd25519:
-		pub, priv, err := ed25519.GenerateKey(prng)
-		if err != nil {
-			return nil, err
-		}
-		return &Owner{
-			publicBytes:     pub,
-			privateBytes:    append([]byte{byte(OwnerTypeEd25519)}, priv...),
-			ecdsaPrivateKey: nil,
-		}, nil
+	case OwnerTypeNistP224:
+		curve = elliptic.P224()
 	case OwnerTypeNistP384:
-		priv, err := ecdsa.GenerateKey(elliptic.P384(), prng)
-		if err != nil {
-			return nil, err
-		}
-		privBytes, err := x509.MarshalECPrivateKey(priv)
-		if err != nil {
-			return nil, err
-		}
-		pubBytes, err := ECDSACompressPublicKey(&priv.PublicKey)
-		if err != nil {
-			return nil, err
-		}
-		pubBytes[0] |= byte(OwnerTypeNistP384) << 2 // pack owner type into unused most significant 6 bits of compressed key
-		return &Owner{
-			publicBytes:     pubBytes,
-			privateBytes:    append([]byte{byte(OwnerTypeNistP384)}, privBytes...),
-			ecdsaPrivateKey: priv,
-		}, nil
+		curve = elliptic.P384()
+	default:
+		return nil, ErrInvalidParameter
 	}
-	return nil, ErrInvalidParameter
-}
 
-// NewOwnerFromSeed creates a new owner whose key pair is generated using deterministic randomness from the given seed.
-func NewOwnerFromSeed(ownerType int, seed []byte) (*Owner, error) {
-	var prng seededPrng
-	prng.seed(seed)
-	return newOwnerIntl(ownerType, &prng)
-}
-
-// NewOwner creates a random new owner key pair.
-func NewOwner(ownerType int) (*Owner, error) { return newOwnerIntl(ownerType, secureRandom) }
-
-// NewOwnerFromBytes creates a new Owner object from a set of public Owner bytes (as returned by Bytes()).
-func NewOwnerFromBytes(publicBytes []byte) (*Owner, error) {
-	if len(publicBytes) == 0 {
-		return nil, ErrInvalidPublicKey
-	}
-	o := &Owner{
-		publicBytes:     publicBytes,
-		privateBytes:    nil,
-		ecdsaPrivateKey: nil,
-	}
-	if o.Type() != OwnerTypeNil {
-		return o, nil
-	}
-	return nil, ErrInvalidPublicKey
-}
-
-// newOwnerFromP384 creates a new P-384 owner (public keys only) from a NIST P-384 public key.
-func newOwnerFromP384(pubX, pubY *big.Int) (*Owner, error) {
-	pubBytes, err := ECCCompressPublicKey(elliptic.P384(), pubX, pubY)
+	priv, err := ecdsa.GenerateKey(curve, prng)
 	if err != nil {
 		return nil, err
 	}
-	pubBytes[0] |= byte(OwnerTypeNistP384) << 2 // pack owner type into unused most significant 6 bits of compressed key
-	return &Owner{
-		publicBytes:     pubBytes,
-		privateBytes:    nil,
-		ecdsaPrivateKey: nil,
-	}, nil
+	pub := internalSha224HashPublic(&priv.PublicKey)
+	pub[0] = (pub[0] & 0x0f) | (ownerType << 4)
+
+	return &Owner{Private: priv, Public: pub[:]}, nil
 }
 
-// NewOwnerFromPrivateBytes creates a new Owner object from a set of private key bytes.
-func NewOwnerFromPrivateBytes(privateBytes []byte) (*Owner, error) {
-	if len(privateBytes) == 0 {
-		return nil, ErrInvalidParameter
-	}
-	switch privateBytes[0] {
-	case OwnerTypeEd25519:
-		if len(privateBytes) == 65 {
-			return &Owner{
-				publicBytes:     privateBytes[33:],
-				privateBytes:    privateBytes,
-				ecdsaPrivateKey: nil,
-			}, nil
-		}
-		return nil, ErrInvalidParameter
-	case OwnerTypeNistP384:
-		priv, err := x509.ParseECPrivateKey(privateBytes[1:])
-		if err != nil {
-			return nil, err
-		}
-		if priv.Curve.Params().Name != "P-384" {
-			return nil, ErrUnsupportedCurve
-		}
-		pubBytes, err := ECDSACompressPublicKey(&priv.PublicKey)
-		if err != nil {
-			return nil, err
-		}
-		pubBytes[0] |= byte(OwnerTypeNistP384) << 2 // pack owner type into unused most significant 6 bits of compressed key
-		return &Owner{
-			publicBytes:     pubBytes,
-			privateBytes:    privateBytes,
-			ecdsaPrivateKey: priv,
-		}, nil
-	}
-	return nil, ErrInvalidParameter
+// NewOwnerFromSeed creates a new owner whose key pair is generated using deterministic randomness from the given seed.
+func NewOwnerFromSeed(ownerType byte, seed []byte) (*Owner, error) {
+	var prng seededPrng
+	prng.seed(seed)
+	return internalNewOwner(ownerType, &prng)
 }
 
-// Type returns this owner's type.
-func (o *Owner) Type() int {
-	if len(o.publicBytes) == 32 {
-		return OwnerTypeEd25519
+// NewOwner creates a random new owner key pair.
+func NewOwner(ownerType byte) (*Owner, error) { return internalNewOwner(ownerType, secureRandom) }
+
+// NewOwnerFromPublicKey creates a public-only owner from a public key.
+func NewOwnerFromPublicKey(k *ecdsa.PublicKey) (*Owner, error) {
+	var ownerType byte
+	switch k.Curve.Params().Name {
+	case "P-256":
+		ownerType = OwnerTypeNistP224
+	case "P-384":
+		ownerType = OwnerTypeNistP384
+	default:
+		return nil, ErrUnsupportedCurve
 	}
-	if len(o.publicBytes) > 32 && (o.publicBytes[0]>>2) == OwnerTypeNistP384 {
-		return OwnerTypeNistP384
-	}
-	return OwnerTypeNil
+
+	pub := internalSha224HashPublic(k)
+	pub[0] = (pub[0] & 0x0f) | (ownerType << 4)
+
+	return &Owner{Private: nil, Public: pub[:]}, nil
 }
 
-// HasPrivate returns true if this owner object includes its private key component.
-func (o *Owner) HasPrivate() bool { return len(o.privateBytes) > 0 }
-
-// Bytes returns this owner's public key bytes.
-// This is the literal value placed in a Record for its owner.
-func (o *Owner) Bytes() []byte { return o.publicBytes }
-
-// PrivateBytes returns this owner's private key bytes prefixed by the owner type.
-func (o *Owner) PrivateBytes() []byte { return o.privateBytes }
-
-// privateECDSA returns the private ECDSA key for this owner if it is of that type.
-// This returns nil for owners using ed25519 or any other non-ECDSA algorithm.
-func (o *Owner) privateECDSA() *ecdsa.PrivateKey {
-	if o.ecdsaPrivateKey == nil {
-		if len(o.privateBytes) == 0 || o.privateBytes[0] != OwnerTypeNistP384 {
-			return nil
-		}
-		priv, err := x509.ParseECPrivateKey(o.privateBytes[1:])
-		if err != nil {
-			return nil
-		}
-		o.ecdsaPrivateKey = priv
+// NewOwnerFromPrivateBytes deserializes both private and public portions from the result of PrivateBytes().
+func NewOwnerFromPrivateBytes(b []byte) (*Owner, error) {
+	priv, err := x509.ParseECPrivateKey(b)
+	if err != nil {
+		return nil, err
 	}
-	return o.ecdsaPrivateKey
+
+	var ownerType byte
+	switch priv.Curve.Params().Name {
+	case "P-256":
+		ownerType = OwnerTypeNistP224
+	case "P-384":
+		ownerType = OwnerTypeNistP384
+	default:
+		return nil, ErrUnsupportedCurve
+	}
+
+	pub := internalSha224HashPublic(&priv.PublicKey)
+	pub[0] = (pub[0] & 0x0f) | (ownerType << 4)
+
+	return &Owner{Private: priv, Public: pub[:]}, nil
 }
 
-// publicECDSA returns the public ECDSA key for this owner if it is of that type.
-// This returns nil for owners using ed25519 or any other non-ECDSA algorithm.
-func (o *Owner) publicECDSA() *ecdsa.PublicKey {
-	if o.Type() == OwnerTypeNistP384 {
-		pub, err := ECDSADecompressPublicKey(elliptic.P384(), o.publicBytes)
-		if err != nil {
-			return nil
-		}
-		return pub
+// PrivateBytes returns this owner serialized with both public and private key parts.
+func (o *Owner) PrivateBytes() ([]byte, error) {
+	if o.Private == nil {
+		return nil, ErrPrivateKeyRequired
 	}
-	return nil
+	return x509.MarshalECPrivateKey(o.Private)
 }
 
-// rawPublicKeyBytes is a shortcut to decoding this owner's public key and encoding it as a byte array.
-// This returns nil if there is a problem or the owner object is not initialized.
-func (o *Owner) rawPublicKeyBytes() []byte {
-	if len(o.publicBytes) == 32 {
-		return o.publicBytes
+// String returns @base62 encoded Public.
+func (o *Owner) String() string { return "@" + Base62Encode(o.Public) }
+
+// Type returns the type of this owner or 0 if the owner is not initialized.
+func (o *Owner) Type() byte {
+	if len(o.Public) == 0 {
+		return o.Public[0] >> 4
 	}
-	pubec := o.publicECDSA()
-	if pubec != nil {
-		comp, err := ECDSACompressPublicKey(pubec)
-		if err == nil {
-			return comp
-		}
-	}
-	return nil
+	return 0
 }
 
 // Sign signs a hash (typically 32 bytes) with this key pair.
 // ErrorPrivateKeyRequired is returned if the private key is not present or invalid.
 func (o *Owner) Sign(hash []byte) ([]byte, error) {
-	if len(o.privateBytes) == 0 {
+	if o.Private == nil {
 		return nil, ErrPrivateKeyRequired
 	}
-	switch o.privateBytes[0] {
-	case OwnerTypeEd25519:
-		if len(o.privateBytes) != 65 {
-			return nil, ErrInvalidParameter
-		}
-		return ed25519.Sign(o.privateBytes[1:], hash), nil
-	case OwnerTypeNistP384:
-		priv := o.privateECDSA()
-		if priv == nil {
-			return nil, ErrInvalidPrivateKey
-		}
-		return ECDSASign(priv, hash)
-	}
-	return nil, ErrPrivateKeyRequired
+	return ECDSASign(o.Private, hash)
 }
 
 // Verify verifies a message hash and a signature against this owner's public key.
-func (o *Owner) Verify(hash, sig []byte) bool {
-	if len(o.publicBytes) == 0 {
-		return false
+func (o *Owner) Verify(hash, sig []byte) (verdict bool) {
+	if len(o.Public) == 0 {
+		verdict = false
+	} else {
+		var k0, k1 *ecdsa.PublicKey
+		otype := o.Public[0] >> 4
+		switch otype {
+		case OwnerTypeNistP224:
+			k0, k1 = ECDSARecoverBoth(elliptic.P224(), hash, sig)
+		case OwnerTypeNistP384:
+			k0, k1 = ECDSARecoverBoth(elliptic.P384(), hash, sig)
+		default:
+			verdict = false
+			return
+		}
+
+		otype <<= 4
+		pub := internalSha224HashPublic(k0)
+		pub[0] = (pub[0] & 0x0f) | otype
+		if bytes.Equal(pub[:], o.Public) {
+			verdict = true
+		} else {
+			pub = internalSha224HashPublic(k1)
+			pub[0] = (pub[0] & 0x0f) | otype
+			verdict = bytes.Equal(pub[:], o.Public)
+		}
 	}
-	if len(o.publicBytes) == 32 { // we assume 32-byte publics are ed25519
-		return ed25519.Verify(o.publicBytes, hash, sig)
-	}
-	pub := o.publicECDSA()
-	if pub == nil {
-		return false
-	}
-	return ECDSAVerify(pub, hash, sig)
+	return
 }

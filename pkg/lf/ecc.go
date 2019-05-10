@@ -225,6 +225,26 @@ func ECDSARecover(curve elliptic.Curve, hash, signature []byte) *ecdsa.PublicKey
 	return ecdsaRecoverPublicKey(curve, &r, &s, hash, uint(signature[len(signature)-1]))
 }
 
+// ECDSARecoverBoth recovers both potential keys from a signature without an embedded recovery index.
+func ECDSARecoverBoth(curve elliptic.Curve, hash, signature []byte) (*ecdsa.PublicKey, *ecdsa.PublicKey) {
+	params := curve.Params()
+
+	orderSize := params.N.BitLen()
+	if (orderSize & 7) != 0 {
+		orderSize = (orderSize / 8) + 1
+	} else {
+		orderSize /= 8
+	}
+	if len(signature) != int(orderSize*2) {
+		return nil, nil
+	}
+
+	var r, s big.Int
+	r.SetBytes(signature[0:orderSize])
+	s.SetBytes(signature[orderSize:len(signature)])
+	return ecdsaRecoverPublicKey(curve, &r, &s, hash, 0), ecdsaRecoverPublicKey(curve, &r, &s, hash, 1)
+}
+
 // ecdsaRecoverPublicKey contains the actual guts of the ECDSA key recovery from signature algorithm
 func ecdsaRecoverPublicKey(c elliptic.Curve, r, s *big.Int, hash []byte, iter uint) *ecdsa.PublicKey {
 	curve := c.Params()

@@ -139,7 +139,7 @@ func (gp *GenesisParameters) RootCAs() ([]*x509.Certificate, error) {
 // The number created is always sufficient to satisfy RecordMinLinks for subsequent records.
 // If RecordMinLinks is zero one record is created. The first genesis record will contain
 // the Genesis parameters in JSON format while subsequent records are empty.
-func CreateGenesisRecords(genesisOwnerType int, genesisParameters *GenesisParameters) ([]*Record, *Owner, error) {
+func CreateGenesisRecords(genesisOwnerType byte, genesisParameters *GenesisParameters) ([]*Record, *Owner, error) {
 	gpjson, err := json.Marshal(genesisParameters)
 	if err != nil {
 		return nil, nil, err

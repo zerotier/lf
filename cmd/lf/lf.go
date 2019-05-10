@@ -731,11 +731,12 @@ func doOwner(cfg *lf.ClientConfig, basePath string, args []string) {
 			fmt.Println("ERROR: an owner named '" + args[1] + "' already exists.")
 			return
 		}
-		owner, _ := lf.NewOwner(lf.OwnerTypeEd25519)
+		owner, _ := lf.NewOwner(lf.OwnerTypeNistP224)
 		isDfl := len(cfg.Owners) == 0
+		priv, _ := owner.PrivateBytes()
 		cfg.Owners[name] = &lf.ClientConfigOwner{
-			Owner:        owner.Bytes(),
-			OwnerPrivate: owner.PrivateBytes(),
+			Owner:        owner.Public,
+			OwnerPrivate: priv,
 			Default:      isDfl,
 		}
 		cfg.Dirty = true
@@ -743,7 +744,7 @@ func doOwner(cfg *lf.ClientConfig, basePath string, args []string) {
 		if isDfl {
 			dfl = "*"
 		}
-		fmt.Printf("%-24s %s @%s\n", name, dfl, lf.Base62Encode(owner.Bytes()))
+		fmt.Printf("%-24s %s @%s\n", name, dfl, owner.String())
 
 	case "default":
 		if len(args) < 2 {
@@ -918,7 +919,8 @@ func doMakeGenesis(cfg *lf.ClientConfig, basePath string, args []string) {
 	ioutil.WriteFile("genesis.lf", grData.Bytes(), 0644)
 	ioutil.WriteFile("genesis.go", []byte(fmt.Sprintf("var SolGenesisRecords = %#v\n", grData.Bytes())), 0644)
 	if len(g.AmendableFields) > 0 {
-		ioutil.WriteFile("genesis.secret", genesisOwner.PrivateBytes(), 0600)
+		priv, _ := genesisOwner.PrivateBytes()
+		ioutil.WriteFile("genesis.secret", priv, 0600)
 	}
 
 	fmt.Printf("\nWrote genesis.lf, genesis.go, and genesis.secret (if amendable) to current directory.\n")
