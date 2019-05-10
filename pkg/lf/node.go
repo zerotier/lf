@@ -50,6 +50,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"golang.org/x/crypto/sha3"
 )
 
 const (
@@ -1124,7 +1126,7 @@ func (n *Node) p2pConnectionHandler(c *net.TCPConn, identity []byte, inbound boo
 	c.SetNoDelay(false)
 	reader := bufio.NewReader(c)
 
-	// Exchange public keys (prefixed by connection mode and key length)
+	// Send our public key to remote.
 	helloMessage := make([]byte, len(n.identity)+2)
 	helloMessage[0] = p2pProtoModeAES256GCMECCP384
 	helloMessage[1] = byte(len(n.identity))
@@ -1135,6 +1137,7 @@ func (n *Node) p2pConnectionHandler(c *net.TCPConn, identity []byte, inbound boo
 		return
 	}
 
+	// Read remote public key
 	_, err = io.ReadFull(reader, helloMessage[0:2])
 	if err != nil {
 		n.log[LogLevelNormal].Printf("P2P connection to %s closed: %s", peerAddressStr, err.Error())
@@ -1181,14 +1184,14 @@ func (n *Node) p2pConnectionHandler(c *net.TCPConn, identity []byte, inbound boo
 
 	// Exchange encrypted nonces (16 bytes are exchanged due to AES block size but only 12 bytes are used for AES-GCM)
 	// Technically encryption of the nonce is not required, but why not?
-	var encryptedOutgoingNonce, outgoingNonce, incomingNonce [16]byte
+	var nonceExchangeTmp, outgoingNonce, incomingNonce [16]byte
 	_, err = secureRandom.Read(outgoingNonce[:])
 	if err != nil {
 		n.log[LogLevelNormal].Printf("P2P connection to %s closed: %s", peerAddressStr, err.Error())
 		return
 	}
-	aesCipher.Encrypt(encryptedOutgoingNonce[:], outgoingNonce[:])
-	_, err = c.Write(encryptedOutgoingNonce[:])
+	aesCipher.Encrypt(nonceExchangeTmp[:], outgoingNonce[:])
+	_, err = c.Write(nonceExchangeTmp[:])
 	if err != nil {
 		n.log[LogLevelNormal].Printf("P2P connection to %s closed: %s", peerAddressStr, err.Error())
 		return
@@ -1199,6 +1202,19 @@ func (n *Node) p2pConnectionHandler(c *net.TCPConn, identity []byte, inbound boo
 		return
 	}
 	aesCipher.Decrypt(incomingNonce[:], incomingNonce[:])
+
+	// Exchange hashes of decrypted nonces to verify correct key.
+	outgoingNonceHash, incomingNonceHash := sha3.Sum256(outgoingNonce[:]), sha3.Sum256(incomingNonce[:])
+	_, err = c.Write(incomingNonceHash[0:16])
+	if err != nil {
+		n.log[LogLevelNormal].Printf("P2P connection to %s closed: %s", peerAddressStr, err.Error())
+		return
+	}
+	_, err = io.ReadFull(reader, nonceExchangeTmp[:])
+	if !bytes.Equal(outgoingNonceHash[0:16], nonceExchangeTmp[:]) {
+		n.log[LogLevelNormal].Printf("P2P connection to %s closed: challenge/response failed (key incorrect?)", peerAddressStr)
+		return
+	}
 
 	p = &peer{
 		n:             n,
