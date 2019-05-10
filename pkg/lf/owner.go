@@ -51,10 +51,10 @@ type Owner struct {
 }
 
 func internalOwnerHashECDSA(ownerType byte, pub *ecdsa.PublicKey) []byte {
-	h := sha3.New384() // SHA3-384 provides 192-bit collision security
+	h := sha3.New224()
 	h.Write(pub.X.Bytes())
 	h.Write(pub.Y.Bytes())
-	var tmp [48]byte
+	var tmp [28]byte
 	hh := h.Sum(tmp[:0])
 	if ownerType == OwnerTypeNistP224 {
 		return hh[0:14] // P-224 provides 112-bit security
