@@ -32,6 +32,7 @@ import (
 	"container/list"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/ecdsa"
 	"crypto/elliptic"
 	"encoding/binary"
 	"encoding/json"
@@ -232,7 +233,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 			return nil, err
 		}
 	}
-	n.identity, err = ECDSACompressPublicKey(&n.owner.Private.PublicKey)
+	n.identity, err = ECDSACompressPublicKey(&n.owner.Private.(*ecdsa.PrivateKey).PublicKey)
 	if err != nil {
 		return nil, err
 	}
@@ -1169,7 +1170,7 @@ func (n *Node) p2pConnectionHandler(c *net.TCPConn, identity []byte, inbound boo
 		n.log[LogLevelNormal].Printf("P2P connection to %s closed: invalid public key: %s", peerAddressStr, err.Error())
 		return
 	}
-	remoteShared, err := ECDHAgreeECDSA(remotePubX, remotePubY, n.owner.Private)
+	remoteShared, err := ECDHAgreeECDSA(remotePubX, remotePubY, n.owner.Private.(*ecdsa.PrivateKey))
 	if err != nil {
 		n.log[LogLevelNormal].Printf("P2P connection to %s closed: key agreement failed: %s", peerAddressStr, err.Error())
 		return
