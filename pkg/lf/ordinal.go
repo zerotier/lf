@@ -36,7 +36,8 @@ import (
 // OrdinalSize is the size of an ordinal in bytes.
 const OrdinalSize = 16
 
-// Ordinal is the somewhat-blinded (via a randomized substitution cipher) sortable/comparable part of a selector.
+// Ordinal is the sortable/comparable part of a selector.
+// It consists of a 64-bit integer masked using a simple order-preserving keyed hash.
 type Ordinal [16]byte
 
 // MarshalJSON returns this blob marshaled as a \bbase62-encoded string (like a non-UTF8 Blob).
@@ -86,39 +87,33 @@ func (b *Ordinal) UnmarshalJSON(j []byte) error {
 	return nil
 }
 
-var ordinalSequences = [6][2]uint64{
-	[2]uint64{0, 1},
-	[2]uint64{0, 2},
-	[2]uint64{0, 3},
-	[2]uint64{1, 2},
-	[2]uint64{2, 3},
-	[2]uint64{1, 3},
-}
-
-// Set sets this ordinal to a sortable masked value that hides the original value to some degree.
+// Set sets this ordinal to a sortable masked value that hides the original value (to some degree).
 func (b *Ordinal) Set(value uint64, key []byte) {
 	kh := sha256.Sum256(key)
-	kh[0]++ // make sure this is never the same as seededPrng
+	kh[0]++ // make sure this is never the same AES key as seededPrng just to be safe
 	c, _ := aes.NewCipher(kh[:])
-	var rb [16]byte
-	c.Encrypt(rb[:], kh[0:16])
+	for i := range kh {
+		kh[i] = 0
+	}
+	c.Encrypt(kh[0:16], kh[0:16])
+	c.Encrypt(kh[16:32], kh[16:32])
 	hi := 0
 	for vi := 0; vi < 8; vi++ {
 		vb := uint(value >> 56)
 		value <<= 8
-		col := uint16(rb[hi])
+		col := uint16(kh[hi])
 		hi++
-		if hi == 16 {
-			rb[0]++
-			c.Encrypt(rb[:], rb[:])
+		if hi == 32 {
+			c.Encrypt(kh[0:16], kh[0:16])
+			c.Encrypt(kh[16:32], kh[16:32])
 			hi = 0
 		}
 		for i := uint(0); i < vb; i++ {
-			col += 1 + uint16(rb[hi])
+			col += 1 + uint16(kh[hi])
 			hi++
-			if hi == 16 {
-				rb[0]++
-				c.Encrypt(rb[:], rb[:])
+			if hi == 32 {
+				c.Encrypt(kh[0:16], kh[0:16])
+				c.Encrypt(kh[16:32], kh[16:32])
 				hi = 0
 			}
 		}
