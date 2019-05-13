@@ -92,15 +92,18 @@ func (b *Ordinal) Set(value uint64, key []byte) {
 	kh := sha256.Sum256(key)
 	kh[0]++ // make sure this is never the same AES key as seededPrng just to be safe
 	c, _ := aes.NewCipher(kh[:])
+
 	for i := range kh {
 		kh[i] = 0
 	}
 	c.Encrypt(kh[0:16], kh[0:16])
 	c.Encrypt(kh[16:32], kh[16:32])
+
 	hi := 0
 	for vi := 0; vi < 8; vi++ {
 		vb := uint(value >> 56)
 		value <<= 8
+
 		col := uint16(kh[hi])
 		hi++
 		if hi == 32 {
@@ -108,6 +111,7 @@ func (b *Ordinal) Set(value uint64, key []byte) {
 			c.Encrypt(kh[16:32], kh[16:32])
 			hi = 0
 		}
+
 		for i := uint(0); i < vb; i++ {
 			col += 1 + uint16(kh[hi])
 			hi++
@@ -117,6 +121,7 @@ func (b *Ordinal) Set(value uint64, key []byte) {
 				hi = 0
 			}
 		}
+
 		binary.BigEndian.PutUint16(b[2*vi:2*(vi+1)], col)
 	}
 }
