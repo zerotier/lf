@@ -29,13 +29,12 @@ package lf
 import (
 	"bytes"
 	"crypto/ecdsa"
+	"crypto/sha256"
 	"encoding/binary"
 	"io"
-
-	"golang.org/x/crypto/sha3"
 )
 
-// SelectorTypeBP160 indicates a sortable selector built from the brainpoolP160t1 small elliptic curve.
+// SelectorTypeBP160 is a 57-byte (serialized) selector built from the BrainpoolP160T1 small elliptic curve.
 // This is a protocol constant and cannot be changed.
 const SelectorTypeBP160 byte = 0 // valid range 0..15
 
@@ -83,7 +82,7 @@ func MakeSelectorKey(plainTextName []byte, plainTextOrdinal uint64) []byte {
 	}
 
 	var key [32]byte
-	hasher := sha3.New256()
+	hasher := sha256.New()
 	hasher.Write(priv.PublicKey.X.Bytes())
 	hasher.Write(priv.PublicKey.Y.Bytes())
 	hasher.Sum(key[:0])
@@ -97,7 +96,7 @@ func MakeSelectorKey(plainTextName []byte, plainTextOrdinal uint64) []byte {
 
 // claimKey recovers the public key from this selector's claim and the record body hash used to generate it.
 func (s *Selector) claimKey(hash []byte) *ecdsa.PublicKey {
-	sigHash := sha3.New256()
+	sigHash := sha256.New()
 	sigHash.Write(hash)
 	sigHash.Write(s.Ordinal[:])
 	var sigHashBuf [32]byte
@@ -130,7 +129,7 @@ func (s *Selector) id(hash []byte) []byte {
 func (s *Selector) key(hash []byte) []byte {
 	pub := s.claimKey(hash)
 	var key [32]byte
-	hasher := sha3.New256()
+	hasher := sha256.New()
 	hasher.Write(pub.X.Bytes())
 	hasher.Write(pub.Y.Bytes())
 	hasher.Sum(key[:0])
@@ -195,7 +194,7 @@ func (s *Selector) set(plainTextName []byte, plainTextOrdinal uint64, hash []byt
 	prng.seed(plainTextName)
 	priv, err := ecdsa.GenerateKey(ECCCurveBrainpoolP160T1, &prng)
 
-	sigHash := sha3.New256()
+	sigHash := sha256.New()
 	sigHash.Write(hash)
 	sigHash.Write(s.Ordinal[:])
 	var sigHashBuf [32]byte
