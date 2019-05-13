@@ -1086,7 +1086,6 @@ func (n *Node) p2pConnectionHandler(c *net.TCPConn, identity []byte, inbound boo
 		n.log[LogLevelWarning].Print("BUG: P2P connection RemoteAddr() did not return a TCPAddr object, connection closed")
 		return
 	}
-	publicAddress := ipIsGlobalPublicUnicast(tcpAddr.IP)
 
 	defer func() {
 		e := recover()
@@ -1243,10 +1242,10 @@ func (n *Node) p2pConnectionHandler(c *net.TCPConn, identity []byte, inbound boo
 		if bytes.Equal(existingPeer.identity, remoteIdentity) {
 			redundant = true
 		}
-		if !inbound && publicAddress {
+		if !inbound {
 			existingPeer.sendPeerAnnouncement(tcpAddr, p.identity)
 		}
-		if !existingPeer.inbound && ipIsGlobalPublicUnicast(existingPeer.tcpAddress.IP) {
+		if !existingPeer.inbound {
 			p.sendPeerAnnouncement(existingPeer.tcpAddress, existingPeer.identity)
 		}
 	}

@@ -33,7 +33,6 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"io"
-	"net"
 	"os"
 	"time"
 	"unsafe"
@@ -100,20 +99,6 @@ func integerSqrtRounded(op uint32) (res uint32) {
 		res++
 	}
 	return
-}
-
-// ipIsGlobalPublicUnicast returns true if IP is global unicast and is not a private (10.x.x.x etc.) range.
-func ipIsGlobalPublicUnicast(ip net.IP) bool {
-	if ip.IsGlobalUnicast() {
-		ip4 := ip.To4()
-		if len(ip4) == 4 {
-			return ip4[0] != 10 && (!((ip4[0] == 192) && (ip4[1] == 168))) && (!((ip4[0] == 172) && (ip4[1] == 16)))
-		}
-		if len(ip) == 16 {
-			return ((ip[0] & 0xfe) != 0xfc)
-		}
-	}
-	return false
 }
 
 type paranoidSecureRandom struct{ cipher cipher.Stream }

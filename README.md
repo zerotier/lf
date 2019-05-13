@@ -1,35 +1,34 @@
 # LF: Fully Decentralized Fully Replicated Key/Value Store
 
-**A mad science project of [ZeroTier, Inc.](https://www.zerotier.com)**
+*(c)2018-2019 [ZeroTier, Inc.](https://www.zerotier.com/)* 
+*Licensed under the [GNU GPLv3](LICENSE.txt)*
 
 ## Introduction
 
 LF (pronounced "aleph") is a fully decentralized fully replicated key/value store.
 
-LF is intended to fill a role akin to the key/value store aspects of [etcd](https://github.com/etcd-io/etcd) or [consul](https://www.consul.io) but for fully decentralized systems that lack both a single point of failure and (in many cases) a single controlling entity. It's designed to store small infrequently changing bits of data like certificates, keys, identity information, DNS records, and other information critical to the operation of a system.
+LF is intended to fill a role akin to the key/value store aspects of [etcd](https://github.com/etcd-io/etcd) or [consul](https://www.consul.io) but for fully decentralized systems that lack both a single point of failure and (in many cases) a single controlling entity. It's designed to store things like public keys, certificates, names, DNS records, and other small but important bits of data required for systems to bootstrap and operate.
 
-The design of LF is inspired by several different cryptocurrencies and other kinds of block chain or hash tree database systems. It's not a cryptocurrency but could in theory be used as the underlying data store for one. It was created to help [ZeroTier](https://www.zerotier.com/) fully decentralize its root server infrastructure and support decentralized controller models for ultra high reliability private networks.
+In most fully decentralized systems this role is filled by a distributed data structure like [Kademlia](https://en.wikipedia.org/wiki/Kademlia) or another distributed hash table (DHT). DHTs are typically slow, depend on network reliability for full data set reachability, and are vulnerable to a variety of denial of service and other attacks. LF provides an alternative that trades much higher local storage overhead for fast queries and continuous availability.
 
 The name LF comes from the short story [The Aleph](https://en.wikipedia.org/wiki/The_Aleph_%28short_story%29) by Jorge Luis Borges and the novel [Mona Lisa Overdrive](https://en.wikipedia.org/wiki/Mona_Lisa_Overdrive) by William Gibson. Borges' story involves a point in space that contains all other points, a fitting metaphor for a data store where every node stores everything. Gibson's novel features a sci-fi take on Borges' concept, and at one point a character calls it "the LF" because "aleph" is mis-heard as an acronym. We used LF because there's already an open source project called Aleph and because a two layer obscure literary reference is cool.
 
 ### Features and Benefits
 
  * Fully decentralized network with no mandatory single points of control or failure.
- * Flexible trust model allowing application authors to decide between different conflict resolution mechanisms: cumulative record weight (proof of work), certificate based, or none at all (e.g. sorting by time).
- * Fully replicated for fast predictable time queries against arbitrary keys and continued operation under partial or total network failure conditions.
- * Simple JSON API and command line client make LF easy to use and nodes are easy to set up and operate.
- * Network can be arbitrarily split with all nodes continuing to operate in full read/write mode. Re-synchronization on re-connection is automatic.
- * Supports composite multi-element keys and range queries.
- * Record keys are encrypted and authenticated for increased privacy and security and to make intentional key collision attacks much harder. Queries can be performed without revealing plain text keys.
- * Record values can be optionally encrypted with a masking key to keep data private. Combined with blind keys this makes fully private use possible even on global open networks.
+ * Flexible trust model allowing application authors to decide between different conflict resolution mechanisms including cumulative record weight (proof of work), certificates (not implemented yet, coming soon!), or none at all.
+ * Fast nearline queries against all data and continuous availablility even during partial or total network failures.
+ * A simple JSON API and command line client make LF easy to use. Full nodes are easy to set up and operate.
+ * Supports multi-element keys and range queries over an optional 64-bit integer ordinal associated with each key.
+ * Keys are encrypted and authenticated. Queries can be performed without revealing keys or ordinals.
 
 ### Limitations and Disadvantages
 
- * Only suitable for small data such as keys, certificates, names, IPs and DNS records, etc.
+ * Only suitable for small records.
  * Not generally suitable for frequently changing or dynamic data.
  * [CAP theorem](https://en.wikipedia.org/wiki/CAP_theorem) trade-off: availability and partition-tolerance. Data is eventually consistent and locks and transactions are not supported.
  * Moderately high CPU, memory, and storage requirements for full nodes make LF unsuitable for very resource constrained devices.
- * Full node storage requirements grow over time (like a block chain or similar system) and could become quite large, though storage costs are also decreasing over time and several space-saving optimizations aren't implemented yet. Partial nodes are also possible but not implemented yet.
+ * Full node storage requirements grow over time (like a block chain or similar system) and could become quite large, though storage costs are also decreasing over time.
 
 ## Building and Running
 
@@ -48,9 +47,3 @@ All of these things exist in the same `lf` binary that gets built when you type 
 ## Internals
 
 See [DESIGN.md](doc/DESIGN.md) for details.
-
-## Credits
-
-(c)2018-2019 [ZeroTier, Inc.](https://www.zerotier.com/) 
-Written by [Adam Ierymenko](http://adamierymenko.com/) 
-Licensed under the [GNU GPLv3](LICENSE.txt)
