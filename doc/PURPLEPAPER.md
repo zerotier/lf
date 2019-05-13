@@ -1,6 +1,6 @@
 # LF: Fully Decentralized Fully Replicated Key/Value Store
 
-**Design** ~~white~~**purplepaper.** (Purple because this is not a cryptocurrency scam.)
+**Design** ~~white~~**purplepaper.**
 
 <img src="underconstruction.gif">
 

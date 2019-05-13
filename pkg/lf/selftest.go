@@ -32,6 +32,7 @@ import (
 	"crypto/elliptic"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -89,6 +90,29 @@ func TestCore(out io.Writer) bool {
 		return false
 	}
 
+	fmt.Fprintf(out, "Testing Blob serialize/deserialize and Base62... ")
+	var tmpjunk [256]byte
+	for k := 1; k <= 256; k++ {
+		testBlob := Blob(tmpjunk[0:k])
+		rand.Read(testBlob)
+		j, err := json.Marshal(&testBlob)
+		if err != nil {
+			fmt.Fprintf(out, "FAILED: %s\n", err.Error())
+			return false
+		}
+		var testBlob2 Blob
+		err = json.Unmarshal(j, &testBlob2)
+		if err != nil {
+			fmt.Fprintf(out, "FAILED: %s\n", err.Error())
+			return false
+		}
+		if !bytes.Equal(testBlob, testBlob2) {
+			fmt.Fprintf(out, "ERROR: results do not match\n")
+			return false
+		}
+	}
+	fmt.Fprintf(out, "OK\n")
+
 	fmt.Fprintf(out, "Testing built-in fork of MD5 (used in proof of work function)... ")
 	var mymd5test lfmd5.Digest
 	mymd5test.Reset()
@@ -141,6 +165,21 @@ func TestCore(out io.Writer) bool {
 		return false
 	}
 	if !op224.Verify(testSigHash[:], sig) {
+		fmt.Fprintf(out, "FAILED (verify)\n")
+		return false
+	}
+	fmt.Fprint(out, "ed25519 ")
+	o25519, _ := NewOwnerFromSeed(OwnerTypeEd25519, []byte("lol"))
+	if hex.EncodeToString(o25519.Public) != "f49e48675d885cabdfd6c84b47ee0017948699ecf356e9902d786cad245450c2" {
+		fmt.Fprintf(out, "FAILED %x\n", o25519.Public)
+		return false
+	}
+	sig, err = o25519.Sign(testSigHash[:])
+	if err != nil {
+		fmt.Fprintf(out, "FAILED (sign)\n")
+		return false
+	}
+	if !o25519.Verify(testSigHash[:], sig) {
 		fmt.Fprintf(out, "FAILED (verify)\n")
 		return false
 	}
