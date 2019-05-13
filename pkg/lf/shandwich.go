@@ -35,11 +35,11 @@ import (
 
 // Shandwich256 combines AES and SHA-256 for a more future-proof 256-bit hash.
 func Shandwich256(in []byte) (h [32]byte) {
-	h = sha256.Sum256(in)
 	h2 := fnv.New128a()
 	h2.Write(in)
 	var tmp [16]byte
 	c, _ := aes.NewCipher(h2.Sum(tmp[:0]))
+	h = sha256.Sum256(in)
 	c.Encrypt(h[0:16], h[0:16])
 	c.Encrypt(h[16:32], h[16:32])
 	return
@@ -72,9 +72,9 @@ func (h *Shandwich256Hasher) BlockSize() int { return sha256.BlockSize }
 
 // Sum computes the 256-bit Shandwich256 sum of the current input.
 func (h *Shandwich256Hasher) Sum(b []byte) []byte {
-	h256 := h[0].Sum(b)
 	var tmp [16]byte
 	c, _ := aes.NewCipher(h[1].Sum(tmp[:0]))
+	h256 := h[0].Sum(b)
 	c.Encrypt(h256[0:16], h256[0:16])
 	c.Encrypt(h256[16:32], h256[16:32])
 	return h256
