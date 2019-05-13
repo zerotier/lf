@@ -105,20 +105,39 @@ func wharrgarblFrankenhash(md5 *lfmd5.Digest, cipher0, cipher1 cipher.Block, tmp
 			cipher1.Encrypt(tmp, tmp)
 			cipher0.Encrypt(tmp, tmp)
 		case 4:
-			cipher1.Encrypt(tmp, tmp)
-			cipher0.Encrypt(tmp, tmp)
-			cipher1.Encrypt(tmp, tmp)
-			cipher1.Encrypt(tmp, tmp)
-			cipher0.Encrypt(tmp, tmp)
+			if tmp[1] == 253 {
+				cipher0.Encrypt(tmp, tmp)
+				cipher1.Encrypt(tmp, tmp)
+				cipher1.Encrypt(tmp, tmp)
+				cipher0.Encrypt(tmp, tmp)
+				cipher0.Encrypt(tmp, tmp)
+				cipher1.Encrypt(tmp, tmp)
+				cipher1.Encrypt(tmp, tmp)
+				cipher1.Encrypt(tmp, tmp)
+				cipher1.Encrypt(tmp, tmp)
+				cipher0.Encrypt(tmp, tmp)
+				cipher1.Encrypt(tmp, tmp)
+				cipher1.Encrypt(tmp, tmp)
+			} else {
+				cipher1.Encrypt(tmp, tmp)
+				cipher0.Encrypt(tmp, tmp)
+				cipher1.Encrypt(tmp, tmp)
+				cipher1.Encrypt(tmp, tmp)
+				cipher0.Encrypt(tmp, tmp)
+			}
 		case 5:
 			cipher1.Encrypt(tmp, tmp)
 			md5.Write(tmp)
 			cipher0.Encrypt(tmp, tmp)
-			md5.Write(tmp)
 			cipher1.Encrypt(tmp, tmp)
-			md5.Write(tmp)
 			cipher0.Encrypt(tmp, tmp)
-			md5.Write(tmp)
+			if tmp[0] == 3 {
+				cipher1.Encrypt(tmp, tmp)
+			} else {
+				cipher0.Encrypt(tmp, tmp)
+				md5.Write(tmp)
+				cipher0.Encrypt(tmp, tmp)
+			}
 		case 6:
 			for i := 1; i < 16; i++ {
 				tmp[i] += tmp[i-1]

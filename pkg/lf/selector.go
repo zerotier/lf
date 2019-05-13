@@ -143,8 +143,7 @@ func (s *Selector) marshalTo(out io.Writer) error {
 		return ErrInvalidObject
 	}
 	// We can pack the last byte of the claim key into the first byte since
-	// it's the key recovery index and will be 0 or 1. This is only true
-	// for type BP160 but that's fine.
+	// it's the key recovery index and will be 0 or 1. This saves one byte.
 	if _, err := out.Write([]byte{SelectorTypeBP160 | (s.Claim[40] << 4)}); err != nil {
 		return err
 	}
