@@ -1,7 +1,5 @@
 # LF: Fully Decentralized Fully Replicated Key/Value Store
 
-**Design** ~~white~~**purplepaper.**
-
 <img src="underconstruction.gif">
 
 ## Abstract

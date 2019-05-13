@@ -50,7 +50,7 @@ All of these things exist in the same `lf` binary that gets built when you type 
 
 ## Internals
 
-See [PURPLEPAPER.md](doc/PURPLEPAPER.md) for details.
+See [DESIGN.md](doc/DESIGN.md) for details.
 
 ## Credits
 
