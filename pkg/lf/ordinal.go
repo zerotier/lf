@@ -31,8 +31,6 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/json"
-	"sort"
-	"unsafe"
 )
 
 // OrdinalSize is the size of an ordinal in bytes.
@@ -88,56 +86,42 @@ func (b *Ordinal) UnmarshalJSON(j []byte) error {
 	return nil
 }
 
-func ordinalMakeAlphabet(alphabet *[2048]uint16, key []byte) {
-	keyHash := sha256.Sum256(key)
-	c, _ := aes.NewCipher(keyHash[:])
-
-	// Generate 8 unique alphabets of 256 16-bit values that are unique and sorted in ascending order.
-	// Each unique alphabet "stripe" corresponds to one byte of the ordinal.
-	for stripeNo := 0; stripeNo < 8; stripeNo++ {
-		var cin [16]byte
-		cin[15] = byte(stripeNo)
-
-	tryNext:
-		for {
-			stripe := alphabet[256*stripeNo : 256*(stripeNo+1)]
-
-			// Generate a random 16-bit alphabet for this stripe of the overall alphabet.
-			stripeBytes := (*[512]byte)(unsafe.Pointer(&stripe[0]))
-			for stripeBlockNo := 0; stripeBlockNo < 32; stripeBlockNo++ {
-				cin[14] = byte(stripeBlockNo)
-				c.Encrypt(stripeBytes[16*stripeBlockNo:16*(stripeBlockNo+1)], cin[:])
-			}
-
-			// Sort this alphabet in ascending word order.
-			sort.Slice(stripe, func(a, b int) bool { return stripe[a] < stripe[b] })
-
-			// If every word in this alphabet stripe is not unique, we increment the AES input's least
-			// significant 64 bits and try again. This is deterministic from the key, so we'll get
-			// the same alphabet every time for a given key.
-			for i := 1; i < 256; i++ {
-				if stripe[i] == stripe[i-1] {
-					for i := 0; i < 8; i++ {
-						cin[i]++
-						if cin[i] != 0 {
-							break
-						}
-					}
-					continue tryNext
-				}
-			}
-			break
-		}
-	}
+var ordinalSequences = [6][2]uint64{
+	[2]uint64{0, 1},
+	[2]uint64{0, 2},
+	[2]uint64{0, 3},
+	[2]uint64{1, 2},
+	[2]uint64{2, 3},
+	[2]uint64{1, 3},
 }
 
-// Set sets this ordinal to a sortable value computed from a 64-bit plain text integer using a random set of alphabets generated from the key.
+// Set sets this ordinal to a sortable masked value that hides the original value to some degree.
 func (b *Ordinal) Set(value uint64, key []byte) {
-	var alphabet [2048]uint16
-	ordinalMakeAlphabet(&alphabet, key)
-	var vb [8]byte
-	binary.BigEndian.PutUint64(vb[:], value)
-	for i := 0; i < 8; i++ {
-		binary.BigEndian.PutUint16(b[2*i:2*(i+1)], alphabet[(i*256)+int(vb[i])])
+	kh := sha256.Sum256(key)
+	kh[0]++ // make sure this is never the same as seededPrng
+	c, _ := aes.NewCipher(kh[:])
+	var rb [16]byte
+	c.Encrypt(rb[:], kh[0:16])
+	hi := 0
+	for vi := 0; vi < 8; vi++ {
+		vb := uint(value >> 56)
+		value <<= 8
+		col := uint16(rb[hi])
+		hi++
+		if hi == 16 {
+			rb[0]++
+			c.Encrypt(rb[:], rb[:])
+			hi = 0
+		}
+		for i := uint(0); i < vb; i++ {
+			col += 1 + uint16(rb[hi])
+			hi++
+			if hi == 16 {
+				rb[0]++
+				c.Encrypt(rb[:], rb[:])
+				hi = 0
+			}
+		}
+		binary.BigEndian.PutUint16(b[2*vi:2*(vi+1)], col)
 	}
 }

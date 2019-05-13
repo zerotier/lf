@@ -31,6 +31,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -177,12 +178,18 @@ func TestCore(out io.Writer) bool {
 	fmt.Fprintf(out, "OK\n")
 
 	fmt.Fprintf(out, "Testing Ordinal... ")
-	for k := 0; k < 1024; k++ {
-		rn := rand.Uint32()
+	var rk [8]byte
+	for k := 0; k < 100000; k++ {
+		binary.LittleEndian.PutUint64(rk[:], rand.Uint64())
+		rn := rand.Uint64()
+		if rn == 0xffffffffffffffff {
+			rn--
+		}
 		var orda, ordb Ordinal
-		orda.Set(uint64(rn), []byte{byte(k)})
-		ordb.Set(uint64(rn)+1, []byte{byte(k)})
-		if bytes.Compare(orda[:], ordb[:]) > 0 {
+		orda.Set(rn, rk[:])
+		rn++
+		ordb.Set(rn, rk[:])
+		if bytes.Compare(orda[:], ordb[:]) >= 0 {
 			fmt.Fprintf(out, "FAILED (ordinal A must be less than ordinal B)\n")
 			return false
 		}
