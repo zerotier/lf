@@ -459,9 +459,9 @@ Peer Connections
 `))
 				n.peersLock.RLock()
 				for _, p := range n.peers {
-					inout := "->"
+					inout := "OUT"
 					if p.inbound {
-						inout = "<-"
+						inout = " IN"
 					}
 					out.Write([]byte(fmt.Sprintf("%s %-42s %s\n", inout, p.address, Base62Encode(p.identity))))
 				}

@@ -40,11 +40,11 @@ import (
 // a known-seed attack scenario. The only goal is to generate a random stream from a seed in a reproducible
 // and strongly random way.
 type seededPrng struct {
-	lock sync.Mutex
-	c    cipher.Block
-	n    uint64
-	i    uint
-	b    [16]byte
+	l sync.Mutex
+	c cipher.Block
+	n uint64
+	i uint
+	b [16]byte
 }
 
 func (s *seededPrng) seed(b []byte) {
@@ -56,7 +56,7 @@ func (s *seededPrng) seed(b []byte) {
 
 func (s *seededPrng) Read(b []byte) (int, error) {
 	var tmp [16]byte
-	s.lock.Lock()
+	s.l.Lock()
 	for i := 0; i < len(b); i++ {
 		if s.i == 16 {
 			s.i = 0
@@ -67,6 +67,6 @@ func (s *seededPrng) Read(b []byte) (int, error) {
 		b[i] = s.b[s.i]
 		s.i++
 	}
-	s.lock.Unlock()
+	s.l.Unlock()
 	return len(b), nil
 }

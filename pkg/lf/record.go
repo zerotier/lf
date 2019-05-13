@@ -56,7 +56,7 @@ var (
 const (
 	// Flags are protocol constants and can't be changed.
 	recordBodyFlagHasType           byte   = 0x01
-	recordValueFlagBrotliCompressed uint32 = 0x80000000
+	recordValueFlagBrotliCompressed uint32 = 0x80000000 // these flags must occupy the most significant 4 bits of the value
 
 	// RecordDefaultWharrgarblMemory is the default amount of memory to use for Wharrgarbl momentum-type PoW.
 	RecordDefaultWharrgarblMemory = 1024 * 1024 * 512

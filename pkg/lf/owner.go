@@ -49,6 +49,15 @@ const OwnerTypeNistP384 byte = 2
 // Total record overhead for this type is 96 bytes.
 const OwnerTypeEd25519 byte = 3
 
+// Length of public part of owner for each type. Right now this length is used
+// to determine the type. If we add another 32-byte type in the future we'll
+// probably make it 33 bytes and preface it or something.
+const (
+	ownerLenP224    = 14
+	ownerLenP384    = 24
+	ownerLenEd25519 = 32
+)
+
 // Owner represents an entity capable of creating LF records.
 type Owner struct {
 	// Private is *ecdsa.PrivateKey for ECDSA modes and *ed25519.PrivateKey for ed25519.
@@ -69,14 +78,16 @@ func internalOwnerHashECDSA(ownerType byte, pub *ecdsa.PublicKey) []byte {
 	var tmp [32]byte
 	hh := h.Sum(tmp[:0])
 	if ownerType == OwnerTypeNistP224 {
-		return hh[0:14] // P-224 provides 112-bit security
+		return hh[0:14] // matches 112-bit security provided by P-224
 	}
-	return hh[0:24] // P-384 provides 192-bit security
+	return hh[0:24] // matches 192-bit security provided by P-384
 }
 
 func internalNewOwner(ownerType byte, prng io.Reader) (*Owner, error) {
 	var curve elliptic.Curve
 	switch ownerType {
+
+	// These two subsequently fall out of the switch statement
 	case OwnerTypeNistP224:
 		curve = elliptic.P224()
 	case OwnerTypeNistP384:
@@ -156,17 +167,17 @@ func (o *Owner) PrivateBytes() ([]byte, error) {
 	}
 	switch len(o.Public) {
 
-	case 14, 24:
+	case ownerLenP224, ownerLenP384:
 		priv, err := x509.MarshalECPrivateKey(o.Private.(*ecdsa.PrivateKey))
 		if err != nil {
 			return nil, err
 		}
-		if len(o.Public) == 14 {
+		if len(o.Public) == ownerLenP224 {
 			return append([]byte{OwnerTypeNistP224}, priv...), nil
 		}
 		return append([]byte{OwnerTypeNistP384}, priv...), nil
 
-	case 32:
+	case ownerLenEd25519:
 		return append([]byte{OwnerTypeEd25519}, (*(o.Private.(*ed25519.PrivateKey)))...), nil
 
 	default:
@@ -197,9 +208,9 @@ func (o *Owner) Sign(hash []byte) ([]byte, error) {
 		return nil, ErrPrivateKeyRequired
 	}
 	switch len(o.Public) {
-	case 14, 24:
+	case ownerLenP224, ownerLenP384:
 		return ECDSASign(o.Private.(*ecdsa.PrivateKey), hash)
-	case 32:
+	case ownerLenEd25519:
 		return ed25519.Sign(*(o.Private.(*ed25519.PrivateKey)), hash), nil
 	default:
 		return nil, ErrInvalidObject
@@ -209,7 +220,7 @@ func (o *Owner) Sign(hash []byte) ([]byte, error) {
 // Verify verifies a message hash and a signature against this owner's public key.
 func (o *Owner) Verify(hash, sig []byte) (verdict bool) {
 	switch len(o.Public) {
-	case 14:
+	case ownerLenP224:
 		k0, k1 := ECDSARecoverBoth(elliptic.P224(), hash, sig)
 		if bytes.Equal(internalOwnerHashECDSA(OwnerTypeNistP224, k0), o.Public) {
 			verdict = true
@@ -217,7 +228,7 @@ func (o *Owner) Verify(hash, sig []byte) (verdict bool) {
 			verdict = bytes.Equal(internalOwnerHashECDSA(OwnerTypeNistP224, k1), o.Public)
 		}
 
-	case 24:
+	case ownerLenP384:
 		k0, k1 := ECDSARecoverBoth(elliptic.P384(), hash, sig)
 		if bytes.Equal(internalOwnerHashECDSA(OwnerTypeNistP384, k0), o.Public) {
 			verdict = true
@@ -225,7 +236,7 @@ func (o *Owner) Verify(hash, sig []byte) (verdict bool) {
 			verdict = bytes.Equal(internalOwnerHashECDSA(OwnerTypeNistP384, k1), o.Public)
 		}
 
-	case 32:
+	case ownerLenEd25519:
 		verdict = ed25519.Verify(o.Public, hash, sig)
 
 	default:
