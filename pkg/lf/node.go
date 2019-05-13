@@ -34,6 +34,7 @@ import (
 	"crypto/cipher"
 	"crypto/ecdsa"
 	"crypto/elliptic"
+	"crypto/sha256"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -51,8 +52,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"golang.org/x/crypto/sha3"
 )
 
 const (
@@ -1196,7 +1195,7 @@ func (n *Node) p2pConnectionHandler(c *net.TCPConn, identity []byte, inbound boo
 	aesCipher.Decrypt(incomingNonce[:], incomingNonce[:])
 
 	// Exchange hashes of decrypted nonces to verify correct key.
-	outgoingNonceHash, incomingNonceHash := sha3.Sum256(outgoingNonce[:]), sha3.Sum256(incomingNonce[:])
+	outgoingNonceHash, incomingNonceHash := sha256.Sum256(outgoingNonce[:]), sha256.Sum256(incomingNonce[:])
 	_, err = c.Write(incomingNonceHash[0:16])
 	if err != nil {
 		n.log[LogLevelNormal].Printf("P2P connection to %s closed: %s", peerAddressStr, err.Error())

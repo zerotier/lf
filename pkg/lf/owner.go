@@ -30,11 +30,11 @@ import (
 	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
+	"crypto/sha256"
 	"crypto/x509"
 	"io"
 
 	"golang.org/x/crypto/ed25519"
-	"golang.org/x/crypto/sha3"
 )
 
 // OwnerTypeNistP224 indicates an owner based on the NIST P-224 elliptic curve.
@@ -72,7 +72,7 @@ type Owner struct {
 }
 
 func internalOwnerHashECDSA(ownerType byte, pub *ecdsa.PublicKey) []byte {
-	h := sha3.New256()
+	h := sha256.New()
 	h.Write(pub.X.Bytes())
 	h.Write(pub.Y.Bytes())
 	var tmp [32]byte

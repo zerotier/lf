@@ -30,13 +30,13 @@ import (
 	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
 	"hash/crc32"
 	"io"
 	"sort"
 
-	"golang.org/x/crypto/sha3"
 	brotlidec "gopkg.in/kothar/brotli-go.v0/dec"
 	brotlienc "gopkg.in/kothar/brotli-go.v0/enc"
 )
@@ -244,7 +244,7 @@ func (rb *recordBody) marshalTo(w io.Writer, hashAsProxyForValue bool) error {
 	}
 
 	if hashAsProxyForValue {
-		h := sha3.Sum256(rb.Value)
+		h := Shandwich256(rb.Value)
 		if _, err := w.Write(h[:]); err != nil {
 			return err
 		}
@@ -314,7 +314,7 @@ func (rb *recordBody) GetValue(maskingKey []byte) ([]byte, error) {
 	if len(rb.Owner) >= 8 {
 		copy(cfbIv[8:16], rb.Owner[0:8])
 	}
-	maskingKeyH := sha3.Sum256(maskingKey)
+	maskingKeyH := sha256.Sum256(maskingKey)
 	c, _ := aes.NewCipher(maskingKeyH[:])
 	cipher.NewCFBDecrypter(c, cfbIv[:]).XORKeyStream(unmaskedValue, rb.Value)
 	flagsAndCrc := binary.BigEndian.Uint32(unmaskedValue[0:4])
@@ -345,9 +345,9 @@ type Record struct {
 	recordBody
 
 	Selectors     []Selector `json:",omitempty"` // Things that can be used to find the record
-	Work          Blob       `json:",omitempty"` // Proof of work computed on sha3-256(Body Signing Hash | Selectors) with work cost based on size of body and selectors
+	Work          Blob       `json:",omitempty"` // Proof of work computed on sha-256(Body Signing Hash | Selectors) with work cost based on size of body and selectors
 	WorkAlgorithm byte       ``                  // Proof of work algorithm
-	Signature     Blob       `json:",omitempty"` // Signature of sha3-256(sha3-256(Body Signing Hash | Selectors) | Work | WorkAlgorithm)
+	Signature     Blob       `json:",omitempty"` // Signature of sha-256(sha-256(Body Signing Hash | Selectors) | Work | WorkAlgorithm)
 
 	hash, id *[32]byte
 }
@@ -527,7 +527,7 @@ func (r *Record) ID() (id [32]byte) {
 		return
 	}
 	selectorClaimSigningHash := r.recordBody.signingHash()
-	h := sha3.New256()
+	h := sha256.New()
 	for i := 0; i < len(r.Selectors); i++ {
 		h.Write(r.Selectors[i].id(selectorClaimSigningHash[:]))
 	}
@@ -551,7 +551,7 @@ func (r *Record) Validate() (err error) {
 
 	selectorClaimSigningHash := r.recordBody.signingHash()
 	workBillableBytes := r.recordBody.sizeBytes()
-	workHasher := sha3.New256()
+	workHasher := sha256.New()
 	workHasher.Write(selectorClaimSigningHash[:])
 	for i := 0; i < len(r.Selectors); i++ {
 		sb := r.Selectors[i].bytes()
@@ -571,7 +571,7 @@ func (r *Record) Validate() (err error) {
 		return ErrRecordInsufficientWork
 	}
 
-	finalHash := sha3.New256()
+	finalHash := sha256.New()
 	finalHash.Write(workHash[:])
 	finalHash.Write(r.Work)
 	finalHash.Write([]byte{r.WorkAlgorithm})
@@ -613,7 +613,7 @@ func NewRecordStart(recordType byte, value []byte, links [][32]byte, maskingKey 
 		if len(maskingKey) == 0 {
 			maskingKey = owner // all records are masked, use owner if no key given
 		}
-		maskingKeyH := sha3.Sum256(maskingKey)
+		maskingKeyH := sha256.Sum256(maskingKey)
 		c, _ := aes.NewCipher(maskingKeyH[:])
 		cfb := cipher.NewCFBEncrypter(c, cfbIv[:])
 		valueMasked := make([]byte, 4+len(value))
@@ -641,7 +641,7 @@ func NewRecordStart(recordType byte, value []byte, links [][32]byte, maskingKey 
 
 	workBillableBytes = r.recordBody.sizeBytes()
 	selectorClaimSigningHash := r.recordBody.signingHash()
-	workHasher := sha3.New256()
+	workHasher := sha256.New()
 	workHasher.Write(selectorClaimSigningHash[:])
 	if len(plainTextSelectorNames) > 0 {
 		r.Selectors = make([]Selector, len(plainTextSelectorNames))
@@ -680,7 +680,7 @@ func NewRecordAddWork(incompleteRecord *Record, workHash []byte, work []byte, wo
 	copy(tmp, workHash)
 	copy(tmp[len(workHash):], work)
 	tmp[len(tmp)-1] = workAlgorithm
-	signingHash = sha3.Sum256(tmp)
+	signingHash = sha256.Sum256(tmp)
 	return
 }
 

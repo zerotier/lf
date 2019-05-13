@@ -45,7 +45,6 @@ import (
 	"time"
 
 	"../../third_party/lfmd5"
-	"golang.org/x/crypto/sha3"
 )
 
 func sliceContainsUInt(s []uint, e uint) bool {
@@ -75,15 +74,7 @@ func TestCore(out io.Writer) bool {
 	}
 	var thout [32]byte
 	th.Sum(thout[:0])
-	ref2 := sha3.Sum512(testStr)
-	th2 := sha3.New512()
-	_, err = th2.Write(testStr)
-	if err != nil {
-		panic(err)
-	}
-	var thout2 [64]byte
-	th2.Sum(thout2[:0])
-	if bytes.Equal(thout[:], ref[:]) && bytes.Equal(thout2[:], ref2[:]) {
+	if bytes.Equal(thout[:], ref[:]) {
 		fmt.Fprintf(out, "OK\n")
 	} else {
 		fmt.Fprintf(out, "FAILED\n")
@@ -130,7 +121,7 @@ func TestCore(out io.Writer) bool {
 	t1h := NewShandwich256()
 	t1h.Write(testStr)
 	t1 := t1h.Sum(nil)
-	if bytes.Equal(t0[:], t1) && hex.EncodeToString(t0[:]) == "6a958404145338606af8408024367cf47d5c3addd555b284ff0630307c4a7fa1" {
+	if bytes.Equal(t0[:], t1) && hex.EncodeToString(t0[:]) == "7f1431b5dbeb7b15129ed4d9ebd97cee1e5b6eb01623405b2c4b33844f1e1bb1" {
 		fmt.Fprintf(out, "OK\n")
 	} else {
 		fmt.Fprintf(out, "FAILED %x\n", t0)
@@ -139,7 +130,7 @@ func TestCore(out io.Writer) bool {
 
 	fmt.Fprintf(out, "Testing deterministic owner generation from seed... P-384 ")
 	op384, _ := NewOwnerFromSeed(OwnerTypeNistP384, []byte("lol"))
-	if hex.EncodeToString(op384.Public) != "65505b47febe92d0fe5147f9240f3e889cbcdb615e1d2c3b" {
+	if hex.EncodeToString(op384.Public) != "7edb3b9ecc106d4a452275ecf71ab1b271e0a82ca2dc9df2" {
 		fmt.Fprintf(out, "FAILED %x\n", op384.Public)
 		return false
 	}
@@ -155,7 +146,7 @@ func TestCore(out io.Writer) bool {
 	}
 	fmt.Fprint(out, "P-224 ")
 	op224, _ := NewOwnerFromSeed(OwnerTypeNistP224, []byte("lol"))
-	if hex.EncodeToString(op224.Public) != "00f67c455fff20cace99472bb8e4" {
+	if hex.EncodeToString(op224.Public) != "6e5e629632947fbfb1d60bb79221" {
 		fmt.Fprintf(out, "FAILED %x\n", op224.Public)
 		return false
 	}
