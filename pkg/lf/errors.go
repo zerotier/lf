@@ -82,7 +82,6 @@ const (
 const (
 	ErrRecordInvalid                   ErrRecord = "record invalid"
 	ErrRecordOwnerSignatureCheckFailed ErrRecord = "owner signature check failed"
-	ErrRecordSelectorClaimCheckFailed  ErrRecord = "selector claim check failed"
 	ErrRecordInsufficientWork          ErrRecord = "insufficient work to pay for this record"
 	ErrRecordInsufficientLinks         ErrRecord = "insufficient links"
 	ErrRecordTooManyLinks              ErrRecord = "too many links"

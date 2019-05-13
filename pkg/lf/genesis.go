@@ -34,19 +34,18 @@ import (
 
 // GenesisParameters is the payload (JSON encoded) of the first RecordMinLinks records in a global data store.
 type GenesisParameters struct {
-	Name                       string   `json:",omitempty"` // Name of this LF network / data store
-	Contact                    string   `json:",omitempty"` // Contact info for this network (may be empty)
-	Comment                    string   `json:",omitempty"` // Optional comment
-	RootCertificateAuthorities Blob     `json:",omitempty"` // X.509 certificate(s) for master CAs for this data store (ASN.1 records)
-	CertificateRequired        bool     `json:""`           // Is a certificate required? (must be false if there are no CAs, obviously)
-	WorkRequired               bool     `json:""`           // Is proof of work required? (assuming no certificate allowing reduced or no work)
-	LinkKey                    [32]byte `json:""`           // Static 32-byte key used to ensure that nodes in this network only connect to one another
-	TimestampFloor             uint64   `json:""`           // Floor for network record timestamps (seconds)
-	RecordMinLinks             uint     `json:""`           // Minimum number of links required for non-genesis records
-	RecordMaxValueSize         uint     `json:""`           // Maximum size of record values
-	RecordMaxSize              uint     `json:""`           // Maximum size of records (up to the RecordMaxSize constant)
-	RecordMaxForwardTimeDrift  uint     `json:""`           // Maximum number of seconds in the future a record can be timestamped
-	AmendableFields            []string `json:",omitempty"` // List of json field names that the genesis owner can change by posting non-empty records
+	Name                      string   `json:",omitempty"` // Name of this LF network / data store
+	Contact                   string   `json:",omitempty"` // Contact info for this network (may be empty)
+	Comment                   string   `json:",omitempty"` // Optional comment
+	AuthCertificates          Blob     `json:",omitempty"` // X.509 certificate(s) that can sign records to bypass work requirement
+	AuthSignatureRequired     bool     ``                  // If true a CA signature is required and simple proof of work is not accepted
+	LinkKey                   [32]byte ``                  // Static 32-byte key used to ensure that nodes in this network only connect to one another
+	TimestampFloor            uint64   ``                  // Floor for network record timestamps (seconds)
+	RecordMinLinks            uint     ``                  // Minimum number of links required for non-genesis records
+	RecordMaxValueSize        uint     ``                  // Maximum size of record values
+	RecordMaxSize             uint     ``                  // Maximum size of records (up to the RecordMaxSize constant)
+	RecordMaxForwardTimeDrift uint     ``                  // Maximum number of seconds in the future a record can be timestamped
+	AmendableFields           []string `json:",omitempty"` // List of json field names that the genesis owner can change by posting non-empty records
 
 	certs       []*x509.Certificate
 	initialized bool
@@ -89,13 +88,11 @@ func (gp *GenesisParameters) Update(jsonValue []byte) error {
 				gp.Contact = ngp.Contact
 			case "comment":
 				gp.Comment = ngp.Comment
-			case "rootcertificateauthorities":
-				gp.RootCertificateAuthorities = ngp.RootCertificateAuthorities
+			case "authcertificates":
+				gp.AuthCertificates = ngp.AuthCertificates
 				gp.certs = nil // forget previously cached certs
 			case "certificaterequired":
-				gp.CertificateRequired = ngp.CertificateRequired
-			case "workrequired":
-				gp.WorkRequired = ngp.WorkRequired
+				gp.AuthSignatureRequired = ngp.AuthSignatureRequired
 			case "linkkey":
 				gp.LinkKey = ngp.LinkKey
 			case "timestampfloor":
@@ -119,15 +116,15 @@ func (gp *GenesisParameters) Update(jsonValue []byte) error {
 	return nil
 }
 
-// RootCAs returns the fully deserialized root CAs in this parameter set.
-func (gp *GenesisParameters) RootCAs() ([]*x509.Certificate, error) {
+// GetAuthCertificates returns the fully deserialized auth CAs in this parameter set.
+func (gp *GenesisParameters) GetAuthCertificates() ([]*x509.Certificate, error) {
 	if len(gp.certs) > 0 {
 		return gp.certs, nil
 	}
-	if len(gp.RootCertificateAuthorities) == 0 {
+	if len(gp.AuthCertificates) == 0 {
 		return nil, nil
 	}
-	certs, err := x509.ParseCertificates(gp.RootCertificateAuthorities)
+	certs, err := x509.ParseCertificates(gp.AuthCertificates)
 	if err != nil {
 		return nil, err
 	}
@@ -153,10 +150,8 @@ func CreateGenesisRecords(genesisOwnerType byte, genesisParameters *GenesisParam
 	}
 	now := TimeSec()
 
-	var wg *Wharrgarblr
-	if genesisParameters.WorkRequired {
-		wg = NewWharrgarblr(RecordDefaultWharrgarblMemory, 0)
-	}
+	// Genesis records always carry PoW
+	wg := NewWharrgarblr(RecordDefaultWharrgarblMemory, 0)
 
 	// Create the very first genesis record, which contains the genesis configuration structure in JSON format.
 	r, err := NewRecord(RecordTypeGenesis, gpjson, nil, nil, nil, nil, nil, now, wg, genesisOwner)

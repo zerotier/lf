@@ -29,7 +29,6 @@ package lf
 import (
 	"bytes"
 	"crypto/ecdsa"
-	"crypto/sha256"
 	"encoding/binary"
 	"io"
 
@@ -38,15 +37,7 @@ import (
 
 // SelectorTypeBP160 indicates a sortable selector built from the brainpoolP160t1 small elliptic curve.
 // This is a protocol constant and cannot be changed.
-const SelectorTypeBP160 byte = 0 // valid range: 0..3
-
-// SelectorMaxOrdinalSize is the maximum length of an ordinal.
-// Functions will take larger ordinals but bytes to the left of this size are ignored.
-// This is a protocol constant and cannot be changed.
-const SelectorMaxOrdinalSize = 24
-
-// SelectorMaxOrdinal is the maximum possible ordinal value (24 0xff bytes).
-var SelectorMaxOrdinal = []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}
+const SelectorTypeBP160 byte = 0
 
 // SelectorKeySize is the size of the sortable ordinal-modified hash used for DB queries and range queries.
 // It's computed by adding the ordinal to the SHA512 hash of the deterministic selector public key.
@@ -56,43 +47,36 @@ const SelectorKeySize = 32
 // Selector is a non-forgeable range queryable identifier for records.
 // It can also rewind on request from the MC.
 type Selector struct {
-	Ordinal Blob `json:",omitempty"` // A plain text sortable field that can be used for range queries against secret selectors
-	Claim   Blob `json:",omitempty"` // 41-byte brainpoolP160t1 recoverable signature
+	Ordinal Ordinal `json:",omitempty"` // A plain text sortable field that can be used for range queries against secret selectors
+	Claim   Blob    `json:",omitempty"` // 41-byte brainpoolP160t1 recoverable signature
 }
 
-// addOrdinalToHash adds a 24-byte public ordinal to a 32-byte key hash.
-func addOrdinalToHash(h *[32]byte, ordinal []byte) {
-	if len(ordinal) > 0 {
-		var ord [24]byte
-		if len(ordinal) > 24 {
-			copy(ord[:], ordinal[len(ordinal)-24:])
-		} else {
-			copy(ord[24-len(ordinal):], ordinal)
-		}
-		a, b, c, d := binary.BigEndian.Uint64(h[0:8]), binary.BigEndian.Uint64(h[8:16]), binary.BigEndian.Uint64(h[16:24]), binary.BigEndian.Uint64(h[24:32])
-		ob, oc, od := b, c, d
-		d += binary.BigEndian.Uint64(ord[16:24])
-		if d < od {
-			c++
-		}
-		c += binary.BigEndian.Uint64(ord[8:16])
-		if c < oc {
-			b++
-		}
-		b += binary.BigEndian.Uint64(ord[0:8])
-		if b < ob {
-			a++
-		}
-		binary.BigEndian.PutUint64(h[0:8], a)
-		binary.BigEndian.PutUint64(h[8:16], b)
-		binary.BigEndian.PutUint64(h[16:24], c)
-		binary.BigEndian.PutUint64(h[24:32], d)
+// addOrdinalToHash adds a 128-bit ordinal to a 256-bit hash.
+func addOrdinalToHash(h *[32]byte, ordinal *Ordinal) {
+	a, b, c, d := binary.BigEndian.Uint64(h[0:8]), binary.BigEndian.Uint64(h[8:16]), binary.BigEndian.Uint64(h[16:24]), binary.BigEndian.Uint64(h[24:32])
+	ob, oc, od := b, c, d
+	d += binary.BigEndian.Uint64(ordinal[8:16])
+	if d < od {
+		c++
 	}
+	if c < oc {
+		b++
+	}
+	c += binary.BigEndian.Uint64(ordinal[0:8])
+	if c < oc {
+		b++
+	}
+	if b < ob {
+		a++
+	}
+	binary.BigEndian.PutUint64(h[0:8], a)
+	binary.BigEndian.PutUint64(h[8:16], b)
+	binary.BigEndian.PutUint64(h[16:24], c)
+	binary.BigEndian.PutUint64(h[24:32], d)
 }
 
 // MakeSelectorKey obtains a sortable database/query key from a plain text name and ordinal.
-// This can be used when using the API to avoid revealing plain text names to outsiders.
-func MakeSelectorKey(plainTextName, ordinal []byte) []byte {
+func MakeSelectorKey(plainTextName []byte, plainTextOrdinal uint64) []byte {
 	var prng seededPrng
 	prng.seed(plainTextName)
 	priv, err := ecdsa.GenerateKey(ECCCurveBrainpoolP160T1, &prng)
@@ -100,22 +84,24 @@ func MakeSelectorKey(plainTextName, ordinal []byte) []byte {
 		panic(err)
 	}
 
-	var publicKeyHash [SelectorKeySize]byte
-	pcomp, _ := ECDSACompressPublicKey(&priv.PublicKey)
-	if pcomp != nil {
-		publicKeyHash = sha256.Sum256(pcomp)
-	}
+	var key [32]byte
+	hasher := sha3.New256()
+	hasher.Write(priv.PublicKey.X.Bytes())
+	hasher.Write(priv.PublicKey.Y.Bytes())
+	hasher.Sum(key[:0])
 
-	addOrdinalToHash(&publicKeyHash, ordinal)
+	var ord Ordinal
+	ord.Set(plainTextOrdinal, plainTextName)
+	addOrdinalToHash(&key, &ord)
 
-	return publicKeyHash[:]
+	return key[:]
 }
 
 // claimKey recovers the public key from this selector's claim and the record body hash used to generate it.
 func (s *Selector) claimKey(hash []byte) *ecdsa.PublicKey {
 	sigHash := sha3.New256()
 	sigHash.Write(hash)
-	sigHash.Write(s.Ordinal)
+	sigHash.Write(s.Ordinal[:])
 	var sigHashBuf [32]byte
 	return ECDSARecover(ECCCurveBrainpoolP160T1, sigHash.Sum(sigHashBuf[:0]), s.Claim)
 }
@@ -145,71 +131,46 @@ func (s *Selector) id(hash []byte) []byte {
 // key returns the sortable and comparable database key for this selector.
 func (s *Selector) key(hash []byte) []byte {
 	pub := s.claimKey(hash)
-	var publicKeyHash [SelectorKeySize]byte
-	if pub != nil {
-		pcomp, _ := ECDSACompressPublicKey(pub)
-		if pcomp != nil {
-			publicKeyHash = sha256.Sum256(pcomp)
-		}
-	}
-	addOrdinalToHash(&publicKeyHash, s.Ordinal)
-	return publicKeyHash[:]
+	var key [32]byte
+	hasher := sha3.New256()
+	hasher.Write(pub.X.Bytes())
+	hasher.Write(pub.Y.Bytes())
+	hasher.Sum(key[:0])
+	addOrdinalToHash(&key, &s.Ordinal)
+	return key[:]
 }
 
 func (s *Selector) marshalTo(out io.Writer) error {
 	if len(s.Claim) != 41 {
 		return ErrInvalidObject
 	}
-	if len(s.Ordinal) > SelectorMaxOrdinalSize || s.Claim[40] > 1 {
-		return ErrInvalidObject
-	}
-
-	// This packs the ordinal length, selector type, and the last byte of the claim signature
-	// into the first byte. The last byte of the claim signature holds either 0 or 1 to select
-	// which key recovery index should be used. This saves a few bytes per selector which can
-	// add up with records with multiple selectors. Note that different selector types might
-	// imply different meanings for the most significant 6 bits of the first byte, but that's
-	// fine since future selector types (if any) may be fundamentally different as they'd
-	// probably use some kind of post-quantum scheme.
-	if _, err := out.Write([]byte{(byte(len(s.Ordinal)) << 3) | ((s.Claim[40] & 1) << 2) | SelectorTypeBP160}); err != nil {
+	if _, err := out.Write([]byte{SelectorTypeBP160}); err != nil {
 		return err
 	}
-
-	if len(s.Ordinal) > 0 {
-		if _, err := out.Write(s.Ordinal); err != nil {
-			return err
-		}
-	}
-
-	if _, err := out.Write(s.Claim[0:40]); err != nil {
+	if _, err := out.Write(s.Ordinal[:]); err != nil {
 		return err
 	}
-
+	if _, err := out.Write(s.Claim); err != nil {
+		return err
+	}
 	return nil
 }
 
 func (s *Selector) unmarshalFrom(in io.Reader) error {
-	var typeOrdinalLenClaimSignatureRecoveryIndex [1]byte
-	if _, err := io.ReadFull(in, typeOrdinalLenClaimSignatureRecoveryIndex[:]); err != nil {
+	var t [1]byte
+	if _, err := io.ReadFull(in, t[:]); err != nil {
 		return err
 	}
-	if (typeOrdinalLenClaimSignatureRecoveryIndex[0] & 3) != SelectorTypeBP160 {
+	if t[0] != SelectorTypeBP160 {
 		return ErrInvalidObject
 	}
-	ordSize := uint(typeOrdinalLenClaimSignatureRecoveryIndex[0] >> 3)
-	if ordSize > 0 {
-		s.Ordinal = make([]byte, ordSize)
-		if _, err := io.ReadFull(in, s.Ordinal); err != nil {
-			return err
-		}
-	} else {
-		s.Ordinal = nil
-	}
-	var cl [41]byte
-	if _, err := io.ReadFull(in, cl[0:40]); err != nil {
+	if _, err := io.ReadFull(in, s.Ordinal[:]); err != nil {
 		return err
 	}
-	cl[40] = (typeOrdinalLenClaimSignatureRecoveryIndex[0] >> 2) & 1 // key recovery index
+	var cl [41]byte
+	if _, err := io.ReadFull(in, cl[:]); err != nil {
+		return err
+	}
 	s.Claim = cl[:]
 	return nil
 }
@@ -226,32 +187,16 @@ func (s *Selector) bytes() []byte {
 	return b.Bytes()
 }
 
-// set sets this selector to a given plain text name, ordinal, and record body hash.
-// The hash supplied is the record's body hash. If this selector is not intended for range
-// queries use nil for its ordinal.
-func (s *Selector) set(plainTextName, ord, hash []byte) {
-	if len(ord) > SelectorMaxOrdinalSize {
-		s.Ordinal = make([]byte, SelectorMaxOrdinalSize)
-		copy(s.Ordinal, ord[len(ord)-SelectorMaxOrdinalSize:])
-	} else {
-		s.Ordinal = ord
-	}
+func (s *Selector) set(plainTextName []byte, plainTextOrdinal uint64, hash []byte) {
+	s.Ordinal.Set(plainTextOrdinal, plainTextName)
 
-	// Generate an ECDSA key pair deterministically using the plain text name. Note that
-	// this depends on the ECDSA key generation algorithm. Go currently implements the
-	// standard [NSA] A.2.1 algorithm. As long as this doesn't change we're fine. If it
-	// does we'll have to copypasta the original [NSA] A.2.1 code.
 	var prng seededPrng
 	prng.seed(plainTextName)
 	priv, err := ecdsa.GenerateKey(ECCCurveBrainpoolP160T1, &prng)
 
-	// The hash we actually sign includes the ordinal so that ordinals, while publicly
-	// visible, can't be forged without knowledge of the plain text name. Note that the
-	// claim is based on a signature computed from the plain text name, so that is
-	// a priori included too.
 	sigHash := sha3.New256()
 	sigHash.Write(hash)
-	sigHash.Write(ord)
+	sigHash.Write(s.Ordinal[:])
 	var sigHashBuf [32]byte
 	cs, err := ECDSASignEmbedRecoveryIndex(priv, sigHash.Sum(sigHashBuf[:0]))
 	if err != nil || len(cs) != 41 { // this would indicate a bug

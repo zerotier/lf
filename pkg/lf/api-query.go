@@ -43,9 +43,9 @@ import (
 // KeyRange method keeps selector names secret while the Name/Range method exposes them to the node or
 // proxy being queried.
 type APIQueryRange struct {
-	Name     Blob   `json:",omitempty"` // Name of selector (plain text)
-	Range    []Blob `json:",omitempty"` // Ordinal value if [1] or range if [2] in size
-	KeyRange []Blob `json:",omitempty"` // Selector key or key range, overrides Name and Range if present (allows queries without revealing name)
+	Name     Blob     `json:",omitempty"` // Name of selector (plain text)
+	Range    []uint64 `json:",omitempty"` // Ordinal value if [1] or range if [2] in size (single ordinal of value 0 if omitted)
+	KeyRange []Blob   `json:",omitempty"` // Selector key or key range, overrides Name and Range if present (allows queries without revealing name)
 }
 
 // APIQuery (request) describes a query for records in the form of an ordered series of selector ranges.
@@ -107,7 +107,7 @@ func (m *APIQuery) execute(n *Node) (qr APIQueryResults, err *APIError) {
 		if len(mm[i].KeyRange) == 0 {
 			// If KeyRange is not used the selectors' names are specified in the clear and we generate keys locally.
 			if len(mm[i].Range) == 0 {
-				ss := MakeSelectorKey(mm[i].Name, nil)
+				ss := MakeSelectorKey(mm[i].Name, 0)
 				selectorRanges = append(selectorRanges, [2][]byte{ss[:], ss[:]})
 			} else if len(mm[i].Range) == 1 {
 				ss := MakeSelectorKey(mm[i].Name, mm[i].Range[0])
@@ -239,7 +239,7 @@ func (m *APIQuery) execute(n *Node) (qr APIQueryResults, err *APIError) {
 			return false
 		}
 		for i := 0; i < len(sa); i++ {
-			c := bytes.Compare(sa[i].Ordinal, sb[i].Ordinal)
+			c := bytes.Compare(sa[i].Ordinal[:], sb[i].Ordinal[:])
 			if c < 0 {
 				return true
 			} else if c > 0 {

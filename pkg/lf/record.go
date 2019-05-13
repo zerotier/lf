@@ -71,7 +71,7 @@ const (
 
 	// RecordMaxSelectors is a sanity limit on the number of selectors.
 	// This is a protocol constant and can't be changed.
-	RecordMaxSelectors = 16
+	RecordMaxSelectors = 8
 
 	// RecordWorkAlgorithmNone indicates no work algorithm.
 	// This is a protocol constant and can't be changed.
@@ -587,7 +587,7 @@ func (r *Record) Validate() (err error) {
 // NewRecordStart creates an incomplete record with its body and selectors filled out but no work or final signature.
 // This can be used to do the first step of a three-phase record creation process with the next two phases being NewRecordAddWork
 // and NewRecordComplete. This is useful of record creation needs to be split among systems or participants.
-func NewRecordStart(recordType byte, value []byte, links [][32]byte, maskingKey []byte, plainTextSelectorNames [][]byte, selectorOrdinals [][]byte, owner, certificate []byte, ts uint64) (r *Record, workHash [32]byte, workBillableBytes uint, err error) {
+func NewRecordStart(recordType byte, value []byte, links [][32]byte, maskingKey []byte, plainTextSelectorNames [][]byte, plainTextSelectorOrdinals []uint64, owner, certificate []byte, ts uint64) (r *Record, workHash [32]byte, workBillableBytes uint, err error) {
 	r = new(Record)
 
 	if len(value) > 0 {
@@ -646,7 +646,7 @@ func NewRecordStart(recordType byte, value []byte, links [][32]byte, maskingKey 
 	if len(plainTextSelectorNames) > 0 {
 		r.Selectors = make([]Selector, len(plainTextSelectorNames))
 		for i := 0; i < len(plainTextSelectorNames); i++ {
-			r.Selectors[i].set(plainTextSelectorNames[i], selectorOrdinals[i], selectorClaimSigningHash[:])
+			r.Selectors[i].set(plainTextSelectorNames[i], plainTextSelectorOrdinals[i], selectorClaimSigningHash[:])
 			sb := r.Selectors[i].bytes()
 			workBillableBytes += uint(len(sb))
 			workHasher.Write(sb)
@@ -693,10 +693,10 @@ func NewRecordComplete(incompleteRecord *Record, signingHash []byte, owner *Owne
 
 // NewRecord is a shortcut to running all incremental record creation functions.
 // Obviously this is time and memory intensive due to proof of work required to "pay" for this record.
-func NewRecord(recordType byte, value []byte, links [][32]byte, maskingKey []byte, plainTextSelectorNames [][]byte, selectorOrdinals [][]byte, certificateRecordHash []byte, ts uint64, workFunction *Wharrgarblr, owner *Owner) (r *Record, err error) {
+func NewRecord(recordType byte, value []byte, links [][32]byte, maskingKey []byte, plainTextSelectorNames [][]byte, plainTextSelectorOrdinals []uint64, certificateRecordHash []byte, ts uint64, workFunction *Wharrgarblr, owner *Owner) (r *Record, err error) {
 	var wh, sh [32]byte
 	var wb uint
-	r, wh, wb, err = NewRecordStart(recordType, value, links, maskingKey, plainTextSelectorNames, selectorOrdinals, owner.Public, certificateRecordHash, ts)
+	r, wh, wb, err = NewRecordStart(recordType, value, links, maskingKey, plainTextSelectorNames, plainTextSelectorOrdinals, owner.Public, certificateRecordHash, ts)
 	if err != nil {
 		return
 	}

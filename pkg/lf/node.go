@@ -555,11 +555,6 @@ func (n *Node) AddRecord(r *Record) error {
 		return ErrRecordTooOld
 	}
 
-	// Work must be present if work is required
-	if r.WorkAlgorithm == RecordWorkAlgorithmNone && n.genesisParameters.WorkRequired {
-		return ErrRecordInsufficientWork
-	}
-
 	// Validate record's internal structure and check signatures and work.
 	err := r.Validate()
 	if err != nil {
@@ -953,17 +948,15 @@ func (n *Node) getAPIWorkFunction() (wf *Wharrgarblr) {
 	}
 	n.workFunctionLock.RUnlock()
 
-	if n.genesisParameters.WorkRequired {
-		n.workFunctionLock.Lock()
-		if n.apiWorkFunction != nil {
-			wf = n.apiWorkFunction
-			n.workFunctionLock.Unlock()
-			return
-		}
-		n.apiWorkFunction = NewWharrgarblr(RecordDefaultWharrgarblMemory, runtime.NumCPU())
+	n.workFunctionLock.Lock()
+	if n.apiWorkFunction != nil {
 		wf = n.apiWorkFunction
 		n.workFunctionLock.Unlock()
+		return
 	}
+	n.apiWorkFunction = NewWharrgarblr(RecordDefaultWharrgarblMemory, runtime.NumCPU())
+	wf = n.apiWorkFunction
+	n.workFunctionLock.Unlock()
 
 	return
 }
@@ -978,24 +971,22 @@ func (n *Node) getBackgroundWorkFunction() (wf *Wharrgarblr) {
 	}
 	n.workFunctionLock.RUnlock()
 
-	if n.genesisParameters.WorkRequired {
-		// For background commentary generation don't use every core on N-core systems.
-		threads := runtime.NumCPU()
-		if threads >= 3 {
-			threads -= 2
-		} else {
-			threads = 1
-		}
-		n.workFunctionLock.Lock()
-		if n.backgroundWorkFunction != nil {
-			wf = n.backgroundWorkFunction
-			n.workFunctionLock.Unlock()
-			return
-		}
-		n.backgroundWorkFunction = NewWharrgarblr(RecordDefaultWharrgarblMemory, threads)
+	// For background commentary generation don't use every core on N-core systems.
+	threads := runtime.NumCPU()
+	if threads >= 3 {
+		threads -= 2
+	} else {
+		threads = 1
+	}
+	n.workFunctionLock.Lock()
+	if n.backgroundWorkFunction != nil {
 		wf = n.backgroundWorkFunction
 		n.workFunctionLock.Unlock()
+		return
 	}
+	n.backgroundWorkFunction = NewWharrgarblr(RecordDefaultWharrgarblMemory, threads)
+	wf = n.backgroundWorkFunction
+	n.workFunctionLock.Unlock()
 
 	return
 }

@@ -14,25 +14,22 @@ The name LF comes from the short story [The Aleph](https://en.wikipedia.org/wiki
 
 ### Features and Benefits
 
- * Fully decentralized network with no required single points of control or failure.
- * Fully decentralized trust model permitting network operation between multiple parties with no existing trust relationship.
+ * Fully decentralized network with no mandatory single points of control or failure.
+ * Flexible trust model allowing application authors to decide between different conflict resolution mechanisms: cumulative record weight (proof of work), certificate based, or none at all (e.g. sorting by time).
  * Fully replicated for fast predictable time queries against arbitrary keys and continued operation under partial or total network failure conditions.
- * Simple JSON API and nodes are easy to set up and operate.
- * Works "out of the box" with a default global network and default seed peers.
+ * Simple JSON API and command line client make LF easy to use and nodes are easy to set up and operate.
  * Network can be arbitrarily split with all nodes continuing to operate in full read/write mode. Re-synchronization on re-connection is automatic.
- * Multiple conflict resolution mechanisms exist: cumulative "weight" through proof of work (a proxy for time), elective node trust relationships, and elective certificate trust models. Users and node operators can choose which mechanism to use, balancing assurance against ease of use and degree of trust decentralization.
  * Supports composite multi-element keys and range queries.
- * The non-range-queryable "name" portion of record keys is cryptographically blinded, private, and authenticated, allowing information about records to be kept private and making intentional key-collision attacks harder.
+ * Record keys are encrypted and authenticated for increased privacy and security and to make intentional key collision attacks much harder. Queries can be performed without revealing plain text keys.
  * Record values can be optionally encrypted with a masking key to keep data private. Combined with blind keys this makes fully private use possible even on global open networks.
 
 ### Limitations and Disadvantages
 
- * Only suitable for small data such as keys, certificates, names, IPs, etc.
+ * Only suitable for small data such as keys, certificates, names, IPs and DNS records, etc.
  * Not generally suitable for frequently changing or dynamic data.
  * [CAP theorem](https://en.wikipedia.org/wiki/CAP_theorem) trade-off: availability and partition-tolerance. Data is eventually consistent and locks and transactions are not supported.
- * Some attention must be paid to trust, consensus, or record validity concerns when designing an application to ensure that it is not vulnerable to data set poisoning attacks.
  * Moderately high CPU, memory, and storage requirements for full nodes make LF unsuitable for very resource constrained devices.
- * Storage requirements grow over time and could become quite large, though storage costs are also decreasing over time and several space-saving optimizations aren't implemented yet.
+ * Full node storage requirements grow over time (like a block chain or similar system) and could become quite large, though storage costs are also decreasing over time and several space-saving optimizations aren't implemented yet. Partial nodes are also possible but not implemented yet.
 
 ## Building and Running
 

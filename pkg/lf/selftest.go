@@ -185,6 +185,46 @@ func TestCore(out io.Writer) bool {
 	}
 	fmt.Fprintf(out, "OK\n")
 
+	fmt.Fprintf(out, "Testing Ordinal... ")
+	for k := 0; k < 1024; k++ {
+		rn := rand.Uint32()
+		var orda, ordb Ordinal
+		orda.Set(uint64(rn), []byte{byte(k)})
+		ordb.Set(uint64(rn)+1, []byte{byte(k)})
+		if bytes.Compare(orda[:], ordb[:]) > 0 {
+			fmt.Fprintf(out, "FAILED (ordinal A must be less than ordinal B)\n")
+			return false
+		}
+	}
+	fmt.Fprintf(out, "OK\n")
+
+	fmt.Fprintf(out, "Testing Selector... ")
+	var testSelectors [256]Selector
+	var testSelectorClaimHash [32]byte
+	secureRandom.Read(testSelectorClaimHash[:])
+	for k := range testSelectors {
+		testSelectors[k].set([]byte("name"), uint64(k), testSelectorClaimHash[:])
+		ts2, err := newSelectorFromBytes(testSelectors[k].bytes())
+		if err != nil || !bytes.Equal(ts2.Ordinal[:], testSelectors[k].Ordinal[:]) || !bytes.Equal(ts2.Claim, testSelectors[k].Claim) {
+			fmt.Fprintln(out, "FAILED (marshal/unmarshal)")
+			return false
+		}
+	}
+	for k := 1; k < len(testSelectors); k++ {
+		sk := testSelectors[k].key(testSelectorClaimHash[:])
+		if bytes.Compare(testSelectors[k-1].key(testSelectorClaimHash[:]), sk) >= 0 {
+			fmt.Fprintf(out, "FAILED (compare %d not < %d)\n", k-1, k)
+			return false
+		}
+	}
+	var selTest Selector
+	selTest.set([]byte("name"), 1234, testSelectorClaimHash[:])
+	if !bytes.Equal(MakeSelectorKey([]byte("name"), 1234), selTest.key(testSelectorClaimHash[:])) {
+		fmt.Fprintf(out, "FAILED (keys from key() vs MakeSelectorKey() are not equal)\n")
+		return false
+	}
+	fmt.Fprintf(out, "OK\n")
+
 	curves := []elliptic.Curve{elliptic.P521(), elliptic.P384(), elliptic.P224(), ECCCurveBrainpoolP160T1}
 	for ci := range curves {
 		curve := curves[ci]
@@ -253,33 +293,6 @@ func TestCore(out io.Writer) bool {
 		fmt.Fprintf(out, "OK\n")
 	}
 
-	fmt.Fprintf(out, "Testing Selector... ")
-	var testSelectors [256]Selector
-	var testSelectorClaimHash [32]byte
-	secureRandom.Read(testSelectorClaimHash[:])
-	for k := range testSelectors {
-		testSelectors[k].set([]byte("name"), []byte(fmt.Sprintf("%.16x", k)), testSelectorClaimHash[:])
-		ts2, err := newSelectorFromBytes(testSelectors[k].bytes())
-		if err != nil || !bytes.Equal(ts2.Ordinal, testSelectors[k].Ordinal) || !bytes.Equal(ts2.Claim[:], testSelectors[k].Claim[:]) {
-			fmt.Fprintln(out, "FAILED (marshal/unmarshal)")
-			return false
-		}
-	}
-	for k := 1; k < len(testSelectors); k++ {
-		sk := testSelectors[k].key(testSelectorClaimHash[:])
-		if bytes.Compare(testSelectors[k-1].key(testSelectorClaimHash[:]), sk) >= 0 {
-			fmt.Fprintf(out, "FAILED (compare %d not < %d)\n", k-1, k)
-			return false
-		}
-	}
-	var selTest Selector
-	selTest.set([]byte("name"), []byte("ord"), testSelectorClaimHash[:])
-	if !bytes.Equal(MakeSelectorKey([]byte("name"), []byte("ord")), selTest.key(testSelectorClaimHash[:])) {
-		fmt.Fprintf(out, "FAILED (keys from key() vs MakeSelectorKey() are not equal)\n")
-		return false
-	}
-	fmt.Fprintf(out, "OK\n")
-
 	fmt.Fprintf(out, "Testing Record marshal/unmarshal... ")
 	for k := 0; k < 32; k++ {
 		var testLinks [][32]byte
@@ -294,7 +307,7 @@ func TestCore(out io.Writer) bool {
 			return false
 		}
 		testVal := []byte("Supercalifragilisticexpealidocious!")
-		rec, err := NewRecord(RecordTypeDatum, testVal, testLinks, []byte("test"), [][]byte{[]byte("test0")}, [][]byte{[]byte("0000")}, nil, uint64(k), nil, owner)
+		rec, err := NewRecord(RecordTypeDatum, testVal, testLinks, []byte("test"), [][]byte{[]byte("test0")}, []uint64{0}, nil, uint64(k), nil, owner)
 		if err != nil {
 			fmt.Fprintf(out, "FAILED (create record): %s\n", err.Error())
 			return false
@@ -339,7 +352,7 @@ func TestCore(out io.Writer) bool {
 		return false
 	}
 	wg := NewWharrgarblr(RecordDefaultWharrgarblMemory, 0)
-	rec, err := NewRecord(RecordTypeDatum, testValue[:], testLinks, []byte("test"), [][]byte{[]byte("full record test")}, [][]byte{[]byte("0000")}, nil, TimeSec(), wg, owner)
+	rec, err := NewRecord(RecordTypeDatum, testValue[:], testLinks, []byte("test"), [][]byte{[]byte("full record test")}, []uint64{0}, nil, TimeSec(), wg, owner)
 	if err != nil {
 		fmt.Fprintf(out, "FAILED (new record creation): %s\n", err.Error())
 		return false
@@ -437,7 +450,8 @@ func TestDatabase(testBasePath string, out io.Writer) bool {
 	fmt.Fprintf(out, "OK\n")
 
 	fmt.Fprintf(out, "Generating %d random linked records... ", testDatabaseRecords)
-	var values, selectors, ordinals, selectorKeys [testDatabaseRecords][]byte
+	var values, selectors, selectorKeys [testDatabaseRecords][]byte
+	var ordinals [testDatabaseRecords]uint64
 	var records [testDatabaseRecords]*Record
 	ts := TimeSec()
 	testMaskingKey := []byte("maskingkey")
@@ -463,14 +477,14 @@ func TestDatabase(testBasePath string, out io.Writer) bool {
 		ts++
 		values[ri] = []byte(strconv.FormatUint(ts, 10))
 		selectors[ri] = []byte(fmt.Sprintf("%.16x", ownerIdx))
-		ordinals[ri] = []byte(fmt.Sprintf("%.16x", ri))
+		ordinals[ri] = uint64(ri)
 		records[ri], err = NewRecord(
 			RecordTypeDatum,
 			values[ri],
 			links,
 			testMaskingKey,
 			[][]byte{selectors[ri]},
-			[][]byte{ordinals[ri]},
+			[]uint64{ordinals[ri]},
 			nil,
 			ts,
 			nil,
@@ -589,8 +603,8 @@ func TestDatabase(testBasePath string, out io.Writer) bool {
 			defer wg.Done()
 			rb := make([]byte, 0, 4096)
 			for oi := 0; oi < testDatabaseOwners; oi++ {
-				sk0 := MakeSelectorKey([]byte(fmt.Sprintf("%.16x", oi)), []byte("0000000000000000"))
-				sk1 := MakeSelectorKey([]byte(fmt.Sprintf("%.16x", oi)), []byte("ffffffffffffffff"))
+				sk0 := MakeSelectorKey([]byte(fmt.Sprintf("%.16x", oi)), 0)
+				sk1 := MakeSelectorKey([]byte(fmt.Sprintf("%.16x", oi)), 0xffffffffffffffff)
 				err = dbs[dbi].query(0, 9223372036854775807, [][2][]byte{{sk0, sk1}}, func(ts, weightL, weightH, doff, dlen uint64, localReputation int, key uint64, owner []byte) bool {
 					_, err := dbs[dbi].getDataByOffset(doff, uint(dlen), rb[:0])
 					if err != nil {

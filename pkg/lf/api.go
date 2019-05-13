@@ -304,14 +304,7 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 			if apiIsTrusted(n, req) {
 				var m APINew
 				if apiReadObj(out, req, &m) == nil {
-					if n.genesisParameters.WorkRequired {
-						if n.apiWorkFunction == nil {
-							n.apiWorkFunction = NewWharrgarblr(RecordDefaultWharrgarblMemory, 0)
-						}
-					} else {
-						n.apiWorkFunction = nil
-					}
-					rec, apiError := m.execute(n.apiWorkFunction)
+					rec, apiError := m.execute(n.getAPIWorkFunction())
 					if apiError != nil {
 						apiSendObj(out, req, apiError.Code, apiError)
 					} else {

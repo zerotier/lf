@@ -34,8 +34,8 @@ import (
 
 // APINewSelector (request, part of APINew) is a selector plain text name and an ordinal value (use zero if you don't care).
 type APINewSelector struct {
-	Name    Blob `json:",omitempty"` // Name of this selector (masked so as to be hidden from those that don't know it)
-	Ordinal Blob `json:",omitempty"` // A sortable public value (optional)
+	Name    Blob   `json:",omitempty"` // Name of this selector (masked so as to be hidden from those that don't know it)
+	Ordinal uint64 `json:",omitempty"` // A sortable public value (optional)
 }
 
 // APINew (request) asks the proxy or node to perform server-side record generation and proof of work.
@@ -97,7 +97,7 @@ func (m *APINew) execute(workFunction *Wharrgarblr) (*Record, *APIError) {
 	}
 
 	sel := make([][]byte, len(m.Selectors))
-	selord := make([][]byte, len(m.Selectors))
+	selord := make([]uint64, len(m.Selectors))
 	for i := range m.Selectors {
 		sel[i] = m.Selectors[i].Name
 		selord[i] = m.Selectors[i].Ordinal

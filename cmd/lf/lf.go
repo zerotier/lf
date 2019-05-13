@@ -119,24 +119,6 @@ func tokenizeStringWithEsc(s string, sep, escape rune) (tokens []string) {
 	return
 }
 
-func escapeOrdinal(ord []byte) string {
-	if len(ord) == 0 {
-		return ""
-	}
-	jstr, _ := json.Marshal(string(ord))
-	if len(jstr) < 2 {
-		return ""
-	}
-	var sb strings.Builder
-	for _, c := range string(jstr[1 : len(jstr)-1]) {
-		if c == '#' || c == '\\' {
-			sb.WriteRune('\\')
-		}
-		sb.WriteRune(c)
-	}
-	return sb.String()
-}
-
 func prompt(prompt string, required bool, dfl string) string {
 	var b [1]byte
 	var s strings.Builder
@@ -435,13 +417,16 @@ func doGet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool
 		if len(unesc) > 0 {
 			tord := tokenizeStringWithEsc(unesc, '#', '\\')
 			if len(tord) == 1 {
-				ranges = append(ranges, lf.APIQueryRange{KeyRange: []lf.Blob{lf.MakeSelectorKey([]byte(tord[0]), nil)}})
+				ranges = append(ranges, lf.APIQueryRange{KeyRange: []lf.Blob{lf.MakeSelectorKey([]byte(tord[0]), 0)}})
 			} else if len(tord) == 2 {
-				ranges = append(ranges, lf.APIQueryRange{KeyRange: []lf.Blob{lf.MakeSelectorKey([]byte(tord[0]), []byte(tord[1]))}})
+				ord0, _ := strconv.ParseUint(tord[1], 10, 64)
+				ranges = append(ranges, lf.APIQueryRange{KeyRange: []lf.Blob{lf.MakeSelectorKey([]byte(tord[0]), ord0)}})
 			} else if len(tord) == 3 {
+				ord0, _ := strconv.ParseUint(tord[1], 10, 64)
+				ord1, _ := strconv.ParseUint(tord[2], 10, 64)
 				ranges = append(ranges, lf.APIQueryRange{KeyRange: []lf.Blob{
-					lf.MakeSelectorKey([]byte(tord[0]), []byte(tord[1])),
-					lf.MakeSelectorKey([]byte(tord[0]), []byte(tord[2])),
+					lf.MakeSelectorKey([]byte(tord[0]), ord0),
+					lf.MakeSelectorKey([]byte(tord[0]), ord1),
 				}})
 			} else {
 				fmt.Printf("ERROR: get query failed: selector or selector ordinal range invalid")
@@ -505,8 +490,7 @@ func doGet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool
 						if res.Record.SelectorIs(sn, si) {
 							fmt.Print(selectorNames[i])
 							if len(res.Record.Selectors[si].Ordinal) > 0 {
-								fmt.Print("#")
-								fmt.Print(escapeOrdinal(res.Record.Selectors[si].Ordinal))
+								fmt.Printf("#%d", res.Record.Selectors[si].Ordinal)
 							}
 						}
 					}
@@ -563,7 +547,8 @@ func doSet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool
 		mk = []byte(*maskKey)
 	}
 
-	var plainTextSelectorNames, selectorOrdinals [][]byte
+	var plainTextSelectorNames [][]byte
+	var plainTextSelectorOrdinals []uint64
 	var selectors []lf.APINewSelector
 	for i := 0; i < len(args)-1; i++ {
 		var unesc string
@@ -575,15 +560,12 @@ func doSet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool
 					log.Println("ERROR: set failed: invalid selector#ordinal: \"" + args[i] + "\"")
 				}
 				sel := []byte(selOrd[0])
-				var ord []byte
+				var ord uint64
 				if len(selOrd) == 2 {
-					ord = []byte(selOrd[1])
-				}
-				if len(ord) > lf.SelectorMaxOrdinalSize {
-					log.Println("ERROR: set failed: invalid selector#ordinal: \"" + args[i] + "\" (max ordinal size is 31 bytes)")
+					ord, _ = strconv.ParseUint(selOrd[1], 10, 64)
 				}
 				plainTextSelectorNames = append(plainTextSelectorNames, sel)
-				selectorOrdinals = append(selectorOrdinals, ord)
+				plainTextSelectorOrdinals = append(plainTextSelectorOrdinals, ord)
 				selectors = append(selectors, lf.APINewSelector{
 					Name:    sel,
 					Ordinal: ord,
@@ -670,7 +652,7 @@ func doSet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool
 			for _, l := range links {
 				lnks = append(lnks, l)
 			}
-			rec, err = lf.NewRecord(lf.RecordTypeDatum, value, lnks, mk, plainTextSelectorNames, selectorOrdinals, nil, ts, lf.NewWharrgarblr(lf.RecordDefaultWharrgarblMemory, 0), o)
+			rec, err = lf.NewRecord(lf.RecordTypeDatum, value, lnks, mk, plainTextSelectorNames, plainTextSelectorOrdinals, nil, ts, lf.NewWharrgarblr(lf.RecordDefaultWharrgarblMemory, 0), o)
 			if err == nil {
 				rb := rec.Bytes()
 				for _, u := range submitDirectly {
