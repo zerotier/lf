@@ -37,11 +37,9 @@ import (
 
 // SelectorTypeBP160 indicates a sortable selector built from the brainpoolP160t1 small elliptic curve.
 // This is a protocol constant and cannot be changed.
-const SelectorTypeBP160 byte = 0
+const SelectorTypeBP160 byte = 0 // valid range 0..15
 
-// SelectorKeySize is the size of the sortable ordinal-modified hash used for DB queries and range queries.
-// It's computed by adding the ordinal to the SHA512 hash of the deterministic selector public key.
-// This is a protocol constant and cannot be changed.
+// SelectorKeySize is the size of the sortable value used for database range queries.
 const SelectorKeySize = 32
 
 // Selector is a non-forgeable range queryable identifier for records.
@@ -144,13 +142,16 @@ func (s *Selector) marshalTo(out io.Writer) error {
 	if len(s.Claim) != 41 {
 		return ErrInvalidObject
 	}
-	if _, err := out.Write([]byte{SelectorTypeBP160}); err != nil {
+	// We can pack the last byte of the claim key into the first byte since
+	// it's the key recovery index and will be 0 or 1. This is only true
+	// for type BP160 but that's fine.
+	if _, err := out.Write([]byte{SelectorTypeBP160 | (s.Claim[40] << 4)}); err != nil {
 		return err
 	}
 	if _, err := out.Write(s.Ordinal[:]); err != nil {
 		return err
 	}
-	if _, err := out.Write(s.Claim); err != nil {
+	if _, err := out.Write(s.Claim[0:40]); err != nil {
 		return err
 	}
 	return nil
@@ -161,16 +162,17 @@ func (s *Selector) unmarshalFrom(in io.Reader) error {
 	if _, err := io.ReadFull(in, t[:]); err != nil {
 		return err
 	}
-	if t[0] != SelectorTypeBP160 {
+	if (t[0] & 0xf) != SelectorTypeBP160 {
 		return ErrInvalidObject
 	}
 	if _, err := io.ReadFull(in, s.Ordinal[:]); err != nil {
 		return err
 	}
 	var cl [41]byte
-	if _, err := io.ReadFull(in, cl[:]); err != nil {
+	if _, err := io.ReadFull(in, cl[0:40]); err != nil {
 		return err
 	}
+	cl[40] = t[0] >> 4
 	s.Claim = cl[:]
 	return nil
 }
