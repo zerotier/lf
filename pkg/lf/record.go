@@ -56,6 +56,7 @@ var (
 const (
 	// Flags are protocol constants and can't be changed.
 	recordBodyFlagHasType           byte   = 0x01
+	recordBodyFlagHasAuthSignature  byte   = 0x02
 	recordValueFlagBrotliCompressed uint32 = 0x80000000 // these flags must occupy the most significant 4 bits of the value
 
 	// RecordDefaultWharrgarblMemory is the default amount of memory to use for Wharrgarbl momentum-type PoW.
@@ -142,11 +143,12 @@ func recordWharrgarblScore(cost uint32) uint32 {
 // recordBody represents the main body of a record including its value, owner public keys, etc.
 // It's included as part of Record but separated since in record construction we want to treat it as a separate element.
 type recordBody struct {
-	Value     Blob       `json:",omitempty"` // Record value (possibly masked and/or compressed, use GetValue() to get)
-	Owner     OwnerBlob  `json:",omitempty"` // Owner of this record (owner public bytes) in @base58string format
-	Links     []HashBlob `json:",omitempty"` // Links to previous records' hashes
-	Timestamp uint64     ``                  // Timestamp (and revision ID) in SECONDS since Unix epoch
-	Type      *byte      `json:",omitempty"` // Record type byte, RecordTypeDatum (0) if nil
+	Value         Blob       `json:",omitempty"` // Record value (possibly masked and/or compressed, use GetValue() to get)
+	Owner         OwnerBlob  `json:",omitempty"` // Owner of this record (owner public bytes) in @base58string format
+	AuthSignature Blob       `json:",omitempty"` // Signature of owner by an auth cerficiate (if any)
+	Links         []HashBlob `json:",omitempty"` // Links to previous records' hashes
+	Timestamp     uint64     ``                  // Timestamp (and revision ID) in SECONDS since Unix epoch
+	Type          *byte      `json:",omitempty"` // Record type byte, RecordTypeDatum (0) if nil
 
 	sigHash *[32]byte
 }
@@ -167,6 +169,8 @@ func (rb *recordBody) unmarshalFrom(r io.Reader) error {
 		if rtype != 0 {
 			rb.Type = &rtype
 		}
+	} else {
+		rb.Type = nil
 	}
 
 	l, err := binary.ReadUvarint(&rr)
@@ -203,6 +207,27 @@ func (rb *recordBody) unmarshalFrom(r io.Reader) error {
 		rb.Owner = nil
 	}
 
+	if (flags & recordBodyFlagHasAuthSignature) != 0 {
+		l, err = binary.ReadUvarint(&rr)
+		if err != nil {
+			return err
+		}
+		if l > 0 {
+			if l > RecordMaxSize {
+				return ErrRecordInvalid
+			}
+			rb.AuthSignature = make([]byte, uint(l))
+			_, err = io.ReadFull(&rr, rb.Owner)
+			if err != nil {
+				return err
+			}
+		} else {
+			rb.AuthSignature = nil
+		}
+	} else {
+		rb.AuthSignature = nil
+	}
+
 	l, err = binary.ReadUvarint(&rr)
 	if err != nil {
 		return err
@@ -233,12 +258,16 @@ func (rb *recordBody) unmarshalFrom(r io.Reader) error {
 }
 
 func (rb *recordBody) marshalTo(w io.Writer, hashAsProxyForValue bool) error {
+	var hasAuthFlag byte
+	if len(rb.AuthSignature) > 0 {
+		hasAuthFlag = recordBodyFlagHasAuthSignature
+	}
 	if rb.Type != nil && *rb.Type != 0 {
-		if _, err := w.Write([]byte{recordBodyFlagHasType, *rb.Type}); err != nil {
+		if _, err := w.Write([]byte{hasAuthFlag | recordBodyFlagHasType, *rb.Type}); err != nil {
 			return err
 		}
 	} else {
-		if _, err := w.Write([]byte{0}); err != nil {
+		if _, err := w.Write([]byte{hasAuthFlag}); err != nil {
 			return err
 		}
 	}
@@ -262,6 +291,15 @@ func (rb *recordBody) marshalTo(w io.Writer, hashAsProxyForValue bool) error {
 	}
 	if _, err := w.Write(rb.Owner); err != nil {
 		return err
+	}
+
+	if len(rb.AuthSignature) > 0 {
+		if _, err := writeUVarint(w, uint64(len(rb.AuthSignature))); err != nil {
+			return err
+		}
+		if _, err := w.Write(rb.AuthSignature); err != nil {
+			return err
+		}
 	}
 
 	if _, err := writeUVarint(w, uint64(len(rb.Links))); err != nil {
