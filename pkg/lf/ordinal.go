@@ -27,7 +27,7 @@
 package lf
 
 import (
-	"crypto/sha256"
+	"crypto/md5"
 	"encoding/binary"
 	"encoding/json"
 	"math/big"
@@ -98,13 +98,13 @@ var bigInt0 = big.NewInt(0)
 func (b *Ordinal) Set(value uint64, key []byte) {
 	var bi, bit, tmp big.Int
 
-	keyHash := sha256.Sum256(key)
-	bi.SetBytes(keyHash[0:16])
+	keyHash := md5.Sum(key) // MD5's issues don't matter here -- we just want 128 pseudorandom bits
+	bi.SetBytes(keyHash[:])
 
 	for i := 0; i < 16; i++ {
 		keyHash[i] = ^keyHash[i]
 	}
-	bit.SetBytes(keyHash[0:16])
+	bit.SetBytes(keyHash[:])
 
 	for i := 0; i < 64; i++ {
 		bit.Rsh(&bit, 1)
@@ -116,7 +116,7 @@ func (b *Ordinal) Set(value uint64, key []byte) {
 
 	if bit.Rsh(&bit, 1).Cmp(bigInt0) > 0 {
 		binary.BigEndian.PutUint64(keyHash[0:8], value)
-		keyHash = sha256.Sum256(keyHash[:]) // generate a random 64-bit int based on key + value
+		keyHash = md5.Sum(keyHash[:]) // generate a random 64-bit int based on key + value
 		bi.Add(&bi, tmp.Mod(tmp.SetUint64(binary.BigEndian.Uint64(keyHash[0:8])), &bit))
 	}
 
