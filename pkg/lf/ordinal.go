@@ -90,6 +90,11 @@ func (b *Ordinal) UnmarshalJSON(j []byte) error {
 var bigInt0 = big.NewInt(0)
 
 // Set sets this ordinal to a sortable masked value that hides the original value (to some degree).
+// This is basically an order preserving keyed hash. If the values are sequential or nearly so,
+// an attacker could guess them after collecting a number of these. Where this helps is in
+// protecting the privacy of non-sequential ordinals that might be something a user wants
+// to keep secret (e.g. a ZeroTier node address or network ID). In that case guessing the ordinal
+// would be quite difficult. Sequential ordinals are typically not private information anyway.
 func (b *Ordinal) Set(value uint64, key []byte) {
 	var bi, bit, tmp big.Int
 
