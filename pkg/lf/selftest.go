@@ -180,16 +180,17 @@ func TestCore(out io.Writer) bool {
 	fmt.Fprintf(out, "Testing Ordinal... ")
 	var rk [8]byte
 	var orda, ordb Ordinal
-	for k := 0; k < 100; k++ {
+	rand.Seed(int64(time.Now().UnixNano()))
+	for k := 0; k < 1000; k++ {
 		binary.LittleEndian.PutUint64(rk[:], rand.Uint64())
 		rn := rand.Uint64()
-		for i := 0; i < 2000; i++ {
+		for i := 0; i < 100; i++ {
+			rn++
 			if rn == 0xffffffffffffffff {
 				rn--
 			}
 			orda.Set(rn, rk[:])
-			rn++
-			ordb.Set(rn, rk[:])
+			ordb.Set(rn+1, rk[:])
 			if bytes.Compare(orda[:], ordb[:]) >= 0 {
 				fmt.Fprintf(out, "FAILED (ordinal A must be less than ordinal B)\n")
 				return false

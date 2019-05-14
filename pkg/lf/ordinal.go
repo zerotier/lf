@@ -27,10 +27,10 @@
 package lf
 
 import (
-	"crypto/aes"
 	"crypto/sha256"
-	"encoding/binary"
 	"encoding/json"
+	"math/big"
+	"math/rand"
 )
 
 // OrdinalSize is the size of an ordinal in bytes.
@@ -87,41 +87,35 @@ func (b *Ordinal) UnmarshalJSON(j []byte) error {
 	return nil
 }
 
+var bigInt0 = big.NewInt(0)
+
 // Set sets this ordinal to a sortable masked value that hides the original value (to some degree).
 func (b *Ordinal) Set(value uint64, key []byte) {
-	kh := sha256.Sum256(key)
-	kh[0]++ // make sure this is never the same AES key as seededPrng just to be safe
-	c, _ := aes.NewCipher(kh[:])
+	var bi, bit, tmp big.Int
 
-	for i := range kh {
-		kh[i] = 0
+	keyHash := sha256.Sum256(key)
+	bi.SetBytes(keyHash[0:16])
+
+	for i := 0; i < 16; i++ {
+		keyHash[i] = ^keyHash[i]
 	}
-	c.Encrypt(kh[0:16], kh[0:16])
-	c.Encrypt(kh[16:32], kh[16:32])
+	bit.SetBytes(keyHash[0:16])
 
-	hi := 0
-	for vi := 0; vi < 8; vi++ {
-		vb := uint(value >> 56)
-		value <<= 8
-
-		col := uint16(kh[hi])
-		hi++
-		if hi == 32 {
-			c.Encrypt(kh[0:16], kh[0:16])
-			c.Encrypt(kh[16:32], kh[16:32])
-			hi = 0
+	for i := 0; i < 64; i++ {
+		bit.Rsh(&bit, 1)
+		if (value >> 63) != 0 {
+			bi.Add(&bi, &bit)
 		}
-
-		for i := uint(0); i < vb; i++ {
-			col += 1 + uint16(kh[hi])
-			hi++
-			if hi == 32 {
-				c.Encrypt(kh[0:16], kh[0:16])
-				c.Encrypt(kh[16:32], kh[16:32])
-				hi = 0
-			}
-		}
-
-		binary.BigEndian.PutUint16(b[2*vi:2*(vi+1)], col)
+		value <<= 1
 	}
+
+	if bit.Rsh(&bit, 1).Cmp(bigInt0) > 0 {
+		bi.Add(&bi, tmp.Mod(tmp.SetUint64(rand.Uint64()), &bit))
+	}
+
+	bb := bi.Bytes()
+	for i, j := 0, 16-len(bb); i < j; i++ {
+		b[i] = 0
+	}
+	copy(b[16-len(bb):], bb[:])
 }
