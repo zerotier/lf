@@ -28,9 +28,9 @@ package lf
 
 import (
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/json"
 	"math/big"
-	"math/rand"
 )
 
 // OrdinalSize is the size of an ordinal in bytes.
@@ -110,7 +110,9 @@ func (b *Ordinal) Set(value uint64, key []byte) {
 	}
 
 	if bit.Rsh(&bit, 1).Cmp(bigInt0) > 0 {
-		bi.Add(&bi, tmp.Mod(tmp.SetUint64(rand.Uint64()), &bit))
+		binary.BigEndian.PutUint64(keyHash[0:8], value)
+		keyHash = sha256.Sum256(keyHash[:]) // generate a random 64-bit int based on key + value
+		bi.Add(&bi, tmp.Mod(tmp.SetUint64(binary.BigEndian.Uint64(keyHash[0:8])), &bit))
 	}
 
 	bb := bi.Bytes()
