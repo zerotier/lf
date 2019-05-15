@@ -104,6 +104,7 @@ func (b *Ordinal) Set(value uint64, key []byte) {
 	for i := 0; i < 16; i++ {
 		keyHash[i] = ^keyHash[i]
 	}
+	keyHash[0] &= 0x0f
 	bit.SetBytes(keyHash[:])
 
 	for i := 0; i < 64; i++ {
