@@ -27,10 +27,11 @@
 package lf
 
 import (
-	"crypto/md5"
+	"crypto/aes"
+	"crypto/sha512"
 	"encoding/binary"
 	"encoding/json"
-	"math/big"
+	"sync"
 )
 
 // OrdinalSize is the size of an ordinal in bytes.
@@ -87,44 +88,102 @@ func (b *Ordinal) UnmarshalJSON(j []byte) error {
 	return nil
 }
 
-var bigInt0 = big.NewInt(0)
-
-// Set sets this ordinal to a sortable masked value that hides the original value (to some degree).
-// This is basically an order preserving keyed hash. If the values are sequential or nearly so,
-// an attacker could guess them after collecting a number of these. Where this helps is in
-// protecting the privacy of non-sequential ordinals that might be something a user wants
-// to keep secret (e.g. a ZeroTier node address or network ID). In that case guessing the ordinal
-// would be quite difficult. Sequential ordinals are typically not private information anyway.
-func (b *Ordinal) Set(value uint64, key []byte) {
-	var bi, bit big.Int
-
-	keyHash := md5.Sum(key) // MD5's issues don't matter here -- we just want 128 pseudorandom bits
-	bi.SetBytes(keyHash[:])
-
-	for i := 0; i < 16; i++ {
-		keyHash[i] = ^keyHash[i]
-	}
-	keyHash[0] &= 0x0f
-	bit.SetBytes(keyHash[:])
-
-	for i := 0; i < 64; i++ {
-		bit.Rsh(&bit, 1)
-		if (value >> 63) != 0 {
-			bi.Add(&bi, &bit)
+func ordinalParallelQuicksort(a []uint32, wg *sync.WaitGroup, par bool) {
+	left, right := 0, len(a)-1
+	a[1], a[right] = a[right], a[1]
+	for i, ai := range a {
+		if ai < a[right] {
+			a[left], a[i] = ai, a[left]
+			left++
 		}
-		value <<= 1
+	}
+	a[left], a[right] = a[right], a[left]
+
+	if left >= 2 {
+		if left >= 2048 {
+			wg.Add(1)
+			go ordinalParallelQuicksort(a[:left], wg, true)
+		} else {
+			ordinalParallelQuicksort(a[:left], wg, false)
+		}
 	}
 
-	if bit.Rsh(&bit, 1).Cmp(bigInt0) > 0 {
-		binary.BigEndian.PutUint64(keyHash[0:8], value)
-		keyHash = md5.Sum(keyHash[:]) // generate a random 64-bit int based on key + value
-		var tmp big.Int
-		bi.Add(&bi, tmp.Mod(tmp.SetUint64(binary.BigEndian.Uint64(keyHash[0:8])), &bit))
+	a = a[left+1:]
+	if len(a) >= 2 {
+		if len(a) >= 2048 {
+			wg.Add(1)
+			go ordinalParallelQuicksort(a, wg, true)
+		} else {
+			ordinalParallelQuicksort(a, wg, false)
+		}
 	}
 
-	bb := bi.Bytes()
-	for i, j := 0, 16-len(bb); i < j; i++ {
-		b[i] = 0
+	if par {
+		wg.Done()
 	}
-	copy(b[16-len(bb):], bb[:])
+}
+
+func ordinal16to32(wg *sync.WaitGroup, value uint, kk int, keyHash *[64]byte, result *[4]uint32) {
+	var aesTmp [16]byte
+	var alphabet [65536]uint32
+
+	c, _ := aes.NewCipher(keyHash[16*kk : 16*(kk+1)])
+
+	c.Encrypt(aesTmp[:], aesTmp[:])
+	rbase := binary.LittleEndian.Uint32(aesTmp[0:4]) % (0x7fffffff + 2)
+
+	for {
+		// Generate 65536 random 32-bit integers
+		for i := 0; i < 65536; {
+			c.Encrypt(aesTmp[:], aesTmp[:])
+			alphabet[i] = (binary.LittleEndian.Uint32(aesTmp[0:4]) & 0x7fffffff) + rbase
+			i++
+			alphabet[i] = (binary.LittleEndian.Uint32(aesTmp[4:8]) & 0x7fffffff) + rbase
+			i++
+			alphabet[i] = (binary.LittleEndian.Uint32(aesTmp[8:12]) & 0x7fffffff) + rbase
+			i++
+			alphabet[i] = (binary.LittleEndian.Uint32(aesTmp[12:16]) & 0x7fffffff) + rbase
+			i++
+		}
+
+		// Flattened quicksort using a queue (pivot is chosen as [1] since array is random and unsorted and pivot doesn't matter much)
+		var sortWG sync.WaitGroup
+		ordinalParallelQuicksort(alphabet[:], &sortWG, false)
+		sortWG.Wait()
+
+		// Make sure all integers are unique
+		for i := 1; i < 65536; i++ {
+			if alphabet[i] == alphabet[i-1] {
+				alphabet[i]++
+			}
+		}
+
+		// Handle very rare case where uniqueness adjustment causes last integer to overflow. In this
+		// case we generate a new set of integers using the continuing output of AES(AES(...)).
+		if alphabet[65535] != 0 {
+			result[kk] = alphabet[value]
+			wg.Done()
+			return
+		}
+	}
+}
+
+// Set sets this ordinal to a sortable masked value that hides the original value using an order preserving keyed hash.
+func (b *Ordinal) Set(value uint64, key []byte) {
+	var result [4]uint32
+
+	keyHash := sha512.Sum512(key)
+
+	var wg sync.WaitGroup
+	wg.Add(4)
+	go ordinal16to32(&wg, uint((value>>48)&0xffff), 0, &keyHash, &result)
+	go ordinal16to32(&wg, uint((value>>32)&0xffff), 1, &keyHash, &result)
+	go ordinal16to32(&wg, uint((value>>16)&0xffff), 2, &keyHash, &result)
+	ordinal16to32(&wg, uint(value&0xffff), 3, &keyHash, &result)
+	wg.Wait()
+
+	binary.BigEndian.PutUint32(b[0:4], result[0])
+	binary.BigEndian.PutUint32(b[4:8], result[1])
+	binary.BigEndian.PutUint32(b[8:12], result[2])
+	binary.BigEndian.PutUint32(b[12:16], result[3])
 }
