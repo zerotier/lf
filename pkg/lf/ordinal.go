@@ -31,6 +31,7 @@ import (
 	"crypto/sha512"
 	"encoding/binary"
 	"encoding/json"
+	"runtime"
 	"sync"
 )
 
@@ -88,6 +89,23 @@ func (b *Ordinal) UnmarshalJSON(j []byte) error {
 	return nil
 }
 
+var ordinalParallelQuicksortThreshold = func() int {
+	nc := runtime.NumCPU()
+	if nc <= 4 {
+		return 1048576 // no sort parallelism
+	}
+	if nc >= 16 {
+		return 4096
+	}
+	return 65536 / nc
+}()
+
+var ordinalAlphabetPool = sync.Pool{
+	New: func() interface{} {
+		return make([]uint32, 65536)
+	},
+}
+
 func ordinalParallelQuicksort(a []uint32, wg *sync.WaitGroup, par bool) {
 	left, right := 0, len(a)-1
 	a[1], a[right] = a[right], a[1]
@@ -100,7 +118,7 @@ func ordinalParallelQuicksort(a []uint32, wg *sync.WaitGroup, par bool) {
 	a[left], a[right] = a[right], a[left]
 
 	if left >= 2 {
-		if left >= 2048 {
+		if left >= ordinalParallelQuicksortThreshold {
 			wg.Add(1)
 			go ordinalParallelQuicksort(a[:left], wg, true)
 		} else {
@@ -110,7 +128,7 @@ func ordinalParallelQuicksort(a []uint32, wg *sync.WaitGroup, par bool) {
 
 	a = a[left+1:]
 	if len(a) >= 2 {
-		if len(a) >= 2048 {
+		if len(a) >= ordinalParallelQuicksortThreshold {
 			wg.Add(1)
 			go ordinalParallelQuicksort(a, wg, true)
 		} else {
@@ -125,7 +143,8 @@ func ordinalParallelQuicksort(a []uint32, wg *sync.WaitGroup, par bool) {
 
 func ordinal16to32(wg *sync.WaitGroup, value uint, kk int, keyHash *[64]byte, result *[4]uint32) {
 	var aesTmp [16]byte
-	var alphabet [65536]uint32
+	alphabet := ordinalAlphabetPool.Get().([]uint32)
+	_ = alphabet[65535]
 
 	c, _ := aes.NewCipher(keyHash[16*kk : 16*(kk+1)])
 
@@ -148,7 +167,7 @@ func ordinal16to32(wg *sync.WaitGroup, value uint, kk int, keyHash *[64]byte, re
 
 		// Flattened quicksort using a queue (pivot is chosen as [1] since array is random and unsorted and pivot doesn't matter much)
 		var sortWG sync.WaitGroup
-		ordinalParallelQuicksort(alphabet[:], &sortWG, false)
+		ordinalParallelQuicksort(alphabet, &sortWG, false)
 		sortWG.Wait()
 
 		// Make sure all integers are unique
@@ -163,6 +182,7 @@ func ordinal16to32(wg *sync.WaitGroup, value uint, kk int, keyHash *[64]byte, re
 		if alphabet[65535] != 0 {
 			result[kk] = alphabet[value]
 			wg.Done()
+			ordinalAlphabetPool.Put(alphabet)
 			return
 		}
 	}
