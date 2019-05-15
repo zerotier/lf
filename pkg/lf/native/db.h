@@ -158,18 +158,9 @@ struct ZTLF_DB
 	pthread_mutex_t dbLock;
 	pthread_mutex_t graphNodeLocks[ZTLF_DB_GRAPH_NODE_LOCK_ARRAY_SIZE]; /* used to lock graph nodes by locking node lock goff % NODE_LOCK_ARRAY_SIZE */
 
-	/* The write lock state of the RW locks for these memory mapped files is
-	 * used to lock them in the case where the memory mapped file must be
-	 * grown, since on most OSes this requires it to be unmapped and remapped.
-	 * Otherwise only the read lock channel is used even when graph nodes are
-	 * updated. To synchronize writes to graph nodes the graphNodeLocks mutex
-	 * array is used. */
 	struct ZTLF_MappedFile gf;
-	pthread_rwlock_t gfLock;
-	struct ZTLF_MappedFile df;
-	pthread_rwlock_t dfLock;
-
-	/* The striped weights file has its own built-in lock. */
+	pthread_rwlock_t gfLock; /* this is only locked for write when the mapped file's size might be adjusted */
+	int df;
 	struct ZTLF_SUInt96 wf;
 
 	pthread_t graphThread;
@@ -241,14 +232,10 @@ static inline const char *ZTLF_DB_LastSqliteErrorMessage(struct ZTLF_DB *db) { r
 
 static inline int ZTLF_DB_GetRecordData(struct ZTLF_DB *db,uint64_t doff,void *data,unsigned int dlen)
 {
-	pthread_rwlock_rdlock(&db->dfLock);
-	void *const d = ZTLF_MappedFile_TryGet(&db->df,doff,(uintptr_t)dlen);
-	if (d) {
-		memcpy(data,d,dlen);
-		pthread_rwlock_unlock(&db->dfLock);
-		return 1;
+	if (db->df >= 0) {
+		if ((long)pread(db->df,data,(size_t)dlen,(off_t)doff) == (long)dlen)
+			return 1;
 	}
-	pthread_rwlock_unlock(&db->dfLock);
 	return 0;
 }
 

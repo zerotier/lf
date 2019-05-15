@@ -96,7 +96,7 @@ var bigInt0 = big.NewInt(0)
 // to keep secret (e.g. a ZeroTier node address or network ID). In that case guessing the ordinal
 // would be quite difficult. Sequential ordinals are typically not private information anyway.
 func (b *Ordinal) Set(value uint64, key []byte) {
-	var bi, bit, tmp big.Int
+	var bi, bit big.Int
 
 	keyHash := md5.Sum(key) // MD5's issues don't matter here -- we just want 128 pseudorandom bits
 	bi.SetBytes(keyHash[:])
@@ -117,6 +117,7 @@ func (b *Ordinal) Set(value uint64, key []byte) {
 	if bit.Rsh(&bit, 1).Cmp(bigInt0) > 0 {
 		binary.BigEndian.PutUint64(keyHash[0:8], value)
 		keyHash = md5.Sum(keyHash[:]) // generate a random 64-bit int based on key + value
+		var tmp big.Int
 		bi.Add(&bi, tmp.Mod(tmp.SetUint64(binary.BigEndian.Uint64(keyHash[0:8])), &bit))
 	}
 

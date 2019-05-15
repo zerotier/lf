@@ -55,16 +55,16 @@ func addOrdinalToHash(h *[32]byte, ordinal *Ordinal) {
 	d += binary.BigEndian.Uint64(ordinal[8:16])
 	if d < od {
 		c++
-	}
-	if c < oc {
-		b++
+		if c < oc {
+			b++
+		}
 	}
 	c += binary.BigEndian.Uint64(ordinal[0:8])
 	if c < oc {
 		b++
-	}
-	if b < ob {
-		a++
+		if b < ob {
+			a++
+		}
 	}
 	binary.BigEndian.PutUint64(h[0:8], a)
 	binary.BigEndian.PutUint64(h[8:16], b)

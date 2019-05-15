@@ -31,7 +31,6 @@
 
 /* Chunk size to increment nominal size of graph and data mmap files. */
 #define ZTLF_GRAPH_FILE_CAPACITY_INCREMENT 33554432
-#define ZTLF_DATA_FILE_CAPACITY_INCREMENT 33554432
 
 /* Max MMAP size for SQLite -- disable on 32-bit systems */
 #ifdef ZTLF_64BIT
@@ -223,6 +222,7 @@ int ZTLF_DB_Open(
 		return ZTLF_NEG(ENAMETOOLONG);
 	memset(db,0,sizeof(struct ZTLF_DB));
 	strncpy(db->path,path,PATH_MAX-1);
+	db->df = -1;
 	db->logger = logger;
 	db->loggerArg = (uintptr_t)loggerArg;
 	db->recordSyncCallback = recordSync;
@@ -235,7 +235,6 @@ int ZTLF_DB_Open(
 	for(int i=0;i<ZTLF_DB_GRAPH_NODE_LOCK_ARRAY_SIZE;++i)
 		pthread_mutex_init(&db->graphNodeLocks[i],NULL);
 	pthread_rwlock_init(&db->gfLock,NULL);
-	pthread_rwlock_init(&db->dfLock,NULL);
 
 	mkdir(path,0755);
 
@@ -407,11 +406,9 @@ int ZTLF_DB_Open(
 		goto exit_with_error;
 	}
 	snprintf(tmp,sizeof(tmp),"%s" ZTLF_PATH_SEPARATOR "records.lf",path);
-	e = ZTLF_MappedFile_Open(&db->df,tmp,ZTLF_GRAPH_FILE_CAPACITY_INCREMENT,ZTLF_GRAPH_FILE_CAPACITY_INCREMENT);
-	if (e) {
+	db->df = open(tmp,O_RDWR|O_CREAT,0644);
+	if (db->df < 0) {
 		ZTLF_MappedFile_Close(&db->gf);
-		errno = e;
-		e = 0;
 		goto exit_with_error;
 	}
 	snprintf(tmp,sizeof(tmp),"%s" ZTLF_PATH_SEPARATOR "weights",path);
@@ -810,7 +807,9 @@ void ZTLF_DB_Close(struct ZTLF_DB *db)
 	unlink(tmp);
 
 	ZTLF_MappedFile_Close(&db->gf);
-	ZTLF_MappedFile_Close(&db->df);
+	if (db->df >= 0)
+		close(db->df);
+	db->df = -1;
 	ZTLF_SUint96_Close(&db->wf);
 
 	pthread_mutex_unlock(&db->dbLock);
@@ -822,7 +821,6 @@ void ZTLF_DB_Close(struct ZTLF_DB *db)
 	for(int i=0;i<ZTLF_DB_GRAPH_NODE_LOCK_ARRAY_SIZE;++i)
 		pthread_mutex_destroy(&db->graphNodeLocks[i]);
 	pthread_rwlock_destroy(&db->gfLock);
-	pthread_rwlock_destroy(&db->dfLock);
 
 	ZTLF_L_trace("shutdown complete");
 }
@@ -934,15 +932,10 @@ int ZTLF_DB_PutRecord(
 		}
 
 		/* Copy data into record data file. */
-		pthread_rwlock_wrlock(&db->dfLock);
-		uint8_t *rdata = (uint8_t *)ZTLF_MappedFile_Get(&db->df,(uintptr_t)doff,(uintptr_t)rsize);
-		if (!rdata) {
-			pthread_rwlock_unlock(&db->dfLock);
+		if ((long)pwrite(db->df,rec,(size_t)rsize,(off_t)doff) != (long)rsize) {
 			result = ZTLF_NEG(EIO);
 			goto exit_putRecord;
 		}
-		memcpy(rdata,rec,rsize);
-		pthread_rwlock_unlock(&db->dfLock);
 
 		break;
 	}

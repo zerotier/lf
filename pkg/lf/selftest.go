@@ -181,19 +181,31 @@ func TestCore(out io.Writer) bool {
 	var rk [8]byte
 	var orda, ordb Ordinal
 	rand.Seed(int64(time.Now().UnixNano()))
-	for k := 0; k < 1000; k++ {
+	for k := 0; k < 100; k++ {
 		binary.LittleEndian.PutUint64(rk[:], rand.Uint64())
+
+		for d := 0; d < 16; d++ {
+			orda.Set(uint64(d), rk[:])
+			ordb.Set(0xffffffffffffffff, rk[:])
+			if bytes.Compare(orda[:], ordb[:]) >= 0 {
+				fmt.Fprintf(out, "FAILED (ordinal A must be less than ordinal B (%d-uint64_max))\n", d)
+				return false
+			}
+		}
+
 		rn := rand.Uint64()
 		for i := 0; i < 100; i++ {
 			rn++
-			if rn == 0xffffffffffffffff {
-				rn--
+			if rn >= 0xfffffffffffffff0 {
+				rn -= 0xf
 			}
-			orda.Set(rn, rk[:])
-			ordb.Set(rn+1, rk[:])
-			if bytes.Compare(orda[:], ordb[:]) >= 0 {
-				fmt.Fprintf(out, "FAILED (ordinal A must be less than ordinal B)\n")
-				return false
+			for d := 1; d < 16; d++ {
+				orda.Set(rn, rk[:])
+				ordb.Set(rn+uint64(d), rk[:])
+				if bytes.Compare(orda[:], ordb[:]) >= 0 {
+					fmt.Fprintf(out, "FAILED (ordinal A must be less than ordinal B (%d))\n", rn+uint64(d))
+					return false
+				}
 			}
 		}
 	}
@@ -218,11 +230,14 @@ func TestCore(out io.Writer) bool {
 			return false
 		}
 	}
-	var selTest Selector
-	selTest.set([]byte("name"), 1234, testSelectorClaimHash[:])
-	if !bytes.Equal(MakeSelectorKey([]byte("name"), 1234), selTest.key(testSelectorClaimHash[:])) {
-		fmt.Fprintf(out, "FAILED (keys from key() vs MakeSelectorKey() are not equal)\n")
-		return false
+	for k := 0; k < 32; k++ {
+		rn := rand.Uint64()
+		var selTest Selector
+		selTest.set([]byte("name"), rn, testSelectorClaimHash[:])
+		if !bytes.Equal(MakeSelectorKey([]byte("name"), rn), selTest.key(testSelectorClaimHash[:])) {
+			fmt.Fprintf(out, "FAILED (keys from key() vs MakeSelectorKey() are not equal)\n")
+			return false
+		}
 	}
 	fmt.Fprintf(out, "OK\n")
 
@@ -476,7 +491,7 @@ func TestDatabase(testBasePath string, out io.Writer) bool {
 
 		ownerIdx := ri % testDatabaseOwners
 		ts++
-		values[ri] = []byte(strconv.FormatUint(ts, 10))
+		values[ri] = []byte(fmt.Sprintf("%.16x%.16x", ownerIdx, ri))
 		selectors[ri] = []byte(fmt.Sprintf("%.16x", ownerIdx))
 		ordinals[ri] = uint64(ri)
 		records[ri], err = NewRecord(
@@ -604,8 +619,9 @@ func TestDatabase(testBasePath string, out io.Writer) bool {
 			defer wg.Done()
 			rb := make([]byte, 0, 4096)
 			for oi := 0; oi < testDatabaseOwners; oi++ {
-				sk0 := MakeSelectorKey([]byte(fmt.Sprintf("%.16x", oi)), 0)
-				sk1 := MakeSelectorKey([]byte(fmt.Sprintf("%.16x", oi)), 0xffffffffffffffff)
+				ptk := []byte(fmt.Sprintf("%.16x", oi))
+				sk0 := MakeSelectorKey(ptk, 0)
+				sk1 := MakeSelectorKey(ptk, 0xffffffffffffffff)
 				err = dbs[dbi].query(0, 9223372036854775807, [][2][]byte{{sk0, sk1}}, func(ts, weightL, weightH, doff, dlen uint64, localReputation int, key uint64, owner []byte) bool {
 					_, err := dbs[dbi].getDataByOffset(doff, uint(dlen), rb[:0])
 					if err != nil {
@@ -622,8 +638,9 @@ func TestDatabase(testBasePath string, out io.Writer) bool {
 		}()
 	}
 	wg.Wait()
-	if gotRecordCount != (testDatabaseRecords * testDatabaseInstances) {
+	if atomic.LoadUint32(&gotRecordCount) != (testDatabaseRecords * testDatabaseInstances) {
 		fmt.Fprintf(out, "  FAILED ordinal range query test: got %d records, expected %d\n", gotRecordCount, testDatabaseRecords*testDatabaseInstances)
+		return false
 	}
 	fmt.Fprintf(out, "  Ordinal range query test OK (%d records from %d parallel databases)\n", gotRecordCount, testDatabaseInstances)
 
