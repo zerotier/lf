@@ -29,6 +29,7 @@ package lf
 import (
 	"crypto/x509"
 	"encoding/json"
+	"fmt"
 	"strings"
 )
 
@@ -42,7 +43,6 @@ type GenesisParameters struct {
 	LinkKey                   [32]byte ``                  // Static 32-byte key used to ensure that nodes in this network only connect to one another
 	RecordMinLinks            uint     ``                  // Minimum number of links required for non-genesis records
 	RecordMaxValueSize        uint     ``                  // Maximum size of record values
-	RecordMaxSize             uint     ``                  // Maximum size of records (up to the RecordMaxSize constant)
 	RecordMaxForwardTimeDrift uint     ``                  // Maximum number of seconds in the future a record can be timestamped
 	AmendableFields           []string `json:",omitempty"` // List of json field names that the genesis owner can change by posting non-empty records
 
@@ -98,8 +98,6 @@ func (gp *GenesisParameters) Update(jsonValue []byte) error {
 				gp.RecordMinLinks = ngp.RecordMinLinks
 			case "recordmaxvaluesize":
 				gp.RecordMaxValueSize = ngp.RecordMaxValueSize
-			case "recordmaxsize":
-				gp.RecordMaxSize = ngp.RecordMaxSize
 			case "recordmaxforwardtimedrift":
 				gp.RecordMaxForwardTimeDrift = ngp.RecordMaxForwardTimeDrift
 			case "amendablefields":
@@ -110,6 +108,27 @@ func (gp *GenesisParameters) Update(jsonValue []byte) error {
 
 	gp.initialized = true
 
+	return nil
+}
+
+// SetAmendableFields validates and sets the AmendableFields field
+func (gp *GenesisParameters) SetAmendableFields(fields []string) error {
+	if len(fields) == 0 {
+		gp.AmendableFields = nil
+		return nil
+	}
+	gp.AmendableFields = make([]string, 0, len(fields))
+	for _, f := range fields {
+		af := strings.ToLower(strings.TrimSpace(f))
+		switch af {
+		case
+			"name", "contact", "comment", "authcertificates", "authrequired", "linkkey",
+			"recordminlinks", "recordmaxvaluesize", "recordmaxforwardtimedrift", "amendablefields":
+			gp.AmendableFields = append(gp.AmendableFields, af)
+		default:
+			return fmt.Errorf("invalid amendable field name: %s", f)
+		}
+	}
 	return nil
 }
 

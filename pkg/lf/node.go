@@ -519,7 +519,7 @@ func (n *Node) AddRecord(r *Record) error {
 	// Genesis records can only come from the genesis owner
 	// Is record too big according to protocol or genesis parameter constraints?
 	rsize := uint(r.SizeBytes())
-	if rsize > RecordMaxSize || rsize > n.genesisParameters.RecordMaxSize {
+	if rsize > RecordMaxSize {
 		return ErrRecordTooLarge
 	}
 

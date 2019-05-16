@@ -230,7 +230,7 @@ func TestCore(out io.Writer) bool {
 	}
 	fmt.Fprintf(out, "OK\n")
 
-	curves := []elliptic.Curve{elliptic.P521(), elliptic.P384(), elliptic.P224(), ECCCurveBrainpoolP160T1}
+	curves := []elliptic.Curve{elliptic.P384(), elliptic.P224(), ECCCurveBrainpoolP160T1}
 	for ci := range curves {
 		curve := curves[ci]
 

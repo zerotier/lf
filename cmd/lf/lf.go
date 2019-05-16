@@ -28,11 +28,19 @@ package main
 
 import (
 	"bytes"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	secrand "crypto/rand"
+	"crypto/sha256"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
 	"flag"
 	"fmt"
 	"io/ioutil"
 	"log"
+	"math/big"
 	"net"
 	"os"
 	"os/signal"
@@ -877,12 +885,134 @@ func doCert(cfg *lf.ClientConfig, basePath string, args []string) {
 }
 */
 
+//////////////////////////////////////////////////////////////////////////////
+
+func atoUI(s string) uint {
+	i, _ := strconv.ParseUint(s, 10, 64)
+	return uint(i)
+}
+
 // doMakeGenesis is currently code for making the default genesis records and isn't very useful to anyone else.
 func doMakeGenesis(cfg *lf.ClientConfig, basePath string, args []string) {
-	g := &lf.SolGenesisParameters
+	var g lf.GenesisParameters
+	g.Name = prompt("Network name: ", true, "")
+	if g.Name == "~~~Sol" { // magic value used internally to make Sol, useless to others
+		g = lf.GenesisParameters{
+			Name:                      "Sol",
+			Contact:                   "https://www.zerotier.com/lf",
+			Comment:                   "Global Public LF Data Store",
+			LinkKey:                   [32]byte{0x17, 0x55, 0x22, 0x2e, 0x7c, 0x33, 0xa8, 0x5f, 0xc9, 0x70, 0x59, 0x5b, 0xfa, 0x5b, 0x46, 0x3b, 0x2a, 0xa9, 0x35, 0xee, 0x3e, 0x46, 0xbe, 0xd3, 0x3b, 0x14, 0x14, 0x8d, 0xe3, 0xd8, 0x8d, 0x23},
+			RecordMinLinks:            2,
+			RecordMaxValueSize:        1024,
+			RecordMaxForwardTimeDrift: 60,
+			AmendableFields:           []string{"authcertificates"},
+		}
+		fmt.Println("Using Sol network defaults...")
+	} else {
+		g.Contact = prompt("Network contact []: ", false, "")
+		g.Comment = prompt("Network comment or description []: ", false, "")
+		q := prompt("Link key: ", true, "")
+		g.LinkKey = sha256.Sum256([]byte(q))
+		g.RecordMinLinks = atoUI(prompt("Record minimum links [2]: ", false, "2"))
+		if g.RecordMinLinks < 2 {
+			fmt.Println("ERROR: min links must be at least 2 or things won't work!")
+			return
+		}
+		g.RecordMaxValueSize = atoUI(prompt("Record maximum value size [1024]: ", false, "1024"))
+		if g.RecordMaxValueSize > lf.RecordMaxSize {
+			fmt.Println("ERROR: record value sizee too large!")
+			return
+		}
+		g.RecordMaxForwardTimeDrift = atoUI(prompt("Record maximum forward time drift (seconds) [60]: ", false, "60"))
+		for {
+			err := g.SetAmendableFields(strings.Split(prompt("Amendable fields (comma separated) []: ", false, ""), ","))
+			if err == nil {
+				break
+			}
+		}
+	}
+
+	q := prompt("Create a record authorization certificate? [y/N]: ", false, "n")
+	for {
+		if q == "Y" || q == "y" || q == "1" {
+			key, err := ecdsa.GenerateKey(elliptic.P384(), secrand.Reader)
+			if err != nil {
+				fmt.Printf("ERROR: unable to generate ECDSA key pair: %s\n", err.Error())
+				return
+			}
+
+			s256 := sha256.New()
+			s256.Write(key.PublicKey.X.Bytes())
+			s256.Write(key.PublicKey.Y.Bytes())
+			serialNo := s256.Sum(nil)
+			serialNoStr := lf.Base62Encode(serialNo)
+
+			ttl := atoUI(prompt("  Time to live in seconds [36500]: ", false, "36500"))
+			if ttl <= 0 {
+				fmt.Println("ERROR: invalid value: must be >0")
+				return
+			}
+
+			var name pkix.Name
+			name.Country = []string{prompt("  Country []: ", false, "")}
+			name.Organization = []string{prompt("  Organization []: ", false, "")}
+			name.OrganizationalUnit = []string{prompt("  Organizational unit []: ", false, "")}
+			name.Locality = []string{prompt("  Locality []: ", false, "")}
+			name.Province = []string{prompt("  Province []: ", false, "")}
+			name.StreetAddress = []string{prompt("  Street address []: ", false, "")}
+			name.PostalCode = []string{prompt("  Postal code []: ", false, "")}
+			name.SerialNumber = serialNoStr
+			name.CommonName = prompt("  Common name []: ", false, "")
+
+			now := time.Now()
+			cert := &x509.Certificate{
+				SerialNumber:          new(big.Int).SetBytes(serialNo),
+				Subject:               name,
+				NotBefore:             now,
+				NotAfter:              now.Add(time.Hour * time.Duration(24*ttl)),
+				IsCA:                  true,
+				ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageTimeStamping},
+				KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+				BasicConstraintsValid: true,
+			}
+
+			certBytes, err := x509.CreateCertificate(secrand.Reader, cert, cert, &key.PublicKey, key)
+			if err != nil {
+				log.Printf("ERROR: unable to create CA certificate: %s", err.Error())
+				return
+			}
+			keyBytes, err := x509.MarshalECPrivateKey(key)
+			if err != nil {
+				log.Printf("ERROR: unable to x509 encode ECDSA private key: %s", err.Error())
+				return
+			}
+
+			err = ioutil.WriteFile("genesis-auth-"+serialNoStr+"-secret.pem", []byte(pem.EncodeToMemory(&pem.Block{Type: "ECDSA PRIVATE KEY", Bytes: keyBytes})), 0600)
+			if err != nil {
+				log.Printf("ERROR: unable to write cert key PEM: %s", err.Error())
+				return
+			}
+
+			g.AuthCertificates = append(g.AuthCertificates, certBytes...)
+		} else {
+			break
+		}
+		q = prompt("Create another record authorization certificate? [y/N]: ", false, "n")
+	}
+	if len(g.AuthCertificates) > 0 {
+		certs, err := g.GetAuthCertificates()
+		if err != nil {
+			log.Printf("ERROR: unable to create CA certificate: %s", err.Error())
+			return
+		}
+		fmt.Printf("  (%d authorization certificates, %d bytes)\n", len(certs), len(g.AuthCertificates))
+		q = prompt("Authorization certificates required? [y/N]: ", false, "n")
+		g.AuthRequired = q == "Y" || q == "y" || q == "1"
+	}
+
 	fmt.Printf("Genesis parameters:\n%s\nCreating %d genesis records...\n", lf.PrettyJSON(g), g.RecordMinLinks)
 
-	genesisRecords, genesisOwner, err := lf.CreateGenesisRecords(lf.OwnerTypeNistP384, g)
+	genesisRecords, genesisOwner, err := lf.CreateGenesisRecords(lf.OwnerTypeNistP384, &g)
 	if err != nil {
 		fmt.Printf("ERROR: %s\n", err.Error())
 		os.Exit(-1)
@@ -894,20 +1024,25 @@ func doMakeGenesis(cfg *lf.ClientConfig, basePath string, args []string) {
 		fmt.Printf("%s\n", lf.PrettyJSON(genesisRecords[i]))
 		err = genesisRecords[i].MarshalTo(&grData, false)
 		if err != nil {
-			fmt.Printf("ERROR: %s\n", err.Error())
+			log.Printf("ERROR: %s", err.Error())
 			os.Exit(-1)
 			return
 		}
 	}
 
-	ioutil.WriteFile("genesis.lf", grData.Bytes(), 0644)
-	ioutil.WriteFile("genesis.go", []byte(fmt.Sprintf("var SolGenesisRecords = %#v\n", grData.Bytes())), 0644)
+	err = ioutil.WriteFile("genesis.lf", grData.Bytes(), 0644)
+	if err != nil {
+		fmt.Printf("ERROR: %s\n", err.Error())
+		os.Exit(-1)
+		return
+	}
+	ioutil.WriteFile("genesis.go", []byte(fmt.Sprintf("%#v\n", grData.Bytes())), 0644)
 	if len(g.AmendableFields) > 0 {
 		priv, _ := genesisOwner.PrivateBytes()
-		ioutil.WriteFile("genesis.secret", priv, 0600)
+		ioutil.WriteFile("genesis-secret.pem", []byte(pem.EncodeToMemory(&pem.Block{Type: "ECDSA PRIVATE KEY", Bytes: priv})), 0600)
 	}
 
-	fmt.Printf("\nWrote genesis.lf, genesis.go, and genesis.secret (if amendable) to current directory.\n")
+	fmt.Printf("\nWrote genesis.* files to current directory.\n")
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -920,11 +1055,13 @@ func main() {
 	err := globalOpts.Parse(os.Args[1:])
 	if err != nil {
 		printHelp("")
+		os.Exit(0)
 		return
 	}
 	args := globalOpts.Args()
 	if len(args) < 1 {
 		printHelp("")
+		os.Exit(0)
 		return
 	}
 	var cmdArgs []string
@@ -951,9 +1088,13 @@ func main() {
 		} else {
 			printHelp("")
 		}
+		os.Exit(0)
+		return
 
 	case "version":
 		fmt.Println(lf.VersionStr)
+		os.Exit(0)
+		return
 
 	case "selftest":
 		test := ""
@@ -974,6 +1115,7 @@ func main() {
 			printHelp("")
 		}
 		os.Exit(0)
+		return
 
 	case "node-start":
 		doNodeStart(&cfg, *basePath, cmdArgs)
@@ -993,8 +1135,10 @@ func main() {
 	case "owner":
 		doOwner(&cfg, *basePath, cmdArgs)
 
-	case "_makegenesis":
+	case "makegenesis":
 		doMakeGenesis(&cfg, *basePath, cmdArgs)
+		os.Exit(0)
+		return
 
 	default:
 		printHelp("")
