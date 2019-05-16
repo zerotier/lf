@@ -128,9 +128,13 @@ var secureRandom = func() *paranoidSecureRandom {
 	return &r
 }()
 
-func shasha256(in []byte) [32]byte {
+func shasha256(in []byte) (hb [32]byte) {
+	h256 := sha256.New()
+	h256.Write(in)
 	h512 := sha512.Sum512(in)
-	return sha256.Sum256(h512[:])
+	h256.Write(h512[:])
+	h256.Sum(hb[:0])
+	return
 }
 
 var jsonPrettyOptions = pretty.Options{
