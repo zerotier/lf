@@ -31,7 +31,10 @@ import (
 	"errors"
 )
 
-var base62Encoding, _ = newBaseXEncoding("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")
+// Base62Alphabet is the alphabet used for LF's Base62 encoding.
+const Base62Alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+
+var base62Encoding, _ = newBaseXEncoding(Base62Alphabet)
 
 type baseXEncoding struct {
 	base        int
