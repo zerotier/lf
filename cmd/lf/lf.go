@@ -369,6 +369,8 @@ func doStatus(cfg *lf.ClientConfig, basePath string, args []string) {
 
 //////////////////////////////////////////////////////////////////////////////
 
+var one = 1
+
 func doGet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool) {
 	getOpts := flag.NewFlagSet("get", flag.ContinueOnError)
 	maskKey := getOpts.String("mask", "", "")
@@ -441,7 +443,7 @@ func doGet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool
 		TimeRange: tr,
 	}
 	if !jsonOutput {
-		req.Limit = 1
+		req.Limit = &one
 	}
 
 	var results lf.APIQueryResults
