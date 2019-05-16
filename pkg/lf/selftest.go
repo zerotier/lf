@@ -117,18 +117,6 @@ func TestCore(out io.Writer) bool {
 	}
 	fmt.Fprintf(out, "OK\n")
 
-	fmt.Fprintf(out, "Testing Shandwich256... ")
-	t0 := Shandwich256(testStr)
-	t1h := NewShandwich256()
-	t1h.Write(testStr)
-	t1 := t1h.Sum(nil)
-	if bytes.Equal(t0[:], t1) && hex.EncodeToString(t0[:]) == "7f1431b5dbeb7b15129ed4d9ebd97cee1e5b6eb01623405b2c4b33844f1e1bb1" {
-		fmt.Fprintf(out, "OK\n")
-	} else {
-		fmt.Fprintf(out, "FAILED %x\n", t0)
-		return false
-	}
-
 	fmt.Fprintf(out, "Testing deterministic owner generation from seed... P-384 ")
 	op384, _ := NewOwnerFromSeed(OwnerTypeNistP384, []byte("lol"))
 	if hex.EncodeToString(op384.Public) != "e0f45357cb01da5c242de114b0850fc07f84dcbd4436e3e9" {

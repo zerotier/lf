@@ -274,7 +274,7 @@ func (rb *recordBody) marshalTo(w io.Writer, hashAsProxyForValue bool) error {
 	}
 
 	if hashAsProxyForValue {
-		h := Shandwich256(rb.Value)
+		h := shasha256(rb.Value)
 		if _, err := w.Write(h[:]); err != nil {
 			return err
 		}
@@ -318,9 +318,10 @@ func (rb *recordBody) marshalTo(w io.Writer, hashAsProxyForValue bool) error {
 
 func (rb *recordBody) signingHash() (hb [32]byte) {
 	if rb.sigHash == nil {
-		h := NewShandwich256()
-		rb.marshalTo(h, true)
-		h.Sum(hb[:0])
+		var s512buf [64]byte
+		s512 := sha512.New()
+		rb.marshalTo(s512, true)
+		hb = sha256.Sum256(s512.Sum(s512buf[:0]))
 		rb.sigHash = &hb
 		return
 	}
@@ -500,19 +501,21 @@ func (r *Record) SizeBytes() int {
 	return int(c)
 }
 
-// Hash returns Shandwich256(Bytes()).
+// Hash returns sha256(sha512(Bytes())).
 // This is the main record hash used for record linking. Note that it's not a straight
 // hash of the record's bytes by a hash of the record with the (raw unmasked) value
 // replaced by the value's hash.
 func (r *Record) Hash() (hb [32]byte) {
 	if r.hash != nil {
-		copy(hb[:], r.hash[:])
+		hb = *r.hash
 		return
 	}
-	h := NewShandwich256()
-	r.MarshalTo(h, true)
-	h.Sum(hb[:0])
-	r.hash = &hb
+	var s512buf [64]byte
+	s512 := sha512.New()
+	r.MarshalTo(s512, true)
+	tmp := sha256.Sum256(s512.Sum(s512buf[:0]))
+	r.hash = &tmp
+	hb = tmp
 	return
 }
 
