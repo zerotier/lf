@@ -48,6 +48,10 @@ import (
 const (
 	dbMaxOwnerSize       uint = C.ZTLF_DB_QUERY_MAX_OWNER_SIZE
 	dbMaxConfigValueSize int  = 1048576
+
+	dbReputationDefault           = 63
+	dbReputationTemporalViolation = 32
+	dbReputationCollision         = 0
 )
 
 // DB is an instance of the LF database that stores records and manages record weights and linkages.

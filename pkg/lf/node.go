@@ -627,12 +627,12 @@ func (n *Node) handleSynchronizedRecord(doff uint64, dlen uint, reputation int, 
 			r, err := NewRecordFromBytes(rdata)
 			if err == nil {
 				// If this record's local reputation is bad, check and see if we have any good
-				// reputation local records with the same ID and owner. If so and if commenting
+				// reputation local records with the same ID and another onwer. If so and if commenting
 				// is enabled, generate a comment record that we will publish under our owner.
-				if reputation <= 0 && atomic.LoadUint32(&n.commentary) != 0 {
+				if reputation < dbReputationDefault && atomic.LoadUint32(&n.commentary) != 0 {
 					rid := r.ID()
-					n.db.getAllByIDNotOwner(rid[:], r.Owner, func(_, _ uint64, reputation int) bool {
-						if reputation > 0 { // a positive reputation fully synchronized record with a different owner exists
+					n.db.getAllByIDNotOwner(rid[:], r.Owner, func(_, _ uint64, alreadyHaveReputation int) bool {
+						if alreadyHaveReputation > reputation {
 							n.commentsLock.Lock()
 							n.comments.PushBack(&comment{
 								subject:   hash[:],

@@ -322,7 +322,7 @@ int ZTLF_DB_Open(
 		"AND reputation > 0"); /* and that isn't already zero (prevents unnecessary writes? not sure if necessary) */
 	S(db->sGetLinkCandidates,
 		"SELECT r.hash FROM record AS r WHERE "
-		"r.reputation > 0 " /* exclude collisions or otherwise wonky records */
+		"r.reputation = " ZTLF_DB_REPUTATION_DEFAULT_S " " /* exclude collisions or otherwise wonky records */
 		"AND NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) "
 		"AND NOT EXISTS (SELECT gp.record_goff FROM graph_pending AS gp WHERE gp.record_goff = r.goff) "
 		"ORDER BY r.linked_count,RANDOM() LIMIT ?"); /* link preferentially to records that have fewer links to them */
@@ -967,7 +967,7 @@ int ZTLF_DB_PutRecord(
 			sqlite3_bind_blob(db->sDemoteCollisions,2,id,32,SQLITE_STATIC);
 			sqlite3_step(db->sDemoteCollisions);
 		} else {
-			reputation = 1;
+			reputation = ZTLF_DB_REPUTATION_DEFAULT;
 		}
 	}
 

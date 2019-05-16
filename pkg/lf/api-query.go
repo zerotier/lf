@@ -28,7 +28,6 @@ package lf
 
 import (
 	"bytes"
-	"encoding/binary"
 	"encoding/json"
 	"net/http"
 	"sort"
@@ -47,6 +46,20 @@ const (
 )
 
 const trustSigDigits float64 = 10000000000.0 // rounding precision for comparing trust values and considering them "equal"
+
+func sliceU32Less(a, b []uint32) bool {
+	if len(a) == len(b) {
+		for i := 0; i < len(a); i++ {
+			if a[i] < b[i] {
+				return true
+			} else if a[i] > b[i] {
+				return false
+			}
+		}
+		return false
+	}
+	return len(a) < len(b)
+}
 
 // APIQueryRange (request, part of APIQuery) specifies a selector or selector range.
 // Selector ranges can be specified in one of two ways. If KeyRange is non-empty it contains a single
@@ -71,12 +84,12 @@ type APIQuery struct {
 
 // APIQueryResult (response, part of APIQueryResults) is a single query result.
 type APIQueryResult struct {
-	Hash   HashBlob ``                  // Hash of this specific unique record
-	Size   int      ``                  // Size of this record in bytes
-	Record *Record  `json:",omitempty"` // Record itself.
-	Value  Blob     `json:",omitempty"` // Unmasked value if masking key was included and valid
-	Trust  float64  ``                  // Locally computed trust metric
-	Weight [16]byte `json:",omitempty"` // Record weight as a 128-bit big-endian value
+	Hash   HashBlob  ``                  // Hash of this specific unique record
+	Size   int       ``                  // Size of this record in bytes
+	Record *Record   `json:",omitempty"` // Record itself.
+	Value  Blob      `json:",omitempty"` // Unmasked value if masking key was included and valid
+	Trust  float64   ``                  // Locally computed trust metric
+	Weight [4]uint32 `json:",omitempty"` // Record weight as a 128-bit big-endian value decomposed into 4 32-bit integers
 }
 
 // APIQueryResults is a list of results to an API query.
@@ -186,13 +199,15 @@ func (m *APIQuery) execute(n *Node) (qr APIQueryResults, err *APIError) {
 			}
 
 			var trust float64
-			if result.localReputation > 0 {
+			if result.localReputation == dbReputationDefault {
 				trust = 1.0
 			}
 
-			var weight [16]byte
-			binary.BigEndian.PutUint64(weight[0:8], result.weightH)
-			binary.BigEndian.PutUint64(weight[8:16], result.weightL)
+			var weight [4]uint32
+			weight[0] = uint32(result.weightH << 32)
+			weight[1] = uint32(result.weightH)
+			weight[2] = uint32(result.weightL << 32)
+			weight[3] = uint32(result.weightL)
 
 			if rn == 0 {
 				qr = append(qr, []APIQueryResult{APIQueryResult{
@@ -223,13 +238,13 @@ func (m *APIQuery) execute(n *Node) (qr APIQueryResults, err *APIError) {
 				if qrr[a].Trust < qrr[b].Trust {
 					return true
 				} else if uint64(qrr[a].Trust*trustSigDigits) == uint64(qrr[b].Trust*trustSigDigits) {
-					return bytes.Compare(qrr[a].Weight[:], qrr[b].Weight[:]) < 0
+					return sliceU32Less(qrr[a].Weight[:], qrr[b].Weight[:])
 				}
 				return false
 			})
 		} else if m.SortOrder == APIQuerySortOrderWeight {
 			sort.Slice(qrr, func(b, a int) bool {
-				return bytes.Compare(qrr[a].Weight[:], qrr[b].Weight[:]) < 0
+				return sliceU32Less(qrr[a].Weight[:], qrr[b].Weight[:])
 			})
 		} else if m.SortOrder == APIQuerySortOrderTimestamp {
 			sort.Slice(qrr, func(b, a int) bool {
