@@ -49,8 +49,6 @@ type APIStatusResult struct {
 	PeerCount           int               ``                  // Number of connected peers
 	GenesisParameters   GenesisParameters ``                  // Genesis record contents that define settings for this LF network
 	NodeWorkAuthorized  bool              ``                  // True if full node will do work for querying user/proxy
-	ProxyChain          []string          ``                  // Each proxy prepends its next URL hop to this slice
-	WorkAuthorized      bool              ``                  // True if full node OR any proxy will do work for you
 }
 
 // APIStatusGet gets a status result from a URL.

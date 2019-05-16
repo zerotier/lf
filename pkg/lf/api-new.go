@@ -41,7 +41,7 @@ type APINewSelector struct {
 // APINew (request) asks the proxy or node to perform server-side record generation and proof of work.
 type APINew struct {
 	Selectors          []APINewSelector `json:",omitempty"` // Plain text selector names and ordinals
-	MaskingKey         Blob             `json:",omitempty"` // An arbitrary key used to mask the record's value from those that don't know what they're looking for
+	MaskingKey         Blob             `json:",omitempty"` // Masking key to override default (default is first selector name)
 	OwnerPrivateKey    Blob             `json:",omitempty"` // Full owner including private key (result of owner PrivateBytes() method)
 	OwnerSeed          Blob             `json:",omitempty"` // Seed to deterministically generate owner (used if ownerprivatekey is missing)
 	OwnerSeedOwnerType *byte            `json:",omitempty"` // Owner type for seeded owner mode (default: P-224)

@@ -334,15 +334,12 @@ func (rb *recordBody) sizeBytes() uint {
 }
 
 // GetValue unmasks and possibly decompresses this record's value.
-// Nil is returned if the value is empty. ErrIncorrectKey is returned if the masking
-// key is not correct.
+// A masking key is always needed. The default for new records where no masking key is
+// explicitly specified is the plain text name of the first selector or the owner if
+// there are no selectors. If nil is given here for a masking key, the owner is used.
 func (rb *recordBody) GetValue(maskingKey []byte) ([]byte, error) {
 	if len(rb.Value) < 4 {
 		return nil, nil
-	}
-
-	if len(maskingKey) == 0 {
-		maskingKey = rb.Owner
 	}
 
 	var unmaskedValue []byte
@@ -351,6 +348,9 @@ func (rb *recordBody) GetValue(maskingKey []byte) ([]byte, error) {
 	binary.BigEndian.PutUint64(cfbIv[0:8], rb.Timestamp)
 	if len(rb.Owner) >= 8 {
 		copy(cfbIv[8:16], rb.Owner[0:8])
+	}
+	if len(maskingKey) == 0 {
+		maskingKey = rb.Owner
 	}
 	maskingKeyH := sha256.Sum256(maskingKey)
 	c, _ := aes.NewCipher(maskingKeyH[:])
@@ -649,7 +649,11 @@ func NewRecordStart(recordType byte, value []byte, links [][32]byte, maskingKey 
 			copy(cfbIv[8:16], owner[0:8])
 		}
 		if len(maskingKey) == 0 {
-			maskingKey = owner // all records are masked, use owner if no key given
+			if len(plainTextSelectorNames) > 0 {
+				maskingKey = plainTextSelectorNames[0]
+			} else {
+				maskingKey = owner
+			}
 		}
 		maskingKeyH := sha256.Sum256(maskingKey)
 		c, _ := aes.NewCipher(maskingKeyH[:])

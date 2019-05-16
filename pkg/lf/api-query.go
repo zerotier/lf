@@ -30,11 +30,23 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/json"
-	"math"
 	"net/http"
 	"sort"
 	"strings"
 )
+
+const (
+	// APIQuerySortOrderTrust sorts by a computed trust value (default)
+	APIQuerySortOrderTrust = "trust"
+
+	// APIQuerySortOrderWeight sorts by proof of work weight only
+	APIQuerySortOrderWeight = "weight"
+
+	// APIQuerySortOrderTimestamp ignores trust and weight and sorts by time
+	APIQuerySortOrderTimestamp = "timestamp"
+)
+
+const trustSigDigits float64 = 10000000000.0 // rounding precision for comparing trust values and considering them "equal"
 
 // APIQueryRange (request, part of APIQuery) specifies a selector or selector range.
 // Selector ranges can be specified in one of two ways. If KeyRange is non-empty it contains a single
@@ -53,8 +65,8 @@ type APIQuery struct {
 	Range      []APIQueryRange `json:",omitempty"` // Selectors or selector range(s)
 	TimeRange  []uint64        `json:",omitempty"` // If present, constrain record times to after first value (if [1]) or range (if [2])
 	MaskingKey Blob            `json:",omitempty"` // Masking key to unmask record value(s) server-side (if non-empty)
-	Limit      int             ``                  // If non-zero, limit maximum lower trust records per result
-	SortOrder  string          `json:",omitempty"` // Sort order within each result
+	SortOrder  string          `json:",omitempty"` // Sort order within each result (default: trust)
+	Limit      *int            `json:",omitempty"` // If non-zero, limit maximum lower trust records per result
 }
 
 // APIQueryResult (response, part of APIQueryResults) is a single query result.
@@ -63,7 +75,7 @@ type APIQueryResult struct {
 	Size   int      ``                  // Size of this record in bytes
 	Record *Record  `json:",omitempty"` // Record itself.
 	Value  Blob     `json:",omitempty"` // Unmasked value if masking key was included and valid
-	Trust  int      ``                  // Trust metric from 0 to 1000 computed from local reputation and trusted commentary
+	Trust  float64  ``                  // Locally computed trust metric
 	Weight [16]byte `json:",omitempty"` // Record weight as a 128-bit big-endian value
 }
 
@@ -102,10 +114,14 @@ func (m *APIQuery) execute(n *Node) (qr APIQueryResults, err *APIError) {
 	if len(mm) == 0 {
 		return nil, &APIError{http.StatusBadRequest, "a query requires at least one selector"}
 	}
+	maskingKey := m.MaskingKey
 	var selectorRanges [][2][]byte
 	for i := 0; i < len(mm); i++ {
 		if len(mm[i].KeyRange) == 0 {
 			// If KeyRange is not used the selectors' names are specified in the clear and we generate keys locally.
+			if len(maskingKey) == 0 && i == 0 {
+				maskingKey = mm[i].Name
+			}
 			if len(mm[i].Range) == 0 {
 				ss := MakeSelectorKey(mm[i].Name, 0)
 				selectorRanges = append(selectorRanges, [2][]byte{ss[:], ss[:]})
@@ -164,7 +180,7 @@ func (m *APIQuery) execute(n *Node) (qr APIQueryResults, err *APIError) {
 				return nil, &APIError{http.StatusInternalServerError, "error retrieving record data: " + err.Error()}
 			}
 
-			v, err := rec.GetValue(m.MaskingKey)
+			v, err := rec.GetValue(maskingKey)
 			if err != nil {
 				v = nil
 			}
@@ -173,7 +189,6 @@ func (m *APIQuery) execute(n *Node) (qr APIQueryResults, err *APIError) {
 			if result.localReputation > 0 {
 				trust = 1.0
 			}
-			trustInt := int(math.Round(1000.0 * trust))
 
 			var weight [16]byte
 			binary.BigEndian.PutUint64(weight[0:8], result.weightH)
@@ -185,7 +200,7 @@ func (m *APIQuery) execute(n *Node) (qr APIQueryResults, err *APIError) {
 					Size:   int(result.dlen),
 					Record: rec,
 					Value:  v,
-					Trust:  trustInt,
+					Trust:  trust,
 					Weight: weight,
 				}})
 			} else {
@@ -194,7 +209,7 @@ func (m *APIQuery) execute(n *Node) (qr APIQueryResults, err *APIError) {
 					Size:   int(result.dlen),
 					Record: rec,
 					Value:  v,
-					Trust:  trustInt,
+					Trust:  trust,
 					Weight: weight,
 				})
 			}
@@ -203,28 +218,28 @@ func (m *APIQuery) execute(n *Node) (qr APIQueryResults, err *APIError) {
 
 	// Sort within each result
 	for qri, qrr := range qr {
-		if len(m.SortOrder) == 0 || m.SortOrder == "trust" {
+		if len(m.SortOrder) == 0 || m.SortOrder == APIQuerySortOrderTrust {
 			sort.Slice(qrr, func(b, a int) bool {
 				if qrr[a].Trust < qrr[b].Trust {
 					return true
-				} else if qrr[a].Trust == qrr[b].Trust {
+				} else if uint64(qrr[a].Trust*trustSigDigits) == uint64(qrr[b].Trust*trustSigDigits) {
 					return bytes.Compare(qrr[a].Weight[:], qrr[b].Weight[:]) < 0
 				}
 				return false
 			})
-		} else if m.SortOrder == "weight" {
+		} else if m.SortOrder == APIQuerySortOrderWeight {
 			sort.Slice(qrr, func(b, a int) bool {
 				return bytes.Compare(qrr[a].Weight[:], qrr[b].Weight[:]) < 0
 			})
-		} else if m.SortOrder == "timestamp" {
+		} else if m.SortOrder == APIQuerySortOrderTimestamp {
 			sort.Slice(qrr, func(b, a int) bool {
 				return qrr[a].Record.Timestamp < qrr[b].Record.Timestamp
 			})
 		} else {
 			return nil, &APIError{http.StatusBadRequest, "valid sort order values: trust (default), weight, timestamp"}
 		}
-		if m.Limit > 0 && len(qrr) > m.Limit {
-			qr[qri] = qrr[0:m.Limit]
+		if m.Limit != nil && *m.Limit > 0 && len(qrr) > *m.Limit {
+			qr[qri] = qrr[0:*m.Limit]
 		}
 	}
 

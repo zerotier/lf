@@ -33,6 +33,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"math"
 	"net"
 	"net/http"
 	"strconv"
@@ -360,8 +361,8 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 				}
 				desired = uint(tmp)
 			}
-			if desired > 2048 {
-				desired = 2048
+			if desired > RecordMaxLinks {
+				desired = RecordMaxLinks
 			}
 			_, links, _ := n.db.getLinks(desired)
 			out.Header().Set("Content-Type", "application/octet-stream")
@@ -376,27 +377,26 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 	smux.HandleFunc("/status", func(out http.ResponseWriter, req *http.Request) {
 		apiSetStandardHeaders(out)
 		if req.Method == http.MethodGet || req.Method == http.MethodHead {
-			rc, ds := n.db.stats()
-			now := TimeSec()
 			wa := apiIsTrusted(n, req)
 			n.peersLock.RLock()
 			pcount := len(n.peers)
 			n.peersLock.RUnlock()
+			rc, ds := n.db.stats()
+			now := time.Now()
 			apiSendObj(out, req, http.StatusOK, &APIStatusResult{
 				Software:            SoftwareName,
 				Version:             Version,
 				APIVersion:          APIVersion,
 				MinAPIVersion:       APIVersion,
 				MaxAPIVersion:       APIVersion,
-				Uptime:              (now - uint64(n.startTime.Unix())),
-				Clock:               now,
+				Uptime:              uint64(math.Round(now.Sub(n.startTime).Seconds())),
+				Clock:               uint64(now.Unix()),
 				DBRecordCount:       rc,
 				DBSize:              ds,
 				DBFullySynchronized: (atomic.LoadUint32(&n.synchronized) != 0),
 				PeerCount:           pcount,
 				GenesisParameters:   n.genesisParameters,
 				NodeWorkAuthorized:  wa,
-				WorkAuthorized:      wa,
 			})
 		} else {
 			out.Header().Set("Allow", "GET, HEAD")

@@ -49,6 +49,7 @@ type seededPrng struct {
 
 func (s *seededPrng) seed(b []byte) {
 	k := sha256.Sum256(b)
+	k[0] ^= k[1] // perturb hash slightly to ensure uniqueness of this AES key vs any other use of the same seed
 	s.c, _ = aes.NewCipher(k[:])
 	s.n = 0
 	s.i = 16
