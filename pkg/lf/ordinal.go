@@ -91,18 +91,18 @@ func (b *Ordinal) UnmarshalJSON(j []byte) error {
 
 var ordinalParallelQuicksortThreshold = func() int {
 	nc := runtime.NumCPU()
-	if nc <= 4 {
+	if nc <= 2 {
 		return 1048576 // no sort parallelism
 	}
 	if nc >= 16 {
-		return 4096
+		return 2048
 	}
-	return 65536 / nc
+	return 32768 / nc
 }()
 
 var ordinalAlphabetPool = sync.Pool{
 	New: func() interface{} {
-		return make([]uint32, 65536)
+		return make([]uint32, 32768)
 	},
 }
 
@@ -144,7 +144,7 @@ func ordinalParallelQuicksort(a []uint32, wg *sync.WaitGroup, par bool) {
 func ordinal16to32(wg *sync.WaitGroup, value uint, kk int, keyHash *[64]byte, result *[4]uint32) {
 	var aesTmp [16]byte
 	alphabet := ordinalAlphabetPool.Get().([]uint32)
-	_ = alphabet[65535]
+	_ = alphabet[32767]
 
 	c, _ := aes.NewCipher(keyHash[16*kk : 16*(kk+1)])
 
@@ -152,8 +152,7 @@ func ordinal16to32(wg *sync.WaitGroup, value uint, kk int, keyHash *[64]byte, re
 	rbase := binary.LittleEndian.Uint32(aesTmp[0:4]) % (0x7fffffff + 2)
 
 	for {
-		// Generate 65536 random 32-bit integers
-		for i := 0; i < 65536; {
+		for i := 0; i < 32768; {
 			c.Encrypt(aesTmp[:], aesTmp[:])
 			alphabet[i] = (binary.LittleEndian.Uint32(aesTmp[0:4]) & 0x7fffffff) + rbase
 			i++
@@ -165,24 +164,32 @@ func ordinal16to32(wg *sync.WaitGroup, value uint, kk int, keyHash *[64]byte, re
 			i++
 		}
 
-		// Flattened quicksort using a queue (pivot is chosen as [1] since array is random and unsorted and pivot doesn't matter much)
 		var sortWG sync.WaitGroup
 		ordinalParallelQuicksort(alphabet, &sortWG, false)
 		sortWG.Wait()
 
-		// Make sure all integers are unique
-		for i := 1; i < 65536; i++ {
-			if alphabet[i] == alphabet[i-1] {
-				alphabet[i]++
+		for i := 1; i < 32768; i++ {
+			if (alphabet[i] - alphabet[i-1]) < 2 {
+				alphabet[i] += 2
 			}
 		}
 
-		// Handle very rare case where uniqueness adjustment causes last integer to overflow. In this
-		// case we generate a new set of integers using the continuing output of AES(AES(...)).
-		if alphabet[65535] != 0 {
-			result[kk] = alphabet[value]
-			wg.Done()
+		if alphabet[32767] > alphabet[0] && alphabet[32767] < 0xfffffffe {
+			vdiv2 := value >> 1
+			rv := alphabet[vdiv2]
+			if (value & 1) != 0 {
+				if vdiv2 == 32767 {
+					c.Encrypt(aesTmp[:], aesTmp[:])
+					rv += binary.LittleEndian.Uint32(aesTmp[0:4]) % (0xffffffff - rv)
+				} else {
+					c.Encrypt(aesTmp[:], aesTmp[:])
+					rv += binary.LittleEndian.Uint32(aesTmp[0:4]) % ((alphabet[vdiv2+1] - rv) - 1)
+				}
+				rv++
+			}
+			result[kk] = rv
 			ordinalAlphabetPool.Put(alphabet)
+			wg.Done()
 			return
 		}
 	}

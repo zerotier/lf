@@ -180,12 +180,15 @@ func TestCore(out io.Writer) bool {
 	fmt.Fprintf(out, "Testing Ordinal... ")
 	var rk [8]byte
 	var orda, ordb Ordinal
-	rand.Seed(int64(time.Now().UnixNano()))
-	for k := 0; k < 64; k++ {
-		binary.LittleEndian.PutUint64(rk[:], rand.Uint64())
+	var ocount float64
+	ostart := time.Now()
+	rand.Read(rk[:])
+	for k := 0; k < 32; k++ {
+		binary.LittleEndian.PutUint16(rk[:], uint16(k))
 
 		orda.Set(0, rk[:])
 		ordb.Set(0xffffffffffffffff, rk[:])
+		ocount += 2.0
 		if bytes.Compare(orda[:], ordb[:]) >= 0 {
 			fmt.Fprintf(out, "FAILED (ordinal A must be less than ordinal B (0-max))\n")
 			return false
@@ -195,17 +198,19 @@ func TestCore(out io.Writer) bool {
 		for i := 0; i < 8; i++ {
 			orda.Set(rn, rk[:])
 			ordb.Set(rn+1, rk[:])
+			ocount += 2.0
 			if bytes.Compare(orda[:], ordb[:]) >= 0 {
 				fmt.Fprintf(out, "FAILED (ordinal A must be less than ordinal B (%.16x))\n", rn)
 				return false
 			}
 			rn++
 			if rn >= 0xfffffffffffffff0 {
-				rn -= 0xf
+				rn = 0
 			}
 		}
 	}
-	fmt.Fprintf(out, "OK\n")
+	oend := time.Now()
+	fmt.Fprintf(out, "OK (%f ms/ordinal)\n", (oend.Sub(ostart).Seconds()*1000.0)/ocount)
 
 	fmt.Fprintf(out, "Testing Selector... ")
 	var testSelectors [256]Selector
