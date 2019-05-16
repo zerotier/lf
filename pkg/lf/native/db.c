@@ -393,6 +393,7 @@ int ZTLF_DB_Open(
 	S(db->sQueryGetResults,
 		"SELECT r.doff,r.dlen,r.goff,r.ts,r.reputation,r.ckey,r.owner FROM record AS r,tmp.rs AS rs WHERE "
 		"r.doff = rs.i "
+		"AND r.reputation >= 0 "
 		"AND NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) "
 		"AND NOT EXISTS (SELECT gp.record_goff FROM graph_pending AS gp WHERE gp.record_goff = r.goff) "
 		"ORDER BY r.ckey,r.owner,r.ts");

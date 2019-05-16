@@ -131,13 +131,13 @@ func NewOwnerFromPrivateBytes(b []byte) (*Owner, error) {
 	switch b[0] {
 
 	case OwnerTypeNistP224, OwnerTypeNistP384:
-		priv, err := x509.ParseECPrivateKey(b)
+		priv, err := x509.ParseECPrivateKey(b[1:])
 		if err != nil {
 			return nil, err
 		}
 		var ownerType byte
 		switch priv.Curve.Params().Name {
-		case "P-256":
+		case "P-224":
 			ownerType = OwnerTypeNistP224
 		case "P-384":
 			ownerType = OwnerTypeNistP384

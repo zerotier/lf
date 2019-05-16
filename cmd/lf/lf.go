@@ -426,8 +426,11 @@ func doGet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool
 		json.Unmarshal([]byte("\""+args[i]+"\""), &unesc) // use JSON string escaping for selector arguments
 		if len(unesc) > 0 {
 			tord := tokenizeStringWithEsc(unesc, '#', '\\')
+			if len(tord) >= 1 && len(mk) == 0 {
+				mk = []byte(tord[0])
+			}
 			if len(tord) == 1 {
-				ranges = append(ranges, lf.APIQueryRange{KeyRange: []lf.Blob{lf.MakeSelectorKey([]byte(tord[0]), 0)}})
+				ranges = append(ranges, lf.APIQueryRange{KeyRange: []lf.Blob{lf.MakeSelectorKey([]byte(tord[0]), 0), lf.MakeSelectorKey([]byte(tord[0]), 0xffffffffffffffff)}})
 			} else if len(tord) == 2 {
 				ord0, _ := strconv.ParseUint(tord[1], 10, 64)
 				ranges = append(ranges, lf.APIQueryRange{KeyRange: []lf.Blob{lf.MakeSelectorKey([]byte(tord[0]), ord0)}})
@@ -499,9 +502,6 @@ func doGet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool
 						sn := []byte(selectorNames[i])
 						if res.Record.SelectorIs(sn, si) {
 							fmt.Print(selectorNames[i])
-							if len(res.Record.Selectors[si].Ordinal) > 0 {
-								fmt.Printf("#%d", res.Record.Selectors[si].Ordinal)
-							}
 						}
 					}
 				}
@@ -794,99 +794,6 @@ func doOwner(cfg *lf.ClientConfig, basePath string, args []string) {
 
 //////////////////////////////////////////////////////////////////////////////
 
-/*
-func doCert(cfg *lf.ClientConfig, basePath string, args []string) {
-	if len(args) == 0 {
-		printHelp("")
-		return
-	}
-
-	switch args[0] {
-
-	case "new":
-		if len(args) != 3 {
-			printHelp("")
-			return
-		}
-
-		ttlDays := prompt("Time to live in days [36500]: ", false, "36500")
-		ttl, err := strconv.ParseUint(ttlDays, 10, 64)
-		if err != nil {
-			log.Printf("ERROR: invalid value: %s", err.Error())
-			return
-		}
-		if ttl <= 0 {
-			log.Printf("ERROR: invalid value: must be >0")
-			return
-		}
-
-		ecCurve := prompt("Elliptic curve (P-384, P-521) [P-521]: ", false, "P-521")
-		var curve elliptic.Curve
-		switch ecCurve {
-		case "P-384":
-			curve = elliptic.P384()
-		case "P-521":
-			curve = elliptic.P521()
-		default:
-			log.Printf("ERROR: unrecognized curve name")
-			return
-		}
-
-		key, err := ecdsa.GenerateKey(curve, secrand.Reader)
-		if err != nil {
-			log.Printf("ERROR: unable to generate ECDSA key pair: %s", err.Error())
-			return
-		}
-		compressedPublicKey, err := lf.ECDSACompressPublicKey(&key.PublicKey)
-		if err != nil {
-			log.Printf("ERROR: unable to generate ECDSA key pair: %s", err.Error())
-			return
-		}
-		serialNo := sha256.Sum256(compressedPublicKey)
-
-		cert := &x509.Certificate{
-			SerialNumber:          new(big.Int).SetBytes(serialNo[:]),
-			Subject:               pkix.Name{},
-			NotBefore:             time.Now(),
-			NotAfter:              time.Now().Add(time.Hour * time.Duration(24) * time.Duration(ttl)),
-			IsCA:                  true,
-			ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageTimeStamping},
-			KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
-			BasicConstraintsValid: true,
-		}
-
-		certBytes, err := x509.CreateCertificate(secrand.Reader, cert, cert, &key.PublicKey, key)
-		if err != nil {
-			log.Printf("ERROR: unable to create CA certificate: %s", err.Error())
-			return
-		}
-		certPem := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certBytes})
-		keyBytes, err := x509.MarshalECPrivateKey(key)
-		if err != nil {
-			log.Printf("ERROR: unable to x509 encode ECDSA private key: %s", err.Error())
-			return
-		}
-		keyPem := pem.EncodeToMemory(&pem.Block{Type: "ECDSA PRIVATE KEY", Bytes: keyBytes})
-
-		err = ioutil.WriteFile(args[1], certPem, 0644)
-		if err != nil {
-			log.Printf("ERROR: unable to write to %s: %s", args[1], err.Error())
-			return
-		}
-		err = ioutil.WriteFile(args[2], keyPem, 0600)
-		if err != nil {
-			log.Printf("ERROR: unable to write to %s: %s", args[2], err.Error())
-			return
-		}
-
-	case "sign":
-
-	}
-}
-*/
-
-//////////////////////////////////////////////////////////////////////////////
-
 func atoUI(s string) uint {
 	i, _ := strconv.ParseUint(s, 10, 64)
 	return uint(i)
@@ -947,7 +854,7 @@ func doMakeGenesis(cfg *lf.ClientConfig, basePath string, args []string) {
 			serialNo := s256.Sum(nil)
 			serialNoStr := lf.Base62Encode(serialNo)
 
-			ttl := atoUI(prompt("  Time to live in seconds [36500]: ", false, "36500"))
+			ttl := atoUI(prompt("  Time to live in days [36500]: ", false, "36500"))
 			if ttl <= 0 {
 				fmt.Println("ERROR: invalid value: must be >0")
 				return
@@ -1039,7 +946,7 @@ func doMakeGenesis(cfg *lf.ClientConfig, basePath string, args []string) {
 	ioutil.WriteFile("genesis.go", []byte(fmt.Sprintf("%#v\n", grData.Bytes())), 0644)
 	if len(g.AmendableFields) > 0 {
 		priv, _ := genesisOwner.PrivateBytes()
-		ioutil.WriteFile("genesis-secret.pem", []byte(pem.EncodeToMemory(&pem.Block{Type: "ECDSA PRIVATE KEY", Bytes: priv})), 0600)
+		ioutil.WriteFile("genesis-secret.pem", []byte(pem.EncodeToMemory(&pem.Block{Type: "LF OWNER PRIVATE KEY", Bytes: priv})), 0600)
 	}
 
 	fmt.Printf("\nWrote genesis.* files to current directory.\n")

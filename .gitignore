@@ -7,5 +7,4 @@
 /lf
 /lf-db-test
 *~
-/genesis.go
-/genesis.lf
+/genesis*
