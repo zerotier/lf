@@ -35,11 +35,10 @@ var SolGenesisParameters = GenesisParameters{
 	Name:                      "Sol",
 	Comment:                   "Global Public LF Data Store",
 	LinkKey:                   [32]byte{0x17, 0x55, 0x22, 0x2e, 0x7c, 0x33, 0xa8, 0x5f, 0xc9, 0x70, 0x59, 0x5b, 0xfa, 0x5b, 0x46, 0x3b, 0x2a, 0xa9, 0x35, 0xee, 0x3e, 0x46, 0xbe, 0xd3, 0x3b, 0x14, 0x14, 0x8d, 0xe3, 0xd8, 0x8d, 0x23},
-	TimestampFloor:            1556919775, // afternoon of Fri May 3, 2019
 	RecordMinLinks:            2,
 	RecordMaxValueSize:        1024,
 	RecordMaxSize:             32768,
-	RecordMaxForwardTimeDrift: 15,
+	RecordMaxForwardTimeDrift: 60,
 }
 
 // SolGenesisRecords are the genesis records for initializing a Sol member node.

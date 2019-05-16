@@ -550,9 +550,6 @@ func (n *Node) AddRecord(r *Record) error {
 	if r.Timestamp > (TimeSec() + uint64(n.genesisParameters.RecordMaxForwardTimeDrift)) {
 		return ErrRecordViolatesSpecialRelativity
 	}
-	if r.Timestamp < n.genesisParameters.TimestampFloor {
-		return ErrRecordTooOld
-	}
 
 	// Validate record's internal structure and check signatures and work.
 	err := r.Validate()

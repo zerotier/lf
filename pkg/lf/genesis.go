@@ -40,7 +40,6 @@ type GenesisParameters struct {
 	AuthCertificates          Blob     `json:",omitempty"` // X.509 certificate(s) that can sign records to bypass work requirement
 	AuthRequired              bool     ``                  // If true a CA signature is required and simple proof of work is not accepted
 	LinkKey                   [32]byte ``                  // Static 32-byte key used to ensure that nodes in this network only connect to one another
-	TimestampFloor            uint64   ``                  // Floor for network record timestamps (seconds)
 	RecordMinLinks            uint     ``                  // Minimum number of links required for non-genesis records
 	RecordMaxValueSize        uint     ``                  // Maximum size of record values
 	RecordMaxSize             uint     ``                  // Maximum size of records (up to the RecordMaxSize constant)
@@ -95,8 +94,6 @@ func (gp *GenesisParameters) Update(jsonValue []byte) error {
 				gp.AuthRequired = ngp.AuthRequired
 			case "linkkey":
 				gp.LinkKey = ngp.LinkKey
-			case "timestampfloor":
-				gp.TimestampFloor = ngp.TimestampFloor
 			case "recordminlinks":
 				gp.RecordMinLinks = ngp.RecordMinLinks
 			case "recordmaxvaluesize":
