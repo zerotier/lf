@@ -30,6 +30,12 @@ package lf
 // database for Earth and its neighbors in the Sol system. It should be good
 // up to Kardashev type II civilization scale.
 
+// SolDefaultNode is a DNS name that resolves to one or more IPs for default nodes for Sol.
+const SolDefaultNode = "lf.zerotier.com"
+
+// SolDefaultNodeURL is the default URL for clients to access Sol (servers operated by ZeroTier, Inc.)
+const SolDefaultNodeURL = "https://" + SolDefaultNode + "/"
+
 // SolGenesisParameters are the parameters that were used to create SolGenesisRecord (here only for documentation reasons).
 var SolGenesisParameters = GenesisParameters{
 	Name:                      "Sol",

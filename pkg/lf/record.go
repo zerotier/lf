@@ -31,6 +31,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/sha256"
+	"crypto/sha512"
 	"encoding/binary"
 	"fmt"
 	"hash/crc32"
@@ -553,7 +554,7 @@ func (r *Record) SelectorIs(plainTextKey []byte, selectorIndex int) bool {
 	return false
 }
 
-// ID returns SHA3-256(selector IDs) where selector IDs are the recovered selector public keys.
+// ID returns SHA256(selector IDs) where selector IDs are the recovered selector public keys.
 // If there are no selectors in this record, its ID is equal to its hash.
 func (r *Record) ID() (id [32]byte) {
 	if r.id != nil {
@@ -589,14 +590,14 @@ func (r *Record) Validate() (err error) {
 
 	selectorClaimSigningHash := r.recordBody.signingHash()
 	workBillableBytes := r.recordBody.sizeBytes()
-	workHasher := sha256.New()
+	workHasher := sha512.New384()
 	workHasher.Write(selectorClaimSigningHash[:])
 	for i := 0; i < len(r.Selectors); i++ {
 		sb := r.Selectors[i].bytes()
 		workHasher.Write(sb)
 		workBillableBytes += uint(len(sb))
 	}
-	var workHash [32]byte
+	var workHash [48]byte
 	workHasher.Sum(workHash[:0])
 
 	switch r.WorkAlgorithm {
@@ -609,11 +610,11 @@ func (r *Record) Validate() (err error) {
 		return ErrRecordInsufficientWork
 	}
 
-	finalHash := sha256.New()
+	finalHash := sha512.New384()
 	finalHash.Write(workHash[:])
 	finalHash.Write(r.Work)
 	finalHash.Write([]byte{r.WorkAlgorithm})
-	var hb [32]byte
+	var hb [48]byte
 	owner := Owner{Public: r.recordBody.Owner}
 	if !owner.Verify(finalHash.Sum(hb[:0]), r.Signature) {
 		return ErrRecordOwnerSignatureCheckFailed
@@ -625,7 +626,7 @@ func (r *Record) Validate() (err error) {
 // NewRecordStart creates an incomplete record with its body and selectors filled out but no work or final signature.
 // This can be used to do the first step of a three-phase record creation process with the next two phases being NewRecordAddWork
 // and NewRecordComplete. This is useful of record creation needs to be split among systems or participants.
-func NewRecordStart(recordType byte, value []byte, links [][32]byte, maskingKey []byte, plainTextSelectorNames [][]byte, plainTextSelectorOrdinals []uint64, owner, certificate []byte, ts uint64) (r *Record, workHash [32]byte, workBillableBytes uint, err error) {
+func NewRecordStart(recordType byte, value []byte, links [][32]byte, maskingKey []byte, plainTextSelectorNames [][]byte, plainTextSelectorOrdinals []uint64, owner, certificate []byte, ts uint64) (r *Record, workHash [48]byte, workBillableBytes uint, err error) {
 	r = new(Record)
 
 	if len(value) > 0 {
@@ -678,12 +679,19 @@ func NewRecordStart(recordType byte, value []byte, links [][32]byte, maskingKey 
 	r.recordBody.Timestamp = ts
 
 	if recordType != 0 {
-		r.Type = &recordType
+		r.recordBody.Type = &recordType
 	}
 
+	// Billable bytes equals the total serialized bytes of the record body and the record's selectors.
 	workBillableBytes = r.recordBody.sizeBytes()
+
+	// Selector claims work by signing the record body
 	selectorClaimSigningHash := r.recordBody.signingHash()
-	workHasher := sha256.New()
+
+	// The work hash combines the record body hash with all the record's selectors. The final signing
+	// hash is computed from this hash followed by the work itself (if any).
+	workHasher := sha512.New384()
+
 	workHasher.Write(selectorClaimSigningHash[:])
 	if len(plainTextSelectorNames) > 0 {
 		r.Selectors = make([]Selector, len(plainTextSelectorNames))
@@ -714,7 +722,7 @@ func NewRecordDoWork(workHash []byte, workBillableBytes uint, workFunction *Whar
 }
 
 // NewRecordAddWork adds work to a record created with NewRecordStart and returns the same record with work and the signing hash to be signed by the owner.
-func NewRecordAddWork(incompleteRecord *Record, workHash []byte, work []byte, workAlgorithm byte) (r *Record, signingHash [32]byte, err error) {
+func NewRecordAddWork(incompleteRecord *Record, workHash []byte, work []byte, workAlgorithm byte) (r *Record, signingHash [48]byte, err error) {
 	r = incompleteRecord
 	r.Work = work
 	r.WorkAlgorithm = workAlgorithm
@@ -722,7 +730,7 @@ func NewRecordAddWork(incompleteRecord *Record, workHash []byte, work []byte, wo
 	copy(tmp, workHash)
 	copy(tmp[len(workHash):], work)
 	tmp[len(tmp)-1] = workAlgorithm
-	signingHash = sha256.Sum256(tmp)
+	signingHash = sha512.Sum384(tmp)
 	return
 }
 
@@ -736,7 +744,7 @@ func NewRecordComplete(incompleteRecord *Record, signingHash []byte, owner *Owne
 // NewRecord is a shortcut to running all incremental record creation functions.
 // Obviously this is time and memory intensive due to proof of work required to "pay" for this record.
 func NewRecord(recordType byte, value []byte, links [][32]byte, maskingKey []byte, plainTextSelectorNames [][]byte, plainTextSelectorOrdinals []uint64, certificateRecordHash []byte, ts uint64, workFunction *Wharrgarblr, owner *Owner) (r *Record, err error) {
-	var wh, sh [32]byte
+	var wh, sh [48]byte
 	var wb uint
 	r, wh, wb, err = NewRecordStart(recordType, value, links, maskingKey, plainTextSelectorNames, plainTextSelectorOrdinals, owner.Public, certificateRecordHash, ts)
 	if err != nil {
