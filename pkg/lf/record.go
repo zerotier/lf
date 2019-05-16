@@ -549,8 +549,8 @@ func (r *Record) Score() uint32 {
 // SelectorKey returns the selector key for a given selector at a given index in []Selectors.
 func (r *Record) SelectorKey(selectorIndex int) []byte {
 	if selectorIndex >= 0 && selectorIndex < len(r.Selectors) {
-		selectorClaimSigningHash := r.recordBody.signingHash()
-		return r.Selectors[selectorIndex].key(selectorClaimSigningHash[:])
+		recordBodyHash := r.recordBody.signingHash()
+		return r.Selectors[selectorIndex].key(recordBodyHash[:])
 	}
 	return nil
 }
@@ -559,8 +559,8 @@ func (r *Record) SelectorKey(selectorIndex int) []byte {
 // Note that this is computationally a little more expensive than you'd think given how selectors work.
 func (r *Record) SelectorIs(plainTextKey []byte, selectorIndex int) bool {
 	if selectorIndex >= 0 && selectorIndex < len(r.Selectors) {
-		selectorClaimSigningHash := r.recordBody.signingHash()
-		return r.Selectors[selectorIndex].isNamed(selectorClaimSigningHash[:], plainTextKey)
+		recordBodyHash := r.recordBody.signingHash()
+		return r.Selectors[selectorIndex].isNamed(recordBodyHash[:], plainTextKey)
 	}
 	return false
 }
@@ -576,10 +576,10 @@ func (r *Record) ID() (id [32]byte) {
 		id = r.Hash()
 		return
 	}
-	selectorClaimSigningHash := r.recordBody.signingHash()
+	recordBodyHash := r.recordBody.signingHash()
 	h := sha256.New()
 	for i := 0; i < len(r.Selectors); i++ {
-		h.Write(r.Selectors[i].id(selectorClaimSigningHash[:]))
+		h.Write(r.Selectors[i].id(recordBodyHash[:]))
 	}
 	h.Sum(id[:0])
 	r.id = &id
@@ -599,10 +599,10 @@ func (r *Record) Validate() (err error) {
 		return ErrRecordOwnerSignatureCheckFailed
 	}
 
-	selectorClaimSigningHash := r.recordBody.signingHash()
+	recordBodyHash := r.recordBody.signingHash()
 	workBillableBytes := r.recordBody.sizeBytes()
 	workHasher := sha512.New384()
-	workHasher.Write(selectorClaimSigningHash[:])
+	workHasher.Write(recordBodyHash[:])
 	for i := 0; i < len(r.Selectors); i++ {
 		sb := r.Selectors[i].bytes()
 		workHasher.Write(sb)
@@ -697,17 +697,17 @@ func NewRecordStart(recordType byte, value []byte, links [][32]byte, maskingKey 
 	workBillableBytes = r.recordBody.sizeBytes()
 
 	// Selector claims work by signing the record body
-	selectorClaimSigningHash := r.recordBody.signingHash()
+	recordBodyHash := r.recordBody.signingHash()
 
 	// The work hash combines the record body hash with all the record's selectors. The final signing
 	// hash is computed from this hash followed by the work itself (if any).
 	workHasher := sha512.New384()
 
-	workHasher.Write(selectorClaimSigningHash[:])
+	workHasher.Write(recordBodyHash[:])
 	if len(plainTextSelectorNames) > 0 {
 		r.Selectors = make([]Selector, len(plainTextSelectorNames))
 		for i := 0; i < len(plainTextSelectorNames); i++ {
-			r.Selectors[i].set(plainTextSelectorNames[i], plainTextSelectorOrdinals[i], selectorClaimSigningHash[:])
+			r.Selectors[i].set(plainTextSelectorNames[i], plainTextSelectorOrdinals[i], recordBodyHash[:])
 			sb := r.Selectors[i].bytes()
 			workBillableBytes += uint(len(sb))
 			workHasher.Write(sb)
