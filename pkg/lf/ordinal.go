@@ -141,7 +141,7 @@ func ordinalParallelQuicksort(a []uint32, wg *sync.WaitGroup, par bool) {
 	}
 }
 
-func ordinal16to32(wg *sync.WaitGroup, value uint, kk int, keyHash *[64]byte, result *[4]uint32) {
+func ordinal16to32(wg *sync.WaitGroup, valueMaskedToColumn uint64, columnValue uint, kk int, keyHash *[64]byte, result *[4]uint32) {
 	var aesTmp [16]byte
 	alphabet := ordinalAlphabetPool.Get().([]uint32)
 	_ = alphabet[32767]
@@ -175,15 +175,16 @@ func ordinal16to32(wg *sync.WaitGroup, value uint, kk int, keyHash *[64]byte, re
 		}
 
 		if alphabet[32767] > alphabet[0] && alphabet[32767] < 0xfffffffe {
-			vdiv2 := value >> 1
+			vdiv2 := columnValue >> 1
 			rv := alphabet[vdiv2]
-			if (value & 1) != 0 {
+			if (columnValue & 1) != 0 {
+				binary.LittleEndian.PutUint64(aesTmp[:], valueMaskedToColumn)
+				c.Encrypt(aesTmp[:], aesTmp[:])
+				rn := binary.LittleEndian.Uint32(aesTmp[0:4])
 				if vdiv2 == 32767 {
-					c.Encrypt(aesTmp[:], aesTmp[:])
-					rv += binary.LittleEndian.Uint32(aesTmp[0:4]) % (0xffffffff - rv)
+					rv += rn % ^rv //(0xffffffff - rv)
 				} else {
-					c.Encrypt(aesTmp[:], aesTmp[:])
-					rv += binary.LittleEndian.Uint32(aesTmp[0:4]) % ((alphabet[vdiv2+1] - rv) - 1)
+					rv += rn % ((alphabet[vdiv2+1] - rv) - 1)
 				}
 				rv++
 			}
@@ -203,10 +204,10 @@ func (b *Ordinal) Set(value uint64, key []byte) {
 
 	var wg sync.WaitGroup
 	wg.Add(4)
-	go ordinal16to32(&wg, uint((value>>48)&0xffff), 0, &keyHash, &result)
-	go ordinal16to32(&wg, uint((value>>32)&0xffff), 1, &keyHash, &result)
-	go ordinal16to32(&wg, uint((value>>16)&0xffff), 2, &keyHash, &result)
-	ordinal16to32(&wg, uint(value&0xffff), 3, &keyHash, &result)
+	go ordinal16to32(&wg, 0, uint((value>>48)&0xffff), 0, &keyHash, &result)
+	go ordinal16to32(&wg, value&0xffff000000000000, uint((value>>32)&0xffff), 1, &keyHash, &result)
+	go ordinal16to32(&wg, value&0xffffffff00000000, uint((value>>16)&0xffff), 2, &keyHash, &result)
+	ordinal16to32(&wg, value&0xffffffffffff0000, uint(value&0xffff), 3, &keyHash, &result)
 	wg.Wait()
 
 	binary.BigEndian.PutUint32(b[0:4], result[0])
