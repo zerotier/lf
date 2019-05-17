@@ -462,6 +462,11 @@ func (n *Node) Stop() {
 	}
 }
 
+// GetHTTPHandler gets the HTTP handler for this Node.
+// If you want to handle requests via e.g. a Lets Encrypt server you can use
+// this to get the handler to pass to your server.
+func (n *Node) GetHTTPHandler() http.Handler { return n.httpServer.Handler }
+
 // Connect attempts to establish a peer-to-peer connection to a remote node.
 func (n *Node) Connect(ip net.IP, port int, identity []byte) {
 	n.backgroundThreadWG.Add(1)

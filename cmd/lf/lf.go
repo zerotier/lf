@@ -32,6 +32,7 @@ import (
 	"crypto/elliptic"
 	secrand "crypto/rand"
 	"crypto/sha256"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/json"
@@ -42,6 +43,7 @@ import (
 	"log"
 	"math/big"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"path"
@@ -52,6 +54,8 @@ import (
 	"syscall"
 	"time"
 	"unicode"
+
+	"golang.org/x/crypto/acme/autocert"
 
 	"../../pkg/lf"
 )
@@ -163,12 +167,12 @@ func prompt(prompt string, required bool, dfl string) string {
 // HACK warning: can only be called before any goroutines start...
 func stickAForkInIt() {
 	if strings.HasPrefix(runtime.GOOS, "windows") {
-		log.Printf("FATAL: fork not supported on Windows")
+		logger.Printf("FATAL: fork not supported on Windows")
 		os.Exit(-1)
 	}
 	fr := int(C.fork())
 	if fr < 0 {
-		log.Printf("FATAL: fork into background failed")
+		logger.Printf("FATAL: fork into background failed")
 		os.Exit(-1)
 	} else if fr > 0 {
 		os.Exit(0)
@@ -202,6 +206,7 @@ Commands:
     -commentary                           Use spare CPU to publish commentary
     -loglevel <normal|verbose|trace>      Node log level
     -logstderr                            Log to stderr, not HOME/node.log
+    -letsencrypt <host[,host]>            Run LetsEncrypt HTTPS on port 443
     -fork                                 Fork into background (if supported)
   node-connect <ip> <port> <identity>     Tell node to try a P2P endpoint
   status                                  Get status from remote node/proxy
@@ -247,7 +252,7 @@ func doNodeStart(cfg *lf.ClientConfig, basePath string, args []string) {
 	defer func() {
 		e := recover()
 		if e != nil {
-			log.Printf("FATAL: caught unexpected panic in doNodeStart(): %s", e)
+			logger.Printf("FATAL: caught unexpected panic in doNodeStart(): %s", e)
 		}
 		if logFile != nil {
 			logFile.Close()
@@ -260,6 +265,7 @@ func doNodeStart(cfg *lf.ClientConfig, basePath string, args []string) {
 	commentary := nodeOpts.Bool("commentary", false, "")
 	logLevel := nodeOpts.String("loglevel", "verbose", "")
 	logToStderr := nodeOpts.Bool("logstderr", false, "")
+	letsEncrypt := nodeOpts.String("letsencrypt", "", "")
 	forkToBackground := nodeOpts.Bool("fork", false, "")
 	nodeOpts.SetOutput(ioutil.Discard)
 	err := nodeOpts.Parse(args)
@@ -291,7 +297,7 @@ func doNodeStart(cfg *lf.ClientConfig, basePath string, args []string) {
 	} else {
 		logFile, err = os.OpenFile(path.Join(basePath, "node.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 		if err != nil {
-			log.Printf("FATAL: cannot open node.log: %s\n", err.Error())
+			logger.Printf("FATAL: cannot open node.log: %s\n", err.Error())
 			return
 		}
 		logger = log.New(logFile, "", log.LstdFlags)
@@ -302,25 +308,65 @@ func doNodeStart(cfg *lf.ClientConfig, basePath string, args []string) {
 		stickAForkInIt()
 	}
 
+	var letsEncryptDomains []string
+	var letsEncryptServer *http.Server
+	if len(*letsEncrypt) > 0 {
+		letsEncryptDomains = strings.Split(*letsEncrypt, ",")
+		for i := range letsEncryptDomains {
+			letsEncryptDomains[i] = strings.TrimSpace(letsEncryptDomains[i])
+		}
+
+		letsEncryptCachePath := path.Join(basePath, "letsencrypt")
+		os.MkdirAll(letsEncryptCachePath, 0700)
+
+		certManager := autocert.Manager{
+			Prompt:     autocert.AcceptTOS,
+			HostPolicy: autocert.HostWhitelist(letsEncryptDomains...),
+			Cache:      autocert.DirCache(letsEncryptCachePath),
+		}
+
+		letsEncryptServer = &http.Server{
+			Addr: ":https",
+			TLSConfig: &tls.Config{
+				GetCertificate: certManager.GetCertificate,
+			},
+		}
+
+		go func() {
+			err := letsEncryptServer.ListenAndServeTLS("", "")
+			if err != nil {
+				logger.Printf("WARNING: LetsEncrypt SSL server for [%v] failed to start: %s", letsEncryptDomains, err.Error())
+			}
+		}()
+	}
+
 	osSignalChannel := make(chan os.Signal, 2)
 	signal.Notify(osSignalChannel, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGINT, syscall.SIGBUS)
 	signal.Ignore(syscall.SIGUSR1, syscall.SIGUSR2)
 
 	node, err := lf.NewNode(basePath, *p2pPort, *httpPort, logger, ll)
 	if err != nil {
-		log.Printf("FATAL: unable to start node: %s\n", err.Error())
+		logger.Printf("FATAL: unable to start node: %s\n", err.Error())
 		return
 	}
 	node.SetCommentaryEnabled(*commentary)
+
+	if letsEncryptServer != nil {
+		letsEncryptServer.Handler = node.GetHTTPHandler()
+	}
 
 	sig := <-osSignalChannel
 	if sig == syscall.SIGBUS {
 		// SIGBUS can happen if mmap'd I/O fails, such as if we are running over a network
 		// drive (not recommended for this reason) or a path is forcibly unmounted. The mmap
 		// code is in C but this should in theory get caught here.
-		log.Println("FATAL: received SIGBUS, shutting down (likely I/O problem, database may be corrupt!)")
+		logger.Println("FATAL: received SIGBUS, shutting down (likely I/O problem, database may be corrupt!)")
 	}
 	node.Stop()
+
+	if letsEncryptServer != nil {
+		letsEncryptServer.Close()
+	}
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -348,7 +394,7 @@ func doNodeConnect(cfg *lf.ClientConfig, basePath string, args []string) {
 		}
 	}
 	if err != nil {
-		log.Printf("ERROR: cannot send connect command to node: %s\n", err.Error())
+		logger.Printf("ERROR: cannot send connect command to node: %s\n", err.Error())
 		return
 	}
 }
@@ -368,7 +414,7 @@ func doStatus(cfg *lf.ClientConfig, basePath string, args []string) {
 		}
 	}
 	if err != nil {
-		log.Printf("ERROR: status query failed: %s\n", err.Error())
+		logger.Printf("ERROR: status query failed: %s\n", err.Error())
 		return
 	}
 	fmt.Println(lf.PrettyJSON(stat))
@@ -408,7 +454,7 @@ func doGet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool
 		urls = tokenizeStringWithEsc(*urlOverride, ',', '\\')
 	}
 	if len(urls) == 0 {
-		log.Println("ERROR: get query failed: no URLs configured!")
+		logger.Println("ERROR: get query failed: no URLs configured!")
 		return
 	}
 
@@ -471,7 +517,7 @@ func doGet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool
 	}
 
 	if err != nil {
-		log.Printf("ERROR: get query failed: %s\n", err.Error())
+		logger.Printf("ERROR: get query failed: %s\n", err.Error())
 		return
 	}
 
@@ -571,7 +617,7 @@ func doSet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool
 	if len(*ownerName) > 0 {
 		owner = cfg.Owners[*ownerName]
 		if owner == nil {
-			log.Printf("ERROR: set failed: owner '%s' not found\n", *ownerName)
+			logger.Printf("ERROR: set failed: owner '%s' not found\n", *ownerName)
 			return
 		}
 	}
@@ -582,7 +628,7 @@ func doSet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool
 		}
 	}
 	if owner == nil {
-		log.Println("ERROR: set failed: owner not found and no default specified")
+		logger.Println("ERROR: set failed: owner not found and no default specified")
 		return
 	}
 
@@ -600,7 +646,7 @@ func doSet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool
 			selOrd := tokenizeStringWithEsc(unesc, '#', '\\')
 			if len(selOrd) > 0 {
 				if len(selOrd) > 2 {
-					log.Println("ERROR: set failed: invalid selector#ordinal: \"" + args[i] + "\"")
+					logger.Println("ERROR: set failed: invalid selector#ordinal: \"" + args[i] + "\"")
 				}
 				sel := []byte(selOrd[0])
 				var ord uint64
@@ -618,13 +664,13 @@ func doSet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool
 		if string(value) == "-" {
 			value, err = ioutil.ReadAll(os.Stdin)
 			if err != nil {
-				log.Println("ERROR: set failed: error reading data from stdin (\"-\" specified as input file)")
+				logger.Println("ERROR: set failed: error reading data from stdin (\"-\" specified as input file)")
 				return
 			}
 		}
 		vdata, err := ioutil.ReadFile(string(value))
 		if err != nil {
-			log.Println("ERROR: set failed: file '" + err.Error() + "' not found")
+			logger.Println("ERROR: set failed: file '" + err.Error() + "' not found")
 			return
 		}
 		value = vdata
@@ -639,7 +685,7 @@ func doSet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool
 		urls = tokenizeStringWithEsc(*urlOverride, ',', '\\')
 	}
 	if len(urls) == 0 {
-		log.Println("ERROR: set failed: no URLs configured!")
+		logger.Println("ERROR: set failed: no URLs configured!")
 		return
 	}
 
@@ -884,18 +930,18 @@ func doMakeGenesis(cfg *lf.ClientConfig, basePath string, args []string) {
 
 			certBytes, err := x509.CreateCertificate(secrand.Reader, cert, cert, &key.PublicKey, key)
 			if err != nil {
-				log.Printf("ERROR: unable to create CA certificate: %s", err.Error())
+				logger.Printf("ERROR: unable to create CA certificate: %s", err.Error())
 				return
 			}
 			keyBytes, err := x509.MarshalECPrivateKey(key)
 			if err != nil {
-				log.Printf("ERROR: unable to x509 encode ECDSA private key: %s", err.Error())
+				logger.Printf("ERROR: unable to x509 encode ECDSA private key: %s", err.Error())
 				return
 			}
 
 			err = ioutil.WriteFile("genesis-auth-"+serialNoStr+"-secret.pem", []byte(pem.EncodeToMemory(&pem.Block{Type: "ECDSA PRIVATE KEY", Bytes: keyBytes})), 0600)
 			if err != nil {
-				log.Printf("ERROR: unable to write cert key PEM: %s", err.Error())
+				logger.Printf("ERROR: unable to write cert key PEM: %s", err.Error())
 				return
 			}
 
@@ -908,7 +954,7 @@ func doMakeGenesis(cfg *lf.ClientConfig, basePath string, args []string) {
 	if len(g.AuthCertificates) > 0 {
 		certs, err := g.GetAuthCertificates()
 		if err != nil {
-			log.Printf("ERROR: unable to create CA certificate: %s", err.Error())
+			logger.Printf("ERROR: unable to create CA certificate: %s", err.Error())
 			return
 		}
 		fmt.Printf("  (%d authorization certificates, %d bytes)\n", len(certs), len(g.AuthCertificates))
@@ -930,7 +976,7 @@ func doMakeGenesis(cfg *lf.ClientConfig, basePath string, args []string) {
 		fmt.Printf("%s\n", lf.PrettyJSON(genesisRecords[i]))
 		err = genesisRecords[i].MarshalTo(&grData, false)
 		if err != nil {
-			log.Printf("ERROR: %s", err.Error())
+			logger.Printf("ERROR: %s", err.Error())
 			os.Exit(-1)
 			return
 		}
