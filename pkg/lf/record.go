@@ -653,6 +653,8 @@ func (r *Record) Validate() (err error) {
 //////////////////////////////////////////////////////////////////////////////
 
 // RecordBuilder allows records to be built in multiple steps.
+// This could be used in the future to support record building across different nodes
+// if we ever need that.
 type RecordBuilder struct {
 	record            *Record
 	workHash          Blob

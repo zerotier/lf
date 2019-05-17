@@ -63,18 +63,6 @@ func sliceContainsUInt(s []uint, e uint) bool {
 func TestCore(out io.Writer) bool {
 	testStr := []byte("My hovercraft is full of eels.") // input for hash tests
 
-	/*
-		var oa Ordinal
-		for k := uint64(0); ; {
-			oa.Set(k, testStr)
-			fmt.Printf("%x %.16x\n", oa, k)
-			k += 65537
-			if k == 0 {
-				break
-			}
-		}
-	*/
-
 	// This checks to make sure the Sum method of hashes fills arrays as expected.
 	// This is sort of an ambiguous behavior in the API docs, so we want to detect
 	// if the actual behavior changes. If it does we'll have to change a few spots.

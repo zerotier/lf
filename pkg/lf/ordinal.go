@@ -94,15 +94,15 @@ var ordinalParallelQuicksortThreshold = func() int {
 	if nc <= 2 {
 		return 1048576 // no sort parallelism
 	}
-	if nc >= 16 {
-		return 2048
+	if nc >= 8 {
+		return 1024
 	}
-	return 32768 / nc
+	return 16384 / (nc * 2)
 }()
 
 var ordinalAlphabetPool = sync.Pool{
 	New: func() interface{} {
-		return make([]uint32, 32768)
+		return make([]uint32, 16384)
 	},
 }
 
@@ -144,23 +144,20 @@ func ordinalParallelQuicksort(a []uint32, wg *sync.WaitGroup, par bool) {
 func ordinal16to32(wg *sync.WaitGroup, valueMaskedToColumn uint64, columnValue uint, kk int, keyHash *[64]byte, result *[4]uint32) {
 	var aesTmp [16]byte
 	alphabet := ordinalAlphabetPool.Get().([]uint32)
-	_ = alphabet[32767]
+	_ = alphabet[16383]
 
 	c, _ := aes.NewCipher(keyHash[16*kk : 16*(kk+1)])
 
-	c.Encrypt(aesTmp[:], aesTmp[:])
-	rbase := binary.LittleEndian.Uint32(aesTmp[0:4]) % (0x7fffffff + 2)
-
 	for {
-		for i := 0; i < 32768; {
+		for i := 0; i < 16384; {
 			c.Encrypt(aesTmp[:], aesTmp[:])
-			alphabet[i] = (binary.LittleEndian.Uint32(aesTmp[0:4]) & 0x7fffffff) + rbase
+			alphabet[i] = binary.LittleEndian.Uint32(aesTmp[0:4]) & 0xfffffff0
 			i++
-			alphabet[i] = (binary.LittleEndian.Uint32(aesTmp[4:8]) & 0x7fffffff) + rbase
+			alphabet[i] = binary.LittleEndian.Uint32(aesTmp[4:8]) & 0xfffffff0
 			i++
-			alphabet[i] = (binary.LittleEndian.Uint32(aesTmp[8:12]) & 0x7fffffff) + rbase
+			alphabet[i] = binary.LittleEndian.Uint32(aesTmp[8:12]) & 0xfffffff0
 			i++
-			alphabet[i] = (binary.LittleEndian.Uint32(aesTmp[12:16]) & 0x7fffffff) + rbase
+			alphabet[i] = binary.LittleEndian.Uint32(aesTmp[12:16]) & 0xfffffff0
 			i++
 		}
 
@@ -168,26 +165,29 @@ func ordinal16to32(wg *sync.WaitGroup, valueMaskedToColumn uint64, columnValue u
 		ordinalParallelQuicksort(alphabet, &sortWG, false)
 		sortWG.Wait()
 
-		for i := 1; i < 32768; i++ {
-			if (alphabet[i] - alphabet[i-1]) < 2 {
-				alphabet[i] += 2
+		for i := 1; i < 16384; i++ {
+			if alphabet[i] <= alphabet[i-1] {
+				alphabet[i] += 0x00000010
 			}
 		}
 
-		if alphabet[32767] > alphabet[0] && alphabet[32767] < 0xfffffffe {
-			vdiv2 := columnValue >> 1
-			rv := alphabet[vdiv2]
-			if (columnValue & 1) != 0 {
-				binary.LittleEndian.PutUint64(aesTmp[:], valueMaskedToColumn)
-				c.Encrypt(aesTmp[:], aesTmp[:])
-				rn := binary.LittleEndian.Uint32(aesTmp[0:4])
-				if vdiv2 == 32767 {
-					rv += rn % ^rv //(0xffffffff - rv)
-				} else {
-					rv += rn % ((alphabet[vdiv2+1] - rv) - 1)
-				}
-				rv++
+		if alphabet[16383] > alphabet[0] {
+			base := columnValue >> 2
+
+			rv := alphabet[base]
+			var rvRangePerStep uint32
+			if base == 16383 {
+				rvRangePerStep = ^rv
+			} else {
+				rvRangePerStep = alphabet[base+1] - rv
 			}
+			rvRangePerStep /= 4
+
+			rv += rvRangePerStep * uint32(columnValue&3)
+			binary.LittleEndian.PutUint64(aesTmp[0:8], valueMaskedToColumn)
+			c.Encrypt(aesTmp[:], aesTmp[:])
+			rv += binary.LittleEndian.Uint32(aesTmp[0:4]) % rvRangePerStep
+
 			result[kk] = rv
 			ordinalAlphabetPool.Put(alphabet)
 			wg.Done()
