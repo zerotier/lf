@@ -32,7 +32,6 @@ import (
 	"crypto/elliptic"
 	secrand "crypto/rand"
 	"crypto/sha256"
-	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/json"
@@ -51,6 +50,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"unicode"
@@ -310,7 +310,10 @@ func doNodeStart(cfg *lf.ClientConfig, basePath string, args []string) {
 
 	var letsEncryptDomains []string
 	var letsEncryptServer *http.Server
+	var letsEncryptShuttingDown uint32
 	if len(*letsEncrypt) > 0 {
+		*httpPort = 80
+
 		letsEncryptDomains = strings.Split(*letsEncrypt, ",")
 		for i := range letsEncryptDomains {
 			letsEncryptDomains[i] = strings.TrimSpace(letsEncryptDomains[i])
@@ -326,15 +329,18 @@ func doNodeStart(cfg *lf.ClientConfig, basePath string, args []string) {
 		}
 
 		letsEncryptServer = &http.Server{
-			Addr: ":https",
-			TLSConfig: &tls.Config{
-				GetCertificate: certManager.GetCertificate,
-			},
+			Addr:           ":https",
+			IdleTimeout:    10 * time.Second,
+			ReadTimeout:    10 * time.Second,
+			WriteTimeout:   30 * time.Second,
+			ErrorLog:       logger,
+			MaxHeaderBytes: 4096,
+			TLSConfig:      certManager.TLSConfig(),
 		}
 
 		go func() {
 			err := letsEncryptServer.ListenAndServeTLS("", "")
-			if err != nil {
+			if err != nil && atomic.LoadUint32(&letsEncryptShuttingDown) == 0 {
 				logger.Printf("WARNING: LetsEncrypt SSL server for [%v] failed to start: %s", letsEncryptDomains, err.Error())
 			}
 		}()
@@ -365,6 +371,7 @@ func doNodeStart(cfg *lf.ClientConfig, basePath string, args []string) {
 	node.Stop()
 
 	if letsEncryptServer != nil {
+		atomic.StoreUint32(&letsEncryptShuttingDown, 1)
 		letsEncryptServer.Close()
 	}
 }
