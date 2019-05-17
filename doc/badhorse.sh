@@ -1,6 +1,8 @@
 #!/bin/bash
 
-# This is what ZeroTier used to put the 'bad horse' demo data into Sol...
+# This is what ZeroTier used to put the 'bad horse' demo data into Sol.
+# You can run it, but your records will rank lower so they'll probably
+# never be seen.
 
 ./lf set bad horse#0 'Bad Horse, Bad Horse'
 ./lf set bad horse#1 'Bad Horse, Bad Horse'
@@ -13,7 +15,7 @@
 ./lf set bad horse#8 'Bad Horse, He''s Bad!'
 ./lf set bad horse#9 'The evil league of evil is watching so beware'
 ./lf set bad horse#10 'The grade that you receive''ll be your last, we swear'
-./lf set bad horse#11 'So make the bad horse gleeful, or he’ll make you his mare'
-./lf set bad horse#12 'You’re saddled up; there''s no recourse'
-./lf set bad horse#13 'It’s "hi-yo, silver!"'
+./lf set bad horse#11 'So make the bad horse gleeful, or he''ll make you his mare'
+./lf set bad horse#12 'You''re saddled up; there''s no recourse'
+./lf set bad horse#13 'It''s "hi-yo, silver!"'
 ./lf set bad horse#14 'Signed: Bad Horse.'

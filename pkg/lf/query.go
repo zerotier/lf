@@ -35,14 +35,14 @@ import (
 )
 
 const (
-	// APIQuerySortOrderTrust sorts by a computed trust value (default)
-	APIQuerySortOrderTrust = "trust"
+	// QuerySortOrderTrust sorts by a computed trust value (default)
+	QuerySortOrderTrust = "trust"
 
-	// APIQuerySortOrderWeight sorts by proof of work weight only
-	APIQuerySortOrderWeight = "weight"
+	// QuerySortOrderWeight sorts by proof of work weight only
+	QuerySortOrderWeight = "weight"
 
-	// APIQuerySortOrderTimestamp ignores trust and weight and sorts by time
-	APIQuerySortOrderTimestamp = "timestamp"
+	// QuerySortOrderTimestamp ignores trust and weight and sorts by time
+	QuerySortOrderTimestamp = "timestamp"
 )
 
 const trustSigDigits float64 = 10000000000.0 // rounding precision for comparing trust values and considering them "equal"
@@ -61,29 +61,29 @@ func sliceU32Less(a, b []uint32) bool {
 	return len(a) < len(b)
 }
 
-// APIQueryRange (request, part of APIQuery) specifies a selector or selector range.
+// QueryRange (request, part of Query) specifies a selector or selector range.
 // Selector ranges can be specified in one of two ways. If KeyRange is non-empty it contains a single
 // masked selector key or a range of keys. If KeyRange is empty then Name contains the plain text name
 // of the selector and Range contains its ordinal range and the server will compute selector keys. The
 // KeyRange method keeps selector names secret while the Name/Range method exposes them to the node or
 // proxy being queried.
-type APIQueryRange struct {
+type QueryRange struct {
 	Name     Blob     `json:",omitempty"` // Name of selector (plain text)
 	Range    []uint64 `json:",omitempty"` // Ordinal value if [1] or range if [2] in size (single ordinal of value 0 if omitted)
 	KeyRange []Blob   `json:",omitempty"` // Selector key or key range, overrides Name and Range if present (allows queries without revealing name)
 }
 
-// APIQuery (request) describes a query for records in the form of an ordered series of selector ranges.
-type APIQuery struct {
-	Range      []APIQueryRange `json:",omitempty"` // Selectors or selector range(s)
-	TimeRange  []uint64        `json:",omitempty"` // If present, constrain record times to after first value (if [1]) or range (if [2])
-	MaskingKey Blob            `json:",omitempty"` // Masking key to unmask record value(s) server-side (if non-empty)
-	SortOrder  string          `json:",omitempty"` // Sort order within each result (default: trust)
-	Limit      *int            `json:",omitempty"` // If non-zero, limit maximum lower trust records per result
+// Query (request) describes a query for records in the form of an ordered series of selector ranges.
+type Query struct {
+	Range      []QueryRange `json:",omitempty"` // Selectors or selector range(s)
+	TimeRange  []uint64     `json:",omitempty"` // If present, constrain record times to after first value (if [1]) or range (if [2])
+	MaskingKey Blob         `json:",omitempty"` // Masking key to unmask record value(s) server-side (if non-empty)
+	SortOrder  string       `json:",omitempty"` // Sort order within each result (default: trust)
+	Limit      *int         `json:",omitempty"` // If non-zero, limit maximum lower trust records per result
 }
 
-// APIQueryResult (response, part of APIQueryResults) is a single query result.
-type APIQueryResult struct {
+// QueryResult (response, part of QueryResults) is a single query result.
+type QueryResult struct {
 	Hash   HashBlob  ``                  // Hash of this specific unique record
 	Size   int       ``                  // Size of this record in bytes
 	Record *Record   `json:",omitempty"` // Record itself.
@@ -92,14 +92,14 @@ type APIQueryResult struct {
 	Weight [4]uint32 `json:",omitempty"` // Record weight as a 128-bit big-endian value decomposed into 4 32-bit integers
 }
 
-// APIQueryResults is a list of results to an API query.
+// QueryResults is a list of results to a query.
 // Each result is actually an array of results sorted by weight and other metrics
 // of trust (descending order of trust). These member slices will never contain
 // zero records, though remote code should check to prevent exceptions.
-type APIQueryResults [][]APIQueryResult
+type QueryResults [][]QueryResult
 
-// Run executes this API query against a remote LF node or proxy
-func (m *APIQuery) Run(url string) (APIQueryResults, error) {
+// Run executes this query against a remote LF node instance.
+func (m *Query) Run(url string) (QueryResults, error) {
 	if strings.HasSuffix(url, "/") {
 		url = url + "query"
 	} else {
@@ -109,7 +109,7 @@ func (m *APIQuery) Run(url string) (APIQueryResults, error) {
 	if err != nil {
 		return nil, err
 	}
-	var qr APIQueryResults
+	var qr QueryResults
 	if err := json.Unmarshal(body, &qr); err != nil {
 		return nil, err
 	}
@@ -121,7 +121,8 @@ type apiQueryResultTmp struct {
 	localReputation              int
 }
 
-func (m *APIQuery) execute(n *Node) (qr APIQueryResults, err *APIError) {
+// Execute executes this query against a local Node instance.
+func (m *Query) Execute(n *Node) (qr QueryResults, err *APIError) {
 	// Set up selector ranges using sender-supplied or computed selector keys.
 	mm := m.Range
 	if len(mm) == 0 {
@@ -199,7 +200,7 @@ func (m *APIQuery) execute(n *Node) (qr APIQueryResults, err *APIError) {
 			}
 
 			var trust float64
-			if result.localReputation == dbReputationDefault {
+			if result.localReputation >= dbReputationDefault {
 				trust = 1.0
 			}
 
@@ -210,7 +211,7 @@ func (m *APIQuery) execute(n *Node) (qr APIQueryResults, err *APIError) {
 			weight[3] = uint32(result.weightL)
 
 			if rn == 0 {
-				qr = append(qr, []APIQueryResult{APIQueryResult{
+				qr = append(qr, []QueryResult{QueryResult{
 					Hash:   rec.Hash(),
 					Size:   int(result.dlen),
 					Record: rec,
@@ -219,7 +220,7 @@ func (m *APIQuery) execute(n *Node) (qr APIQueryResults, err *APIError) {
 					Weight: weight,
 				}})
 			} else {
-				qr[len(qr)-1] = append(qr[len(qr)-1], APIQueryResult{
+				qr[len(qr)-1] = append(qr[len(qr)-1], QueryResult{
 					Hash:   rec.Hash(),
 					Size:   int(result.dlen),
 					Record: rec,
@@ -233,7 +234,7 @@ func (m *APIQuery) execute(n *Node) (qr APIQueryResults, err *APIError) {
 
 	// Sort within each result
 	for qri, qrr := range qr {
-		if len(m.SortOrder) == 0 || m.SortOrder == APIQuerySortOrderTrust {
+		if len(m.SortOrder) == 0 || m.SortOrder == QuerySortOrderTrust {
 			sort.Slice(qrr, func(b, a int) bool {
 				if qrr[a].Trust < qrr[b].Trust {
 					return true
@@ -242,11 +243,11 @@ func (m *APIQuery) execute(n *Node) (qr APIQueryResults, err *APIError) {
 				}
 				return false
 			})
-		} else if m.SortOrder == APIQuerySortOrderWeight {
+		} else if m.SortOrder == QuerySortOrderWeight {
 			sort.Slice(qrr, func(b, a int) bool {
 				return sliceU32Less(qrr[a].Weight[:], qrr[b].Weight[:])
 			})
-		} else if m.SortOrder == APIQuerySortOrderTimestamp {
+		} else if m.SortOrder == QuerySortOrderTimestamp {
 			sort.Slice(qrr, func(b, a int) bool {
 				return qrr[a].Record.Timestamp < qrr[b].Record.Timestamp
 			})

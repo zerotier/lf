@@ -82,6 +82,22 @@ type APIPeer struct {
 	Identity Blob
 }
 
+// APIStatusResult contains status information about this node and the network it belongs to.
+type APIStatusResult struct {
+	Software            string            `json:",omitempty"` // Software implementation name
+	Version             [4]int            ``                  // Version of software
+	APIVersion          int               ``                  // Current version of API
+	MinAPIVersion       int               ``                  // Minimum API version supported
+	MaxAPIVersion       int               ``                  // Maximum API version supported
+	Uptime              uint64            ``                  // Node uptime in seconds
+	Clock               uint64            ``                  // Node local clock in seconds since epoch
+	DBRecordCount       uint64            ``                  // Number of records in database
+	DBSize              uint64            ``                  // Total size of records in database in bytes
+	DBFullySynchronized bool              ``                  // True if there are no dangling links (excluding abandoned ones)
+	PeerCount           int               ``                  // Number of connected peers
+	GenesisParameters   GenesisParameters ``                  // Network parameters
+}
+
 //////////////////////////////////////////////////////////////////////////////
 
 // APIPostRecord submits a raw LF record to a node or proxy.
@@ -188,6 +204,28 @@ func APIGetLinks(url string, count int) ([]HashBlob, error) {
 	return nil, APIError{Code: resp.StatusCode}
 }
 
+// APIStatusGet gets a status result from a URL.
+func APIStatusGet(url string) (*APIStatusResult, error) {
+	if strings.HasSuffix(url, "/") {
+		url = url + "status"
+	} else {
+		url = url + "/status"
+	}
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, err
+	}
+	body, err := ioutil.ReadAll(&io.LimitedReader{R: resp.Body, N: 65536})
+	if err != nil {
+		return nil, err
+	}
+	var sr APIStatusResult
+	if err := json.Unmarshal(body, &sr); err != nil {
+		return nil, err
+	}
+	return &sr, nil
+}
+
 //////////////////////////////////////////////////////////////////////////////
 
 // apiRun contains common code for the Run() methods of API request objects.
@@ -283,42 +321,14 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 	smux.HandleFunc("/query", func(out http.ResponseWriter, req *http.Request) {
 		apiSetStandardHeaders(out)
 		if req.Method == http.MethodPost || req.Method == http.MethodPut {
-			var m APIQuery
+			var m Query
 			if apiReadObj(out, req, &m) == nil {
-				results, err := m.execute(n)
+				results, err := m.Execute(n)
 				if err != nil {
 					apiSendObj(out, req, err.Code, err)
 				} else {
 					apiSendObj(out, req, http.StatusOK, results)
 				}
-			}
-		} else {
-			out.Header().Set("Allow", "POST, PUT")
-			apiSendObj(out, req, http.StatusMethodNotAllowed, &APIError{Code: http.StatusMethodNotAllowed, Message: req.Method + " not supported for this path"})
-		}
-	})
-
-	// Add a record, takes APINew payload.
-	smux.HandleFunc("/new", func(out http.ResponseWriter, req *http.Request) {
-		apiSetStandardHeaders(out)
-		if req.Method == http.MethodPost || req.Method == http.MethodPut {
-			if apiIsTrusted(n, req) {
-				var m APINew
-				if apiReadObj(out, req, &m) == nil {
-					rec, apiError := m.execute(n.getAPIWorkFunction())
-					if apiError != nil {
-						apiSendObj(out, req, apiError.Code, apiError)
-					} else {
-						err := n.AddRecord(rec)
-						if err != nil {
-							apiSendObj(out, req, http.StatusBadRequest, &APIError{Code: APIErrorRecordRejected, Message: "record rejected or record import failed: " + err.Error()})
-						} else {
-							apiSendObj(out, req, http.StatusOK, nil)
-						}
-					}
-				}
-			} else {
-				apiSendObj(out, req, http.StatusForbidden, &APIError{Code: APIErrorLazy, Message: "full record creation only allowed from authorized clients"})
 			}
 		} else {
 			out.Header().Set("Allow", "POST, PUT")
@@ -377,7 +387,6 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 	smux.HandleFunc("/status", func(out http.ResponseWriter, req *http.Request) {
 		apiSetStandardHeaders(out)
 		if req.Method == http.MethodGet || req.Method == http.MethodHead {
-			wa := apiIsTrusted(n, req)
 			n.peersLock.RLock()
 			pcount := len(n.peers)
 			n.peersLock.RUnlock()
@@ -396,7 +405,6 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 				DBFullySynchronized: (atomic.LoadUint32(&n.synchronized) != 0),
 				PeerCount:           pcount,
 				GenesisParameters:   n.genesisParameters,
-				NodeWorkAuthorized:  wa,
 			})
 		} else {
 			out.Header().Set("Allow", "GET, HEAD")

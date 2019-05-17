@@ -324,7 +324,7 @@ int ZTLF_DB_Open(
 		"UPDATE record SET reputation = ? WHERE hash = ?");
 	S(db->sGetLinkCandidates,
 		"SELECT r.hash FROM record AS r WHERE "
-		"r.reputation = " ZTLF_DB_REPUTATION_DEFAULT_S " " /* exclude collisions or otherwise wonky records */
+		"r.reputation >= " ZTLF_DB_REPUTATION_DEFAULT_S " " /* exclude collisions or otherwise wonky records */
 		"AND NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) "
 		"AND NOT EXISTS (SELECT gp.record_goff FROM graph_pending AS gp WHERE gp.record_goff = r.goff) "
 		"ORDER BY r.linked_count,RANDOM() LIMIT ?"); /* link preferentially to records that have fewer links to them */

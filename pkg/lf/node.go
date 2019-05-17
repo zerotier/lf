@@ -154,9 +154,8 @@ type Node struct {
 	httpServer      *http.Server
 	p2pTCPListener  *net.TCPListener
 
-	apiWorkFunction        *Wharrgarblr
-	backgroundWorkFunction *Wharrgarblr
-	workFunctionLock       sync.RWMutex
+	backgroundWorkFunction     *Wharrgarblr
+	backgroundWorkFunctionLock sync.Mutex
 
 	db                 db             //
 	backgroundThreadWG sync.WaitGroup // used to wait for all goroutines
@@ -412,11 +411,11 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 func (n *Node) Stop() {
 	n.log[LogLevelNormal].Printf("shutting down")
 	if atomic.SwapUint32(&n.shutdown, 1) == 0 {
-		n.workFunctionLock.RLock()
+		n.backgroundWorkFunctionLock.Lock()
 		if n.backgroundWorkFunction != nil {
 			n.backgroundWorkFunction.Abort()
 		}
-		n.workFunctionLock.RUnlock()
+		n.backgroundWorkFunctionLock.Unlock()
 
 		n.connectionsInStartupLock.Lock()
 		if n.connectionsInStartup != nil {
@@ -959,56 +958,22 @@ func (n *Node) writeKnownPeers() {
 	}
 }
 
-// getAPIWorkFunction gets (creating if needed) the work function for API calls.
-func (n *Node) getAPIWorkFunction() (wf *Wharrgarblr) {
-	n.workFunctionLock.RLock()
-	if n.apiWorkFunction != nil {
-		wf = n.apiWorkFunction
-		n.workFunctionLock.RUnlock()
-		return
-	}
-	n.workFunctionLock.RUnlock()
-
-	n.workFunctionLock.Lock()
-	if n.apiWorkFunction != nil {
-		wf = n.apiWorkFunction
-		n.workFunctionLock.Unlock()
-		return
-	}
-	n.apiWorkFunction = NewWharrgarblr(RecordDefaultWharrgarblMemory, runtime.NumCPU())
-	wf = n.apiWorkFunction
-	n.workFunctionLock.Unlock()
-
-	return
-}
-
 // getBackgroundWorkFunction gets (creating if needed) the work function for background work addition.
 func (n *Node) getBackgroundWorkFunction() (wf *Wharrgarblr) {
-	n.workFunctionLock.RLock()
+	n.backgroundWorkFunctionLock.Lock()
+	defer n.backgroundWorkFunctionLock.Unlock()
 	if n.backgroundWorkFunction != nil {
 		wf = n.backgroundWorkFunction
-		n.workFunctionLock.RUnlock()
 		return
 	}
-	n.workFunctionLock.RUnlock()
-
-	// For background commentary generation don't use every core on N-core systems.
 	threads := runtime.NumCPU()
 	if threads >= 3 {
 		threads -= 2
 	} else {
 		threads = 1
 	}
-	n.workFunctionLock.Lock()
-	if n.backgroundWorkFunction != nil {
-		wf = n.backgroundWorkFunction
-		n.workFunctionLock.Unlock()
-		return
-	}
 	n.backgroundWorkFunction = NewWharrgarblr(RecordDefaultWharrgarblMemory, threads)
 	wf = n.backgroundWorkFunction
-	n.workFunctionLock.Unlock()
-
 	return
 }
 

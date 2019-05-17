@@ -210,8 +210,6 @@ Commands:
     -mask <key>                           Encrypt value using masking key
     -owner <owner>                        Use this owner instead of default
     -url <url[,url,...]>                  Override configured node/proxy URLs
-    -remote                               Remote encrypt/PoW (shares mask key)
-    -tryremote                            Try remote encrypt/PoW, then local
   get [-...] <name[#start[#end]]> [...]   Find by selector (optional range)
     -mask <key>                           Decrypt value(s) with masking key
     -url <url[,url,...]>                  Override configured node/proxy URLs
@@ -556,8 +554,6 @@ func doSet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool
 	ownerName := setOpts.String("owner", "", "")
 	maskKey := setOpts.String("mask", "", "")
 	valueIsFile := setOpts.Bool("file", false, "")
-	remote := setOpts.Bool("remote", false, "")
-	tryRemote := setOpts.Bool("tryremote", false, "")
 	urlOverride := setOpts.String("url", "", "")
 	setOpts.SetOutput(ioutil.Discard)
 	err := setOpts.Parse(args)
@@ -597,7 +593,6 @@ func doSet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool
 
 	var plainTextSelectorNames [][]byte
 	var plainTextSelectorOrdinals []uint64
-	var selectors []lf.APINewSelector
 	for i := 0; i < len(args)-1; i++ {
 		var unesc string
 		json.Unmarshal([]byte("\""+args[i]+"\""), &unesc) // use JSON string escaping for selector arguments
@@ -614,10 +609,6 @@ func doSet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool
 				}
 				plainTextSelectorNames = append(plainTextSelectorNames, sel)
 				plainTextSelectorOrdinals = append(plainTextSelectorOrdinals, ord)
-				selectors = append(selectors, lf.APINewSelector{
-					Name:    sel,
-					Ordinal: ord,
-				})
 			}
 		}
 	}
@@ -652,7 +643,6 @@ func doSet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool
 		return
 	}
 
-	// Get links for record
 	for _, u := range urls {
 		links, err = lf.APIGetLinks(u, 0)
 		if err == nil {
@@ -660,54 +650,25 @@ func doSet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool
 		}
 	}
 	if err != nil {
-		fmt.Printf("ERROR: set failed: cannot get links: %s\n", err.Error())
+		fmt.Printf("ERROR: set failed: unable to get links for new record: %s\n", err.Error())
 		return
 	}
 
-	// If remote delegated record creation is preferred, try that first.
-	var submitDirectly []string
-	if *remote || *tryRemote {
-		req := lf.APINew{
-			Selectors:    selectors,
-			MaskingKey:   mk,
-			OwnerPrivate: owner.OwnerPrivate,
-			Links:        links,
-			Value:        value,
-			Timestamp:    &ts,
+	go lf.WharrgarblInitTable(path.Join(basePath, "wharrgarbl-table.bin"))
+	var o *lf.Owner
+	o, err = owner.GetOwner()
+	if err == nil {
+		lnks := make([][32]byte, 0, len(links))
+		for _, l := range links {
+			lnks = append(lnks, l)
 		}
-		for _, u := range urls {
-			rec, err = req.Run(u)
-			if err == nil {
-				submitDirectly = nil
-				break
-			}
-			apiErr, isAPIErr := err.(lf.APIError)
-			if isAPIErr && apiErr.Code == lf.APIErrorLazy {
-				submitDirectly = append(submitDirectly, u)
-			}
-		}
-	} else {
-		submitDirectly = urls
-	}
-
-	// If not delegating or trial remote delgation failed, make record locally.
-	if len(submitDirectly) > 0 && !*remote {
-		go lf.WharrgarblInitTable(path.Join(basePath, "wharrgarbl-table.bin"))
-		var o *lf.Owner
-		o, err = owner.GetOwner()
+		rec, err = lf.NewRecord(lf.RecordTypeDatum, value, lnks, mk, plainTextSelectorNames, plainTextSelectorOrdinals, nil, ts, lf.NewWharrgarblr(lf.RecordDefaultWharrgarblMemory, 0), o)
 		if err == nil {
-			lnks := make([][32]byte, 0, len(links))
-			for _, l := range links {
-				lnks = append(lnks, l)
-			}
-			rec, err = lf.NewRecord(lf.RecordTypeDatum, value, lnks, mk, plainTextSelectorNames, plainTextSelectorOrdinals, nil, ts, lf.NewWharrgarblr(lf.RecordDefaultWharrgarblMemory, 0), o)
-			if err == nil {
-				rb := rec.Bytes()
-				for _, u := range submitDirectly {
-					err = lf.APIPostRecord(u, rb)
-					if err == nil {
-						break
-					}
+			rb := rec.Bytes()
+			for _, u := range urls {
+				err = lf.APIPostRecord(u, rb)
+				if err == nil {
+					break
 				}
 			}
 		}
