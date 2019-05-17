@@ -312,8 +312,6 @@ func doNodeStart(cfg *lf.ClientConfig, basePath string, args []string) {
 	var letsEncryptServer *http.Server
 	var letsEncryptShuttingDown uint32
 	if len(*letsEncrypt) > 0 {
-		*httpPort = 80
-
 		letsEncryptDomains = strings.Split(*letsEncrypt, ",")
 		for i := range letsEncryptDomains {
 			letsEncryptDomains[i] = strings.TrimSpace(letsEncryptDomains[i])
