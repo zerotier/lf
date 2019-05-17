@@ -630,12 +630,12 @@ func doSet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool
 	var submitDirectly []string
 	if *remote || *tryRemote {
 		req := lf.APINew{
-			Selectors:       selectors,
-			MaskingKey:      mk,
-			OwnerPrivateKey: owner.OwnerPrivate,
-			Links:           links,
-			Value:           value,
-			Timestamp:       &ts,
+			Selectors:    selectors,
+			MaskingKey:   mk,
+			OwnerPrivate: owner.OwnerPrivate,
+			Links:        links,
+			Value:        value,
+			Timestamp:    &ts,
 		}
 		for _, u := range urls {
 			rec, err = req.Run(u)
@@ -946,7 +946,7 @@ func doMakeGenesis(cfg *lf.ClientConfig, basePath string, args []string) {
 	ioutil.WriteFile("genesis.go", []byte(fmt.Sprintf("%#v\n", grData.Bytes())), 0644)
 	if len(g.AmendableFields) > 0 {
 		priv, _ := genesisOwner.PrivateBytes()
-		ioutil.WriteFile("genesis-secret.pem", []byte(pem.EncodeToMemory(&pem.Block{Type: "LF OWNER PRIVATE KEY", Bytes: priv})), 0600)
+		ioutil.WriteFile("genesis-secret.pem", []byte(pem.EncodeToMemory(&pem.Block{Type: lf.OwnerPrivatePEMType, Bytes: priv})), 0600)
 	}
 
 	fmt.Printf("\nWrote genesis.* files to current directory.\n")

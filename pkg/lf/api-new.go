@@ -39,11 +39,14 @@ type APINewSelector struct {
 }
 
 // APINew (request) asks the proxy or node to perform server-side record generation and proof of work.
+// Owners may be specified via raw OwnerPrivate key information or an OwnerSeed that is used server-side
+// to deterministically (re-)generate the owner key pair. Note that both methods reveal your owner data.
+// To avoid this generate the record locally and submit it directly instead of using the /new API.
 type APINew struct {
 	Selectors          []APINewSelector `json:",omitempty"` // Plain text selector names and ordinals
-	MaskingKey         Blob             `json:",omitempty"` // Masking key to override default (default is first selector name)
-	OwnerPrivateKey    Blob             `json:",omitempty"` // Full owner including private key (result of owner PrivateBytes() method)
-	OwnerSeed          Blob             `json:",omitempty"` // Seed to deterministically generate owner (used if ownerprivatekey is missing)
+	MaskingKey         Blob             `json:",omitempty"` // Masking key to override default
+	OwnerPrivate       Blob             `json:",omitempty"` // Full owner including private key (result of owner PrivateBytes() method)
+	OwnerSeed          Blob             `json:",omitempty"` // Seed to deterministically generate owner (used if OwnerPrivate is missing)
 	OwnerSeedOwnerType *byte            `json:",omitempty"` // Owner type for seeded owner mode (default: P-224)
 	Links              []HashBlob       `json:",omitempty"` // Links to other records in the DAG
 	Value              Blob             `json:",omitempty"` // Plain text (unmasked, uncompressed) value for this record
@@ -71,8 +74,8 @@ func (m *APINew) Run(url string) (*Record, error) {
 func (m *APINew) execute(workFunction *Wharrgarblr) (*Record, *APIError) {
 	var err error
 	var owner *Owner
-	if len(m.OwnerPrivateKey) > 0 {
-		owner, err = NewOwnerFromPrivateBytes(m.OwnerPrivateKey)
+	if len(m.OwnerPrivate) > 0 {
+		owner, err = NewOwnerFromPrivateBytes(m.OwnerPrivate)
 		if err != nil {
 			return nil, &APIError{Code: http.StatusBadRequest, Message: "cannot derive owner format public key from x509 private key: " + err.Error()}
 		}

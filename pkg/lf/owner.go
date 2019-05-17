@@ -49,6 +49,9 @@ const OwnerTypeNistP384 byte = 2
 // Total record overhead for this type is 96 bytes.
 const OwnerTypeEd25519 byte = 3
 
+// OwnerPrivatePEMType is the type string that should be used for PEM-encoding owner private keys.
+const OwnerPrivatePEMType = "LF OWNER PRIVATE KEY"
+
 // Length of public part of owner for each type. Right now this length is used
 // to determine the type. If we add another 32-byte type in the future we'll
 // probably make it 33 bytes and preface it or something.

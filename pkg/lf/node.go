@@ -210,14 +210,16 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 	}
 
 	// Load or generate this node's public owner / public key.
-	ownerPath := path.Join(basePath, "node-secret.pem")
+	ownerPath := path.Join(basePath, "node-identity-secret.pem")
 	ownerBytes, _ := ioutil.ReadFile(ownerPath)
 	if len(ownerBytes) > 0 {
 		pb, _ := pem.Decode(ownerBytes)
-		n.owner, err = NewOwnerFromPrivateBytes(pb.Bytes)
-		if err != nil {
-			n.owner = nil
-			err = nil
+		if pb != nil {
+			n.owner, err = NewOwnerFromPrivateBytes(pb.Bytes)
+			if err != nil {
+				n.owner = nil
+				err = nil
+			}
 		}
 	}
 	if n.owner == nil {
@@ -229,7 +231,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 		if err != nil {
 			return nil, err
 		}
-		err = ioutil.WriteFile(ownerPath, []byte(pem.EncodeToMemory(&pem.Block{Type: "LF OWNER PRIVATE KEY", Bytes: priv})), 0600)
+		err = ioutil.WriteFile(ownerPath, []byte(pem.EncodeToMemory(&pem.Block{Type: OwnerPrivatePEMType, Bytes: priv})), 0600)
 		if err != nil {
 			return nil, err
 		}
