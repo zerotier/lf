@@ -169,12 +169,12 @@ func makeMaskingCipher(maskingKey, ownerPublic []byte, selectorNames [][]byte, t
 // recordBody represents the main body of a record including its value, owner public keys, etc.
 // It's included as part of Record but separated since in record construction we want to treat it as a separate element.
 type recordBody struct {
-	Value         Blob       `json:",omitempty"` // Record value (possibly masked and/or compressed, use GetValue() to get)
-	Owner         OwnerBlob  `json:",omitempty"` // Owner of this record (owner public bytes) in @base58string format
-	AuthSignature Blob       `json:",omitempty"` // Signature of owner by an auth cerficiate (if any)
-	Links         []HashBlob `json:",omitempty"` // Links to previous records' hashes
-	Timestamp     uint64     ``                  // Timestamp (and revision ID) in SECONDS since Unix epoch
-	Type          *byte      `json:",omitempty"` // Record type byte, RecordTypeDatum (0) if nil
+	Value         Blob        `json:",omitempty"` // Record value (possibly masked and/or compressed, use GetValue() to get)
+	Owner         OwnerPublic `json:",omitempty"` // Owner of this record
+	AuthSignature Blob        `json:",omitempty"` // Signature of owner by an auth cerficiate (if any)
+	Links         []HashBlob  `json:",omitempty"` // Links to previous records' hashes
+	Timestamp     uint64      ``                  // Timestamp (and revision ID) in SECONDS since Unix epoch
+	Type          *byte       `json:",omitempty"` // Record type byte, RecordTypeDatum (0) if nil
 
 	sigHash *[48]byte
 }

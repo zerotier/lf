@@ -70,44 +70,6 @@ func (b *Blob) UnmarshalJSON(j []byte) error {
 
 //////////////////////////////////////////////////////////////////////////////
 
-// OwnerBlob is a byte array that serializes to an @owner base62-encoded string.
-type OwnerBlob []byte
-
-// MarshalJSON returns this blob marshaled as a @owner base62-encoded string.
-func (b OwnerBlob) MarshalJSON() ([]byte, error) {
-	return []byte("\"@" + Base62Encode(b) + "\""), nil
-}
-
-// UnmarshalJSON unmarshals this blob from a JSON array or string
-func (b *OwnerBlob) UnmarshalJSON(j []byte) error {
-	if len(j) == 0 {
-		*b = nil
-		return nil
-	}
-
-	// Default is @base62string
-	var err error
-	var str string
-	err = json.Unmarshal(j, &str)
-	if err == nil {
-		if len(str) > 0 && str[0] == '@' {
-			*b = Base62Decode(str[1:])
-			return nil
-		}
-		err = errors.New("base62 string not prefixed by @ (for owner)")
-	}
-
-	// Byte arrays are also accepted
-	var bb []byte
-	if json.Unmarshal(j, &bb) != nil {
-		return err
-	}
-	*b = bb
-	return nil
-}
-
-//////////////////////////////////////////////////////////////////////////////
-
 // HashBlob is a 32-byte array that serializes to a =hash base62-encoded string.
 type HashBlob [32]byte
 

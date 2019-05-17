@@ -31,6 +31,8 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/x509"
+	"encoding/json"
+	"errors"
 	"io"
 
 	"golang.org/x/crypto/ed25519"
@@ -60,6 +62,58 @@ const (
 	ownerLenEd25519 = 32
 )
 
+// OwnerPublic is a byte array that serializes to an @owner base62-encoded string.
+type OwnerPublic []byte
+
+// NewOwnerPublicFromString decodes a @base62 owner public name.
+func NewOwnerPublicFromString(b62 string) (OwnerPublic, error) {
+	if len(b62) < 1 {
+		return nil, ErrInvalidParameter
+	}
+	if b62[0] == '@' {
+		return OwnerPublic(Base62Decode(b62[1:])), nil
+	}
+	return nil, ErrInvalidParameter
+}
+
+// String returns @base62 owner
+func (b OwnerPublic) String() string {
+	return "@" + Base62Encode(b)
+}
+
+// MarshalJSON returns this blob marshaled as a @owner base62-encoded string.
+func (b OwnerPublic) MarshalJSON() ([]byte, error) {
+	return []byte("\"@" + Base62Encode(b) + "\""), nil
+}
+
+// UnmarshalJSON unmarshals this blob from a JSON array or string
+func (b *OwnerPublic) UnmarshalJSON(j []byte) error {
+	if len(j) == 0 {
+		*b = nil
+		return nil
+	}
+
+	// Default is @base62string
+	var err error
+	var str string
+	err = json.Unmarshal(j, &str)
+	if err == nil {
+		if len(str) > 0 && str[0] == '@' {
+			*b = Base62Decode(str[1:])
+			return nil
+		}
+		err = errors.New("base62 string not prefixed by @ (for owner)")
+	}
+
+	// Byte arrays are also accepted
+	var bb []byte
+	if json.Unmarshal(j, &bb) != nil {
+		return err
+	}
+	*b = bb
+	return nil
+}
+
 // Owner represents an entity capable of creating LF records.
 type Owner struct {
 	// Private is *ecdsa.PrivateKey for ECDSA modes and *ed25519.PrivateKey for ed25519.
@@ -70,7 +124,7 @@ type Owner struct {
 	// Its exact nature varies by owner key type. For ed25519 it's the 256-bit public
 	// key itself. For ECDSA it's a hash of the key to save space and verification
 	// happens by running ECESA key recovery and checking the result against this hash.
-	Public []byte
+	Public OwnerPublic
 }
 
 func internalOwnerHashECDSA(ownerType byte, pub *ecdsa.PublicKey) ([]byte, error) {
@@ -101,7 +155,7 @@ func internalNewOwner(ownerType byte, prng io.Reader) (*Owner, error) {
 			return nil, err
 		}
 		priv := ed25519.NewKeyFromSeed(seed[:])
-		return &Owner{Private: &priv, Public: priv[32:]}, nil
+		return &Owner{Private: &priv, Public: OwnerPublic(priv[32:])}, nil
 
 	default:
 		return nil, ErrInvalidParameter
@@ -163,7 +217,7 @@ func NewOwnerFromPrivateBytes(b []byte) (*Owner, error) {
 		var priv ed25519.PrivateKey
 		priv = priv2[:]
 		copy(priv, b[1:])
-		return &Owner{Private: &priv, Public: priv[32:]}, nil
+		return &Owner{Private: &priv, Public: OwnerPublic(priv[32:])}, nil
 	}
 
 	return nil, ErrInvalidPrivateKey
@@ -250,7 +304,7 @@ func (o *Owner) Verify(hash, sig []byte) (verdict bool) {
 		}
 
 	case ownerLenEd25519:
-		verdict = ed25519.Verify(o.Public, hash, sig)
+		verdict = ed25519.Verify([]byte(o.Public), hash, sig)
 
 	default:
 		verdict = false

@@ -136,7 +136,7 @@ type Node struct {
 	identity                   []byte            // Compressed public key from owner
 	identityStr                string            //
 	genesisParameters          GenesisParameters // Genesis configuration for this node's network
-	genesisOwner               []byte            // Owner of genesis record(s)
+	genesisOwner               OwnerPublic       // Owner of genesis record(s)
 	lastGenesisRecordTimestamp uint64            //
 
 	knownPeers               []*knownPeer          // Peers we know about
@@ -467,6 +467,14 @@ func (n *Node) Stop() {
 // If you want to handle requests via e.g. a Lets Encrypt server you can use
 // this to get the handler to pass to your server.
 func (n *Node) GetHTTPHandler() http.Handler { return n.httpServer.Handler }
+
+// ConnectedPeerCount returns the number of active P2P connections.
+func (n *Node) ConnectedPeerCount() int {
+	n.peersLock.RLock()
+	c := len(n.peers)
+	n.peersLock.RUnlock()
+	return c
+}
 
 // Connect attempts to establish a peer-to-peer connection to a remote node.
 func (n *Node) Connect(ip net.IP, port int, identity []byte) {
