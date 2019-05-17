@@ -81,11 +81,7 @@ func MakeSelectorKey(plainTextName []byte, plainTextOrdinal uint64) []byte {
 		panic(err)
 	}
 
-	var key [32]byte
-	hasher := sha256.New()
-	hasher.Write(priv.PublicKey.X.Bytes())
-	hasher.Write(priv.PublicKey.Y.Bytes())
-	hasher.Sum(key[:0])
+	key, _ := ECDSAHashPublicKey(&priv.PublicKey)
 
 	var ord Ordinal
 	ord.Set(plainTextOrdinal, plainTextName)
@@ -128,11 +124,7 @@ func (s *Selector) id(hash []byte) []byte {
 // key returns the sortable and comparable database key for this selector.
 func (s *Selector) key(hash []byte) []byte {
 	pub := s.claimKey(hash)
-	var key [32]byte
-	hasher := sha256.New()
-	hasher.Write(pub.X.Bytes())
-	hasher.Write(pub.Y.Bytes())
-	hasher.Sum(key[:0])
+	key, _ := ECDSAHashPublicKey(pub)
 	addOrdinalToHash(&key, &s.Ordinal)
 	return key[:]
 }

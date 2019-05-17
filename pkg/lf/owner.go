@@ -30,7 +30,6 @@ import (
 	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
-	"crypto/sha256"
 	"crypto/x509"
 	"io"
 
@@ -74,16 +73,15 @@ type Owner struct {
 	Public []byte
 }
 
-func internalOwnerHashECDSA(ownerType byte, pub *ecdsa.PublicKey) []byte {
-	h := sha256.New()
-	h.Write(pub.X.Bytes())
-	h.Write(pub.Y.Bytes())
-	var tmp [32]byte
-	hh := h.Sum(tmp[:0])
-	if ownerType == OwnerTypeNistP224 {
-		return hh[0:14] // matches 112-bit security provided by P-224
+func internalOwnerHashECDSA(ownerType byte, pub *ecdsa.PublicKey) ([]byte, error) {
+	hh, err := ECDSAHashPublicKey(pub)
+	if err != nil {
+		return nil, err
 	}
-	return hh[0:24] // matches 192-bit security provided by P-384
+	if ownerType == OwnerTypeNistP224 {
+		return hh[0:14], nil // matches 112-bit security provided by P-224
+	}
+	return hh[0:24], nil // matches 192-bit security provided by P-384
 }
 
 func internalNewOwner(ownerType byte, prng io.Reader) (*Owner, error) {
@@ -113,7 +111,11 @@ func internalNewOwner(ownerType byte, prng io.Reader) (*Owner, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Owner{Private: priv, Public: internalOwnerHashECDSA(ownerType, &priv.PublicKey)}, nil
+	oh, err := internalOwnerHashECDSA(ownerType, &priv.PublicKey)
+	if err != nil {
+		return nil, err
+	}
+	return &Owner{Private: priv, Public: oh}, nil
 }
 
 // NewOwnerFromSeed creates a new owner whose key pair is generated using deterministic randomness from the given seed.
@@ -147,7 +149,11 @@ func NewOwnerFromPrivateBytes(b []byte) (*Owner, error) {
 		default:
 			return nil, ErrUnsupportedCurve
 		}
-		return &Owner{Private: priv, Public: internalOwnerHashECDSA(ownerType, &priv.PublicKey)}, nil
+		oh, err := internalOwnerHashECDSA(ownerType, &priv.PublicKey)
+		if err != nil {
+			return nil, err
+		}
+		return &Owner{Private: priv, Public: oh}, nil
 
 	case OwnerTypeEd25519:
 		if len(b) != 65 {
@@ -225,18 +231,22 @@ func (o *Owner) Verify(hash, sig []byte) (verdict bool) {
 	switch len(o.Public) {
 	case ownerLenP224:
 		k0, k1 := ECDSARecoverBoth(elliptic.P224(), hash, sig)
-		if bytes.Equal(internalOwnerHashECDSA(OwnerTypeNistP224, k0), o.Public) {
+		oh, _ := internalOwnerHashECDSA(OwnerTypeNistP224, k0)
+		if bytes.Equal(oh, o.Public) {
 			verdict = true
 		} else {
-			verdict = bytes.Equal(internalOwnerHashECDSA(OwnerTypeNistP224, k1), o.Public)
+			oh, _ = internalOwnerHashECDSA(OwnerTypeNistP224, k1)
+			verdict = bytes.Equal(oh, o.Public)
 		}
 
 	case ownerLenP384:
 		k0, k1 := ECDSARecoverBoth(elliptic.P384(), hash, sig)
-		if bytes.Equal(internalOwnerHashECDSA(OwnerTypeNistP384, k0), o.Public) {
+		oh, _ := internalOwnerHashECDSA(OwnerTypeNistP384, k0)
+		if bytes.Equal(oh, o.Public) {
 			verdict = true
 		} else {
-			verdict = bytes.Equal(internalOwnerHashECDSA(OwnerTypeNistP384, k1), o.Public)
+			oh, _ = internalOwnerHashECDSA(OwnerTypeNistP384, k1)
+			verdict = bytes.Equal(oh, o.Public)
 		}
 
 	case ownerLenEd25519:

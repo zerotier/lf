@@ -26,6 +26,10 @@
 
 package lf
 
+// NOTE: the way point compression, public key hashing, and several other
+// things are done here are parts of the protocol spec and can't easily be
+// changed.
+
 import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -111,6 +115,23 @@ func ECDHAgreeECDSA(pubX, pubY *big.Int, priv *ecdsa.PrivateKey) ([32]byte, erro
 	}
 	x, _ := priv.Curve.ScalarMult(pubX, pubY, priv.D.Bytes())
 	return sha256.Sum256(x.Bytes()), nil
+}
+
+// ECDSAHashPublicKey computes a SHA256 hash of X|Y|Curve Name
+func ECDSAHashPublicKey(pub *ecdsa.PublicKey) ([32]byte, error) {
+	params := pub.Params()
+	curveSize := (params.BitSize >> 3) + (params.BitSize & 3)
+
+	xb, yb := pub.X.Bytes(), pub.Y.Bytes()
+	if len(xb) > curveSize || len(yb) > curveSize {
+		return [32]byte{0}, ErrInvalidPublicKey
+	}
+	buf := make([]byte, curveSize*2, (curveSize*2)+16)
+	copy(buf[curveSize-len(xb):], xb)
+	copy(buf[len(buf)-len(yb):], yb)
+	buf = append(buf, []byte(params.Name)...)
+
+	return sha256.Sum256(buf), nil
 }
 
 // ECDSACompressPublicKey compresses an ECDSA public key using standard ECC point compression for prime curves.

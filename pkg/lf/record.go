@@ -139,6 +139,31 @@ func recordWharrgarblScore(cost uint32) uint32 {
 	return ((cost * 16) + ((cost / 10000) * 5369))
 }
 
+// makeMaskingCipher initializes AES256-CFB using various bits of record material.
+// If maskingKey is nil, selectorNames[0] is used if present. If both are nil/empty
+// then the masking key is based only on the timestamp and the owner.
+func makeMaskingCipher(maskingKey, ownerPublic []byte, selectorNames [][]byte, timestamp uint64, decrypt bool) cipher.Stream {
+	var tsb [8]byte
+	binary.BigEndian.PutUint64(tsb[:], timestamp)
+	maskingHasher := sha512.New384()
+	maskingHasher.Write(tsb[:])
+	if len(maskingKey) == 0 {
+		if len(selectorNames) > 0 {
+			maskingHasher.Write(selectorNames[0])
+		}
+	} else {
+		maskingHasher.Write(maskingKey)
+	}
+	maskingHasher.Write(ownerPublic)
+	var maskingKeyBits [48]byte
+	maskingHasher.Sum(maskingKeyBits[:0])
+	c, _ := aes.NewCipher(maskingKeyBits[0:32])
+	if decrypt {
+		return cipher.NewCFBDecrypter(c, maskingKeyBits[32:48])
+	}
+	return cipher.NewCFBEncrypter(c, maskingKeyBits[32:48])
+}
+
 //////////////////////////////////////////////////////////////////////////////
 
 // recordBody represents the main body of a record including its value, owner public keys, etc.
@@ -151,7 +176,7 @@ type recordBody struct {
 	Timestamp     uint64     ``                  // Timestamp (and revision ID) in SECONDS since Unix epoch
 	Type          *byte      `json:",omitempty"` // Record type byte, RecordTypeDatum (0) if nil
 
-	sigHash *[32]byte
+	sigHash *[48]byte
 }
 
 func (rb *recordBody) unmarshalFrom(r io.Reader) error {
@@ -274,7 +299,7 @@ func (rb *recordBody) marshalTo(w io.Writer, hashAsProxyForValue bool) error {
 	}
 
 	if hashAsProxyForValue {
-		h := shasha256(rb.Value)
+		h := sha512.Sum384(rb.Value)
 		if _, err := w.Write(h[:]); err != nil {
 			return err
 		}
@@ -316,16 +341,11 @@ func (rb *recordBody) marshalTo(w io.Writer, hashAsProxyForValue bool) error {
 	return err
 }
 
-func (rb *recordBody) signingHash() (hb [32]byte) {
+func (rb *recordBody) signingHash() (hb [48]byte) {
 	if rb.sigHash == nil {
-		s256 := sha256.New()
-		s512 := sha512.New()
-		rb.marshalTo(io.MultiWriter(s256, s512), true)
-
-		var s512buf [64]byte
-		s256.Write(s512.Sum(s512buf[:0]))
-
-		s256.Sum(hb[:0])
+		s384 := sha512.New384()
+		rb.marshalTo(s384, true)
+		s384.Sum(hb[:0])
 		rb.sigHash = &hb
 		return
 	}
@@ -348,19 +368,8 @@ func (rb *recordBody) GetValue(maskingKey []byte) ([]byte, error) {
 		return nil, nil
 	}
 
-	var unmaskedValue []byte
-	unmaskedValue = make([]byte, len(rb.Value))
-	var cfbIv [16]byte
-	binary.BigEndian.PutUint64(cfbIv[0:8], rb.Timestamp)
-	if len(rb.Owner) >= 8 {
-		copy(cfbIv[8:16], rb.Owner[0:8])
-	}
-	if len(maskingKey) == 0 {
-		maskingKey = rb.Owner
-	}
-	maskingKeyH := sha256.Sum256(maskingKey)
-	c, _ := aes.NewCipher(maskingKeyH[:])
-	cipher.NewCFBDecrypter(c, cfbIv[:]).XORKeyStream(unmaskedValue, rb.Value)
+	unmaskedValue := make([]byte, len(rb.Value))
+	makeMaskingCipher(maskingKey, rb.Owner, nil, rb.Timestamp, true).XORKeyStream(unmaskedValue, rb.Value)
 	flagsAndCrc := binary.BigEndian.Uint32(unmaskedValue[0:4])
 	if (crc32.ChecksumIEEE(unmaskedValue[4:]) & 0x0fffffff) != (flagsAndCrc & 0x0fffffff) {
 		return nil, ErrIncorrectKey
@@ -389,9 +398,9 @@ type Record struct {
 	recordBody
 
 	Selectors     []Selector `json:",omitempty"` // Things that can be used to find the record
-	Work          Blob       `json:",omitempty"` // Proof of work computed on sha-256(Body Signing Hash | Selectors) with work cost based on size of body and selectors
+	Work          Blob       `json:",omitempty"` // Proof of work "paying" for this record
 	WorkAlgorithm byte       ``                  // Proof of work algorithm
-	Signature     Blob       `json:",omitempty"` // Signature of sha-256(sha-256(Body Signing Hash | Selectors) | Work | WorkAlgorithm)
+	Signature     Blob       `json:",omitempty"` // Signature of record (including work) by owner
 
 	hash, id *[32]byte
 }
@@ -453,9 +462,9 @@ func (r *Record) UnmarshalFrom(rdr io.Reader) error {
 }
 
 // MarshalTo writes this record in serialized form to the supplied writer.
-// If hashAsProxyForValue is true a hash of the value is substituted for the actual value.
-// This results in a byte stream that can't be unmarshaled and is used for computing
-// record hashes.
+// If hashAsProxyForValue is true SHA384(value) is stored in the stream instead
+// of the actual value. These streams can't (currently) be unmarshaled and are
+// only used to compute further hashes.
 func (r *Record) MarshalTo(w io.Writer, hashAsProxyForValue bool) error {
 	if err := r.recordBody.marshalTo(w, hashAsProxyForValue); err != nil {
 		return err
@@ -488,9 +497,14 @@ func (r *Record) MarshalTo(w io.Writer, hashAsProxyForValue bool) error {
 	return nil
 }
 
-// Bytes returns a byte serialized record.
-// The returned slice should not be modified since it's cached internally in Record to
-// make multiple calls to Bytes() faster.
+// NewRecordFromBytes deserializes a record from a byte array.
+func NewRecordFromBytes(b []byte) (r *Record, err error) {
+	r = new(Record)
+	err = r.UnmarshalFrom(bytes.NewReader(b))
+	return
+}
+
+// Bytes returns a byte serialized record
 func (r *Record) Bytes() []byte {
 	var buf bytes.Buffer
 	buf.Grow(len(r.Value) + 256)
@@ -498,17 +512,18 @@ func (r *Record) Bytes() []byte {
 	return buf.Bytes()
 }
 
-// SizeBytes is a faster shortcut for len(Bytes())
+// SizeBytes is a faster shortcut for len(Bytes()) that just serializes to a counting writer.
 func (r *Record) SizeBytes() int {
 	var c countingWriter
 	r.MarshalTo(&c, false)
 	return int(c)
 }
 
-// Hash returns sha256(Bytes()|sha512(Bytes())).
-// This is the main record hash used for record linking. Note that it's not a straight
-// hash of the record's bytes by a hash of the record with the (raw unmasked) value
-// replaced by the value's hash.
+// Hash returns the record hash used for individual record identification and linking.
+// The hash computed is sha256(in | sha512(in)) where in is the record with its value
+// replaced by the sha384() hash of its value. This replacement is to allow future
+// nodes to drop old record values from storage but still compute proper hashes for all
+// records in the entire DAG.
 func (r *Record) Hash() (hb [32]byte) {
 	if r.hash != nil {
 		hb = *r.hash
@@ -534,8 +549,9 @@ func (r *Record) HashString() string {
 }
 
 // Score returns this record's work score, which is algorithm dependent.
-// The returned value is scaled to the range of uint32 so that future algorithms can coexist with or at least
-// be comparable relative to current ones.
+// The returned value is scaled to the range of uint32 so that future
+// work algorithms can coexist with or at least be comparable relative to
+// current ones.
 func (r *Record) Score() uint32 {
 	switch r.WorkAlgorithm {
 	case RecordWorkAlgorithmNone:
@@ -621,27 +637,39 @@ func (r *Record) Validate() (err error) {
 		return ErrRecordInsufficientWork
 	}
 
-	finalHash := sha512.New384()
-	finalHash.Write(workHash[:])
-	finalHash.Write(r.Work)
-	finalHash.Write([]byte{r.WorkAlgorithm})
+	signingHash := sha512.New384()
+	signingHash.Write(workHash[:])
+	signingHash.Write(r.Work)
+	signingHash.Write([]byte{r.WorkAlgorithm})
 	var hb [48]byte
 	owner := Owner{Public: r.recordBody.Owner}
-	if !owner.Verify(finalHash.Sum(hb[:0]), r.Signature) {
+	if !owner.Verify(signingHash.Sum(hb[:0]), r.Signature) {
 		return ErrRecordOwnerSignatureCheckFailed
 	}
 
 	return nil
 }
 
-// NewRecordStart creates an incomplete record with its body and selectors filled out but no work or final signature.
-// This can be used to do the first step of a three-phase record creation process with the next two phases being NewRecordAddWork
-// and NewRecordComplete. This is useful of record creation needs to be split among systems or participants.
-func NewRecordStart(recordType byte, value []byte, links [][32]byte, maskingKey []byte, plainTextSelectorNames [][]byte, plainTextSelectorOrdinals []uint64, owner, certificate []byte, ts uint64) (r *Record, workHash [48]byte, workBillableBytes uint, err error) {
-	r = new(Record)
+//////////////////////////////////////////////////////////////////////////////
+
+// RecordBuilder allows records to be built in multiple steps.
+type RecordBuilder struct {
+	record            *Record
+	workHash          Blob
+	workBillableBytes uint
+}
+
+// Start begins creating a new record, resetting RecordBuilder if it contains any old state.
+func (rb *RecordBuilder) Start(recordType byte, value []byte, links [][32]byte, maskingKey []byte, selectorNames [][]byte, selectorOrdinals []uint64, ownerPublic, authSignature []byte, timestamp uint64) error {
+	rb.record = new(Record)
+	rb.workHash = nil
+	rb.workBillableBytes = 0
+
+	if timestamp == 0 {
+		timestamp = TimeSec()
+	}
 
 	if len(value) > 0 {
-		// Attempt compression for values of non-trivial size.
 		var flags uint32
 		if len(value) > 24 {
 			cout, err := brotlienc.CompressBuffer(brotliParams, value, make([]byte, 0, len(value)+4))
@@ -651,135 +679,95 @@ func NewRecordStart(recordType byte, value []byte, links [][32]byte, maskingKey 
 			}
 		}
 
-		// Encrypt with AES256-CFB using the timestamp and owner for IV. A CRC32 is
-		// included so users can tell if their masking key is correct. Note that this
-		// CRC32 is not used for real authentication. That happens via the owner's
-		// signature of the whole record.
-		var cfbIv [16]byte
-		binary.BigEndian.PutUint64(cfbIv[0:8], ts)
-		if len(owner) >= 8 { // sanity check
-			copy(cfbIv[8:16], owner[0:8])
-		}
-		if len(maskingKey) == 0 {
-			if len(plainTextSelectorNames) > 0 {
-				maskingKey = plainTextSelectorNames[0]
-			} else {
-				maskingKey = owner
-			}
-		}
-		maskingKeyH := sha256.Sum256(maskingKey)
-		c, _ := aes.NewCipher(maskingKeyH[:])
-		cfb := cipher.NewCFBEncrypter(c, cfbIv[:])
 		valueMasked := make([]byte, 4+len(value))
 		binary.BigEndian.PutUint32(valueMasked[0:4], (crc32.ChecksumIEEE(value)&0x0fffffff)|flags) // most significant 4 bits are used for flags
+		cfb := makeMaskingCipher(maskingKey, ownerPublic, selectorNames, timestamp, false)
 		cfb.XORKeyStream(valueMasked[0:4], valueMasked[0:4])
 		cfb.XORKeyStream(valueMasked[4:], value)
-		r.recordBody.Value = valueMasked
+		rb.record.recordBody.Value = valueMasked
 	}
 
-	r.recordBody.Owner = append(r.recordBody.Owner, owner...)
-
+	rb.record.recordBody.Owner = ownerPublic
+	rb.record.recordBody.AuthSignature = authSignature
 	if len(links) > 0 {
-		r.recordBody.Links = make([]HashBlob, 0, len(links))
+		rb.record.recordBody.Links = make([]HashBlob, 0, len(links))
 		for i := 0; i < len(links); i++ {
-			r.recordBody.Links = append(r.recordBody.Links, links[i])
+			rb.record.recordBody.Links = append(rb.record.recordBody.Links, links[i])
 		}
-		sort.Slice(r.recordBody.Links, func(a, b int) bool { return bytes.Compare(r.recordBody.Links[a][:], r.recordBody.Links[b][:]) < 0 })
+		sort.Slice(rb.record.recordBody.Links, func(a, b int) bool {
+			return bytes.Compare(rb.record.recordBody.Links[a][:], rb.record.recordBody.Links[b][:]) < 0
+		})
 	}
-
-	r.recordBody.Timestamp = ts
-
+	rb.record.recordBody.Timestamp = timestamp
 	if recordType != 0 {
-		r.recordBody.Type = &recordType
+		rb.record.recordBody.Type = &recordType
 	}
 
-	// Billable bytes equals the total serialized bytes of the record body and the record's selectors.
-	workBillableBytes = r.recordBody.sizeBytes()
-
-	// Selector claims work by signing the record body
-	recordBodyHash := r.recordBody.signingHash()
+	// Billable bytes equals the total serialized bytes of the record body plus the record's selectors' serialized sizes.
+	rb.workBillableBytes = rb.record.recordBody.sizeBytes()
 
 	// The work hash combines the record body hash with all the record's selectors. The final signing
 	// hash is computed from this hash followed by the work itself (if any).
 	workHasher := sha512.New384()
 
+	recordBodyHash := rb.record.recordBody.signingHash()
 	workHasher.Write(recordBodyHash[:])
-	if len(plainTextSelectorNames) > 0 {
-		r.Selectors = make([]Selector, len(plainTextSelectorNames))
-		for i := 0; i < len(plainTextSelectorNames); i++ {
-			r.Selectors[i].set(plainTextSelectorNames[i], plainTextSelectorOrdinals[i], recordBodyHash[:])
-			sb := r.Selectors[i].bytes()
-			workBillableBytes += uint(len(sb))
+	if len(selectorNames) > 0 {
+		rb.record.Selectors = make([]Selector, len(selectorNames))
+		for i := 0; i < len(selectorNames); i++ {
+			rb.record.Selectors[i].set(selectorNames[i], selectorOrdinals[i], recordBodyHash[:])
+			sb := rb.record.Selectors[i].bytes()
+			rb.workBillableBytes += uint(len(sb))
 			workHasher.Write(sb)
 		}
 	}
-	workHasher.Sum(workHash[:0])
+	var workHashBuf [48]byte
+	rb.workHash = workHasher.Sum(workHashBuf[:0])
 
-	return
+	return nil
 }
 
-// NewRecordDoWork is a convenience method for doing the work to add to a record.
-// This can obviously be a time and memory intensive function.
-func NewRecordDoWork(workHash []byte, workBillableBytes uint, workFunction *Wharrgarblr) (work []byte, err error) {
+// AddWork actually computes the work and sets the Work field in the RecordBuilder.
+// This doesn't need to be called if there is no work to be done, e.g. an auth signature only record.
+func (rb *RecordBuilder) AddWork(workFunction *Wharrgarblr) error {
 	if workFunction != nil {
-		w, iter := workFunction.Compute(workHash, recordWharrgarblCost(workBillableBytes))
+		w, iter := workFunction.Compute(rb.workHash, recordWharrgarblCost(rb.workBillableBytes))
 		if iter == 0 {
-			err = ErrWharrgarblFailed
-			return
+			return ErrWharrgarblFailed
 		}
-		work = w[:]
+		rb.record.Work = w[:]
+		rb.record.WorkAlgorithm = RecordWorkAlgorithmWharrgarbl
 	}
-	return
+	return nil
 }
 
-// NewRecordAddWork adds work to a record created with NewRecordStart and returns the same record with work and the signing hash to be signed by the owner.
-func NewRecordAddWork(incompleteRecord *Record, workHash []byte, work []byte, workAlgorithm byte) (r *Record, signingHash [48]byte, err error) {
-	r = incompleteRecord
-	r.Work = work
-	r.WorkAlgorithm = workAlgorithm
-	tmp := make([]byte, len(workHash)+len(work)+1)
-	copy(tmp, workHash)
-	copy(tmp[len(workHash):], work)
-	tmp[len(tmp)-1] = workAlgorithm
-	signingHash = sha512.Sum384(tmp)
-	return
-}
-
-// NewRecordComplete completes a record created with NewRecordStart after work is added with NewRecordAddWork by signing it with the owner's private key.
-func NewRecordComplete(incompleteRecord *Record, signingHash []byte, owner *Owner) (r *Record, err error) {
-	r = incompleteRecord
-	r.Signature, err = owner.Sign(signingHash)
-	return
+// Complete computes the signing hash, signs the record, and returns a pointer to completed record on success.
+// It must be supplied with an Owner containing a full private key as well as public information.
+func (rb *RecordBuilder) Complete(owner *Owner) (*Record, error) {
+	signingHasher := sha512.New384()
+	signingHasher.Write(rb.workHash)
+	signingHasher.Write(rb.record.Work)
+	signingHasher.Write([]byte{rb.record.WorkAlgorithm})
+	var signingHash [48]byte
+	signingHasher.Sum(signingHash[:0])
+	var err error
+	rb.record.Signature, err = owner.Sign(signingHash[:])
+	if err != nil {
+		return nil, err
+	}
+	return rb.record, nil
 }
 
 // NewRecord is a shortcut to running all incremental record creation functions.
-// Obviously this is time and memory intensive due to proof of work required to "pay" for this record.
-func NewRecord(recordType byte, value []byte, links [][32]byte, maskingKey []byte, plainTextSelectorNames [][]byte, plainTextSelectorOrdinals []uint64, certificateRecordHash []byte, ts uint64, workFunction *Wharrgarblr, owner *Owner) (r *Record, err error) {
-	var wh, sh [48]byte
-	var wb uint
-	r, wh, wb, err = NewRecordStart(recordType, value, links, maskingKey, plainTextSelectorNames, plainTextSelectorOrdinals, owner.Public, certificateRecordHash, ts)
+func NewRecord(recordType byte, value []byte, links [][32]byte, maskingKey []byte, selectorNames [][]byte, selectorOrdinals []uint64, authSignature []byte, timestamp uint64, workFunction *Wharrgarblr, owner *Owner) (*Record, error) {
+	var rb RecordBuilder
+	err := rb.Start(recordType, value, links, maskingKey, selectorNames, selectorOrdinals, owner.Public, authSignature, timestamp)
 	if err != nil {
-		return
+		return nil, err
 	}
-	w, err := NewRecordDoWork(wh[:], wb, workFunction)
+	err = rb.AddWork(workFunction)
 	if err != nil {
-		return
+		return nil, err
 	}
-	workAlgorithm := RecordWorkAlgorithmNone
-	if workFunction != nil {
-		workAlgorithm = RecordWorkAlgorithmWharrgarbl
-	}
-	r, sh, err = NewRecordAddWork(r, wh[:], w, workAlgorithm)
-	if err != nil {
-		return
-	}
-	r, err = NewRecordComplete(r, sh[:], owner)
-	return
-}
-
-// NewRecordFromBytes deserializes a record from a byte array.
-func NewRecordFromBytes(b []byte) (r *Record, err error) {
-	r = new(Record)
-	err = r.UnmarshalFrom(bytes.NewReader(b))
-	return
+	return rb.Complete(owner)
 }

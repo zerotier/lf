@@ -30,8 +30,6 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	secrand "crypto/rand"
-	"crypto/sha256"
-	"crypto/sha512"
 	"encoding/binary"
 	"encoding/json"
 	"io"
@@ -127,15 +125,6 @@ var secureRandom = func() *paranoidSecureRandom {
 	r.cipher = cipher.NewCFBEncrypter(c, cipherKey[16:32])
 	return &r
 }()
-
-func shasha256(in []byte) (hb [32]byte) {
-	h256 := sha256.New()
-	h256.Write(in)
-	h512 := sha512.Sum512(in)
-	h256.Write(h512[:])
-	h256.Sum(hb[:0])
-	return
-}
 
 var jsonPrettyOptions = pretty.Options{
 	Width:    2147483647, // always put arrays on one line

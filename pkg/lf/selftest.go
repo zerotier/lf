@@ -131,7 +131,7 @@ func TestCore(out io.Writer) bool {
 
 	fmt.Fprintf(out, "Testing deterministic owner generation from seed... p384 ")
 	op384, _ := NewOwnerFromSeed(OwnerTypeNistP384, []byte("lol"))
-	if hex.EncodeToString(op384.Public) != "e0f45357cb01da5c242de114b0850fc07f84dcbd4436e3e9" {
+	if hex.EncodeToString(op384.Public) != "ce7c9b30790dc6e0fb39d235a2c2351a618f1602eecd7c58" {
 		fmt.Fprintf(out, "FAILED %x\n", op384.Public)
 		return false
 	}
@@ -147,7 +147,7 @@ func TestCore(out io.Writer) bool {
 	}
 	fmt.Fprint(out, "p224 ")
 	op224, _ := NewOwnerFromSeed(OwnerTypeNistP224, []byte("lol"))
-	if hex.EncodeToString(op224.Public) != "b02cb7b72405ba4a70bce58dd40a" {
+	if hex.EncodeToString(op224.Public) != "806c27580270ced2f4eadc1d8fa1" {
 		fmt.Fprintf(out, "FAILED %x\n", op224.Public)
 		return false
 	}
