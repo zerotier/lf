@@ -70,7 +70,7 @@ type APIError struct {
 // Error implements the error interface, making APIError an 'error' in the Go sense.
 func (e APIError) Error() string {
 	if len(e.Message) > 0 {
-		return fmt.Sprintf("%d (%s)", e.Code, e.Message)
+		return fmt.Sprintf("[%d] %s", e.Code, e.Message)
 	}
 	return strconv.FormatInt(int64(e.Code), 10)
 }
@@ -325,7 +325,7 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 			if apiReadObj(out, req, &m) == nil {
 				results, err := m.Execute(n)
 				if err != nil {
-					apiSendObj(out, req, err.Code, err)
+					apiSendObj(out, req, http.StatusBadRequest, &APIError{Code: http.StatusBadRequest, Message: "query failed: " + err.Error()})
 				} else {
 					apiSendObj(out, req, http.StatusOK, results)
 				}

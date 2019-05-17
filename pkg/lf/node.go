@@ -74,7 +74,7 @@ const (
 	p2pProtoMaxRetries = 256
 
 	// p2pDesiredConnectionCount is how many P2P TCP connections we want to have open
-	p2pDesiredConnectionCount = 64
+	p2pDesiredConnectionCount = 32
 
 	// Delete peers that haven't been used in this long.
 	p2pPeerExpiration = 432000000 // 5 days

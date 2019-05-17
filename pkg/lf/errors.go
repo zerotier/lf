@@ -62,20 +62,22 @@ func (e ErrDatabase) Error() string {
 
 // General errors
 const (
-	ErrInvalidPublicKey   Err = "invalid public key"
-	ErrInvalidPrivateKey  Err = "invalid private key"
-	ErrInvalidParameter   Err = "invalid parameter"
-	ErrInvalidObject      Err = "invalid object"
-	ErrUnsupportedType    Err = "unsupported type"
-	ErrUnsupportedCurve   Err = "unsupported ECC curve (for this purpose)"
-	ErrOutOfRange         Err = "parameter out of range"
-	ErrWharrgarblFailed   Err = "Wharrgarbl proof of work algorithm failed (out of memory?)"
-	ErrIO                 Err = "I/O error"
-	ErrIncorrectKey       Err = "incorrect key"
-	ErrAlreadyConnected   Err = "already connected"
-	ErrDuplicateRecord    Err = "duplicate record"
-	ErrPrivateKeyRequired Err = "private key required"
-	ErrInvalidMessageSize Err = "message size invalid"
+	ErrInvalidPublicKey       Err = "invalid public key"
+	ErrInvalidPrivateKey      Err = "invalid private key"
+	ErrInvalidParameter       Err = "invalid parameter"
+	ErrInvalidObject          Err = "invalid object"
+	ErrUnsupportedType        Err = "unsupported type"
+	ErrUnsupportedCurve       Err = "unsupported ECC curve (for this purpose)"
+	ErrOutOfRange             Err = "parameter out of range"
+	ErrWharrgarblFailed       Err = "Wharrgarbl proof of work algorithm failed (out of memory?)"
+	ErrIO                     Err = "I/O error"
+	ErrIncorrectKey           Err = "incorrect key"
+	ErrAlreadyConnected       Err = "already connected"
+	ErrDuplicateRecord        Err = "duplicate record"
+	ErrPrivateKeyRequired     Err = "private key required"
+	ErrInvalidMessageSize     Err = "message size invalid"
+	ErrQueryRequiresSelectors Err = "query requires at least one selector"
+	ErrQueryInvalidSortOrder  Err = "invalid sort order value"
 )
 
 // Errs indicating that a record is invalid

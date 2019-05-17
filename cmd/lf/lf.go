@@ -420,7 +420,7 @@ func doGet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool
 		tr[1] = parseCLITime(*tEnd)
 	}
 
-	var ranges []lf.APIQueryRange
+	var ranges []lf.QueryRange
 	var selectorNames []string
 	for i := 0; i < len(args); i++ {
 		var unesc string
@@ -431,18 +431,18 @@ func doGet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool
 				mk = []byte(tord[0])
 			}
 			if len(tord) == 1 {
-				ranges = append(ranges, lf.APIQueryRange{KeyRange: []lf.Blob{lf.MakeSelectorKey([]byte(tord[0]), 0)}})
+				ranges = append(ranges, lf.QueryRange{KeyRange: []lf.Blob{lf.MakeSelectorKey([]byte(tord[0]), 0)}})
 			} else if len(tord) == 2 {
 				if len(tord[1]) == 0 {
-					ranges = append(ranges, lf.APIQueryRange{KeyRange: []lf.Blob{lf.MakeSelectorKey([]byte(tord[0]), 0), lf.MakeSelectorKey([]byte(tord[0]), 0xffffffffffffffff)}})
+					ranges = append(ranges, lf.QueryRange{KeyRange: []lf.Blob{lf.MakeSelectorKey([]byte(tord[0]), 0), lf.MakeSelectorKey([]byte(tord[0]), 0xffffffffffffffff)}})
 				} else {
 					ord0, _ := strconv.ParseUint(tord[1], 10, 64)
-					ranges = append(ranges, lf.APIQueryRange{KeyRange: []lf.Blob{lf.MakeSelectorKey([]byte(tord[0]), ord0)}})
+					ranges = append(ranges, lf.QueryRange{KeyRange: []lf.Blob{lf.MakeSelectorKey([]byte(tord[0]), ord0)}})
 				}
 			} else if len(tord) == 3 {
 				ord0, _ := strconv.ParseUint(tord[1], 10, 64)
 				ord1, _ := strconv.ParseUint(tord[2], 10, 64)
-				ranges = append(ranges, lf.APIQueryRange{KeyRange: []lf.Blob{
+				ranges = append(ranges, lf.QueryRange{KeyRange: []lf.Blob{
 					lf.MakeSelectorKey([]byte(tord[0]), ord0),
 					lf.MakeSelectorKey([]byte(tord[0]), ord1),
 				}})
@@ -454,7 +454,7 @@ func doGet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool
 		}
 	}
 
-	req := &lf.APIQuery{
+	req := &lf.Query{
 		Range:     ranges,
 		TimeRange: tr,
 	}
@@ -462,9 +462,9 @@ func doGet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool
 		req.Limit = &one
 	}
 
-	var results lf.APIQueryResults
+	var results lf.QueryResults
 	for _, u := range urls {
-		results, err = req.Run(u)
+		results, err = req.ExecuteRemote(u)
 		if err == nil {
 			break
 		}

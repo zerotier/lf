@@ -29,7 +29,6 @@ package lf
 import (
 	"bytes"
 	"encoding/json"
-	"net/http"
 	"sort"
 	"strings"
 )
@@ -46,20 +45,6 @@ const (
 )
 
 const trustSigDigits float64 = 10000000000.0 // rounding precision for comparing trust values and considering them "equal"
-
-func sliceU32Less(a, b []uint32) bool {
-	if len(a) == len(b) {
-		for i := 0; i < len(a); i++ {
-			if a[i] < b[i] {
-				return true
-			} else if a[i] > b[i] {
-				return false
-			}
-		}
-		return false
-	}
-	return len(a) < len(b)
-}
 
 // QueryRange (request, part of Query) specifies a selector or selector range.
 // Selector ranges can be specified in one of two ways. If KeyRange is non-empty it contains a single
@@ -82,14 +67,42 @@ type Query struct {
 	Limit      *int         `json:",omitempty"` // If non-zero, limit maximum lower trust records per result
 }
 
-// QueryResult (response, part of QueryResults) is a single query result.
+// QueryResultWeight is a 128-bit value broken into four 32-bit valu
+type QueryResultWeight [4]uint32
+
+// Compare returns -1, 0, or 1 depending on whether b is less than, equal to, or greater than a.
+func (a *QueryResultWeight) Compare(b *QueryResultWeight) int {
+	if a[0] < b[0] {
+		return -1
+	} else if a[0] > b[0] {
+		return 1
+	}
+	if a[1] < b[1] {
+		return -1
+	} else if a[1] > b[1] {
+		return 1
+	}
+	if a[2] < b[2] {
+		return -1
+	} else if a[2] > b[2] {
+		return 1
+	}
+	if a[3] < b[3] {
+		return -1
+	} else if a[3] > b[3] {
+		return 1
+	}
+	return 0
+}
+
+// QueryResult is a single query result.
 type QueryResult struct {
-	Hash   HashBlob  ``                  // Hash of this specific unique record
-	Size   int       ``                  // Size of this record in bytes
-	Record *Record   `json:",omitempty"` // Record itself.
-	Value  Blob      `json:",omitempty"` // Unmasked value if masking key was included and valid
-	Trust  float64   ``                  // Locally computed trust metric
-	Weight [4]uint32 `json:",omitempty"` // Record weight as a 128-bit big-endian value decomposed into 4 32-bit integers
+	Hash   HashBlob          ``                  // Hash of this specific unique record
+	Size   int               ``                  // Size of this record in bytes
+	Record *Record           `json:",omitempty"` // Record itself.
+	Value  Blob              `json:",omitempty"` // Unmasked value if masking key was included and valid
+	Trust  float64           ``                  // Locally computed trust metric
+	Weight QueryResultWeight `json:",omitempty"` // Record weight as a 128-bit big-endian value decomposed into 4 32-bit integers
 }
 
 // QueryResults is a list of results to a query.
@@ -98,8 +111,8 @@ type QueryResult struct {
 // zero records, though remote code should check to prevent exceptions.
 type QueryResults [][]QueryResult
 
-// Run executes this query against a remote LF node instance.
-func (m *Query) Run(url string) (QueryResults, error) {
+// ExecuteRemote executes this query against a remote LF node instance.
+func (m *Query) ExecuteRemote(url string) (QueryResults, error) {
 	if strings.HasSuffix(url, "/") {
 		url = url + "query"
 	} else {
@@ -122,11 +135,11 @@ type apiQueryResultTmp struct {
 }
 
 // Execute executes this query against a local Node instance.
-func (m *Query) Execute(n *Node) (qr QueryResults, err *APIError) {
+func (m *Query) Execute(n *Node) (qr QueryResults, err error) {
 	// Set up selector ranges using sender-supplied or computed selector keys.
 	mm := m.Range
 	if len(mm) == 0 {
-		return nil, &APIError{http.StatusBadRequest, "a query requires at least one selector"}
+		return nil, ErrQueryRequiresSelectors
 	}
 	maskingKey := m.MaskingKey
 	var selectorRanges [][2][]byte
@@ -155,6 +168,9 @@ func (m *Query) Execute(n *Node) (qr QueryResults, err *APIError) {
 				selectorRanges = append(selectorRanges, [2][]byte{mm[i].KeyRange[0], mm[i].KeyRange[1]})
 			}
 		}
+	}
+	if len(selectorRanges) == 0 {
+		return nil, ErrQueryRequiresSelectors
 	}
 
 	// Get query timestamp range (or use min..max)
@@ -187,11 +203,11 @@ func (m *Query) Execute(n *Node) (qr QueryResults, err *APIError) {
 			result := &(*rptr)[rn]
 			rdata, err := n.db.getDataByOffset(result.doff, uint(result.dlen), nil)
 			if err != nil {
-				return nil, &APIError{http.StatusInternalServerError, "error retrieving record data: " + err.Error()}
+				return nil, err
 			}
 			rec, err := NewRecordFromBytes(rdata)
 			if err != nil {
-				return nil, &APIError{http.StatusInternalServerError, "error retrieving record data: " + err.Error()}
+				return nil, err
 			}
 
 			v, err := rec.GetValue(maskingKey)
@@ -239,20 +255,20 @@ func (m *Query) Execute(n *Node) (qr QueryResults, err *APIError) {
 				if qrr[a].Trust < qrr[b].Trust {
 					return true
 				} else if uint64(qrr[a].Trust*trustSigDigits) == uint64(qrr[b].Trust*trustSigDigits) {
-					return sliceU32Less(qrr[a].Weight[:], qrr[b].Weight[:])
+					return qrr[a].Weight.Compare(&qrr[b].Weight) < 0
 				}
 				return false
 			})
 		} else if m.SortOrder == QuerySortOrderWeight {
 			sort.Slice(qrr, func(b, a int) bool {
-				return sliceU32Less(qrr[a].Weight[:], qrr[b].Weight[:])
+				return qrr[a].Weight.Compare(&qrr[b].Weight) < 0
 			})
 		} else if m.SortOrder == QuerySortOrderTimestamp {
 			sort.Slice(qrr, func(b, a int) bool {
 				return qrr[a].Record.Timestamp < qrr[b].Record.Timestamp
 			})
 		} else {
-			return nil, &APIError{http.StatusBadRequest, "valid sort order values: trust (default), weight, timestamp"}
+			return nil, ErrQueryInvalidSortOrder
 		}
 		if m.Limit != nil && *m.Limit > 0 && len(qrr) > *m.Limit {
 			qr[qri] = qrr[0:*m.Limit]
