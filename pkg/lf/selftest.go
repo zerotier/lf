@@ -174,7 +174,6 @@ func TestCore(out io.Writer) bool {
 	rand.Read(rk[:])
 	for k := 0; k < 128; k++ {
 		binary.LittleEndian.PutUint16(rk[:], uint16(k))
-
 		orda.Set(0, rk[:])
 		ordb.Set(0xffffffffffffffff, rk[:])
 		ocount += 2.0
@@ -187,7 +186,6 @@ func TestCore(out io.Writer) bool {
 		for i := 0; i < 8; i++ {
 			orda.Set(rn, rk[:])
 			ordb.Set(rn+1, rk[:])
-			//fmt.Printf("%x %.16x %x %.16x\n", orda, rn, ordb, rn+1)
 			ocount += 2.0
 			if bytes.Compare(orda[:], ordb[:]) >= 0 {
 				fmt.Fprintf(out, "FAILED (ordinal A must be less than ordinal B (%.16x))\n", rn)
@@ -200,6 +198,17 @@ func TestCore(out io.Writer) bool {
 		}
 	}
 	oend := time.Now()
+	for k := 0; k < 128; k++ {
+		rn := rand.Uint64()
+		binary.LittleEndian.PutUint16(rk[:], uint16(k))
+		binary.LittleEndian.PutUint32(rk[4:], uint32(rn))
+		orda.Set(rn, rk[:])
+		if orda.Get(rk[:]) != rn {
+			fmt.Printf("\n%x %.16x %.16x\n", orda, rn, orda.Get(rk[:]))
+			fmt.Fprintf(out, "FAILED (Get() failed to decrypt ordinal)\n")
+			return false
+		}
+	}
 	fmt.Fprintf(out, "OK (%f ms/ordinal)\n", (oend.Sub(ostart).Seconds()*1000.0)/ocount)
 
 	fmt.Fprintf(out, "Testing Selector... ")

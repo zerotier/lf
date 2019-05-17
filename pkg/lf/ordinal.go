@@ -32,6 +32,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"runtime"
+	"sort"
 	"sync"
 )
 
@@ -95,6 +96,64 @@ var ordinalAlphabetPool = sync.Pool{
 	},
 }
 
+func ordinal32to16(valueMaskedToColumn uint64, columnValue uint32, kk int, keyHash *[64]byte) uint {
+	var rnb [16]byte
+	c, _ := aes.NewCipher(keyHash[16*kk : 16*(kk+1)])
+
+	alphabet := ordinalAlphabetPool.Get().([]uint32)
+	_ = alphabet[16383]
+
+	for {
+	StartOver:
+		for {
+			c.Encrypt(rnb[:], rnb[:])
+			rangeSize := uint32(0xffffffff / 16384)
+			last := binary.LittleEndian.Uint32(rnb[:]) % rangeSize
+			alphabet[0] = last
+			for i := 1; i < 16384; i++ {
+				rni := i & 3
+				if rni == 0 {
+					c.Encrypt(rnb[:], rnb[:])
+				}
+				rangeSize = ^last / uint32(16384-i)
+				if rangeSize == 0 {
+					continue StartOver
+				}
+				last = (binary.LittleEndian.Uint32(rnb[rni<<2:]) % rangeSize) + last + 1
+				alphabet[i] = last
+			}
+			break
+		}
+
+		for i := 1; i < 16384; i++ {
+			ai := alphabet[i]
+			diff := ai - alphabet[i-1]
+			if diff < 16 || diff > ai {
+				alphabet[i] += 0x00000010
+			}
+		}
+
+		if alphabet[16383] > alphabet[0] {
+			base := sort.Search(16384, func(a int) bool { return alphabet[a] >= columnValue })
+			if base > 0 {
+				base--
+			}
+
+			rv := alphabet[base]
+			var rvRangePerStep uint32
+			if base == 16383 {
+				rvRangePerStep = ^rv
+			} else {
+				rvRangePerStep = alphabet[base+1] - rv
+			}
+			rvRangePerStep >>= 2 // /4
+
+			ordinalAlphabetPool.Put(alphabet)
+			return uint(base<<2) + uint((columnValue-rv)/rvRangePerStep)
+		}
+	}
+}
+
 func ordinal16to32(wg *sync.WaitGroup, valueMaskedToColumn uint64, columnValue uint, kk int, keyHash *[64]byte, result *[4]uint32) {
 	var rnb [16]byte
 	c, _ := aes.NewCipher(keyHash[16*kk : 16*(kk+1)])
@@ -154,12 +213,11 @@ func ordinal16to32(wg *sync.WaitGroup, valueMaskedToColumn uint64, columnValue u
 			rv += binary.LittleEndian.Uint32(rnb[:]) % rvRangePerStep
 
 			result[kk] = rv
-			ordinalAlphabetPool.Put(alphabet)
 
+			ordinalAlphabetPool.Put(alphabet)
 			if wg != nil {
 				wg.Done()
 			}
-
 			return
 		}
 	}
@@ -199,4 +257,15 @@ func (b *Ordinal) Set(value uint64, key []byte) {
 	binary.BigEndian.PutUint32(b[4:8], result[1])
 	binary.BigEndian.PutUint32(b[8:12], result[2])
 	binary.BigEndian.PutUint32(b[12:16], result[3])
+}
+
+// Get reverses Set and returns the original 64-bit ordinal.
+func (b *Ordinal) Get(key []byte) (v uint64) {
+	// This one can't be parallelized since each computation depends on the previous one.
+	keyHash := sha512.Sum512(key)
+	v = uint64(ordinal32to16(0, binary.BigEndian.Uint32(b[0:4]), 0, &keyHash)) << 48
+	v |= uint64(ordinal32to16(v, binary.BigEndian.Uint32(b[4:8]), 1, &keyHash)) << 32
+	v |= uint64(ordinal32to16(v, binary.BigEndian.Uint32(b[8:12]), 2, &keyHash)) << 16
+	v |= uint64(ordinal32to16(v, binary.BigEndian.Uint32(b[12:16]), 3, &keyHash))
+	return
 }
