@@ -89,84 +89,49 @@ func (b *Ordinal) UnmarshalJSON(j []byte) error {
 	return nil
 }
 
-var ordinalParallelQuicksortThreshold = func() int {
-	nc := runtime.NumCPU()
-	if nc <= 2 {
-		return 1048576 // no sort parallelism
-	}
-	if nc >= 8 {
-		return 1024
-	}
-	return 16384 / (nc * 2)
-}()
-
 var ordinalAlphabetPool = sync.Pool{
 	New: func() interface{} {
-		return make([]uint32, 16384)
+		return make([]uint32, 16384, 16384)
 	},
 }
 
-func ordinalParallelQuicksort(a []uint32, wg *sync.WaitGroup, par bool) {
-	left, right := 0, len(a)-1
-	a[1], a[right] = a[right], a[1]
-	for i, ai := range a {
-		if ai < a[right] {
-			a[left], a[i] = ai, a[left]
-			left++
-		}
-	}
-	a[left], a[right] = a[right], a[left]
-
-	if left >= 2 {
-		if left >= ordinalParallelQuicksortThreshold {
-			wg.Add(1)
-			go ordinalParallelQuicksort(a[:left], wg, true)
-		} else {
-			ordinalParallelQuicksort(a[:left], wg, false)
-		}
-	}
-
-	a = a[left+1:]
-	if len(a) >= 2 {
-		if len(a) >= ordinalParallelQuicksortThreshold {
-			wg.Add(1)
-			go ordinalParallelQuicksort(a, wg, true)
-		} else {
-			ordinalParallelQuicksort(a, wg, false)
-		}
-	}
-
-	if par {
-		wg.Done()
-	}
-}
-
 func ordinal16to32(wg *sync.WaitGroup, valueMaskedToColumn uint64, columnValue uint, kk int, keyHash *[64]byte, result *[4]uint32) {
-	var aesTmp [16]byte
+	var rnb [16]byte
+	c, _ := aes.NewCipher(keyHash[16*kk : 16*(kk+1)])
+
 	alphabet := ordinalAlphabetPool.Get().([]uint32)
 	_ = alphabet[16383]
 
-	c, _ := aes.NewCipher(keyHash[16*kk : 16*(kk+1)])
-
 	for {
-		for i := 0; i < 16384; {
-			c.Encrypt(aesTmp[:], aesTmp[:])
-			alphabet[i] = binary.LittleEndian.Uint32(aesTmp[0:4]) & 0xfffffff0
-			i++
-			alphabet[i] = binary.LittleEndian.Uint32(aesTmp[4:8]) & 0xfffffff0
-			i++
-			alphabet[i] = binary.LittleEndian.Uint32(aesTmp[8:12]) & 0xfffffff0
-			i++
-			alphabet[i] = binary.LittleEndian.Uint32(aesTmp[12:16]) & 0xfffffff0
-			i++
+		// This generates random numbers in ascending order. It generates a
+		// somewhat skewed distribution, but we don't really care. It's
+		// good enough for this use case.
+	StartOver:
+		for {
+			c.Encrypt(rnb[:], rnb[:])
+			rangeSize := uint32(0xffffffff / 16384)
+			last := binary.LittleEndian.Uint32(rnb[:]) % rangeSize
+			alphabet[0] = last
+			for i := 1; i < 16384; i++ {
+				rni := i & 3
+				if rni == 0 {
+					c.Encrypt(rnb[:], rnb[:])
+				}
+				rangeSize = ^last / uint32(16384-i)
+				if rangeSize == 0 {
+					continue StartOver
+				}
+				last = (binary.LittleEndian.Uint32(rnb[rni<<2:]) % rangeSize) + last + 1
+				alphabet[i] = last
+			}
+			break
 		}
 
-		var sortWG sync.WaitGroup
-		ordinalParallelQuicksort(alphabet, &sortWG, false)
-		sortWG.Wait()
-
+		// Make sure all values have a gap of at least 16.
 		for i := 1; i < 16384; i++ {
-			if alphabet[i] <= alphabet[i-1] {
+			ai := alphabet[i]
+			diff := ai - alphabet[i-1]
+			if diff < 16 || diff > ai {
 				alphabet[i] += 0x00000010
 			}
 		}
@@ -181,12 +146,12 @@ func ordinal16to32(wg *sync.WaitGroup, valueMaskedToColumn uint64, columnValue u
 			} else {
 				rvRangePerStep = alphabet[base+1] - rv
 			}
-			rvRangePerStep /= 4
+			rvRangePerStep >>= 2 // /4
 
 			rv += rvRangePerStep * uint32(columnValue&3)
-			binary.LittleEndian.PutUint64(aesTmp[0:8], valueMaskedToColumn)
-			c.Encrypt(aesTmp[:], aesTmp[:])
-			rv += binary.LittleEndian.Uint32(aesTmp[0:4]) % rvRangePerStep
+			binary.LittleEndian.PutUint64(rnb[0:8], valueMaskedToColumn)
+			c.Encrypt(rnb[:], rnb[:])
+			rv += binary.LittleEndian.Uint32(rnb[:]) % rvRangePerStep
 
 			result[kk] = rv
 			ordinalAlphabetPool.Put(alphabet)
@@ -200,7 +165,7 @@ func ordinal16to32(wg *sync.WaitGroup, valueMaskedToColumn uint64, columnValue u
 	}
 }
 
-// Set sets this ordinal to a sortable masked value that hides the original value using an order preserving keyed hash.
+// Set sets this ordinal to a sortable masked value that hides the original value (somewhat).
 func (b *Ordinal) Set(value uint64, key []byte) {
 	var result [4]uint32
 

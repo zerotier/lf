@@ -61,6 +61,7 @@ func sliceContainsUInt(s []uint, e uint) bool {
 
 // TestCore tests various core functions and helpers.
 func TestCore(out io.Writer) bool {
+	rand.Seed(time.Now().UnixNano())
 	testStr := []byte("My hovercraft is full of eels.") // input for hash tests
 
 	// This checks to make sure the Sum method of hashes fills arrays as expected.
@@ -119,7 +120,7 @@ func TestCore(out io.Writer) bool {
 
 	fmt.Fprintf(out, "Testing deterministic owner generation from seed... p384 ")
 	op384, _ := NewOwnerFromSeed(OwnerTypeNistP384, []byte("lol"))
-	if hex.EncodeToString(op384.Public) != "ce7c9b30790dc6e0fb39d235a2c2351a618f1602eecd7c58" {
+	if hex.EncodeToString(op384.Public) != "27691ad48a4a20ad0417b307bb9ac731d6237ea94e8fc783" {
 		fmt.Fprintf(out, "FAILED %x\n", op384.Public)
 		return false
 	}
@@ -135,7 +136,7 @@ func TestCore(out io.Writer) bool {
 	}
 	fmt.Fprint(out, "p224 ")
 	op224, _ := NewOwnerFromSeed(OwnerTypeNistP224, []byte("lol"))
-	if hex.EncodeToString(op224.Public) != "806c27580270ced2f4eadc1d8fa1" {
+	if hex.EncodeToString(op224.Public) != "ac946de2f947da9533b979d7fb7f" {
 		fmt.Fprintf(out, "FAILED %x\n", op224.Public)
 		return false
 	}
@@ -150,7 +151,7 @@ func TestCore(out io.Writer) bool {
 	}
 	fmt.Fprint(out, "ed25519 ")
 	o25519, _ := NewOwnerFromSeed(OwnerTypeEd25519, []byte("lol"))
-	if hex.EncodeToString(o25519.Public) != "89b0370fcff9ad3e4367746a98902b024ad6e253f92ae88b0b9bd7e164600441" {
+	if hex.EncodeToString(o25519.Public) != "c289a225c996df1998b7aa0e4af9f1142a81d5ab8c55484dadbac7b48baefc8e" {
 		fmt.Fprintf(out, "FAILED %x\n", o25519.Public)
 		return false
 	}
@@ -171,7 +172,7 @@ func TestCore(out io.Writer) bool {
 	var ocount float64
 	ostart := time.Now()
 	rand.Read(rk[:])
-	for k := 0; k < 64; k++ {
+	for k := 0; k < 128; k++ {
 		binary.LittleEndian.PutUint16(rk[:], uint16(k))
 
 		orda.Set(0, rk[:])
@@ -186,6 +187,7 @@ func TestCore(out io.Writer) bool {
 		for i := 0; i < 8; i++ {
 			orda.Set(rn, rk[:])
 			ordb.Set(rn+1, rk[:])
+			//fmt.Printf("%x %.16x %x %.16x\n", orda, rn, ordb, rn+1)
 			ocount += 2.0
 			if bytes.Compare(orda[:], ordb[:]) >= 0 {
 				fmt.Fprintf(out, "FAILED (ordinal A must be less than ordinal B (%.16x))\n", rn)
