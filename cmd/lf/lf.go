@@ -71,16 +71,14 @@ import "C"
 var (
 	lfDefaultPath = func() string {
 		if os.Getuid() == 0 {
-			return "/var/lib/lf"
+			return "/var/lib/zerotier-lf"
 		}
 		h := os.Getenv("HOME")
 		if len(h) > 0 {
-			return path.Join(h, ".lf")
+			return path.Join(h, ".zerotier-lf")
 		}
-		return "./lf"
+		return "./lf" // fallback under weird conditions
 	}()
-
-	troo = true
 
 	lfDefaultP2PPortStr  = strconv.FormatUint(uint64(lf.DefaultP2PPort), 10)
 	lfDefaultHTTPPortStr = strconv.FormatUint(uint64(lf.DefaultHTTPPort), 10)
