@@ -630,6 +630,27 @@ func (n *Node) handleSynchronizedRecord(doff uint64, dlen uint, reputation int, 
 		if len(rdata) > 0 && err == nil {
 			r, err := NewRecordFromBytes(rdata)
 			if err == nil {
+				// Check to make sure this record only links to records that are older than it to within
+				// permitted fuzziness for network. (Only bother if reputation is above this threshold.)
+				if reputation > dbReputationTemporalViolation {
+					temporalViolation := false
+					for li := range r.Links {
+						ok, ts := n.db.getRecordTimestampByHash(r.Links[li][:])
+						if ok {
+							if ts > r.Timestamp && (ts-r.Timestamp) > uint64(n.genesisParameters.RecordMaxForwardTimeDrift) {
+								temporalViolation = true
+								break
+							}
+						}
+					}
+					if temporalViolation {
+						n.log[LogLevelVerbose].Printf("record %s reputation adjusted from %d to %d since it links to records newer than itself", r.HashString(), reputation, dbReputationTemporalViolation)
+						reputation = dbReputationTemporalViolation
+						rh := r.Hash()
+						n.db.updateRecordReputationByHash(rh[:], reputation)
+					}
+				}
+
 				// If this record's local reputation is bad, check and see if we have any good
 				// reputation local records with the same ID and another onwer. If so and if commenting
 				// is enabled, generate a comment record that we will publish under our owner.

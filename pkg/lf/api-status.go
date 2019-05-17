@@ -47,7 +47,7 @@ type APIStatusResult struct {
 	DBSize              uint64            ``                  // Total size of records in database in bytes
 	DBFullySynchronized bool              ``                  // True if there are no dangling links (excluding abandoned ones)
 	PeerCount           int               ``                  // Number of connected peers
-	GenesisParameters   GenesisParameters ``                  // Genesis record contents that define settings for this LF network
+	GenesisParameters   GenesisParameters ``                  // Network parameters
 	NodeWorkAuthorized  bool              ``                  // True if full node will do work for querying user/proxy
 }
 

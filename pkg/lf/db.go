@@ -193,8 +193,8 @@ func (db *db) getDataByHash(h []byte, buf []byte) (int, []byte, error) {
 		return 0, buf, ErrInvalidParameter
 	}
 
-	var doff uint64
-	dlen := int(C.ZTLF_DB_GetByHash(db.cdb, unsafe.Pointer(&(h[0])), (*C.uint64_t)(unsafe.Pointer(&doff))))
+	var doff, ts uint64
+	dlen := int(C.ZTLF_DB_GetByHash(db.cdb, unsafe.Pointer(&(h[0])), (*C.uint64_t)(unsafe.Pointer(&doff)), (*C.uint64_t)(unsafe.Pointer(&ts))))
 	if dlen == 0 {
 		return 0, buf, nil
 	}
@@ -225,11 +225,22 @@ func (db *db) getDataByOffset(doff uint64, dlen uint, buf []byte) ([]byte, error
 // hasRecord returns true if the record with the given hash exists (rejected table is not checked)
 func (db *db) hasRecord(h []byte) bool {
 	if len(h) == 32 {
-		var doff uint64
-		dlen := int(C.ZTLF_DB_GetByHash(db.cdb, unsafe.Pointer(&(h[0])), (*C.uint64_t)(unsafe.Pointer(&doff))))
+		var doff, ts uint64
+		dlen := int(C.ZTLF_DB_GetByHash(db.cdb, unsafe.Pointer(&(h[0])), (*C.uint64_t)(unsafe.Pointer(&doff)), (*C.uint64_t)(unsafe.Pointer(&ts))))
 		return dlen > 0
 	}
 	return false
+}
+
+// getRecordTimestampByHash returns whether or not the record exists and its timestamp in seconds since epoch.
+func (db *db) getRecordTimestampByHash(h []byte) (bool, uint64) {
+	if len(h) == 32 {
+		var doff, ts uint64
+		if C.ZTLF_DB_GetByHash(db.cdb, unsafe.Pointer(&(h[0])), (*C.uint64_t)(unsafe.Pointer(&doff)), (*C.uint64_t)(unsafe.Pointer(&ts))) > 0 {
+			return true, ts
+		}
+	}
+	return false, 0
 }
 
 // getLinks gets up to count 32-bit hashes of linkable records, returning the number actually retrieved.
@@ -256,6 +267,12 @@ func (db *db) getLinks2(count uint) (ll [][32]byte, err error) {
 		}
 	}
 	return
+}
+
+func (db *db) updateRecordReputationByHash(h []byte, reputation int) {
+	if len(h) == 32 {
+		C.ZTLF_DB_UpdateRecordReputationByHash(db.cdb, unsafe.Pointer(&h[0]), C.int(reputation))
+	}
 }
 
 // stats returns some basic statistics about this database.

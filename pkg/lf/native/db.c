@@ -320,6 +320,8 @@ int ZTLF_DB_Open(
 			"AND NOT EXISTS (SELECT gp.record_goff FROM graph_pending AS gp WHERE gp.record_goff = r2.goff)"
 		") "
 		"AND reputation > 0"); /* and that isn't already zero (prevents unnecessary writes? not sure if necessary) */
+	S(db->sUpdateRecordReputationByHash,
+		"UPDATE record SET reputation = ? WHERE hash = ?");
 	S(db->sGetLinkCandidates,
 		"SELECT r.hash FROM record AS r WHERE "
 		"r.reputation = " ZTLF_DB_REPUTATION_DEFAULT_S " " /* exclude collisions or otherwise wonky records */
@@ -327,7 +329,7 @@ int ZTLF_DB_Open(
 		"AND NOT EXISTS (SELECT gp.record_goff FROM graph_pending AS gp WHERE gp.record_goff = r.goff) "
 		"ORDER BY r.linked_count,RANDOM() LIMIT ?"); /* link preferentially to records that have fewer links to them */
 	S(db->sGetRecordByHash,
-		"SELECT doff,dlen FROM record WHERE hash = ?");
+		"SELECT doff,dlen,ts FROM record WHERE hash = ?");
 	S(db->sGetMaxRecordDoff,
 		"SELECT doff,dlen FROM record ORDER BY doff DESC LIMIT 1");
 	S(db->sGetMaxRecordGoff,
@@ -774,6 +776,7 @@ void ZTLF_DB_Close(struct ZTLF_DB *db)
 		if (db->sGetIDOwnerReputation)                sqlite3_finalize(db->sGetIDOwnerReputation);
 		if (db->sHaveRecordsWithIDNotOwner)           sqlite3_finalize(db->sHaveRecordsWithIDNotOwner);
 		if (db->sDemoteCollisions)                    sqlite3_finalize(db->sDemoteCollisions);
+		if (db->sUpdateRecordReputationByHash)        sqlite3_finalize(db->sUpdateRecordReputationByHash);
 		if (db->sGetLinkCandidates)                   sqlite3_finalize(db->sGetLinkCandidates);
 		if (db->sGetRecordByHash)                     sqlite3_finalize(db->sGetRecordByHash);
 		if (db->sGetMaxRecordDoff)                    sqlite3_finalize(db->sGetMaxRecordDoff);
@@ -833,7 +836,7 @@ struct _ZTLF_DB_GetMatching_follow
 	struct _ZTLF_DB_GetMatching_follow *next;
 };
 
-unsigned int ZTLF_DB_GetByHash(struct ZTLF_DB *db,const void *hash,uint64_t *doff)
+unsigned int ZTLF_DB_GetByHash(struct ZTLF_DB *db,const void *hash,uint64_t *doff,uint64_t *ts)
 {
 	unsigned int dlen = 0;
 	pthread_mutex_lock(&db->dbLock);
@@ -842,6 +845,7 @@ unsigned int ZTLF_DB_GetByHash(struct ZTLF_DB *db,const void *hash,uint64_t *dof
 	if (sqlite3_step(db->sGetRecordByHash) == SQLITE_ROW) {
 		*doff = (uint64_t)sqlite3_column_int64(db->sGetRecordByHash,0);
 		dlen = (unsigned int)sqlite3_column_int(db->sGetRecordByHash,1);
+		*ts = (uint64_t)sqlite3_column_int64(db->sGetRecordByHash,2);
 	}
 	pthread_mutex_unlock(&db->dbLock);
 	return dlen;
@@ -862,6 +866,16 @@ unsigned int ZTLF_DB_GetLinks(struct ZTLF_DB *db,void *const lbuf,unsigned int c
 	}
 	pthread_mutex_unlock(&db->dbLock);
 	return lc;
+}
+
+void ZTLF_DB_UpdateRecordReputationByHash(struct ZTLF_DB *db,const void *const hash,const int reputation)
+{
+	pthread_mutex_lock(&db->dbLock);
+	sqlite3_reset(db->sUpdateRecordReputationByHash);
+	sqlite3_bind_int(db->sUpdateRecordReputationByHash,1,reputation);
+	sqlite3_bind_blob(db->sUpdateRecordReputationByHash,2,hash,32,SQLITE_STATIC);
+	sqlite3_step(db->sUpdateRecordReputationByHash);
+	pthread_mutex_unlock(&db->dbLock);
 }
 
 int ZTLF_DB_PutRecord(

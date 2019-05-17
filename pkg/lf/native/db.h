@@ -139,6 +139,7 @@ struct ZTLF_DB
 	sqlite3_stmt *sGetIDOwnerReputation;
 	sqlite3_stmt *sHaveRecordsWithIDNotOwner;
 	sqlite3_stmt *sDemoteCollisions;
+	sqlite3_stmt *sUpdateRecordReputationByHash;
 	sqlite3_stmt *sGetLinkCandidates;
 	sqlite3_stmt *sGetRecordByHash;
 	sqlite3_stmt *sGetMaxRecordDoff;
@@ -213,11 +214,14 @@ struct ZTLF_QueryResults *ZTLF_DB_Query(struct ZTLF_DB *db,const int64_t tsMin,c
 struct ZTLF_RecordList *ZTLF_DB_GetAllByOwner(struct ZTLF_DB *db,const void *owner,const unsigned int ownerLen);
 struct ZTLF_RecordList *ZTLF_DB_GetAllByIDNotOwner(struct ZTLF_DB *db,const void *id,const void *owner,const unsigned int ownerLen);
 
-/* Gets the data offset and data length of a record by its hash (returns length, sets doff). */
-unsigned int ZTLF_DB_GetByHash(struct ZTLF_DB *db,const void *hash,uint64_t *doff);
+/* Gets the data offset and data length of a record by its hash (returns length, sets doff and ts). */
+unsigned int ZTLF_DB_GetByHash(struct ZTLF_DB *db,const void *hash,uint64_t *doff,uint64_t *ts);
 
 /* Gets up to cnt hashes of records to which a new record should link, returning actual number of links written to lbuf. */
 unsigned int ZTLF_DB_GetLinks(struct ZTLF_DB *db,void *const lbuf,unsigned int cnt);
+
+/* This sets a record's reputation */
+void ZTLF_DB_UpdateRecordReputationByHash(struct ZTLF_DB *db,const void *const hash,const int reputation);
 
 /* Fill result pointer arguments with statistics about this database. */
 void ZTLF_DB_Stats(struct ZTLF_DB *db,uint64_t *recordCount,uint64_t *dataSize);
