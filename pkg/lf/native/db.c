@@ -183,7 +183,7 @@ static void *_ZTLF_DB_graphThreadMain(void *arg);
 "CREATE TABLE IF NOT EXISTS graph_pending (" \
 "record_goff INTEGER PRIMARY KEY NOT NULL," \
 "hole_count INTEGER NOT NULL" \
-");\n" \
+") WITHOUT ROWID;\n" \
 \
 "CREATE TABLE IF NOT EXISTS wanted (" \
 "hash BLOB PRIMARY KEY NOT NULL," \
