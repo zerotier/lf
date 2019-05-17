@@ -51,6 +51,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode"
 
 	"../../pkg/lf"
 )
@@ -385,6 +386,7 @@ func doGet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool
 	tStart := getOpts.String("tstart", "", "")
 	tEnd := getOpts.String("tend", "", "")
 	urlOverride := getOpts.String("url", "", "")
+	json2 := getOpts.Bool("json", jsonOutput, "") // allow -json after get for convenience
 	getOpts.SetOutput(ioutil.Discard)
 	err := getOpts.Parse(args)
 	if err != nil {
@@ -396,6 +398,7 @@ func doGet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool
 		printHelp("")
 		return
 	}
+	jsonOutput = *json2
 
 	var mk []byte
 	if len(*maskKey) > 0 {
@@ -491,22 +494,52 @@ func doGet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool
 			fmt.Println("[]")
 		}
 	} else {
+		maxStrLen := 2
+		resultStrings := make([]string, 0, len(results))
+		resultStringLengths := make([]int, 0, len(results))
+
 		for _, ress := range results {
 			if len(ress) > 0 {
 				res := &ress[0]
 				if len(res.Value) > 0 {
-					jstr, _ := json.Marshal(string(res.Value)) // use JSON's string escaping
-					fmt.Print(string(jstr[1 : len(jstr)-1]))
+					rs := string(res.Value)
+					var sb strings.Builder
+					sl := 0
+					for _, c := range rs {
+						if unicode.IsPrint(c) {
+							sb.WriteRune(c)
+							sl++
+						}
+					}
+					rs = sb.String()
+					if sl > maxStrLen {
+						maxStrLen = sl
+					}
+					resultStrings = append(resultStrings, rs)
+					resultStringLengths = append(resultStringLengths, sl)
 				} else {
-					fmt.Print("-")
+					resultStrings = append(resultStrings, "-")
+					resultStringLengths = append(resultStringLengths, 1)
 				}
-				fmt.Print("\t=")
+			}
+		}
+
+		for ri, ress := range results {
+			if len(ress) > 0 {
+				res := &ress[0]
+				fmt.Print(resultStrings[ri])
+				for s := 0; s < maxStrLen-resultStringLengths[ri]; s++ {
+					fmt.Print(" ")
+				}
+				fmt.Print(" | ")
 				for i := range selectorNames {
-					fmt.Print("\t")
 					for si := range res.Record.Selectors {
 						sn := []byte(selectorNames[i])
 						if res.Record.SelectorIs(sn, si) {
 							fmt.Printf("%s#%d", selectorNames[i], res.Record.Selectors[si].Ordinal.Get(sn))
+							if i != len(selectorNames)-1 {
+								fmt.Print("\t")
+							}
 						}
 					}
 				}
