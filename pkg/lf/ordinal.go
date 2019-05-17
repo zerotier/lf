@@ -190,7 +190,11 @@ func ordinal16to32(wg *sync.WaitGroup, valueMaskedToColumn uint64, columnValue u
 
 			result[kk] = rv
 			ordinalAlphabetPool.Put(alphabet)
-			wg.Done()
+
+			if wg != nil {
+				wg.Done()
+			}
+
 			return
 		}
 	}
@@ -202,13 +206,29 @@ func (b *Ordinal) Set(value uint64, key []byte) {
 
 	keyHash := sha512.Sum512(key)
 
-	var wg sync.WaitGroup
-	wg.Add(4)
-	go ordinal16to32(&wg, 0, uint((value>>48)&0xffff), 0, &keyHash, &result)
-	go ordinal16to32(&wg, value&0xffff000000000000, uint((value>>32)&0xffff), 1, &keyHash, &result)
-	go ordinal16to32(&wg, value&0xffffffff00000000, uint((value>>16)&0xffff), 2, &keyHash, &result)
-	ordinal16to32(&wg, value&0xffffffffffff0000, uint(value&0xffff), 3, &keyHash, &result)
-	wg.Wait()
+	switch runtime.NumCPU() {
+	case 0, 1:
+		ordinal16to32(nil, 0, uint((value>>48)&0xffff), 0, &keyHash, &result)
+		ordinal16to32(nil, value&0xffff000000000000, uint((value>>32)&0xffff), 1, &keyHash, &result)
+		ordinal16to32(nil, value&0xffffffff00000000, uint((value>>16)&0xffff), 2, &keyHash, &result)
+		ordinal16to32(nil, value&0xffffffffffff0000, uint(value&0xffff), 3, &keyHash, &result)
+	case 2, 3:
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go ordinal16to32(&wg, 0, uint((value>>48)&0xffff), 0, &keyHash, &result)
+		ordinal16to32(nil, value&0xffff000000000000, uint((value>>32)&0xffff), 1, &keyHash, &result)
+		go ordinal16to32(&wg, value&0xffffffff00000000, uint((value>>16)&0xffff), 2, &keyHash, &result)
+		ordinal16to32(nil, value&0xffffffffffff0000, uint(value&0xffff), 3, &keyHash, &result)
+		wg.Wait()
+	default:
+		var wg sync.WaitGroup
+		wg.Add(3)
+		go ordinal16to32(&wg, 0, uint((value>>48)&0xffff), 0, &keyHash, &result)
+		go ordinal16to32(&wg, value&0xffff000000000000, uint((value>>32)&0xffff), 1, &keyHash, &result)
+		go ordinal16to32(&wg, value&0xffffffff00000000, uint((value>>16)&0xffff), 2, &keyHash, &result)
+		ordinal16to32(nil, value&0xffffffffffff0000, uint(value&0xffff), 3, &keyHash, &result)
+		wg.Wait()
+	}
 
 	binary.BigEndian.PutUint32(b[0:4], result[0])
 	binary.BigEndian.PutUint32(b[4:8], result[1])
