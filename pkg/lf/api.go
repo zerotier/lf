@@ -225,7 +225,6 @@ func APIStatusGet(url string) (*APIStatusResult, error) {
 
 //////////////////////////////////////////////////////////////////////////////
 
-// apiRun contains common code for the Run() methods of API request objects.
 func apiRun(url string, m interface{}) ([]byte, error) {
 	aq, err := json.Marshal(m)
 	if err != nil {
@@ -312,7 +311,6 @@ func apiIsTrusted(n *Node, req *http.Request) bool {
 	return net.ParseIP(ip).IsLoopback()
 }
 
-// apiCreateHTTPServeMux returns the HTTP ServeMux for LF's Node API
 func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 	smux := http.NewServeMux()
 

@@ -40,7 +40,7 @@ import (
 const OrdinalSize = 16
 
 // Ordinal is the sortable/comparable part of a selector.
-// It consists of a 64-bit integer masked using a simple order-preserving keyed hash.
+// It consists of a 64-bit integer masked using a simple order-preserving encryption algorithm.
 type Ordinal [16]byte
 
 // MarshalJSON returns this blob marshaled as a \bbase62-encoded string (like a non-UTF8 Blob).
@@ -261,7 +261,7 @@ func (b *Ordinal) Set(value uint64, key []byte) {
 
 // Get reverses Set and returns the original 64-bit ordinal.
 func (b *Ordinal) Get(key []byte) (v uint64) {
-	// This one can't be parallelized since each computation depends on the previous one.
+	// This one can't be parallelized since each word depends on the previous ones.
 	keyHash := sha512.Sum512(key)
 	v = uint64(ordinal32to16(0, binary.BigEndian.Uint32(b[0:4]), 0, &keyHash)) << 48
 	v |= uint64(ordinal32to16(v, binary.BigEndian.Uint32(b[4:8]), 1, &keyHash)) << 32
