@@ -52,7 +52,7 @@ var SolDefaultPeers = []APIPeer{
 	APIPeer{ // ZeroTier LF node in Helsinki, Finland
 		IP:       net.ParseIP("95.216.29.85"),
 		Port:     9908,
-		Identity: Base62Decode(""),
+		Identity: Base62Decode("HIEpUzI4pn89HHUsuz0hy2RhnNnSnOSAeN5upsmCIvyyj8ixuniiPKfnrMEISwpZa"),
 	},
 	APIPeer{ // ZeroTier LF node at our HQ in Los Angeles, California, USA
 		IP:       net.ParseIP("174.136.102.98"),

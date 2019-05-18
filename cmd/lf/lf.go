@@ -604,6 +604,8 @@ func doGet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool
 //////////////////////////////////////////////////////////////////////////////
 
 func doSet(cfg *lf.ClientConfig, basePath string, args []string) {
+	go lf.WharrgarblInitTable(path.Join(basePath, "wharrgarbl-table.bin"))
+
 	setOpts := flag.NewFlagSet("set", flag.ContinueOnError)
 	ownerName := setOpts.String("owner", "", "")
 	maskKey := setOpts.String("mask", "", "")
@@ -708,7 +710,6 @@ func doSet(cfg *lf.ClientConfig, basePath string, args []string) {
 		return
 	}
 
-	go lf.WharrgarblInitTable(path.Join(basePath, "wharrgarbl-table.bin"))
 	var o *lf.Owner
 	o, err = owner.GetOwner()
 	if err == nil {
@@ -720,7 +721,12 @@ func doSet(cfg *lf.ClientConfig, basePath string, args []string) {
 		if err == nil {
 			rb := rec.Bytes()
 			for _, u := range urls {
-				err = lf.APIPostRecord(u, rb)
+				for trials := 0; trials < 2; trials++ {
+					err = lf.APIPostRecord(u, rb)
+					if err == nil {
+						break
+					}
+				}
 				if err == nil {
 					break
 				}

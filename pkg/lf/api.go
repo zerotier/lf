@@ -55,6 +55,8 @@ var apiVersionStr = strconv.FormatInt(int64(APIVersion), 10)
 // APIMaxResponseSize is a sanity limit on the maximum size of a response from the LF HTTP API (can be increased)
 const APIMaxResponseSize = 4194304
 
+var httpClient = http.Client{Timeout: time.Second * 60}
+
 // APIError (response) indicates an error and is returned with non-200 responses.
 type APIError struct {
 	Code    int    ``                  // Positive error codes simply mirror HTTP response codes, while negative ones are LF-specific
@@ -101,7 +103,7 @@ func APIPostRecord(url string, recordData []byte) error {
 	} else {
 		url = url + "/post"
 	}
-	resp, err := http.Post(url, "application/octet-stream", bytes.NewReader(recordData))
+	resp, err := httpClient.Post(url, "application/octet-stream", bytes.NewReader(recordData))
 	if err != nil {
 		return err
 	}
@@ -144,7 +146,7 @@ func APIPostConnect(url string, ip net.IP, port int, identity string) error {
 	if err != nil {
 		return err
 	}
-	resp, err := http.Post(url, "application/json", bytes.NewReader(apiPeerJSON))
+	resp, err := httpClient.Post(url, "application/json", bytes.NewReader(apiPeerJSON))
 	if err != nil {
 		return err
 	}
@@ -177,7 +179,7 @@ func APIGetLinks(url string, count int) ([]HashBlob, error) {
 	if count > 0 {
 		url = url + "?count=" + strconv.FormatUint(uint64(count), 10)
 	}
-	resp, err := http.Get(url)
+	resp, err := httpClient.Get(url)
 	if err != nil {
 		return nil, err
 	}
@@ -205,7 +207,7 @@ func APIStatusGet(url string) (*APIStatusResult, error) {
 	} else {
 		url = url + "/status"
 	}
-	resp, err := http.Get(url)
+	resp, err := httpClient.Get(url)
 	if err != nil {
 		return nil, err
 	}
@@ -233,7 +235,7 @@ func apiRun(url string, m interface{}) ([]byte, error) {
 		return nil, err
 	}
 	req.Header.Add("Accept-Encoding", "gzip")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
