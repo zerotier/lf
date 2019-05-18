@@ -502,7 +502,7 @@ func (n *Node) Connect(ip net.IP, port int, identity []byte) {
 		}
 		n.peersLock.RUnlock()
 
-		n.log[LogLevelNormal].Printf("P2P attempting to connect to %s %d %s", ip.String(), port, Base62Encode(identity))
+		n.log[LogLevelVerbose].Printf("P2P attempting to connect to %s %d %s", ip.String(), port, Base62Encode(identity))
 
 		conn, err := net.DialTimeout("tcp", ta.String(), time.Second*10)
 		if atomic.LoadUint32(&n.shutdown) == 0 {
@@ -1000,36 +1000,31 @@ func (n *Node) getBackgroundWorkFunction() (wf *Wharrgarblr) {
 }
 
 // sendPeerAnnouncement sends a peer announcement to this peer for the given address and public key
-func (p *peer) sendPeerAnnouncement(tcpAddr *net.TCPAddr, identity []byte) error {
+func (p *peer) sendPeerAnnouncement(tcpAddr *net.TCPAddr, identity []byte) {
 	var peerMsg APIPeer
 	peerMsg.IP = tcpAddr.IP
 	peerMsg.Port = tcpAddr.Port
 	peerMsg.Identity = identity
 	json, err := json.Marshal(&peerMsg)
 	if err != nil {
-		return err
+		return
 	}
 	pa := make([]byte, 1, len(json)+1)
 	pa[0] = p2pProtoMessageTypePeer
 	pa = append(pa, json...)
-	return p.send(pa)
+	p.send(pa)
 }
 
 // send sends a message to a peer (message must be prefixed by type byte)
-func (p *peer) send(msg []byte) (err error) {
-	p.sendLock.Lock()
-	defer func() {
-		e := recover()
-		p.sendLock.Unlock()
-		if e != nil {
-			err = fmt.Errorf("unexpected panic in send: %s", e)
-		}
-	}()
-
+func (p *peer) send(msg []byte) {
 	if len(msg) < 1 {
-		err = ErrInvalidParameter
 		return
 	}
+
+	buf := make([]byte, 10, len(msg)+32)
+	buf = buf[0:binary.PutUvarint(buf, uint64(len(msg)))]
+
+	p.sendLock.Lock()
 
 	for i := 0; i < 12; i++ { // 12 == GCM standard nonce size
 		p.outgoingNonce[i]++
@@ -1038,16 +1033,19 @@ func (p *peer) send(msg []byte) (err error) {
 		}
 	}
 
-	buf := make([]byte, 10, len(msg)+32)
-	buf = buf[0:binary.PutUvarint(buf, uint64(len(msg)))]
 	buf = p.cryptor.Seal(buf, p.outgoingNonce[0:12], msg, nil)
 
-	p.c.SetWriteDeadline(time.Now().Add(time.Second * 30))
-	_, err = p.c.Write(buf)
-	if err != nil {
-		p.c.Close()
-	}
-	return
+	go func() {
+		c := p.c
+		if c != nil {
+			c.SetWriteDeadline(time.Now().Add(time.Second * 30))
+			_, err := c.Write(buf)
+			if err != nil {
+				c.Close()
+			}
+		}
+		p.sendLock.Unlock()
+	}()
 }
 
 // updateKnownPeersWithConnectResult is called from p2pConnectionHandler to update n.knownPeers
@@ -1263,6 +1261,7 @@ func (n *Node) p2pConnectionHandler(c *net.TCPConn, identity []byte, inbound boo
 			n.updateKnownPeersWithConnectResult(tcpAddr.IP, tcpAddr.Port, remoteIdentity) // we can still remember this peer
 		}
 		n.log[LogLevelNormal].Printf("P2P connection to %s closed: closing redundant link to already connected peer", peerAddressStr)
+		n.peersLock.Unlock()
 		return
 	}
 	n.peers[peerAddressStr] = p
