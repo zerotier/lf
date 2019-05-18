@@ -169,7 +169,7 @@ func internalNewOwner(ownerType byte, prng io.Reader) (*Owner, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Owner{Private: priv, Public: oh}, nil
+	return &Owner{Private: priv, Public: OwnerPublic(oh)}, nil
 }
 
 // NewOwnerFromSeed creates a new owner whose key pair is generated using deterministic randomness from the given seed.
@@ -262,6 +262,19 @@ func (o *Owner) Type() byte {
 		return OwnerTypeEd25519
 	}
 	return 0
+}
+
+// TypeString returns a human-readable Owner type.
+func (o Owner) TypeString() string {
+	switch len(o.Public) {
+	case 14:
+		return "p224"
+	case 24:
+		return "p384"
+	case 32:
+		return "ed25519"
+	}
+	return ""
 }
 
 // Sign signs a hash (typically 32 bytes) with this key pair.

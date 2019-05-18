@@ -120,8 +120,9 @@ func TestCore(out io.Writer) bool {
 
 	fmt.Fprintf(out, "Testing deterministic owner generation from seed... p384 ")
 	op384, _ := NewOwnerFromSeed(OwnerTypeNistP384, []byte("lol"))
-	if hex.EncodeToString(op384.Public) != "27691ad48a4a20ad0417b307bb9ac731d6237ea94e8fc783" {
-		fmt.Fprintf(out, "FAILED %x\n", op384.Public)
+	op384s := hex.EncodeToString(op384.Public)
+	if op384s != "071da200540e3774af83a33e2494db3d8c8e4ea15201dfbe" {
+		fmt.Fprintf(out, "FAILED %s\n", op384s)
 		return false
 	}
 	testSigHash := sha256.Sum256(testStr)
@@ -136,8 +137,9 @@ func TestCore(out io.Writer) bool {
 	}
 	fmt.Fprint(out, "p224 ")
 	op224, _ := NewOwnerFromSeed(OwnerTypeNistP224, []byte("lol"))
-	if hex.EncodeToString(op224.Public) != "ac946de2f947da9533b979d7fb7f" {
-		fmt.Fprintf(out, "FAILED %x\n", op224.Public)
+	op224s := hex.EncodeToString(op224.Public)
+	if op224s != "c561d9cb504bd966d451d421fd77" {
+		fmt.Fprintf(out, "FAILED %s\n", op224s)
 		return false
 	}
 	sig, err = op224.Sign(testSigHash[:])
@@ -151,8 +153,9 @@ func TestCore(out io.Writer) bool {
 	}
 	fmt.Fprint(out, "ed25519 ")
 	o25519, _ := NewOwnerFromSeed(OwnerTypeEd25519, []byte("lol"))
-	if hex.EncodeToString(o25519.Public) != "c289a225c996df1998b7aa0e4af9f1142a81d5ab8c55484dadbac7b48baefc8e" {
-		fmt.Fprintf(out, "FAILED %x\n", o25519.Public)
+	o25519s := hex.EncodeToString(o25519.Public)
+	if o25519s != "c289a225c996df1998b7aa0e4af9f1142a81d5ab8c55484dadbac7b48baefc8e" {
+		fmt.Fprintf(out, "FAILED %s\n", o25519s)
 		return false
 	}
 	sig, err = o25519.Sign(testSigHash[:])

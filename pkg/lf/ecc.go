@@ -34,6 +34,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/sha256"
+	"crypto/sha512"
 	"math/big"
 )
 
@@ -117,21 +118,27 @@ func ECDHAgreeECDSA(pubX, pubY *big.Int, priv *ecdsa.PrivateKey) ([32]byte, erro
 	return sha256.Sum256(x.Bytes()), nil
 }
 
-// ECDSAHashPublicKey computes a SHA256 hash of X|Y|Curve Name
-func ECDSAHashPublicKey(pub *ecdsa.PublicKey) ([32]byte, error) {
+// ECDSAHashPublicKey computes sha256(in | sha512(in)) over X, Y, and the curve name.
+func ECDSAHashPublicKey(pub *ecdsa.PublicKey) (hb [32]byte, err error) {
 	params := pub.Params()
 	curveSize := (params.BitSize >> 3) + (params.BitSize & 3)
 
 	xb, yb := pub.X.Bytes(), pub.Y.Bytes()
 	if len(xb) > curveSize || len(yb) > curveSize {
-		return [32]byte{0}, ErrInvalidPublicKey
+		err = ErrInvalidPublicKey
+		return
 	}
-	buf := make([]byte, curveSize*2, (curveSize*2)+16)
+	buf := make([]byte, curveSize*2, (curveSize*2)+32)
 	copy(buf[curveSize-len(xb):], xb)
 	copy(buf[len(buf)-len(yb):], yb)
 	buf = append(buf, []byte(params.Name)...)
 
-	return sha256.Sum256(buf), nil
+	s256 := sha256.New()
+	s256.Write(buf)
+	s512 := sha512.Sum512(buf)
+	s256.Write(s512[:])
+	s256.Sum(hb[:0])
+	return
 }
 
 // ECDSACompressPublicKey compresses an ECDSA public key using standard ECC point compression for prime curves.

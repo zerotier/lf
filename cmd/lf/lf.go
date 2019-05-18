@@ -224,6 +224,11 @@ Commands:
     default <name>                        Set default owner
     delete <name>                         Delete an owner (PERMANENT)
     rename <old name> <new name>          Rename an owner
+  url <operation> [...]
+    list                                  Show client URLs
+    add <url>                             Add a URL
+    delete <url>                          Delete a URL
+    default <url>                         Move URL to front (first to try)
 
 Global options must precede commands, while command options must come after
 the command name.
@@ -758,7 +763,12 @@ func doOwner(cfg *lf.ClientConfig, basePath string, args []string) {
 			if o.Default {
 				dfl = "*"
 			}
-			fmt.Printf("%-24s %s @%s\n", n, dfl, lf.Base62Encode(o.Owner))
+			var otype string
+			op, _ := o.GetOwner()
+			if op != nil {
+				otype = op.TypeString()
+			}
+			fmt.Printf("%-24s %s %-5s %s\n", n, dfl, otype, o.Owner.String())
 		}
 
 	case "new":
