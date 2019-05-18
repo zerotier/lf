@@ -43,14 +43,14 @@ const ClientConfigName = "client.json"
 
 // ClientConfigOwner is a locally configured owner with private key information.
 type ClientConfigOwner struct {
-	Owner        OwnerPublic
-	OwnerPrivate Blob
-	Default      bool
+	Public  OwnerPublic
+	Private Blob
+	Default bool
 }
 
 // GetOwner gets an Owner object (including private key) from this ClientConfigOwner
 func (co *ClientConfigOwner) GetOwner() (o *Owner, err error) {
-	o, err = NewOwnerFromPrivateBytes(co.OwnerPrivate)
+	o, err = NewOwnerFromPrivateBytes(co.Private)
 	return
 }
 
@@ -87,9 +87,9 @@ func (c *ClientConfig) Load(path string) error {
 			return err
 		}
 		c.Owners[dflName] = &ClientConfigOwner{
-			Owner:        owner.Public,
-			OwnerPrivate: priv,
-			Default:      true,
+			Public:  owner.Public,
+			Private: priv,
+			Default: true,
 		}
 		c.Dirty = true
 		err = nil

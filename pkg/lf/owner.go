@@ -77,19 +77,43 @@ func NewOwnerPublicFromString(b62 string) (OwnerPublic, error) {
 }
 
 // String returns @base62 owner
-func (b OwnerPublic) String() string {
-	return "@" + Base62Encode(b)
+func (o OwnerPublic) String() string { return "@" + Base62Encode(o) }
+
+// Type returns the type of this owner or 0 if the owner is not initialized.
+func (o OwnerPublic) Type() byte {
+	switch len(o) {
+	case 14:
+		return OwnerTypeNistP224
+	case 24:
+		return OwnerTypeNistP384
+	case 32:
+		return OwnerTypeEd25519
+	}
+	return 0
+}
+
+// TypeString returns a human-readable Owner type.
+func (o OwnerPublic) TypeString() string {
+	switch len(o) {
+	case 14:
+		return "p224"
+	case 24:
+		return "p384"
+	case 32:
+		return "ed25519"
+	}
+	return ""
 }
 
 // MarshalJSON returns this blob marshaled as a @owner base62-encoded string.
-func (b OwnerPublic) MarshalJSON() ([]byte, error) {
-	return []byte("\"@" + Base62Encode(b) + "\""), nil
+func (o OwnerPublic) MarshalJSON() ([]byte, error) {
+	return []byte("\"@" + Base62Encode(o) + "\""), nil
 }
 
 // UnmarshalJSON unmarshals this blob from a JSON array or string
-func (b *OwnerPublic) UnmarshalJSON(j []byte) error {
+func (o *OwnerPublic) UnmarshalJSON(j []byte) error {
 	if len(j) == 0 {
-		*b = nil
+		*o = nil
 		return nil
 	}
 
@@ -99,7 +123,7 @@ func (b *OwnerPublic) UnmarshalJSON(j []byte) error {
 	err = json.Unmarshal(j, &str)
 	if err == nil {
 		if len(str) > 0 && str[0] == '@' {
-			*b = Base62Decode(str[1:])
+			*o = Base62Decode(str[1:])
 			return nil
 		}
 		err = errors.New("base62 string not prefixed by @ (for owner)")
@@ -110,7 +134,7 @@ func (b *OwnerPublic) UnmarshalJSON(j []byte) error {
 	if json.Unmarshal(j, &bb) != nil {
 		return err
 	}
-	*b = bb
+	*o = bb
 	return nil
 }
 
@@ -249,33 +273,13 @@ func (o *Owner) PrivateBytes() ([]byte, error) {
 }
 
 // String returns @base62 encoded Public.
-func (o *Owner) String() string { return "@" + Base62Encode(o.Public) }
+func (o *Owner) String() string { return o.Public.String() }
 
 // Type returns the type of this owner or 0 if the owner is not initialized.
-func (o *Owner) Type() byte {
-	switch len(o.Public) {
-	case 14:
-		return OwnerTypeNistP224
-	case 24:
-		return OwnerTypeNistP384
-	case 32:
-		return OwnerTypeEd25519
-	}
-	return 0
-}
+func (o *Owner) Type() byte { return o.Public.Type() }
 
 // TypeString returns a human-readable Owner type.
-func (o Owner) TypeString() string {
-	switch len(o.Public) {
-	case 14:
-		return "p224"
-	case 24:
-		return "p384"
-	case 32:
-		return "ed25519"
-	}
-	return ""
-}
+func (o Owner) TypeString() string { return o.Public.TypeString() }
 
 // Sign signs a hash (typically 32 bytes) with this key pair.
 // ErrorPrivateKeyRequired is returned if the private key is not present or invalid.

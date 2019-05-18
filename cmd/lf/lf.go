@@ -220,7 +220,7 @@ Commands:
     -tend <time>                          Constrain to before this time
   owner <operation> [...]
     list                                  List owners
-    new <name>                            Create a new owner
+    new <name> [p224|p384|ed25519]        Create a new owner
     default <name>                        Set default owner
     delete <name>                         Delete an owner (PERMANENT)
     rename <old name> <new name>          Rename an owner
@@ -603,7 +603,7 @@ func doGet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool
 
 //////////////////////////////////////////////////////////////////////////////
 
-func doSet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool) {
+func doSet(cfg *lf.ClientConfig, basePath string, args []string) {
 	setOpts := flag.NewFlagSet("set", flag.ContinueOnError)
 	ownerName := setOpts.String("owner", "", "")
 	maskKey := setOpts.String("mask", "", "")
@@ -733,12 +733,8 @@ func doSet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool
 		return
 	}
 
-	if jsonOutput {
-		fmt.Println(lf.PrettyJSON(rec))
-	} else {
-		rh := rec.Hash()
-		fmt.Printf("=%s\n", lf.Base62Encode(rh[:]))
-	}
+	rh := rec.Hash()
+	fmt.Printf("%s =%s\n", o.String(), lf.Base62Encode(rh[:]))
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -763,12 +759,7 @@ func doOwner(cfg *lf.ClientConfig, basePath string, args []string) {
 			if o.Default {
 				dfl = "*"
 			}
-			var otype string
-			op, _ := o.GetOwner()
-			if op != nil {
-				otype = op.TypeString()
-			}
-			fmt.Printf("%-24s %s %-5s %s\n", n, dfl, otype, o.Owner.String())
+			fmt.Printf("%-24s %s %5s %s\n", n, dfl, o.Public.TypeString(), o.Public.String())
 		}
 
 	case "new":
@@ -781,20 +772,33 @@ func doOwner(cfg *lf.ClientConfig, basePath string, args []string) {
 			fmt.Println("ERROR: an owner named '" + args[1] + "' already exists.")
 			return
 		}
-		owner, _ := lf.NewOwner(lf.OwnerTypeNistP224)
+		ownerType := lf.OwnerTypeNistP224
+		if len(args) > 2 {
+			if args[2] == "p244" {
+				ownerType = lf.OwnerTypeNistP224
+			} else if args[2] == "p384" {
+				ownerType = lf.OwnerTypeNistP384
+			} else if args[2] == "ed25519" {
+				ownerType = lf.OwnerTypeEd25519
+			} else {
+				fmt.Println("ERROR: unrecognized owner type")
+				return
+			}
+		}
+		owner, _ := lf.NewOwner(ownerType)
 		isDfl := len(cfg.Owners) == 0
 		priv, _ := owner.PrivateBytes()
 		cfg.Owners[name] = &lf.ClientConfigOwner{
-			Owner:        owner.Public,
-			OwnerPrivate: priv,
-			Default:      isDfl,
+			Public:  owner.Public,
+			Private: priv,
+			Default: isDfl,
 		}
 		cfg.Dirty = true
 		dfl := " "
 		if isDfl {
 			dfl = "*"
 		}
-		fmt.Printf("%-24s %s @%s\n", name, dfl, owner.String())
+		fmt.Printf("%-24s %s %5s %s\n", name, dfl, owner.TypeString(), owner.String())
 
 	case "default":
 		if len(args) < 2 {
@@ -810,7 +814,7 @@ func doOwner(cfg *lf.ClientConfig, basePath string, args []string) {
 			o.Default = (n == name)
 		}
 		cfg.Dirty = true
-		fmt.Printf("%-24s * @%s\n", name, lf.Base62Encode(cfg.Owners[name].Owner))
+		fmt.Printf("%-24s * %5s %s\n", name, cfg.Owners[name].Public.TypeString(), cfg.Owners[name].Public.String())
 
 	case "delete":
 		if len(args) < 2 {
@@ -847,6 +851,76 @@ func doOwner(cfg *lf.ClientConfig, basePath string, args []string) {
 
 	default:
 		printHelp("")
+	}
+}
+
+//////////////////////////////////////////////////////////////////////////////
+
+func doURL(cfg *lf.ClientConfig, basePath string, args []string) {
+	if len(args) == 0 {
+		printHelp("")
+		return
+	}
+
+	switch args[0] {
+	case "list":
+		for _, u := range cfg.URLs {
+			fmt.Println(u)
+		}
+	case "add":
+		if len(args) < 2 {
+			printHelp("")
+			return
+		}
+		url := strings.TrimSpace(args[1])
+		have := false
+		for _, u := range cfg.URLs {
+			if u == url {
+				have = true
+			}
+		}
+		if !have {
+			cfg.URLs = append([]string{url}, cfg.URLs...)
+			cfg.Dirty = true
+		}
+		for _, u := range cfg.URLs {
+			fmt.Println(u)
+		}
+	case "delete":
+		var u2 []string
+		if len(args) < 2 {
+			printHelp("")
+			return
+		}
+		url := strings.TrimSpace(args[1])
+		for _, u := range cfg.URLs {
+			if u != url {
+				u2 = append(u2, u)
+			}
+		}
+		cfg.URLs = u2
+		cfg.Dirty = true
+		for _, u := range cfg.URLs {
+			fmt.Println(u)
+		}
+	case "default":
+		var u2 []string
+		if len(args) < 2 {
+			printHelp("")
+			return
+		}
+		url := strings.TrimSpace(args[1])
+		u2 = append(u2, url)
+		for _, u := range cfg.URLs {
+			if u != url {
+				u2 = append(u2, u)
+			}
+		}
+		cfg.URLs = u2
+		cfg.Dirty = true
+		for _, u := range cfg.URLs {
+			fmt.Println(u)
+		}
 	}
 }
 
@@ -1092,13 +1166,16 @@ func main() {
 		doStatus(&cfg, *basePath, cmdArgs)
 
 	case "set":
-		doSet(&cfg, *basePath, cmdArgs, *jsonOutput)
+		doSet(&cfg, *basePath, cmdArgs)
 
 	case "get":
 		doGet(&cfg, *basePath, cmdArgs, *jsonOutput)
 
 	case "owner":
 		doOwner(&cfg, *basePath, cmdArgs)
+
+	case "url":
+		doURL(&cfg, *basePath, cmdArgs)
 
 	case "makegenesis":
 		doMakeGenesis(&cfg, *basePath, cmdArgs)
