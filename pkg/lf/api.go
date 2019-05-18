@@ -55,9 +55,6 @@ var apiVersionStr = strconv.FormatInt(int64(APIVersion), 10)
 // APIMaxResponseSize is a sanity limit on the maximum size of a response from the LF HTTP API (can be increased)
 const APIMaxResponseSize = 4194304
 
-// APIMaxLinks is the maximum number of links that will be returned by /links.
-const APIMaxLinks = RecordMaxLinks
-
 // APIError (response) indicates an error and is returned with non-200 responses.
 type APIError struct {
 	Code    int    ``                  // Positive error codes simply mirror HTTP response codes, while negative ones are LF-specific
