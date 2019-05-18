@@ -391,12 +391,20 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 		n.commentaryGeneratorMain()
 	}()
 
-	// Add server's local URL to client config if there aren't any configured URLs.
+	// Add server's local URL to client config if it's not there already.
 	clientConfigPath := path.Join(basePath, ClientConfigName)
 	var cc ClientConfig
 	cc.Load(clientConfigPath)
-	if len(cc.Urls) == 0 {
-		cc.Urls = []string{fmt.Sprintf("http://127.0.0.1:%d", httpPort)}
+	myURL := fmt.Sprintf("http://127.0.0.1:%d", httpPort)
+	haveURL := false
+	for _, u := range cc.URLs {
+		if u == myURL {
+			haveURL = true
+			break
+		}
+	}
+	if !haveURL {
+		cc.URLs = append([]string{myURL}, cc.URLs...)
 		cc.Save(clientConfigPath)
 	}
 

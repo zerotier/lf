@@ -56,7 +56,7 @@ func (co *ClientConfigOwner) GetOwner() (o *Owner, err error) {
 
 // ClientConfig is the JSON format for the client configuration file.
 type ClientConfig struct {
-	Urls   []string                      ``         // URLs of full nodes and/or proxies
+	URLs   []string                      ``         // URLs of full nodes and/or proxies
 	Owners map[string]*ClientConfigOwner ``         // Owners by name
 	Dirty  bool                          `json:"-"` // Non-persisted flag that can be used to indicate the config should be saved on client exit
 }
@@ -74,9 +74,9 @@ func (c *ClientConfig) Load(path string) error {
 
 	// If the file didn't exist, init config with defaults.
 	if err != nil && os.IsNotExist(err) {
-		c.Urls = nil // TODO: use acceptable defaults
+		c.URLs = []string{SolDefaultNodeURL}
 		owner, _ := NewOwner(OwnerTypeNistP224)
-		dflName := "user"
+		dflName := "default"
 		u, _ := user.Current()
 		if u != nil && len(u.Username) > 0 {
 			dflName = strings.ReplaceAll(u.Username, " ", "") // use the current login user name if it can be determined

@@ -389,7 +389,7 @@ func doNodeConnect(cfg *lf.ClientConfig, basePath string, args []string) {
 		printHelp("")
 		return
 	}
-	urls := cfg.Urls
+	urls := cfg.URLs
 	for _, u := range urls {
 		err = lf.APIPostConnect(u, ip, int(port), args[2])
 		if err == nil {
@@ -409,7 +409,7 @@ func doStatus(cfg *lf.ClientConfig, basePath string, args []string) {
 	}
 	var stat *lf.APIStatusResult
 	var err error
-	urls := cfg.Urls
+	urls := cfg.URLs
 	for _, u := range urls {
 		stat, err = lf.APIStatusGet(u)
 		if err == nil {
@@ -452,7 +452,7 @@ func doGet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool
 		mk = []byte(*maskKey)
 	}
 
-	urls := cfg.Urls
+	urls := cfg.URLs
 	if len(*urlOverride) > 0 {
 		urls = tokenizeStringWithEsc(*urlOverride, ',', '\\')
 	}
@@ -683,7 +683,7 @@ func doSet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool
 	var rec *lf.Record
 	ts := lf.TimeSec()
 
-	urls := cfg.Urls
+	urls := cfg.URLs
 	if len(*urlOverride) > 0 {
 		urls = tokenizeStringWithEsc(*urlOverride, ',', '\\')
 	}
