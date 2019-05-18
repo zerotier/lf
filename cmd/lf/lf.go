@@ -75,7 +75,7 @@ var (
 		}
 		h := os.Getenv("HOME")
 		if len(h) > 0 {
-			return path.Join(h, ".zerotier-lf")
+			return path.Join(h, ".lf")
 		}
 		return "./lf" // fallback under weird conditions
 	}()
