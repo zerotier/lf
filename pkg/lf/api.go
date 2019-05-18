@@ -48,9 +48,6 @@ const APIVersion = 1
 const (
 	// APIErrorRecordRejected indicates that a posted record was considered invalid or too suspect to import.
 	APIErrorRecordRejected = -1
-
-	// APIErrorLazy indicates that this proxy or full node will not do proof of work for you.
-	APIErrorLazy = -2
 )
 
 var apiVersionStr = strconv.FormatInt(int64(APIVersion), 10)
@@ -308,16 +305,17 @@ func apiReadObj(out http.ResponseWriter, req *http.Request, dest interface{}) (e
 }
 
 func apiIsTrusted(n *Node, req *http.Request) bool {
-	// TODO
-	return true
+	ip, _, err := net.SplitHostPort(req.RemoteAddr)
+	if err != nil {
+		return false
+	}
+	return net.ParseIP(ip).IsLoopback()
 }
 
 // apiCreateHTTPServeMux returns the HTTP ServeMux for LF's Node API
 func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 	smux := http.NewServeMux()
 
-	// Query for records matching one or more selectors or ranges of selectors.
-	// Even though this is a "getter" it must be POSTed since it's a JSON object and not a simple path.
 	smux.HandleFunc("/query", func(out http.ResponseWriter, req *http.Request) {
 		apiSetStandardHeaders(out)
 		if req.Method == http.MethodPost || req.Method == http.MethodPut {
@@ -336,7 +334,6 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 		}
 	})
 
-	// Add a record in raw binary form (not JSON), returns parsed record as JSON on success.
 	smux.HandleFunc("/post", func(out http.ResponseWriter, req *http.Request) {
 		apiSetStandardHeaders(out)
 		if req.Method == http.MethodPost || req.Method == http.MethodPut {
@@ -346,10 +343,10 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 				apiSendObj(out, req, http.StatusBadRequest, &APIError{Code: http.StatusBadRequest, Message: "record deserialization failed: " + err.Error()})
 			} else {
 				err = n.AddRecord(&rec)
-				if err != nil {
+				if err != nil && err != ErrDuplicateRecord {
 					apiSendObj(out, req, http.StatusBadRequest, &APIError{Code: APIErrorRecordRejected, Message: "record rejected or record import failed: " + err.Error()})
 				} else {
-					apiSendObj(out, req, http.StatusOK, rec)
+					apiSendObj(out, req, http.StatusOK, nil)
 				}
 			}
 		} else {
@@ -358,7 +355,6 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 		}
 	})
 
-	// Get links for incorporation into a new record, returns up to 2048 raw binary hashes. A ?count= parameter can be added to specify how many are desired.
 	smux.HandleFunc("/links", func(out http.ResponseWriter, req *http.Request) {
 		apiSetStandardHeaders(out)
 		if req.Method == http.MethodGet || req.Method == http.MethodHead {
@@ -374,10 +370,12 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 			if desired > RecordMaxLinks {
 				desired = RecordMaxLinks
 			}
-			_, links, _ := n.db.getLinks(desired)
 			out.Header().Set("Content-Type", "application/octet-stream")
 			out.WriteHeader(http.StatusOK)
-			out.Write(links)
+			if desired > 0 {
+				_, links, _ := n.db.getLinks(desired)
+				out.Write(links)
+			}
 		} else {
 			out.Header().Set("Allow", "GET, HEAD")
 			apiSendObj(out, req, http.StatusMethodNotAllowed, &APIError{Code: http.StatusMethodNotAllowed, Message: req.Method + " not supported for this path"})
@@ -412,6 +410,7 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 		}
 	})
 
+	// /connect is only accepted from localhost
 	smux.HandleFunc("/connect", func(out http.ResponseWriter, req *http.Request) {
 		apiSetStandardHeaders(out)
 		if req.Method == http.MethodPost || req.Method == http.MethodPut {
