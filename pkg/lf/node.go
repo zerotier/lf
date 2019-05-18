@@ -1156,7 +1156,7 @@ func (n *Node) p2pConnectionHandler(c *net.TCPConn, identity []byte, inbound boo
 		n.log[LogLevelNormal].Printf("P2P connection to %s closed: other side has same identity!", peerAddressStr)
 		return
 	}
-	if !bytes.Equal(identity, remoteIdentity) {
+	if !inbound && !bytes.Equal(identity, remoteIdentity) {
 		n.log[LogLevelNormal].Printf("P2P connection to %s closed: remote identity (public key) does not match expected identity", peerAddressStr)
 		return
 	}

@@ -133,8 +133,8 @@ func APIPostConnect(url string, ip net.IP, port int, identity string) error {
 		url = url + "/connect"
 	}
 	var ob []byte
-	if len(identity) > 0 && identity[0] == '@' {
-		ob = Base62Decode(identity[1:])
+	if len(identity) > 0 {
+		ob = Base62Decode(identity[:])
 	} else {
 		return ErrInvalidParameter
 	}
