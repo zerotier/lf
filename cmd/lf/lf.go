@@ -34,6 +34,7 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/asn1"
 	"encoding/json"
 	"encoding/pem"
 	"flag"
@@ -700,9 +701,16 @@ func doSet(cfg *lf.ClientConfig, basePath string, args []string) {
 	}
 
 	for _, u := range urls {
-		links, err = lf.APIGetLinks(u, 0)
+		var serverTimestamp int64
+		links, serverTimestamp, err = lf.APIGetLinks(u, 0)
 		if err == nil {
 			break
+		}
+		if serverTimestamp > 0 {
+			myClock := time.Now().Unix()
+			if ((serverTimestamp > myClock) && (serverTimestamp-myClock) > 10) || ((myClock > serverTimestamp) && (myClock-serverTimestamp) > 10) {
+				logger.Printf("ERROR: server clock %d is more than 10 seconds off from our clock %d, can cause record rejection or reduced reputation", serverTimestamp, myClock)
+			}
 		}
 	}
 	if err != nil {
@@ -943,14 +951,14 @@ func doMakeGenesis(cfg *lf.ClientConfig, basePath string, args []string) {
 	g.Name = prompt("Network name: ", true, "")
 	if g.Name == "~~~Sol" { // magic value used internally to make Sol, useless to others
 		g = lf.GenesisParameters{
-			ID:                        [32]byte{0x17, 0x55, 0x22, 0x2e, 0x7c, 0x33, 0xa8, 0x5f, 0xc9, 0x70, 0x59, 0x5b, 0xfa, 0x5b, 0x46, 0x3b, 0x2a, 0xa9, 0x35, 0xee, 0x3e, 0x46, 0xbe, 0xd3, 0x3b, 0x14, 0x14, 0x8d, 0xe3, 0xd8, 0x8d, 0x23},
-			AmendableFields:           []string{"authcertificates", "seedpeers"},
-			Name:                      "Sol",
-			Contact:                   "https://www.zerotier.com/lf",
-			Comment:                   "Global Public LF Data Store",
-			RecordMinLinks:            2,
-			RecordMaxValueSize:        1024,
-			RecordMaxForwardTimeDrift: 60,
+			ID:                 [32]byte{0x17, 0x55, 0x22, 0x2e, 0x7c, 0x33, 0xa8, 0x5f, 0xc9, 0x70, 0x59, 0x5b, 0xfa, 0x5b, 0x46, 0x3b, 0x2a, 0xa9, 0x35, 0xee, 0x3e, 0x46, 0xbe, 0xd3, 0x3b, 0x14, 0x14, 0x8d, 0xe3, 0xd8, 0x8d, 0x23},
+			AmendableFields:    []string{"authcertificates", "seedpeers"},
+			Name:               "Sol",
+			Contact:            "https://www.zerotier.com/lf",
+			Comment:            "Global Public LF Data Store",
+			RecordMinLinks:     2,
+			RecordMaxValueSize: 1024,
+			RecordMaxTimeDrift: 60,
 			SeedPeers: []lf.Peer{
 				lf.Peer{ // ZeroTier LF node in Helsinki, Finland
 					IP:       net.ParseIP("95.216.29.85"),
@@ -980,7 +988,7 @@ func doMakeGenesis(cfg *lf.ClientConfig, basePath string, args []string) {
 			fmt.Println("ERROR: record value sizee too large!")
 			return
 		}
-		g.RecordMaxForwardTimeDrift = atoUI(prompt("Record maximum forward time drift (seconds) [60]: ", false, "60"))
+		g.RecordMaxTimeDrift = atoUI(prompt("Record maximum time drift (seconds) [60]: ", false, "60"))
 		for {
 			err := g.SetAmendableFields(strings.Split(prompt("Amendable fields (comma separated) []: ", false, ""), ","))
 			if err == nil {
@@ -1021,16 +1029,33 @@ func doMakeGenesis(cfg *lf.ClientConfig, basePath string, args []string) {
 			name.SerialNumber = serialNoStr
 			name.CommonName = prompt("  Common name []: ", false, "")
 
+			extPseudoWorkValue := pkix.Extension{}
+			extPseudoWorkValue.Id = lf.AuthCertificateASN1PseudoWorkValue
+			extPseudoWorkValue.Critical = false
+			pseudoWork := prompt("  Pseudo-work value of signature (hex 0-ffffffff) [0]: ", false, "0")
+			pseudoWorkInt, err := strconv.ParseUint(pseudoWork, 16, 64)
+			if err != nil || pseudoWorkInt > 0xffffffff {
+				fmt.Println("ERROR: invalid value: must be hex 0-ffffffff")
+				return
+			}
+			pseudoWorkASN1V, err := asn1.Marshal(new(big.Int).SetUint64(pseudoWorkInt))
+			if err != nil {
+				fmt.Printf("ERROR: ASN.1 marshal failed: %s\n", err.Error())
+				return
+			}
+			extPseudoWorkValue.Value = pseudoWorkASN1V
+
 			now := time.Now()
 			cert := &x509.Certificate{
 				SerialNumber:          new(big.Int).SetBytes(serialNo),
 				Subject:               name,
 				NotBefore:             now,
 				NotAfter:              now.Add(time.Hour * time.Duration(24*ttl)),
-				IsCA:                  true,
+				ExtraExtensions:       []pkix.Extension{extPseudoWorkValue},
 				ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageTimeStamping},
 				KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
 				BasicConstraintsValid: true,
+				IsCA:                  true,
 			}
 
 			certBytes, err := x509.CreateCertificate(secrand.Reader, cert, cert, &key.PublicKey, key)

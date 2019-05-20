@@ -29,15 +29,23 @@ package lf
 import (
 	"bytes"
 	"crypto/x509"
+	"encoding/asn1"
 	"encoding/json"
 	"fmt"
 	"strings"
 )
 
+// ASN1PrivateOIDBase is the 1.3.6.1.4.1.X base OID for LF's private cert OIDs.
+// This is just a big random 32-bit integer.
+const ASN1PrivateOIDBase = 1426727994
+
+// AuthCertificateASN1PseudoWorkValue is the ASN1 OID for auth certificate pseudo-work value (value is a 32-bit unsigned integer).
+var AuthCertificateASN1PseudoWorkValue = asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, ASN1PrivateOIDBase, 1}
+
 // GenesisParameters is the payload (JSON encoded) of the first RecordMinLinks records in a global data store.
 type GenesisParameters struct {
-	ID                 [32]byte ``                  // Unique arbitrary 32-byte ID of this network (always immutable!)
-	AmendableFields    []string `json:",omitempty"` // List of json field names that the genesis owner can change by posting non-empty records
+	ID                 [32]byte ``                  // Unique arbitrary 32-byte ID of this network (always immutable)
+	AmendableFields    []string `json:",omitempty"` // List of json field names that the genesis owner can change (always immutable)
 	Name               string   `json:",omitempty"` // Name of this LF network / data store
 	Contact            string   `json:",omitempty"` // Contact info for this network (may be empty)
 	Comment            string   `json:",omitempty"` // Optional comment
@@ -67,6 +75,7 @@ func (gp *GenesisParameters) Update(jsonValue []byte) (bool, error) {
 
 	if !gp.initialized {
 		*gp = ngp
+		gp.initialized = true
 		return true, nil
 	}
 
@@ -134,7 +143,6 @@ func (gp *GenesisParameters) Update(jsonValue []byte) (bool, error) {
 	if changed {
 		gp.history = append(gp.history, old)
 	}
-	gp.initialized = true
 
 	return changed, nil
 }
@@ -149,7 +157,7 @@ func (gp *GenesisParameters) SetAmendableFields(fields []string) error {
 	for _, f := range fields {
 		af := strings.ToLower(strings.TrimSpace(f))
 		switch af {
-		case "name", "contact", "comment", "authcertificates", "authrequired", "recordminlinks", "recordmaxvaluesize", "recordmaxforwardtimedrift", "seedpeers", "amendablefields":
+		case "name", "contact", "comment", "authcertificates", "authrequired", "recordminlinks", "recordmaxvaluesize", "recordmaxforwardtimedrift", "seedpeers":
 			gp.AmendableFields = append(gp.AmendableFields, af)
 		default:
 			return fmt.Errorf("invalid amendable field name: %s", f)

@@ -170,7 +170,9 @@ func APIPostConnect(url string, ip net.IP, port int, identity string) error {
 
 // APIGetLinks queries this node for links to use to build a new record.
 // Passing 0 or a negative count causes the node to be asked for the default link count.
-func APIGetLinks(url string, count int) ([]HashBlob, error) {
+// This returns links, the server time reported in the X-LF-Time header field (or -1
+// if none), and an error (if any).
+func APIGetLinks(url string, count int) ([]HashBlob, int64, error) {
 	if strings.HasSuffix(url, "/") {
 		url = url + "links"
 	} else {
@@ -181,13 +183,13 @@ func APIGetLinks(url string, count int) ([]HashBlob, error) {
 	}
 	resp, err := httpClient.Get(url)
 	if err != nil {
-		return nil, err
+		return nil, -1, err
 	}
 	if resp.StatusCode == 200 {
 		body, err := ioutil.ReadAll(&io.LimitedReader{R: resp.Body, N: 131072})
 		resp.Body.Close()
 		if err != nil {
-			return nil, err
+			return nil, -1, err
 		}
 		var l []HashBlob
 		for i := 0; (i + 32) <= len(body); i += 32 {
@@ -195,9 +197,14 @@ func APIGetLinks(url string, count int) ([]HashBlob, error) {
 			copy(h[:], body[i:i+32])
 			l = append(l, h)
 		}
-		return l, nil
+		tstr := resp.Header.Get("X-LF-Time")
+		if len(tstr) > 0 {
+			ts, _ := strconv.ParseInt(tstr, 10, 64)
+			return l, ts, nil
+		}
+		return l, -1, nil
 	}
-	return nil, APIError{Code: resp.StatusCode}
+	return nil, -1, APIError{Code: resp.StatusCode}
 }
 
 // APIStatusGet gets a status result from a URL.
@@ -264,13 +271,15 @@ func apiRun(url string, m interface{}) ([]byte, error) {
 }
 
 func apiSetStandardHeaders(out http.ResponseWriter) {
+	now := time.Now().UTC()
 	h := out.Header()
 	h.Set("Cache-Control", "no-cache, no-store, must-revalidate")
 	h.Set("Expires", "0")
 	h.Set("Pragma", "no-cache")
-	h.Set("Date", time.Now().UTC().Format(time.RFC1123))
+	h.Set("Date", now.Format(time.RFC1123))
 	h.Set("X-LF-Version", VersionStr)
 	h.Set("X-LF-APIVersion", apiVersionStr)
+	h.Set("X-LF-Time", strconv.FormatInt(now.Unix(), 10))
 	h.Set("Server", SoftwareName)
 }
 
