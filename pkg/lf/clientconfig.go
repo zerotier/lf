@@ -74,7 +74,7 @@ func (c *ClientConfig) Load(path string) error {
 
 	// If the file didn't exist, init config with defaults.
 	if err != nil && os.IsNotExist(err) {
-		c.URLs = []string{SolDefaultNodeURL}
+		c.URLs = SolDefaultNodeURLs
 		owner, _ := NewOwner(OwnerTypeNistP224)
 		dflName := "default"
 		u, _ := user.Current()

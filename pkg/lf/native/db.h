@@ -40,14 +40,11 @@
 
 #define ZTLF_DB_GRAPH_NODE_LOCK_ARRAY_SIZE 197
 
-/* NOTE: reputations must match constants in db.go */
+/* NOTE: these reputations must match constants in db.go */
 
 /* Reputation for default good records */
 #define ZTLF_DB_REPUTATION_DEFAULT 63
 #define ZTLF_DB_REPUTATION_DEFAULT_S "63"
-
-/* Record links to newer record (beyond allowed fuzz) */
-#define ZTLF_DB_REPUTATION_LINK_TEMPORAL_VIOLATION 32
 
 /* Reputation for records that appear to be collisions with other record composite keys */
 #define ZTLF_DB_REPUTATION_COLLISION 0

@@ -68,7 +68,7 @@ const (
 	p2pProtoMessageTypeRecord               byte = 2 // binary marshaled Record
 	p2pProtoMesaggeTypeRequestRecordsByHash byte = 3 // one or more 32-byte hashes we want
 	p2pProtoMessageTypeHaveRecords          byte = 4 // one or more 32-byte hashes we have
-	p2pProtoMessageTypePeer                 byte = 5 // APIPeer (JSON)
+	p2pProtoMessageTypePeer                 byte = 5 // Peer (JSON)
 
 	// p2pProtoMaxRetries is the maximum number of times we'll try to retry a record
 	p2pProtoMaxRetries = 256
@@ -100,8 +100,8 @@ type peerHelloMsg struct {
 	SubscribeToNewRecords bool // If true, peer wants new records
 }
 
-// peer represents a single TCP connection to another peer using the LF P2P TCP protocol
-type peer struct {
+// connectedPeer represents a single TCP connection to another peer using the LF P2P TCP protocol
+type connectedPeer struct {
 	n              *Node                // Node that owns this peer
 	address        string               // Address in string format
 	tcpAddress     *net.TCPAddr         // IP and port
@@ -109,16 +109,16 @@ type peer struct {
 	cryptor        cipher.AEAD          // AES-GCM instance
 	hasRecords     map[[32]byte]uintptr // Record this peer has recently reported that it has or has sent
 	hasRecordsLock sync.Mutex           //
-	sendLock       sync.Mutex           //
-	outgoingNonce  [16]byte             // outgoing nonce (incremented for each message)
-	identity       []byte               // Remote node public in byte array format
+	sendLock       sync.Mutex           // Locked while a send is in progress
+	outgoingNonce  [16]byte             // Outgoing nonce (incremented for each message)
+	identity       []byte               // Remote node's identity (public key)
 	peerHelloMsg   peerHelloMsg         // Hello message received from peer
 	inbound        bool                 // True if this is an incoming connection
 }
 
 // knownPeer contains info about a peer we know about via another peer or the API
 type knownPeer struct {
-	APIPeer
+	Peer
 	FirstConnect               uint64
 	LastSuccessfulConnection   uint64
 	TotalSuccessfulConnections int64
@@ -126,38 +126,35 @@ type knownPeer struct {
 
 // Node is an instance of a full LF node supporting both P2P and HTTP access.
 type Node struct {
-	basePath      string                     //
-	peersFilePath string                     //
-	p2pPort       int                        //
-	httpPort      int                        //
-	log           [logLevelCount]*log.Logger // Pointers to loggers for each log level (inoperative levels point to a discard logger)
+	basePath                   string
+	peersFilePath              string
+	p2pPort                    int
+	httpPort                   int
+	log                        [logLevelCount]*log.Logger
+	httpTCPListener            *net.TCPListener
+	httpServer                 *http.Server
+	p2pTCPListener             *net.TCPListener
+	commentaryWorkFunction     *Wharrgarblr
+	commentaryWorkFunctionLock sync.Mutex
+	db                         db
 
-	owner                      *Owner            // Owner for commentary, key also currently used for ECDH on link
-	identity                   []byte            // Compressed public key from owner
-	identityStr                string            //
-	genesisParameters          GenesisParameters // Genesis configuration for this node's network
-	genesisOwner               OwnerPublic       // Owner of genesis record(s)
-	lastGenesisRecordTimestamp uint64            //
+	owner                      *Owner                    // Owner for commentary, key also currently used for ECDH on link
+	identity                   []byte                    // Compressed public key from owner
+	identityStr                string                    //
+	genesisParameters          GenesisParameters         // Genesis configuration for this node's network
+	genesisOwner               OwnerPublic               // Owner of genesis record(s)
+	lastGenesisRecordTimestamp uint64                    //
+	knownPeers                 []*knownPeer              // Peers we know about
+	knownPeersLock             sync.Mutex                //
+	connectionsInStartup       map[*net.TCPConn]bool     // Connections in startup state but not yet in peers[]
+	connectionsInStartupLock   sync.Mutex                //
+	peers                      map[string]*connectedPeer // Currently connected peers by address
+	peersLock                  sync.RWMutex              //
+	recordsRequested           map[[32]byte]uintptr      // When records were last requested
+	recordsRequestedLock       sync.Mutex                //
+	comments                   *list.List                // Accumulates commentary if commentary is enabled
+	commentsLock               sync.Mutex                //
 
-	knownPeers               []*knownPeer          // Peers we know about
-	knownPeersLock           sync.Mutex            //
-	connectionsInStartup     map[*net.TCPConn]bool // Connections in startup state but not yet in peers[]
-	connectionsInStartupLock sync.Mutex            //
-	peers                    map[string]*peer      // Currently connected peers by address
-	peersLock                sync.RWMutex          //
-	recordsRequested         map[[32]byte]uintptr  // When records were last requested
-	recordsRequestedLock     sync.Mutex            //
-	comments                 *list.List            // Accumulates commentary if commentary is enabled
-	commentsLock             sync.Mutex            //
-
-	httpTCPListener *net.TCPListener
-	httpServer      *http.Server
-	p2pTCPListener  *net.TCPListener
-
-	backgroundWorkFunction     *Wharrgarblr
-	backgroundWorkFunctionLock sync.Mutex
-
-	db                 db             //
 	backgroundThreadWG sync.WaitGroup // used to wait for all goroutines
 	startTime          time.Time      // time node started
 	timeTicker         uintptr        // ticks approximately every second
@@ -175,7 +172,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 	n.p2pPort = p2pPort
 	n.httpPort = httpPort
 	n.connectionsInStartup = make(map[*net.TCPConn]bool)
-	n.peers = make(map[string]*peer)
+	n.peers = make(map[string]*connectedPeer)
 	n.recordsRequested = make(map[[32]byte]uintptr)
 	n.comments = list.New()
 	n.startTime = time.Now()
@@ -265,8 +262,8 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 		return nil, err
 	}
 
-	n.log[LogLevelNormal].Printf("ports: P2P: %d HTTP: %d", p2pPort, httpPort)
-	n.log[LogLevelNormal].Printf("identity: %s", n.identityStr)
+	n.log[LogLevelNormal].Printf("TCP ports: P2P: %d HTTP: %d", p2pPort, httpPort)
+	n.log[LogLevelNormal].Printf("P2P identity: %s", n.identityStr)
 	n.log[LogLevelNormal].Printf("commentary owner: %s", n.owner.String())
 
 	// Load genesis.lf or use compiled-in defaults for global LF network
@@ -274,12 +271,11 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 	genesisPath := path.Join(basePath, "genesis.lf")
 	genesisFile, err := os.Open(genesisPath)
 	if err == nil && genesisFile != nil {
-		n.log[LogLevelNormal].Print("loading and checking initial genesis records from genesis.lf")
 		genesisReader = genesisFile
 	} else {
-		n.log[LogLevelNormal].Print("loading and checking initial genesis records from internal defaults (no genesis.lf found)")
 		genesisReader = bytes.NewReader(SolGenesisRecords)
 	}
+	haveInitialGenesisRecords := true
 	for {
 		var r Record
 		err := r.UnmarshalFrom(genesisReader)
@@ -287,7 +283,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 			break
 		}
 		if err != nil {
-			return nil, fmt.Errorf("invalid genesis record(s): " + err.Error())
+			return nil, fmt.Errorf("invalid initial genesis record(s): " + err.Error())
 		}
 
 		if len(n.genesisOwner) == 0 {
@@ -297,7 +293,8 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 		if bytes.Equal(n.genesisOwner, r.Owner) { // sanity check
 			rh := r.Hash()
 			if !n.db.hasRecord(rh[:]) {
-				n.log[LogLevelNormal].Printf("adding genesis record =%s (not already in database)", Base62Encode(rh[:]))
+				haveInitialGenesisRecords = false
+				n.log[LogLevelNormal].Printf("adding initial genesis record =%s", Base62Encode(rh[:]))
 				err = n.db.putRecord(&r)
 				if err != nil {
 					return nil, err
@@ -305,17 +302,21 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 			}
 		}
 	}
-	if genesisFile == nil {
-		ioutil.WriteFile(genesisPath, SolGenesisRecords, 0644)
-	} else {
-		genesisFile.Close()
+	if !haveInitialGenesisRecords {
+		if genesisFile == nil {
+			n.log[LogLevelNormal].Print("genesis.lf not found, used compiled-in defaults for global public network node")
+			ioutil.WriteFile(genesisPath, SolGenesisRecords, 0644)
+		} else {
+			n.log[LogLevelNormal].Print("genesis.lf found, initial genesis records loaded")
+			genesisFile.Close()
+		}
 	}
 	if len(n.genesisOwner) == 0 {
 		return nil, errors.New("no default genesis records found; database cannot be initialized and/or genesis record lineage cannot be determined")
 	}
 
-	// Load any genesis records after those in genesis.lf (or compiled in default)
-	n.log[LogLevelNormal].Printf("loading genesis records from genesis owner @%s", Base62Encode(n.genesisOwner))
+	// Load and replay genesis records, passing them through handler to bring network config to current state.
+	n.log[LogLevelNormal].Printf("replaying genesis records by genesis owner @%s", Base62Encode(n.genesisOwner))
 	gotGenesis := false
 	n.db.getAllByOwner(n.genesisOwner, func(doff, dlen uint64, reputation int) bool {
 		rdata, _ := n.db.getDataByOffset(doff, uint(dlen), nil)
@@ -333,11 +334,6 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 	})
 	if !gotGenesis {
 		return nil, errors.New("no genesis records found or none readable")
-	}
-	if len(n.genesisParameters.AmendableFields) > 0 {
-		n.log[LogLevelNormal].Printf("network '%s' permits changes to configuration fields %v by owner @%s", n.genesisParameters.Name, n.genesisParameters.AmendableFields, Base62Encode(n.genesisOwner))
-	} else {
-		n.log[LogLevelNormal].Printf("network '%s' genesis configuration is immutable (via any in-band mechanism)", n.genesisParameters.Name)
 	}
 
 	// Load peers.json if present
@@ -420,11 +416,11 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 func (n *Node) Stop() {
 	n.log[LogLevelNormal].Printf("shutting down")
 	if atomic.SwapUint32(&n.shutdown, 1) == 0 {
-		n.backgroundWorkFunctionLock.Lock()
-		if n.backgroundWorkFunction != nil {
-			n.backgroundWorkFunction.Abort()
+		n.commentaryWorkFunctionLock.Lock()
+		if n.commentaryWorkFunction != nil {
+			n.commentaryWorkFunction.Abort()
 		}
-		n.backgroundWorkFunctionLock.Unlock()
+		n.commentaryWorkFunctionLock.Unlock()
 
 		n.connectionsInStartupLock.Lock()
 		if n.connectionsInStartup != nil {
@@ -571,8 +567,8 @@ func (n *Node) AddRecord(r *Record) error {
 		return ErrRecordTooManySelectors
 	}
 
-	// Timestamp must be within a sane range
-	if r.Timestamp > (TimeSec() + uint64(n.genesisParameters.RecordMaxForwardTimeDrift)) {
+	// Timestamp must not be too far in the future
+	if r.Timestamp > (TimeSec() + uint64(n.genesisParameters.RecordMaxTimeDrift)) {
 		return ErrRecordViolatesSpecialRelativity
 	}
 
@@ -623,7 +619,6 @@ func (n *Node) handleGenesisRecord(gr *Record) bool {
 			atomic.StoreUint64(&n.lastGenesisRecordTimestamp, gr.Timestamp)
 			return true
 		}
-		n.log[LogLevelNormal].Printf("ignoring genesis configuration update from record =%s: timestamp %d <= latest timestamp %d", grHashStr, gr.Timestamp, n.lastGenesisRecordTimestamp)
 	}
 	return false
 }
@@ -641,12 +636,11 @@ func (n *Node) handleSynchronizedRecord(doff uint64, dlen uint, reputation int, 
 		defer func() {
 			e := recover()
 			if e != nil && atomic.LoadUint32(&n.shutdown) != 0 {
-				n.log[LogLevelWarning].Printf("WARNING: unexpected panic replicating synchronized record: %s", e)
+				n.log[LogLevelWarning].Printf("WARNING: BUG: unexpected panic handling synchronized record: %s", e)
 			}
 			n.backgroundThreadWG.Done()
 		}()
 
-		recordHashStr := Base62Encode(hash[:])
 		rdata, err := n.db.getDataByOffset(doff, dlen, nil)
 		if len(rdata) > 0 && err == nil {
 			r, err := NewRecordFromBytes(rdata)
@@ -654,28 +648,26 @@ func (n *Node) handleSynchronizedRecord(doff uint64, dlen uint, reputation int, 
 				// Check to make sure this record only links to records that are older than it to within
 				// permitted fuzziness for network. (Only bother if reputation is above this threshold.)
 				if reputation > dbReputationTemporalViolation {
-					temporalViolation := false
 					for li := range r.Links {
-						ok, ts := n.db.getRecordTimestampByHash(r.Links[li][:])
+						ok, linkTS := n.db.getRecordTimestampByHash(r.Links[li][:])
 						if ok {
-							if ts > r.Timestamp && (ts-r.Timestamp) > uint64(n.genesisParameters.RecordMaxForwardTimeDrift) {
-								temporalViolation = true
+							if linkTS > r.Timestamp && (linkTS-r.Timestamp) > uint64(n.genesisParameters.RecordMaxTimeDrift) {
+								n.log[LogLevelVerbose].Printf("record %s reputation adjusted from %d to %d since it links to records newer than itself", r.HashString(), reputation, dbReputationTemporalViolation)
+								reputation = dbReputationTemporalViolation
+								n.db.updateRecordReputationByHash(hash[:], reputation)
 								break
 							}
+						} else {
+							n.log[LogLevelFatal].Printf("FATAL: I/O error or database corruption: record %s was reported by database as synchronized, but is not since link =%s is missing!", r.HashString(), Base62Encode(r.Links[li][:]))
+							go n.Stop()
+							return
 						}
-					}
-					if temporalViolation {
-						n.log[LogLevelVerbose].Printf("record %s reputation adjusted from %d to %d since it links to records newer than itself", r.HashString(), reputation, dbReputationTemporalViolation)
-						reputation = dbReputationTemporalViolation
-						rh := r.Hash()
-						n.db.updateRecordReputationByHash(rh[:], reputation)
 					}
 				}
 
-				// If this record's local reputation is bad, check and see if we have any good
-				// reputation local records with the same ID and another onwer. If so and if commenting
-				// is enabled, generate a comment record that we will publish under our owner.
-				if reputation < dbReputationDefault && atomic.LoadUint32(&n.commentary) != 0 {
+				// If record looks like a collision and if we have other records that have a positive reputation,
+				// generate a commentary record indicating that this record is suspect.
+				if reputation <= dbReputationCollision && atomic.LoadUint32(&n.commentary) != 0 {
 					rid := r.ID()
 					n.db.getAllByIDNotOwner(rid[:], r.Owner, func(_, _ uint64, alreadyHaveReputation int) bool {
 						if alreadyHaveReputation > reputation {
@@ -710,38 +702,48 @@ func (n *Node) handleSynchronizedRecord(doff uint64, dlen uint, reputation int, 
 							}
 						}
 					}
+					//case RecordTypeCertificate: // TODO: not implemented yet
 				}
 
-				// Announce that we have this record to connected peers (rumor/gossip propagation)
-				var msg [33]byte
-				msg[0] = p2pProtoMessageTypeHaveRecords
-				copy(msg[1:], hash[:])
-				announcementCount := 0
-				n.peersLock.RLock()
-				if len(n.peers) > 0 {
-					for _, p := range n.peers {
-						if atomic.LoadUint32(&n.shutdown) != 0 {
-							break
-						}
-						if p.peerHelloMsg.SubscribeToNewRecords {
-							p.hasRecordsLock.Lock()
-							_, hasRecord := p.hasRecords[*hash]
-							p.hasRecordsLock.Unlock()
-							if !hasRecord {
-								p.send(msg[:])
-								announcementCount++
+				// If record is of good reputation, announce that we have it to peers. Low reputation records
+				// are not announced, but peers can still request them. This causes them to propagate more
+				// slowly, increasing the odds of other less synchronized nodes also flagging them as
+				// suspect for temporal heuristic reasons.
+				if reputation >= dbReputationDefault {
+					var msg [33]byte
+					msg[0] = p2pProtoMessageTypeHaveRecords
+					copy(msg[1:], hash[:])
+					announcementCount := 0
+					n.peersLock.RLock()
+					if len(n.peers) > 0 {
+						for _, p := range n.peers {
+							if atomic.LoadUint32(&n.shutdown) != 0 {
+								break
+							}
+							if p.peerHelloMsg.SubscribeToNewRecords {
+								p.hasRecordsLock.Lock()
+								_, hasRecord := p.hasRecords[*hash]
+								p.hasRecordsLock.Unlock()
+								if !hasRecord {
+									p.send(msg[:])
+									announcementCount++
+								}
 							}
 						}
 					}
-				}
-				n.peersLock.RUnlock()
+					n.peersLock.RUnlock()
 
-				n.log[LogLevelNormal].Printf("sync: =%s synchronized (subjective reputation %d), announced to %d peers", recordHashStr, reputation, announcementCount)
+					n.log[LogLevelNormal].Printf("sync: %s with local reputation %d (announced to %d peers)", r.HashString(), reputation, announcementCount)
+				} else {
+					n.log[LogLevelNormal].Printf("sync: %s with local reputation %d (not announced due to below normal reputation)", r.HashString(), reputation)
+				}
 			} else {
-				n.log[LogLevelWarning].Printf("WARNING: record =%s deserialization error: %s (is your node version too old?)", recordHashStr, err.Error())
+				n.log[LogLevelWarning].Printf("WARNING: could your node be really old? record =%s reputation adjusted from %d to %d since an error occured deserializing it (%s)", Base62Encode(hash[:]), reputation, dbReputationRecordDeserializationFailed, err.Error())
+				n.db.updateRecordReputationByHash(hash[:], dbReputationRecordDeserializationFailed)
 			}
 		} else {
-			n.log[LogLevelWarning].Printf("WARNING: unable to read record at byte index %d in data file", doff)
+			n.log[LogLevelFatal].Printf("FATAL: I/O error or database corruption: unable to read record at byte index %d with size %d in data file (%s)", doff, dlen, err.Error())
+			go n.Stop()
 		}
 	}()
 }
@@ -783,7 +785,7 @@ func (n *Node) backgroundWorkerMain() {
 
 		// Periodically announce that we have a few recent records to prompt syncing
 		if (ticker % 10) == 0 {
-			_, links, err := n.db.getLinks(4)
+			_, links, err := n.db.getLinks(2)
 			if err == nil && len(links) >= 32 {
 				hr := make([]byte, 1, 1+len(links))
 				hr[0] = p2pProtoMessageTypeHaveRecords
@@ -828,6 +830,12 @@ func (n *Node) backgroundWorkerMain() {
 							visited[idx] = true
 						}
 					}
+				} else {
+					sp := n.genesisParameters.SeedPeers
+					if len(sp) > 0 {
+						spp := &sp[rand.Int()%len(sp)]
+						n.Connect(spp.IP, spp.Port, spp.Identity)
+					}
 				}
 				n.knownPeersLock.Unlock()
 			}
@@ -850,7 +858,6 @@ func (n *Node) backgroundWorkerMain() {
 
 // commentaryGeneratorMain is run to generate commentary and add work to the DAG (if enabled).
 func (n *Node) commentaryGeneratorMain() {
-	var err error
 	desiredMinOverhead := 1024
 	for atomic.LoadUint32(&n.shutdown) == 0 {
 		time.Sleep(time.Second) // 1s pause between each new record
@@ -867,6 +874,7 @@ func (n *Node) commentaryGeneratorMain() {
 				if len(commentary)+s > int(n.genesisParameters.RecordMaxValueSize) {
 					break
 				}
+				var err error
 				commentary, err = c.appendTo(commentary)
 				if err != nil {
 					commentary = nil
@@ -893,30 +901,52 @@ func (n *Node) commentaryGeneratorMain() {
 			links, err := n.db.getLinks2(nlinks)
 
 			if err == nil && len(links) > 0 {
-				startTime := TimeMs()
-				rec, err := NewRecord(RecordTypeCommentary, commentary, links, nil, nil, nil, nil, TimeSec(), n.getBackgroundWorkFunction(), n.owner)
-				endTime := TimeMs()
+				var wf *Wharrgarblr
+				n.commentaryWorkFunctionLock.Lock()
+				if n.commentaryWorkFunction != nil {
+					wf = n.commentaryWorkFunction
+				} else {
+					threads := runtime.NumCPU()
+					if threads >= 3 {
+						threads -= 2
+					} else {
+						threads = 1
+					}
+					n.commentaryWorkFunction = NewWharrgarblr(RecordDefaultWharrgarblMemory, threads)
+					wf = n.commentaryWorkFunction
+				}
+				n.commentaryWorkFunctionLock.Unlock()
+
+				startTime := time.Now()
+				rec, err := NewRecord(RecordTypeCommentary, commentary, links, nil, nil, nil, nil, TimeSec(), wf, n.owner)
+				endTime := time.Now()
+
 				if err == nil {
 					err = n.AddRecord(rec)
 					if err == nil {
 						// Tune desired overhead to attempt to achieve a commentary rate of one
-						// new record every two minutes.
-						duration := endTime - startTime
-						if duration < 120000 {
+						// new record every two minutes. Actual results will vary a lot due to
+						// the probabilistic nature of the work function.
+						duration := endTime.Sub(startTime).Seconds()
+						if duration < 120.0 {
 							desiredMinOverhead += 32
-						} else if duration > 120000 && desiredMinOverhead > 32 {
+						} else if desiredMinOverhead > 32 {
 							desiredMinOverhead -= 32
 						}
 
-						rhash := rec.Hash()
-						n.log[LogLevelVerbose].Printf("commentary: =%s submitted with %d comments and %d links (generation took %f seconds)", Base62Encode(rhash[:]), commentCount, len(links), float64(duration)/1000.0)
+						n.log[LogLevelVerbose].Printf("commentary: %s submitted with %d comments and %d links (creation took %f seconds)", rec.HashString(), commentCount, len(links), duration)
 					} else {
-						n.log[LogLevelWarning].Printf("WARNING: error creating record: %s", err.Error())
+						n.log[LogLevelWarning].Printf("WARNING: error adding commentary record: %s", err.Error())
 					}
 				} else {
-					n.log[LogLevelWarning].Printf("WARNING: error creating record: %s", err.Error())
+					n.log[LogLevelWarning].Printf("WARNING: error creating commentary record: %s", err.Error())
 				}
 			}
+		} else {
+			// If commentary is disabled, go ahead and let go of work function RAM.
+			n.commentaryWorkFunctionLock.Lock()
+			n.commentaryWorkFunction = nil
+			n.commentaryWorkFunctionLock.Unlock()
 		}
 	}
 }
@@ -930,7 +960,7 @@ func (n *Node) requestWantedRecords(minRetries, maxRetries int) {
 	}
 	count, hashes := n.db.getWanted(256, minRetries, maxRetries, true)
 	if len(hashes) >= 32 {
-		var p *peer
+		var p *connectedPeer
 		for _, pp := range n.peers { // exploits the random map iteration order in Go
 			p = pp
 			break
@@ -980,28 +1010,9 @@ func (n *Node) writeKnownPeers() {
 	}
 }
 
-// getBackgroundWorkFunction gets (creating if needed) the work function for background work addition.
-func (n *Node) getBackgroundWorkFunction() (wf *Wharrgarblr) {
-	n.backgroundWorkFunctionLock.Lock()
-	defer n.backgroundWorkFunctionLock.Unlock()
-	if n.backgroundWorkFunction != nil {
-		wf = n.backgroundWorkFunction
-		return
-	}
-	threads := runtime.NumCPU()
-	if threads >= 3 {
-		threads -= 2
-	} else {
-		threads = 1
-	}
-	n.backgroundWorkFunction = NewWharrgarblr(RecordDefaultWharrgarblMemory, threads)
-	wf = n.backgroundWorkFunction
-	return
-}
-
 // sendPeerAnnouncement sends a peer announcement to this peer for the given address and public key
-func (p *peer) sendPeerAnnouncement(tcpAddr *net.TCPAddr, identity []byte) {
-	var peerMsg APIPeer
+func (p *connectedPeer) sendPeerAnnouncement(tcpAddr *net.TCPAddr, identity []byte) {
+	var peerMsg Peer
 	peerMsg.IP = tcpAddr.IP
 	peerMsg.Port = tcpAddr.Port
 	peerMsg.Identity = identity
@@ -1016,76 +1027,112 @@ func (p *peer) sendPeerAnnouncement(tcpAddr *net.TCPAddr, identity []byte) {
 }
 
 // send sends a message to a peer (message must be prefixed by type byte)
-func (p *peer) send(msg []byte) {
+func (p *connectedPeer) send(msg []byte) {
 	if len(msg) < 1 {
 		return
 	}
-
-	buf := make([]byte, 10, len(msg)+32)
-	buf = buf[0:binary.PutUvarint(buf, uint64(len(msg)))]
-
 	p.sendLock.Lock()
-
-	for i := 0; i < 12; i++ { // 12 == GCM standard nonce size
-		p.outgoingNonce[i]++
-		if p.outgoingNonce[i] != 0 {
-			break
-		}
-	}
-
-	buf = p.cryptor.Seal(buf, p.outgoingNonce[0:12], msg, nil)
-
 	go func() {
-		c := p.c
-		if c != nil {
-			c.SetWriteDeadline(time.Now().Add(time.Second * 30))
-			_, err := c.Write(buf)
-			if err != nil {
-				c.Close()
+		defer func() {
+			if recover() != nil {
+				if p.c != nil {
+					p.c.Close()
+				}
+			}
+			p.sendLock.Unlock()
+		}()
+
+		buf := make([]byte, 10, len(msg)+32)
+		buf = buf[0:binary.PutUvarint(buf, uint64(len(msg)))]
+
+		for i := 0; i < 12; i++ { // 12 == GCM nonce size
+			p.outgoingNonce[i]++
+			if p.outgoingNonce[i] != 0 {
+				break
 			}
 		}
-		p.sendLock.Unlock()
+
+		buf = p.cryptor.Seal(buf, p.outgoingNonce[0:12], msg, nil)
+		if p.c != nil {
+			p.c.SetWriteDeadline(time.Now().Add(time.Second * 30))
+			_, err := p.c.Write(buf)
+			if err != nil {
+				p.c.Close()
+			}
+		}
 	}()
 }
 
 // updateKnownPeersWithConnectResult is called from p2pConnectionHandler to update n.knownPeers
-func (n *Node) updateKnownPeersWithConnectResult(ip net.IP, port int, identity []byte) bool {
-	n.knownPeersLock.Lock()
-	defer n.knownPeersLock.Unlock()
-	now := TimeMs()
-
+func (n *Node) updateKnownPeersWithConnectResult(ip net.IP, port int, identity []byte) {
 	if bytes.Equal(n.identity, identity) {
-		return true
+		return
 	}
 
-	for _, kp := range n.knownPeers {
-		if kp.IP.Equal(ip) && kp.Port == port && bytes.Equal(kp.Identity, identity) {
-			if kp.FirstConnect == 0 {
+	ip4 := ip.To4()
+	if len(ip4) == 4 {
+		ip = ip4
+	}
+
+	n.knownPeersLock.Lock()
+	defer n.knownPeersLock.Unlock()
+
+	now := TimeMs()
+	haveIdx := -1
+	haveFC := uint64(0xffffffffffffffff)
+	for kpi, kp := range n.knownPeers {
+		if bytes.Equal(kp.Identity, identity) {
+			if kp.FirstConnect == 0 || !kp.IP.Equal(ip) || kp.Port != port {
+				kp.IP = ip
+				kp.Port = port
 				kp.FirstConnect = now
+				kp.LastSuccessfulConnection = now
+				kp.TotalSuccessfulConnections = 1
+			} else {
+				kp.LastSuccessfulConnection = now
+				kp.TotalSuccessfulConnections++
 			}
+			if kp.FirstConnect <= haveFC {
+				haveFC = kp.FirstConnect
+				haveIdx = kpi
+			}
+		} else if kp.IP.Equal(ip) && kp.Port == port && !bytes.Equal(kp.Identity, identity) {
+			kp.Identity = identity
+			kp.FirstConnect = now
 			kp.LastSuccessfulConnection = now
-			kp.TotalSuccessfulConnections++
-			return true
+			kp.TotalSuccessfulConnections = 1
+			if kp.FirstConnect <= haveFC {
+				haveFC = kp.FirstConnect
+				haveIdx = kpi
+			}
 		}
 	}
 
-	n.knownPeers = append(n.knownPeers, &knownPeer{
-		APIPeer: APIPeer{
-			IP:       ip,
-			Port:     port,
-			Identity: identity,
-		},
-		FirstConnect:               now,
-		LastSuccessfulConnection:   now,
-		TotalSuccessfulConnections: 1,
-	})
-
-	return false
+	if haveIdx >= 0 {
+		kp2 := make([]*knownPeer, 0, len(n.knownPeers))
+		for kpi, kp := range n.knownPeers {
+			if kpi == haveIdx || !bytes.Equal(kp.Identity, identity) {
+				kp2 = append(kp2, kp)
+			}
+		}
+		n.knownPeers = kp2
+	} else {
+		n.knownPeers = append(n.knownPeers, &knownPeer{
+			Peer: Peer{
+				IP:       ip,
+				Port:     port,
+				Identity: identity,
+			},
+			FirstConnect:               now,
+			LastSuccessfulConnection:   now,
+			TotalSuccessfulConnections: 1,
+		})
+	}
 }
 
 func (n *Node) p2pConnectionHandler(c *net.TCPConn, identity []byte, inbound bool) {
 	var err error
-	var p *peer
+	var p *connectedPeer
 	var msgbuf []byte
 	peerAddressStr := c.RemoteAddr().String()
 	tcpAddr, tcpAddrOk := c.RemoteAddr().(*net.TCPAddr)
@@ -1171,10 +1218,8 @@ func (n *Node) p2pConnectionHandler(c *net.TCPConn, identity []byte, inbound boo
 		n.log[LogLevelNormal].Printf("P2P connection to %s closed: key agreement failed: %s", peerAddressStr, err.Error())
 		return
 	}
-	if len(n.genesisParameters.LinkKey) == 32 {
-		for i := 0; i < 32; i++ {
-			remoteShared[i] ^= n.genesisParameters.LinkKey[i]
-		}
+	for i := 0; i < 32; i++ {
+		remoteShared[i] ^= n.genesisParameters.ID[i] // mangle link key with ID to avoid talking to peers not in our network
 	}
 	aesCipher, _ := aes.NewCipher(remoteShared[:])
 	cryptor, _ := cipher.NewGCM(aesCipher)
@@ -1213,7 +1258,7 @@ func (n *Node) p2pConnectionHandler(c *net.TCPConn, identity []byte, inbound boo
 		return
 	}
 
-	p = &peer{
+	p = &connectedPeer{
 		n:             n,
 		address:       peerAddressStr,
 		tcpAddress:    tcpAddr,
@@ -1430,7 +1475,7 @@ func (n *Node) p2pConnectionHandler(c *net.TCPConn, identity []byte, inbound boo
 
 		case p2pProtoMessageTypePeer:
 			if len(msg) > 0 {
-				var peerMsg APIPeer
+				var peerMsg Peer
 				if json.Unmarshal(msg, &peerMsg) == nil {
 					if len(peerMsg.Identity) > 0 {
 						var tmp net.TCPAddr

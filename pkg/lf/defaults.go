@@ -26,43 +26,12 @@
 
 package lf
 
-import "net"
-
 // This contains the defaults for the Sol LF network, the global shared LF
 // database for Earth and its neighbors in the Sol system. It should be good
 // up to Kardashev type II civilization scale.
 
-/*
-{
-  "Name": "Sol",
-  "Contact": "https://www.zerotier.com/lf",
-  "Comment": "Global Public LF Data Store",
-  "AuthCertificates": "\bTETqvpezBjwOp4gskqxKhtNbpqVDL7HCGwV3N4nvNlPYl7OxMc756MWS7HaU8AwvQ0mwhfADxe68PFdIAa1mqB3Zi9oD2r2uJoND1d7cUdOgifxFyAaPvxKjbXsqGEW03lChurUj0frFz2GL658QukYgF2eE6HxHqXNqbPS6WZUyumuDrjuGt3uIXdiKHc18xisoPgyL95VkCVeZqz777SsxajFhLiLrheRGXWpAO1jM1B11Zxc5rscXbcXHtflS4xcJu5ip8pXTrwZlpMozBmgTQXlSOfPNRsD7AWXGIAuPXekcADdInL017ntjHRKuCfGuhiBiOB2tjO2IEDNlZOnRiLxuVxpGZMs8fJqjdKbQiIedZDwvff74yDYvm5gmeklZ9uCh2HwmLCotCNEbRWJWc8abvJkaU5iL7ZQfyh0LUaLGp0na4tbw2uWsbQBFku2vfHczIES4P5odjpaXMf0PcEpbkAcJC1kLcDPItj4IkfCJZ8Inpko8Jwm6m60BqxvhQxr9k8HiGVpKx0LjvQMwZTILIrmBiApOqsiX2fsr7SyBdIJ93oB890IGFESEUFGcXF7QJPQ2Y0oGK8nacqfq5sqfX97dWkBTGi0jZXYYFUbLUFsHtveyeXhGBq5mR3WnlXYxv7npbL4yFD1ZVTiyVkQIeRtx4Va0fZktns7GQNPPJ4E0hEVsYTxYhVnPH3d32EcccYzyaySAdOXcX5U0LoolPj9SiapEnET4Ub4pZVE2g1LObjX3HSBrA5cRu9DWArXwxWA9JcbAPywQIPKJWXjuNngJlz2Z2L3LH6o11xQF78dVuE0SoO6a24R9rKurvcRL2sXXZqUbQd7Y8PuRMT4q2kOTmNRmQaUOsJGpS8EDlOEDd4qyfBNSAj5rK7a85VH3aM361xr3MZwqfipHsyI94H8Xujc7aGelydGI9U1ESKdt7dCTl2MAec8xQlMtRt1lH68T9eMNN9UW201KhbYfXpqVPbIkuCkyqlFBsganz11tin8aOF9WRCzPdHYutt4Ox",
-  "AuthRequired": false,
-  "LinkKey": [23, 85, 34, 46, 124, 51, 168, 95, 201, 112, 89, 91, 250, 91, 70, 59, 42, 169, 53, 238, 62, 70, 190, 211, 59, 20, 20, 141, 227, 216, 141, 35],
-  "RecordMinLinks": 2,
-  "RecordMaxValueSize": 1024,
-  "RecordMaxForwardTimeDrift": 60,
-  "AmendableFields": ["authcertificates"]
-}
-*/
-
-// SolDefaultPeers is a list of seed peers that can be used to get a Sol peer connected to the net.
-var SolDefaultPeers = []APIPeer{
-	APIPeer{ // ZeroTier LF node in Helsinki, Finland
-		IP:       net.ParseIP("95.216.29.85"),
-		Port:     9908,
-		Identity: Base62Decode("JrKNrBrauJsmnbeGRPYN6NmyM81yp32MjmLhNb2EQENd0NwilsR4Cxsdd4CdgkPMS"),
-	},
-	APIPeer{ // ZeroTier LF node at our HQ in Los Angeles, California, USA
-		IP:       net.ParseIP("174.136.102.98"),
-		Port:     9908,
-		Identity: Base62Decode(""),
-	},
-}
-
-// SolDefaultNodeURL is the default URL for clients to access Sol (servers operated by ZeroTier, Inc.)
-const SolDefaultNodeURL = "https://lf.zerotier.com/"
+// SolDefaultNodeURLs is the default URL for clients to access Sol (servers operated by ZeroTier, Inc.)
+var SolDefaultNodeURLs = []string{"https://lf.zerotier.com/"}
 
 // SolGenesisOwnerPublic is the owner of the Sol genesis records.
 var SolGenesisOwnerPublic, _ = NewOwnerPublicFromString("@215FOwI9yiVOPXi523c1RfoI3rqYcg8f6")

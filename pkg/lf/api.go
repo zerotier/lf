@@ -71,8 +71,8 @@ func (e APIError) Error() string {
 	return strconv.FormatInt(int64(e.Code), 10)
 }
 
-// APIPeer contains information about a peer
-type APIPeer struct {
+// Peer contains information about a peer
+type Peer struct {
 	IP       net.IP
 	Port     int
 	Identity Blob
@@ -125,7 +125,7 @@ func APIPostRecord(url string, recordData []byte) error {
 	return APIError{Code: resp.StatusCode}
 }
 
-// APIPostConnect submits an APIPeer record to /connect.
+// APIPostConnect submits an Peer record to /connect.
 func APIPostConnect(url string, ip net.IP, port int, identity string) error {
 	if strings.HasSuffix(url, "/") {
 		url = url + "connect"
@@ -138,7 +138,7 @@ func APIPostConnect(url string, ip net.IP, port int, identity string) error {
 	} else {
 		return ErrInvalidParameter
 	}
-	apiPeerJSON, err := json.Marshal(&APIPeer{
+	apiPeerJSON, err := json.Marshal(&Peer{
 		IP:       ip,
 		Port:     port,
 		Identity: ob,
@@ -412,7 +412,7 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 		apiSetStandardHeaders(out)
 		if req.Method == http.MethodPost || req.Method == http.MethodPut {
 			if apiIsTrusted(n, req) {
-				var m APIPeer
+				var m Peer
 				if apiReadObj(out, req, &m) == nil {
 					n.Connect(m.IP, m.Port, m.Identity)
 					apiSendObj(out, req, http.StatusOK, nil)

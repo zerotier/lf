@@ -49,9 +49,12 @@ const (
 	dbMaxOwnerSize       uint = C.ZTLF_DB_QUERY_MAX_OWNER_SIZE
 	dbMaxConfigValueSize int  = 1048576
 
-	dbReputationDefault           = 63
-	dbReputationTemporalViolation = 32
-	dbReputationCollision         = 0
+	// Reputations are in descending order in a circles of hell sense -- 0 is the worst possible thing.
+	// Note that 0 and 63 must match native/db.h defines.
+	dbReputationDefault                     = 63 // normal perfectly good looking record
+	dbReputationTemporalViolation           = 48 // leave a bit of room above and below
+	dbReputationRecordDeserializationFailed = 1  // record appears corrupt (shouldn't really happen at all)
+	dbReputationCollision                   = 0  // record's selector names collide with another owner
 )
 
 // DB is an instance of the LF database that stores records and manages record weights and linkages.

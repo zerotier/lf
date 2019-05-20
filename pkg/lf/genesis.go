@@ -27,6 +27,7 @@
 package lf
 
 import (
+	"bytes"
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
@@ -35,80 +36,107 @@ import (
 
 // GenesisParameters is the payload (JSON encoded) of the first RecordMinLinks records in a global data store.
 type GenesisParameters struct {
-	Name                      string   `json:",omitempty"` // Name of this LF network / data store
-	Contact                   string   `json:",omitempty"` // Contact info for this network (may be empty)
-	Comment                   string   `json:",omitempty"` // Optional comment
-	AuthCertificates          Blob     `json:",omitempty"` // X.509 certificate(s) that can sign records to bypass work requirement
-	AuthRequired              bool     ``                  // If true a CA signature is required and simple proof of work is not accepted
-	LinkKey                   [32]byte ``                  // Static 32-byte key used to ensure that nodes in this network only connect to one another
-	RecordMinLinks            uint     ``                  // Minimum number of links required for non-genesis records
-	RecordMaxValueSize        uint     ``                  // Maximum size of record values
-	RecordMaxForwardTimeDrift uint     ``                  // Maximum number of seconds in the future a record can be timestamped
-	AmendableFields           []string `json:",omitempty"` // List of json field names that the genesis owner can change by posting non-empty records
+	ID                 [32]byte ``                  // Unique arbitrary 32-byte ID of this network (always immutable!)
+	AmendableFields    []string `json:",omitempty"` // List of json field names that the genesis owner can change by posting non-empty records
+	Name               string   `json:",omitempty"` // Name of this LF network / data store
+	Contact            string   `json:",omitempty"` // Contact info for this network (may be empty)
+	Comment            string   `json:",omitempty"` // Optional comment
+	AuthCertificates   Blob     `json:",omitempty"` // X.509 certificate(s) that can sign records to bypass work requirement
+	AuthRequired       bool     ``                  // If true a CA signature is required and simple proof of work is not accepted
+	RecordMinLinks     uint     ``                  // Minimum number of links required for non-genesis records
+	RecordMaxValueSize uint     ``                  // Maximum size of record values
+	RecordMaxTimeDrift uint     ``                  // Maximum number of seconds of time drift permitted for records
+	SeedPeers          []Peer   `json:",omitempty"` // Some peer nodes with static IPs to help bootstrap
 
 	certs       []*x509.Certificate
+	history     []GenesisParameters
 	initialized bool
 }
 
-// Update updates these GenesisParameters from a JSON encoded parameter set.
-// This handles the initial update and then constraining later updated by AmendableFields and which fields are present.
-func (gp *GenesisParameters) Update(jsonValue []byte) error {
+// Update updates these GenesisParameters from a JSON encoded parameter set, obeying AmendableFields constraints.
+func (gp *GenesisParameters) Update(jsonValue []byte) (bool, error) {
 	if len(jsonValue) == 0 {
-		return nil
+		return false, nil
 	}
 
-	updFields := make(map[string]*json.RawMessage)
-	err := json.Unmarshal(jsonValue, &updFields)
-	if err != nil {
-		return err
-	}
 	var ngp GenesisParameters
-	err = json.Unmarshal(jsonValue, &ngp)
+	err := json.Unmarshal(jsonValue, &ngp)
 	if err != nil {
-		return err
+		return false, err
 	}
 
-	afields := gp.AmendableFields
-	for k := range updFields {
-		skip := gp.initialized
-		if skip {
-			for _, af := range afields {
-				if strings.EqualFold(af, k) {
-					skip = false
-					break
+	if !gp.initialized {
+		*gp = ngp
+		return true, nil
+	}
+
+	changed := false
+	old := *gp
+	for _, k := range gp.AmendableFields {
+		switch strings.ToLower(k) {
+		case "name":
+			if gp.Name != ngp.Name {
+				gp.Name = ngp.Name
+				changed = true
+			}
+		case "contact":
+			if gp.Contact != ngp.Contact {
+				gp.Contact = ngp.Contact
+				changed = true
+			}
+		case "comment":
+			if gp.Comment != ngp.Comment {
+				gp.Comment = ngp.Comment
+				changed = true
+			}
+		case "authcertificates":
+			if !bytes.Equal(gp.AuthCertificates, ngp.AuthCertificates) {
+				gp.AuthCertificates = ngp.AuthCertificates
+				gp.certs = nil // forget previously cached certs
+				changed = true
+			}
+		case "authrequired":
+			if gp.AuthRequired != ngp.AuthRequired {
+				gp.AuthRequired = ngp.AuthRequired
+				changed = true
+			}
+		case "recordminlinks":
+			if gp.RecordMinLinks != ngp.RecordMinLinks {
+				gp.RecordMinLinks = ngp.RecordMinLinks
+				changed = true
+			}
+		case "recordmaxvaluesize":
+			if gp.RecordMaxValueSize != ngp.RecordMaxValueSize {
+				gp.RecordMaxValueSize = ngp.RecordMaxValueSize
+				changed = true
+			}
+		case "recordmaxtimedrift":
+			if gp.RecordMaxTimeDrift != ngp.RecordMaxTimeDrift {
+				gp.RecordMaxTimeDrift = ngp.RecordMaxTimeDrift
+				changed = true
+			}
+		case "seedpeers":
+			if len(gp.SeedPeers) != len(ngp.SeedPeers) {
+				gp.SeedPeers = ngp.SeedPeers
+				changed = true
+			} else {
+				for i := range gp.SeedPeers {
+					if !gp.SeedPeers[i].IP.Equal(ngp.SeedPeers[i].IP) || gp.SeedPeers[i].Port != ngp.SeedPeers[i].Port || !bytes.Equal(gp.SeedPeers[i].Identity, ngp.SeedPeers[i].Identity) {
+						gp.SeedPeers = ngp.SeedPeers
+						changed = true
+						break
+					}
 				}
 			}
 		}
-		if !skip {
-			switch strings.ToLower(k) {
-			case "name":
-				gp.Name = ngp.Name
-			case "contact":
-				gp.Contact = ngp.Contact
-			case "comment":
-				gp.Comment = ngp.Comment
-			case "authcertificates":
-				gp.AuthCertificates = ngp.AuthCertificates
-				gp.certs = nil // forget previously cached certs
-			case "authrequired":
-				gp.AuthRequired = ngp.AuthRequired
-			case "linkkey":
-				gp.LinkKey = ngp.LinkKey
-			case "recordminlinks":
-				gp.RecordMinLinks = ngp.RecordMinLinks
-			case "recordmaxvaluesize":
-				gp.RecordMaxValueSize = ngp.RecordMaxValueSize
-			case "recordmaxforwardtimedrift":
-				gp.RecordMaxForwardTimeDrift = ngp.RecordMaxForwardTimeDrift
-			case "amendablefields":
-				gp.AmendableFields = ngp.AmendableFields
-			}
-		}
 	}
 
+	if changed {
+		gp.history = append(gp.history, old)
+	}
 	gp.initialized = true
 
-	return nil
+	return changed, nil
 }
 
 // SetAmendableFields validates and sets the AmendableFields field
@@ -121,9 +149,7 @@ func (gp *GenesisParameters) SetAmendableFields(fields []string) error {
 	for _, f := range fields {
 		af := strings.ToLower(strings.TrimSpace(f))
 		switch af {
-		case
-			"name", "contact", "comment", "authcertificates", "authrequired", "linkkey",
-			"recordminlinks", "recordmaxvaluesize", "recordmaxforwardtimedrift", "amendablefields":
+		case "name", "contact", "comment", "authcertificates", "authrequired", "recordminlinks", "recordmaxvaluesize", "recordmaxforwardtimedrift", "seedpeers", "amendablefields":
 			gp.AmendableFields = append(gp.AmendableFields, af)
 		default:
 			return fmt.Errorf("invalid amendable field name: %s", f)

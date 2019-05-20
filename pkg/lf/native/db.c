@@ -966,7 +966,7 @@ int ZTLF_DB_PutRecord(
 	 * of the DAG itself and is not replicated, though it will factor into
 	 * record commentary and therefore can be taken into consideration by
 	 * others on a voluntary trust basis. */
-	int reputation = 0;
+	int reputation = ZTLF_DB_REPUTATION_COLLISION;
 	sqlite3_reset(db->sGetIDOwnerReputation);
 	sqlite3_bind_blob(db->sGetIDOwnerReputation,1,id,32,SQLITE_STATIC);
 	sqlite3_bind_blob(db->sGetIDOwnerReputation,2,owner,ownerSize,SQLITE_STATIC);

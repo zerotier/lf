@@ -209,15 +209,15 @@ Commands:
   node-connect <ip> <port> <identity>     Tell node to try a P2P endpoint
   status                                  Get status from remote node/proxy
   set [-...] <name[#ord]> [...] <value>   Set a value in the data store
-    -file                                 Value is a file path not a literal
+    -file                                 Value is a file path ("-" for stdin)
     -mask <key>                           Encrypt value using masking key
     -owner <owner>                        Use this owner instead of default
     -url <url[,url,...]>                  Override configured node/proxy URLs
   get [-...] <name[#start[#end]]> [...]   Find by selector (optional range)
     -mask <key>                           Decrypt value(s) with masking key
-    -url <url[,url,...]>                  Override configured node/proxy URLs
     -tstart <time>                        Constrain to after this time
     -tend <time>                          Constrain to before this time
+    -url <url[,url,...]>                  Override configured node/proxy URLs
   owner <operation> [...]
     list                                  List owners
     new <name> [p224|p384|ed25519]        Create a new owner
@@ -943,21 +943,33 @@ func doMakeGenesis(cfg *lf.ClientConfig, basePath string, args []string) {
 	g.Name = prompt("Network name: ", true, "")
 	if g.Name == "~~~Sol" { // magic value used internally to make Sol, useless to others
 		g = lf.GenesisParameters{
+			ID:                        [32]byte{0x17, 0x55, 0x22, 0x2e, 0x7c, 0x33, 0xa8, 0x5f, 0xc9, 0x70, 0x59, 0x5b, 0xfa, 0x5b, 0x46, 0x3b, 0x2a, 0xa9, 0x35, 0xee, 0x3e, 0x46, 0xbe, 0xd3, 0x3b, 0x14, 0x14, 0x8d, 0xe3, 0xd8, 0x8d, 0x23},
+			AmendableFields:           []string{"authcertificates", "seedpeers"},
 			Name:                      "Sol",
 			Contact:                   "https://www.zerotier.com/lf",
 			Comment:                   "Global Public LF Data Store",
-			LinkKey:                   [32]byte{0x17, 0x55, 0x22, 0x2e, 0x7c, 0x33, 0xa8, 0x5f, 0xc9, 0x70, 0x59, 0x5b, 0xfa, 0x5b, 0x46, 0x3b, 0x2a, 0xa9, 0x35, 0xee, 0x3e, 0x46, 0xbe, 0xd3, 0x3b, 0x14, 0x14, 0x8d, 0xe3, 0xd8, 0x8d, 0x23},
 			RecordMinLinks:            2,
 			RecordMaxValueSize:        1024,
 			RecordMaxForwardTimeDrift: 60,
-			AmendableFields:           []string{"authcertificates"},
+			SeedPeers: []lf.Peer{
+				lf.Peer{ // ZeroTier LF node in Helsinki, Finland
+					IP:       net.ParseIP("95.216.29.85"),
+					Port:     9908,
+					Identity: lf.Base62Decode("JrKNrBrauJsmnbeGRPYN6NmyM81yp32MjmLhNb2EQENd0NwilsR4Cxsdd4CdgkPMS"),
+				},
+				lf.Peer{ // ZeroTier LF node at our HQ in Los Angeles, California, USA
+					IP:       net.ParseIP("174.136.102.98"),
+					Port:     9908,
+					Identity: lf.Base62Decode(""),
+				},
+			},
 		}
 		fmt.Println("Using Sol network defaults...")
 	} else {
+		secrand.Read(g.ID[:])
+		fmt.Printf("Network ID will be %x\n", g.ID)
 		g.Contact = prompt("Network contact []: ", false, "")
 		g.Comment = prompt("Network comment or description []: ", false, "")
-		q := prompt("Link key: ", true, "")
-		g.LinkKey = sha256.Sum256([]byte(q))
 		g.RecordMinLinks = atoUI(prompt("Record minimum links [2]: ", false, "2"))
 		if g.RecordMinLinks < 2 {
 			fmt.Println("ERROR: min links must be at least 2 or things won't work!")

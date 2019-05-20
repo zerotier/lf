@@ -91,13 +91,13 @@ const (
 	// This is a protocol constant and can't be changed.
 	RecordTypeGenesis byte = 1
 
-	// RecordTypeCertificate records contain an x509 certificate.
-	// This is a protocol constant and can't be changed.
-	RecordTypeCertificate byte = 2
-
 	// RecordTypeCommentary records contain commentary about other records in the DAG.
 	// This is a protocol constant and can't be changed.
-	RecordTypeCommentary byte = 3
+	RecordTypeCommentary byte = 2
+
+	// RecordTypeCertificate records contain an x509 certificate.
+	// This is a protocol constant and can't be changed.
+	RecordTypeCertificate byte = 3
 )
 
 // recordWharrgarblCost computes the cost in Wharrgarbl difficulty for a record of a given number of "billable" bytes.
