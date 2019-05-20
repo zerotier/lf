@@ -41,16 +41,27 @@ const asn1PrivateOIDBase = 1426727994
 var AuthCertificateASN1PseudoWorkValue = asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, asn1PrivateOIDBase, 1}
 
 // GetAuthCertificatePseudoWork is a shortcut to parse out the pseudo work amount value from ExtraExtensions.
-// This will return 0 if the field is not present.
-func GetAuthCertificatePseudoWork(c *x509.Certificate) (uint32, error) {
+// This will return 0 if the field is not present or invalid.
+func GetAuthCertificatePseudoWork(c *x509.Certificate) uint32 {
+	for _, ext := range c.Extensions {
+		if ext.Id.Equal(AuthCertificateASN1PseudoWorkValue) {
+			var v int64
+			_, err := asn1.Unmarshal(ext.Value, &v)
+			if err == nil && v < 0xffffffff && v >= 0 {
+				return uint32(v)
+			}
+		}
+	}
 	for _, ext := range c.ExtraExtensions {
 		if ext.Id.Equal(AuthCertificateASN1PseudoWorkValue) {
 			var v int64
-			_, err := asn1.Unmarshal(ext.Value, v)
-			return uint32(v), err
+			_, err := asn1.Unmarshal(ext.Value, &v)
+			if err == nil && v < 0xffffffff && v >= 0 {
+				return uint32(v)
+			}
 		}
 	}
-	return 0, nil
+	return 0
 }
 
 // GenesisParameters is the payload (JSON encoded) of the first RecordMinLinks records in a global data store.

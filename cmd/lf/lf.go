@@ -1029,9 +1029,6 @@ func doMakeGenesis(cfg *lf.ClientConfig, basePath string, args []string) {
 			name.SerialNumber = serialNoStr
 			name.CommonName = prompt("  Common name []: ", false, "")
 
-			extPseudoWorkValue := pkix.Extension{}
-			extPseudoWorkValue.Id = lf.AuthCertificateASN1PseudoWorkValue
-			extPseudoWorkValue.Critical = false
 			pseudoWork := prompt("  Pseudo-work value of signature (hex 0-ffffffff) [0]: ", false, "0")
 			pseudoWorkInt, err := strconv.ParseInt(pseudoWork, 16, 64)
 			if err != nil || pseudoWorkInt > 0xffffffff || pseudoWorkInt < 0 {
@@ -1043,15 +1040,18 @@ func doMakeGenesis(cfg *lf.ClientConfig, basePath string, args []string) {
 				fmt.Printf("ERROR: ASN.1 marshal failed: %s\n", err.Error())
 				return
 			}
-			extPseudoWorkValue.Value = pseudoWorkASN1V
 
 			now := time.Now()
 			cert := &x509.Certificate{
-				SerialNumber:          new(big.Int).SetBytes(serialNo),
-				Subject:               name,
-				NotBefore:             now,
-				NotAfter:              now.Add(time.Hour * time.Duration(24*ttl)),
-				ExtraExtensions:       []pkix.Extension{extPseudoWorkValue},
+				SerialNumber: new(big.Int).SetBytes(serialNo),
+				Subject:      name,
+				NotBefore:    now,
+				NotAfter:     now.Add(time.Hour * time.Duration(24*ttl)),
+				ExtraExtensions: []pkix.Extension{pkix.Extension{
+					Id:       lf.AuthCertificateASN1PseudoWorkValue,
+					Critical: false,
+					Value:    pseudoWorkASN1V,
+				}},
 				ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageTimeStamping},
 				KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
 				BasicConstraintsValid: true,
@@ -1063,6 +1063,20 @@ func doMakeGenesis(cfg *lf.ClientConfig, basePath string, args []string) {
 				logger.Printf("ERROR: unable to create CA certificate: %s", err.Error())
 				return
 			}
+			cert2, err := x509.ParseCertificate(certBytes)
+			if err != nil {
+				logger.Printf("ERROR: unable to create CA certificate (parsing test): %s", err.Error())
+				return
+			}
+			if lf.GetAuthCertificatePseudoWork(cert2) != uint32(pseudoWorkInt) {
+				logger.Printf("ERROR: unable to create CA certificate (parsing test): pseudo-work ints do not match")
+				return
+			}
+			if cert.Subject.String() != cert2.Subject.String() {
+				logger.Printf("ERROR: unable to create CA certificate (parsing test): subjects do not match")
+				return
+			}
+
 			keyBytes, err := x509.MarshalECPrivateKey(key)
 			if err != nil {
 				logger.Printf("ERROR: unable to x509 encode ECDSA private key: %s", err.Error())
