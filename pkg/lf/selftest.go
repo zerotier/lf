@@ -118,57 +118,6 @@ func TestCore(out io.Writer) bool {
 	}
 	fmt.Fprintf(out, "OK\n")
 
-	fmt.Fprintf(out, "Testing deterministic owner generation from seed... p384 ")
-	op384, _ := NewOwnerFromSeed(OwnerTypeNistP384, []byte("lol"))
-	op384s := hex.EncodeToString(op384.Public)
-	if op384s != "071da200540e3774af83a33e2494db3d8c8e4ea15201dfbe" {
-		fmt.Fprintf(out, "FAILED %s\n", op384s)
-		return false
-	}
-	testSigHash := sha256.Sum256(testStr)
-	sig, err := op384.Sign(testSigHash[:])
-	if err != nil {
-		fmt.Fprintf(out, "FAILED (sign)\n")
-		return false
-	}
-	if !op384.Verify(testSigHash[:], sig) {
-		fmt.Fprintf(out, "FAILED (verify)\n")
-		return false
-	}
-	fmt.Fprint(out, "p224 ")
-	op224, _ := NewOwnerFromSeed(OwnerTypeNistP224, []byte("lol"))
-	op224s := hex.EncodeToString(op224.Public)
-	if op224s != "c561d9cb504bd966d451d421fd77" {
-		fmt.Fprintf(out, "FAILED %s\n", op224s)
-		return false
-	}
-	sig, err = op224.Sign(testSigHash[:])
-	if err != nil {
-		fmt.Fprintf(out, "FAILED (sign)\n")
-		return false
-	}
-	if !op224.Verify(testSigHash[:], sig) {
-		fmt.Fprintf(out, "FAILED (verify)\n")
-		return false
-	}
-	fmt.Fprint(out, "ed25519 ")
-	o25519, _ := NewOwnerFromSeed(OwnerTypeEd25519, []byte("lol"))
-	o25519s := hex.EncodeToString(o25519.Public)
-	if o25519s != "c289a225c996df1998b7aa0e4af9f1142a81d5ab8c55484dadbac7b48baefc8e" {
-		fmt.Fprintf(out, "FAILED %s\n", o25519s)
-		return false
-	}
-	sig, err = o25519.Sign(testSigHash[:])
-	if err != nil {
-		fmt.Fprintf(out, "FAILED (sign)\n")
-		return false
-	}
-	if !o25519.Verify(testSigHash[:], sig) {
-		fmt.Fprintf(out, "FAILED (verify)\n")
-		return false
-	}
-	fmt.Fprintf(out, "OK\n")
-
 	fmt.Fprintf(out, "Testing Ordinal... ")
 	var rk [8]byte
 	var orda, ordb Ordinal
@@ -303,14 +252,106 @@ func TestCore(out io.Writer) bool {
 			pub := ECDSARecover(curve, junk[:], sig)
 			if pub == nil {
 				fmt.Fprintf(out, "FAILED (ECDSARecover returned nil)\n")
+				return false
 			}
 			if pub.X.Cmp(priv.PublicKey.X) != 0 || pub.Y.Cmp(priv.PublicKey.Y) != 0 {
 				pcomp, _ := ECDSACompressPublicKey(pub)
 				fmt.Fprintf(out, "FAILED (ECDSARecover returned wrong key: %x)\n", pcomp)
+				return false
 			}
 		}
 		fmt.Fprintf(out, "OK\n")
 	}
+
+	fmt.Fprintf(out, "Testing Owner...")
+	for _, ownerType := range []byte{OwnerTypeNistP224, OwnerTypeNistP384, OwnerTypeEd25519} {
+		owner, err := NewOwner(ownerType)
+		if err != nil {
+			fmt.Fprintf(out, " FAILED (create: %s)", err.Error())
+			return false
+		}
+		fmt.Fprintf(out, " %s", owner.TypeString())
+		ownerPrivBytes, err := owner.PrivateBytes()
+		if err != nil {
+			fmt.Fprintf(out, " FAILED (encode private: %s)", err.Error())
+			return false
+		}
+		owner2, err := NewOwnerFromPrivateBytes(ownerPrivBytes)
+		if err != nil {
+			fmt.Fprintf(out, " FAILED (decode private: %s)", err.Error())
+			return false
+		}
+		sig, err := owner.Sign(testStr)
+		if err != nil {
+			fmt.Fprintf(out, " FAILED (sign: %s)", err.Error())
+			return false
+		}
+		if !owner2.Verify(testStr, sig) {
+			if err != nil {
+				fmt.Fprintf(out, " FAILED (verify #1 failed)")
+				return false
+			}
+		}
+		owner3 := Owner{Public: owner.Public}
+		if !owner3.Verify(testStr, sig) {
+			if err != nil {
+				fmt.Fprintf(out, " FAILED (verify #2 failed)")
+				return false
+			}
+		}
+	}
+	fmt.Fprintf(out, " OK\n")
+
+	fmt.Fprintf(out, "Testing deterministic owner generation from seed... p384 ")
+	op384, _ := NewOwnerFromSeed(OwnerTypeNistP384, []byte("lol"))
+	op384s := hex.EncodeToString(op384.Public)
+	if op384s != "071da200540e3774af83a33e2494db3d8c8e4ea15201dfbe" {
+		fmt.Fprintf(out, "FAILED %s\n", op384s)
+		return false
+	}
+	testSigHash := sha256.Sum256(testStr)
+	sig, err := op384.Sign(testSigHash[:])
+	if err != nil {
+		fmt.Fprintf(out, "FAILED (sign)\n")
+		return false
+	}
+	if !op384.Verify(testSigHash[:], sig) {
+		fmt.Fprintf(out, "FAILED (verify)\n")
+		return false
+	}
+	fmt.Fprint(out, "p224 ")
+	op224, _ := NewOwnerFromSeed(OwnerTypeNistP224, []byte("lol"))
+	op224s := hex.EncodeToString(op224.Public)
+	if op224s != "c561d9cb504bd966d451d421fd77" {
+		fmt.Fprintf(out, "FAILED %s\n", op224s)
+		return false
+	}
+	sig, err = op224.Sign(testSigHash[:])
+	if err != nil {
+		fmt.Fprintf(out, "FAILED (sign)\n")
+		return false
+	}
+	if !op224.Verify(testSigHash[:], sig) {
+		fmt.Fprintf(out, "FAILED (verify)\n")
+		return false
+	}
+	fmt.Fprint(out, "ed25519 ")
+	o25519, _ := NewOwnerFromSeed(OwnerTypeEd25519, []byte("lol"))
+	o25519s := hex.EncodeToString(o25519.Public)
+	if o25519s != "c289a225c996df1998b7aa0e4af9f1142a81d5ab8c55484dadbac7b48baefc8e" {
+		fmt.Fprintf(out, "FAILED %s\n", o25519s)
+		return false
+	}
+	sig, err = o25519.Sign(testSigHash[:])
+	if err != nil {
+		fmt.Fprintf(out, "FAILED (sign)\n")
+		return false
+	}
+	if !o25519.Verify(testSigHash[:], sig) {
+		fmt.Fprintf(out, "FAILED (verify)\n")
+		return false
+	}
+	fmt.Fprintf(out, "OK\n")
 
 	fmt.Fprintf(out, "Testing Record marshal/unmarshal... ")
 	for k := 0; k < 32; k++ {
