@@ -206,7 +206,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 	}
 
 	// Load or generate this node's public owner / public key.
-	ownerPath := path.Join(basePath, "node-identity-secret.pem")
+	ownerPath := path.Join(basePath, "identity-secret.pem")
 	ownerBytes, _ := ioutil.ReadFile(ownerPath)
 	if len(ownerBytes) > 0 {
 		pb, _ := pem.Decode(ownerBytes)

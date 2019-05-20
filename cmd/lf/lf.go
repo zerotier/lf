@@ -968,7 +968,7 @@ func doMakeGenesis(cfg *lf.ClientConfig, basePath string, args []string) {
 				lf.Peer{ // ZeroTier LF node at our HQ in Los Angeles, California, USA
 					IP:       net.ParseIP("174.136.102.98"),
 					Port:     9908,
-					Identity: lf.Base62Decode(""),
+					Identity: lf.Base62Decode("Hcsqi4GP24UhaJL9poDM35k7KwvgvYzt1fMrYDr5EEAhTJ1ZnHu61xpDctypw66fh"),
 				},
 			},
 		}
