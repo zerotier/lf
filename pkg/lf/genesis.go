@@ -35,12 +35,23 @@ import (
 	"strings"
 )
 
-// ASN1PrivateOIDBase is the 1.3.6.1.4.1.X base OID for LF's private cert OIDs.
-// This is just a big random 32-bit integer.
-const ASN1PrivateOIDBase = 1426727994
+const asn1PrivateOIDBase = 1426727994
 
 // AuthCertificateASN1PseudoWorkValue is the ASN1 OID for auth certificate pseudo-work value (value is a 32-bit unsigned integer).
-var AuthCertificateASN1PseudoWorkValue = asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, ASN1PrivateOIDBase, 1}
+var AuthCertificateASN1PseudoWorkValue = asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, asn1PrivateOIDBase, 1}
+
+// GetAuthCertificatePseudoWork is a shortcut to parse out the pseudo work amount value from ExtraExtensions.
+// This will return 0 if the field is not present.
+func GetAuthCertificatePseudoWork(c *x509.Certificate) (uint32, error) {
+	for _, ext := range c.ExtraExtensions {
+		if ext.Id.Equal(AuthCertificateASN1PseudoWorkValue) {
+			var v int64
+			_, err := asn1.Unmarshal(ext.Value, v)
+			return uint32(v), err
+		}
+	}
+	return 0, nil
+}
 
 // GenesisParameters is the payload (JSON encoded) of the first RecordMinLinks records in a global data store.
 type GenesisParameters struct {
@@ -79,8 +90,8 @@ func (gp *GenesisParameters) Update(jsonValue []byte) (bool, error) {
 		return true, nil
 	}
 
-	changed := false
 	old := *gp
+	changed := false
 	for _, k := range gp.AmendableFields {
 		switch strings.ToLower(k) {
 		case "name":
@@ -141,6 +152,8 @@ func (gp *GenesisParameters) Update(jsonValue []byte) (bool, error) {
 	}
 
 	if changed {
+		old.certs = nil
+		old.history = nil
 		gp.history = append(gp.history, old)
 	}
 

@@ -1033,12 +1033,12 @@ func doMakeGenesis(cfg *lf.ClientConfig, basePath string, args []string) {
 			extPseudoWorkValue.Id = lf.AuthCertificateASN1PseudoWorkValue
 			extPseudoWorkValue.Critical = false
 			pseudoWork := prompt("  Pseudo-work value of signature (hex 0-ffffffff) [0]: ", false, "0")
-			pseudoWorkInt, err := strconv.ParseUint(pseudoWork, 16, 64)
-			if err != nil || pseudoWorkInt > 0xffffffff {
+			pseudoWorkInt, err := strconv.ParseInt(pseudoWork, 16, 64)
+			if err != nil || pseudoWorkInt > 0xffffffff || pseudoWorkInt < 0 {
 				fmt.Println("ERROR: invalid value: must be hex 0-ffffffff")
 				return
 			}
-			pseudoWorkASN1V, err := asn1.Marshal(new(big.Int).SetUint64(pseudoWorkInt))
+			pseudoWorkASN1V, err := asn1.Marshal(pseudoWorkInt)
 			if err != nil {
 				fmt.Printf("ERROR: ASN.1 marshal failed: %s\n", err.Error())
 				return
