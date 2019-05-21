@@ -63,7 +63,7 @@ Once you build the binary just run it for help.
 
 LF ships out of the box with its command line client configured to query `lf.zerotier.com`, a public network node operated by ZeroTier. That means you can try a simple query right away:
 
-```
+```text
 $ ./lf get bad horse#
 Bad Horse, Bad Horse                                      | bad#0 horse#0
 Bad Horse, Bad Horse                                      | bad#0 horse#1
@@ -92,7 +92,7 @@ Record keys are cryptographic objects called *selectors* that are generated from
 
 Bad Horse is stored as a series of records with two selectors and with the ordinals in the second selector placing them in order. You can see them in the output above. Now try a few variations:
 
-```
+```text
 $ ./lf get bad horse
 Bad Horse, Bad Horse | bad#0 horse#0
 
@@ -114,7 +114,7 @@ In the first command above the trailing hash is interpreted as `#0#1844674407370
 
 If LF is open and decentralized, what happens if someone does this?
 
-```
+```text
 $ ./lf set bad horse#0 'Good Horse, Good Horse'
 ```
 
@@ -128,7 +128,7 @@ The already existing Bad Horse records have three big things going for them:
 
 But what does happen to lower weight or lower reputation records? Try this:
 
-```
+```text
 $ ./lf -json get bad horse#0
 ```
 
@@ -140,7 +140,7 @@ Since names are first come first serve, short names like `bad` aren't the sorts 
 
 What if someone does this?
 
-```
+```text
 $ ./lf set bad cow '!ooM !ooM'
 ```
 
@@ -148,7 +148,7 @@ A record is identified by all its selector names. That means anyone can claim a 
 
 Try this:
 
-```
+```text
 $ ./lf get bad
 !ooM !ooM                                                 | bad#0 ?byGYyeZPawCV1GTzQEcONgzdbZw3Qm2aLc3Ov8HNoc3
 Bad Horse, Bad Horse                                      | bad#0 ?Iu9lUHgVNfAMBIkQiS7AMw51quhj5qnsR8NVD6U30h
@@ -167,7 +167,7 @@ In most cases application developers will want to fully specify the selectors fo
 
 Running a node on the public network is easy:
 
-```
+```text
 $ ./lf node-start &
 ```
 
@@ -175,7 +175,7 @@ Obviously you'll want to set this up via *systemd* or some other process-supervi
 
 To see what your new node is doing, type:
 
-```
+```text
 $ tail -f ~/.lf/node.log
 ```
 
