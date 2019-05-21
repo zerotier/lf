@@ -264,7 +264,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 
 	n.log[LogLevelNormal].Printf("TCP ports: P2P: %d HTTP: %d", p2pPort, httpPort)
 	n.log[LogLevelNormal].Printf("P2P identity: %s", n.identityStr)
-	n.log[LogLevelNormal].Printf("commentary owner: %s", n.owner.String())
+	n.log[LogLevelNormal].Printf("oracle: %s", n.owner.String())
 
 	// Load genesis.lf or use compiled-in defaults for global LF network
 	var genesisReader io.Reader
@@ -698,7 +698,7 @@ func (n *Node) handleSynchronizedRecord(doff uint64, dlen uint, reputation int, 
 						for len(cdata) > 0 {
 							cdata, err = c.readFrom(cdata)
 							if err == nil {
-								n.log[LogLevelVerbose].Printf("commentary: @%s: %s", Base62Encode(r.Owner), c.string())
+								n.log[LogLevelVerbose].Printf("comment: @%s: %s", Base62Encode(r.Owner), c.string())
 								n.db.logComment(doff, int(c.assertion), int(c.reason), c.subject)
 							} else {
 								break
@@ -933,7 +933,7 @@ func (n *Node) commentaryGeneratorMain() {
 							minWorkDifficulty -= 0x00005000
 						}
 
-						n.log[LogLevelVerbose].Printf("commentary: %s submitted with %d comments (minimum difficulty %.8x created in %f seconds)", rec.HashString(), commentCount, minWorkDifficulty, duration)
+						n.log[LogLevelVerbose].Printf("oracle: %s submitted with %d comments (minimum difficulty %.8x created in %f seconds)", rec.HashString(), commentCount, minWorkDifficulty, duration)
 					} else {
 						n.log[LogLevelWarning].Printf("WARNING: error adding commentary record: %s", err.Error())
 					}
