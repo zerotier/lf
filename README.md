@@ -11,45 +11,45 @@ LF (pronounced "aleph") is a fully decentralized fully replicated key/value stor
 
 Fully decentralized means anyone can run a node without obtaining special permission and all nodes are effectively equal. Fully replicated means every node stores all data.
 
-LF is built on a [directed acyclic graph (DAG)](https://en.wikipedia.org/wiki/Directed_acyclic_graph) data model. Proof of work is used to rate limit writes to the shared data store on public networks and as one potential input to conflict resolution algorithms. See [DESIGN.md](doc/DESIGN.md) for details.
+LF is built on a [directed acyclic graph (DAG)](https://en.wikipedia.org/wiki/Directed_acyclic_graph) data model. Proof of work is used to rate limit writes to the shared data store on public networks and as one thing that can be considered by conflict resolution and trust algorithms. See [DESIGN.md](doc/DESIGN.md) for details.
 
 The name LF comes from the short story [The Aleph](https://en.wikipedia.org/wiki/The_Aleph_%28short_story%29) by Jorge Luis Borges and the novel [Mona Lisa Overdrive](https://en.wikipedia.org/wiki/Mona_Lisa_Overdrive) by William Gibson. Borges' story involves a point in space that contains all other points, a fitting metaphor for a data store where every node stores everything. Gibson's novel features a sci-fi take on Borges' concept. At one point a character calls it the "LF" because "aleph" has been mis-heard as an acronym. We used LF because there's already an open source project called Aleph, it gives the command line client `lf` a short name, and because two levels of obscure literary reference recursion is cool.
 
-### Why Create LF?
+### Why?
 
 The purpose of LF is to provide for decentralized systems what the key/value store aspects of [etcd](https://github.com/etcd-io/etcd) and [consul](https://www.consul.io) provide in centrally managed environments, namely a fast reliable store for small but critical pieces of information.
 
-Most decentralized systems rely on distributed hash tables (DHTs) like [Kademlia](https://en.wikipedia.org/wiki/Kademlia) to fill this role. This has been the standard approach since [magnet links](https://en.wikipedia.org/wiki/Magnet_URI_scheme) were developed for open file sharing applications in the early 2000s, and not much else has been done for decentralized small data storage since that time.
+Most decentralized systems rely on distributed hash tables (DHTs) like [Kademlia](https://en.wikipedia.org/wiki/Kademlia) to fill this role. This has been the standard approach since [magnet links](https://en.wikipedia.org/wiki/Magnet_URI_scheme) and similar DHT-based schemes were developed for open file sharing applications in the early 2000s.
 
-ZeroTier has for several years been researching ways to more completely decentralize our network. This drive is both economic and philosophical. We have multiple enterprise clients that want to minimize hard dependency on third party physical infrastructure and one very large customer that wants ultra-reliable operation on very unreliable and potentially insecure private networks. We also want to cut our hosting costs. Philosophically we began life as a "re-decentralize the Internet" open source effort, and that's still very much in our DNA.
+For several years ZeroTier has researched ways to more completely decentralize our network. This drive is both economic and philosophical. We have multiple enterprise clients that want to minimize hard dependency on third party physical infrastructure and one that wants very reliable operation in very unreliable environments. We don't mind cutting our hosting costs either. Philosophically we began life as a "re-decentralize the Internet" open source effort and that's still very much in our DNA.
 
-Unfortunately DHTs are very vulnerable to network level and ["Sybil"](https://en.wikipedia.org/wiki/Sybil_attack) attacks, are only as reliable as the entirity of the network, and tend to be slow. Because DHTs are distributed (meaning they scatter data across nodes) their performance and reliability issues are intrinsic, especially on wide area networks. They might be good enough
+We looked at DHTs but unfortunately they are not up to the task. They're vulnerable to multiple types of network level denial of service and ["Sybil"](https://en.wikipedia.org/wiki/Sybil_attack) attacks, lose access to data if even parts of the network become unreachable, and are slow. Unfortunately everyone in the decentralization space seems to think DHTs solve the small data problem. More recent serious projects like [IPFS](https://ipfs.io) and [Dat](https://dat.foundation) are concentrating on decentralizing storage for medium to large data objects.
 
-Virtually all other mature projects in the decentralized data storage space like [IPFS](https://ipfs.io) and [Dat](https://dat.foundation) are trying to solve the problem of decentralizing large data storage.
+ZeroTier's initial minimally centralized design might offend decentralization purists but it's fast and secure. We wanted something just as good. Until mid-2018 we [weren't sure it was possible](http://adamierymenko.com/decentralization.html). Then we realized certain ideas from the cryptocurrency space combined with certain other ideas from the decentralized trust arena could be combined to yield something new, and we started creating LF.
 
+LF will allow us to completely decentralize our root server infrastructure, letting customers use only their own roots or other third party roots without sacrificing ZeroTier's powerful and convenient single unified namespace. It will also let us deliver network virtualization solutions to our enterprise customers that are no less reliable than the network itself, continuing to operate even when sections of the overall network become slow or unreachable.
 
 ### Features and Benefits
 
+* Easy to use and easy to deploy.
 * Fully decentralized network with no mandatory single points of control or failure.
-* Multi-paradigm security model allowing user choice between different conflict resolution mechanisms including cumulative proof of work "weight," local heuristics, elective trust of certain nodes, and (eventually) certificates. The default model is weight plus local node heuristics.
-* Fast nearline queries against all data and continuous availablility even during partial or total network failures.
-* A simple JSON API and command line client make LF easy to use. Full nodes are easy to set up and operate.
-* Supports multiple keys per value and range queries over 64-bit ordinals associated with each key.
-* Record keys are encrypted and authenticated, hiding them from those who don't already know them and preventing anyone from even generating a valid record for an unknown key.
-* Record values are encrypted with a masking key that defaults to the first plain text record key, hiding record content from those who don't know how to look up a record. Combined with record key encryption this makes all records completely private even though all data is replicated everywhere.
-* Eventual consistency and automatic re-synchronization after periods of down time.
-* LF ships with "genesis records" and seed peer to peer addresses for a default public LF network called *Sol*, making it work on the open Internet with zero configuration.
+* Multi-paradigm trust model allowing user choice between different conflict resolution mechanisms including cumulative proof of work "weight," local node heuristics, elective trust of oracle nodes, and (eventually) certificates.
+* Fast (milliseconds) nearline queries against the entire global data set at all times.
+* Multiple record keys (up to 15) allow nested directory-like relationships.
+* Range queries are possible against a 64-bit ordinal value assocaited with each record key.
+* Encrypted record keys and values for improved privacy and security.
+* Novel proof-of-knowledge mechanism makes it impossible to generate valid records identified by a key whose plain text is not known.
 
 ### Limitations and Disadvantages
 
-* Only suitable for small infrequently changing bits of data like static IPs, public keys, certificates, identity information, etc.
-* Its [CAP theorem](https://en.wikipedia.org/wiki/CAP_theorem) trade-off is availability and partition-tolerance. Data is eventually consistent and transactions are not supported.
-* High storage requirements for full nodes make LF unsuitable for resource constrained devices. These devices can query nodes instead. Since all nodes hold all data, servers can be interchangeable and pools of them can be operated easily.
-* Storage requirements grow over time in a manner not unlike a block chain.
+* LF is only useful for small bits of information that don't change very often like certificates, keys, IP addresses, names, etc.
+* The [CAP theorem](https://en.wikipedia.org/wiki/CAP_theorem) trade-off is availability and partition-tolerance, meaning eventual consistency and no transactions.
+* High storage requirements for full nodes make LF unsuitable for resource constrained devices. These devices usually work by querying larger servers or stationary devices anyway.
+* Storage requirements grow over time in a manner not unlike a block chain. Fortunately [storage is getting cheaper over time too](https://www.backblaze.com/blog/hard-drive-cost-per-gigabyte/) and unlike transistor density on conventional 2d silicon wafers we do not appear to be near a physical limit. The way LF records are stored and hashed allows some old data to be discarded too, but this is not implemented yet.
 
 ## Building and Running
 
-LF works on Linux, Mac, and probably xBSD. It won't work on Windows yet but porting shouldn't be too hard if anyone wants it. It's mostly written in Go (1.11+ required) with some C for performance critical bits. Building it is easy. The only non-Go dependency is a reasonably recent version of [SQLite](https://sqlite.org/) whose libraries and header files will need to be available on the system.
+LF works on Linux, Mac, and probably BSD. It won't work on Windows yet but porting shouldn't be too hard if anyone wants it. It's mostly written in Go (1.11+ required) with some C for performance critical bits. Building it is easy. The only non-Go dependency is a reasonably recent version of [SQLite](https://sqlite.org/) whose libraries and header files will need to be available on the system.
 
 If you have recent Go, a C compiler, and SQLite just type `make` and it should build.
 
