@@ -59,6 +59,7 @@ const (
 	recordBodyFlagHasType           byte   = 0x01
 	recordBodyFlagHasValue          byte   = 0x02
 	recordBodyFlagHasAuthSignature  byte   = 0x04
+	recordBodyFlagValueIsHash       byte   = 0x08
 	recordValueFlagBrotliCompressed uint32 = 0x80000000 // these flags must occupy the most significant 4 bits of the value
 
 	// RecordDefaultWharrgarblMemory is the default amount of memory to use for Wharrgarbl momentum-type PoW.
@@ -292,6 +293,9 @@ func (rb *recordBody) marshalTo(w io.Writer, hashAsProxyForValue bool) error {
 	if len(rb.AuthSignature) > 0 {
 		flags |= recordBodyFlagHasAuthSignature
 	}
+	if hashAsProxyForValue {
+		flags |= recordBodyFlagValueIsHash
+	}
 	if rb.Type != nil && *rb.Type != 0 {
 		if _, err := w.Write([]byte{flags | recordBodyFlagHasType, *rb.Type}); err != nil {
 			return err
@@ -302,17 +306,19 @@ func (rb *recordBody) marshalTo(w io.Writer, hashAsProxyForValue bool) error {
 		}
 	}
 
-	if hashAsProxyForValue {
-		h := sha512.Sum384(rb.Value)
-		if _, err := w.Write(h[:]); err != nil {
-			return err
-		}
-	} else if len(rb.Value) > 0 {
-		if _, err := writeUVarint(w, uint64(len(rb.Value))); err != nil {
-			return err
-		}
-		if _, err := w.Write(rb.Value); err != nil {
-			return err
+	if len(rb.Value) > 0 {
+		if hashAsProxyForValue {
+			h := sha512.Sum384(rb.Value)
+			if _, err := w.Write(h[:]); err != nil {
+				return err
+			}
+		} else {
+			if _, err := writeUVarint(w, uint64(len(rb.Value))); err != nil {
+				return err
+			}
+			if _, err := w.Write(rb.Value); err != nil {
+				return err
+			}
 		}
 	}
 
