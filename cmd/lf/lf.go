@@ -154,27 +154,6 @@ func prompt(prompt string, required bool, dfl string) string {
 	}
 }
 
-func stickAForkInIt() {
-	if os.Getenv("_LF_DAEMON_SUBPROCESS") == "1" {
-		return
-	}
-	executable, err := os.Executable()
-	if err != nil {
-		logger.Printf("FATAL: cannot locate executable: %s", err.Error())
-		os.Exit(-1)
-		return
-	}
-	os.Setenv("_LF_DAEMON_SUBPROCESS", "1")
-	_, err = os.StartProcess(executable, os.Args, nil)
-	if err != nil {
-		logger.Printf("FATAL: cannot restart executable: %s", err.Error())
-		os.Exit(-1)
-		return
-	}
-	os.Exit(0)
-	return
-}
-
 func printHelp(cmd string) {
 	// NOTE: When editing make sure your editor doesn't indent help with
 	// tabs, otherwise it will format funny on a console. Also try to keep
@@ -203,7 +182,6 @@ Commands:
     -loglevel <normal|verbose|trace>      Node log level
     -logstderr                            Log to stderr, not HOME/node.log
     -letsencrypt <host[,host]>            Run LetsEncrypt HTTPS on port 443
-    -fork                                 Fork into background (if supported)
   node-connect <ip> <port> <identity>     Tell node to try a P2P endpoint
   status                                  Get status from remote node/proxy
   set [-...] <name[#ord]> [...] <value>   Set a value in the data store
@@ -267,7 +245,6 @@ func doNodeStart(cfg *lf.ClientConfig, basePath string, args []string) {
 	logLevel := nodeOpts.String("loglevel", "verbose", "")
 	logToStderr := nodeOpts.Bool("logstderr", false, "")
 	letsEncrypt := nodeOpts.String("letsencrypt", "", "")
-	forkToBackground := nodeOpts.Bool("fork", false, "")
 	nodeOpts.SetOutput(ioutil.Discard)
 	err := nodeOpts.Parse(args)
 	if err != nil {
@@ -302,11 +279,6 @@ func doNodeStart(cfg *lf.ClientConfig, basePath string, args []string) {
 			return
 		}
 		logger = log.New(logFile, "", log.LstdFlags)
-	}
-
-	// This must happen before gorountines are launched. It's only supported on *nix platforms.
-	if *forkToBackground {
-		stickAForkInIt()
 	}
 
 	var letsEncryptDomains []string
