@@ -178,7 +178,7 @@ Commands:
   node-start [-...]                       Start a full LF node
     -p2p <port>                           P2P TCP port (default: ` + lfDefaultP2PPortStr + `)
     -http <port>                          HTTP TCP port (default: ` + lfDefaultHTTPPortStr + `)
-    -commentary                           Use spare CPU to publish commentary
+    -oracle                               Use spare CPU to publish commentary
     -loglevel <normal|verbose|trace>      Node log level
     -logstderr                            Log to stderr, not HOME/node.log
     -letsencrypt <host[,host]>            Run LetsEncrypt HTTPS on port 443
@@ -241,7 +241,7 @@ func doNodeStart(cfg *lf.ClientConfig, basePath string, args []string) {
 	nodeOpts := flag.NewFlagSet("node-start", flag.ContinueOnError)
 	p2pPort := nodeOpts.Int("p2p", lf.DefaultP2PPort, "")
 	httpPort := nodeOpts.Int("http", lf.DefaultHTTPPort, "")
-	commentary := nodeOpts.Bool("commentary", false, "")
+	oracle := nodeOpts.Bool("oracle", false, "")
 	logLevel := nodeOpts.String("loglevel", "verbose", "")
 	logToStderr := nodeOpts.Bool("logstderr", false, "")
 	letsEncrypt := nodeOpts.String("letsencrypt", "", "")
@@ -326,7 +326,7 @@ func doNodeStart(cfg *lf.ClientConfig, basePath string, args []string) {
 		logger.Printf("FATAL: unable to start node: %s\n", err.Error())
 		return
 	}
-	node.SetCommentaryEnabled(*commentary)
+	node.SetCommentaryEnabled(*oracle)
 
 	if letsEncryptServer != nil {
 		letsEncryptServer.Handler = node.GetHTTPHandler()
