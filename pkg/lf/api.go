@@ -470,6 +470,7 @@ Data Size:           ` + strconv.FormatUint(ds, 10) + `
 					}
 				}
 				n.peersLock.RUnlock()
+				out.Write([]byte("\n"))
 			} else {
 				apiSendObj(out, req, http.StatusNotFound, &APIError{Code: http.StatusNotFound, Message: req.URL.Path + " is not a valid path"})
 			}

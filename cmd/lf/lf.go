@@ -63,7 +63,7 @@ import (
 var (
 	lfDefaultPath = func() string {
 		if os.Getuid() == 0 {
-			return "/var/lib/zerotier-lf"
+			return "/var/lib/lf"
 		}
 		h := os.Getenv("HOME")
 		if len(h) > 0 {
@@ -559,14 +559,14 @@ func doGet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool
 					if res.Record.SelectorIs(sn, i) {
 						fmt.Printf("%s#%d", selectorNames[i], res.Record.Selectors[i].Ordinal.Get(sn))
 						if i != len(res.Record.Selectors)-1 {
-							fmt.Print("\t")
+							fmt.Print(" ")
 						}
 					}
 				}
 				for i := len(selectorNames); i < len(res.Record.Selectors); i++ {
 					sk := lf.Base62Encode(res.Record.SelectorKey(i))
 					if i != len(res.Record.Selectors)-1 {
-						fmt.Printf("?%s\t", sk)
+						fmt.Printf("?%s ", sk)
 					} else {
 						fmt.Printf("?%s", sk)
 					}
@@ -729,12 +729,11 @@ func doSet(cfg *lf.ClientConfig, basePath string, args []string) {
 //////////////////////////////////////////////////////////////////////////////
 
 func doOwner(cfg *lf.ClientConfig, basePath string, args []string) {
-	if len(args) == 0 {
-		printHelp("")
-		return
+	cmd := "list"
+	if len(args) > 0 {
+		cmd = args[0]
 	}
-
-	switch args[0] {
+	switch cmd {
 
 	case "list":
 		var names []string

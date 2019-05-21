@@ -322,7 +322,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 		rdata, _ := n.db.getDataByOffset(doff, uint(dlen), nil)
 		if len(rdata) > 0 {
 			gr, err := NewRecordFromBytes(rdata)
-			if gr != nil && err == nil && gr.GetType() == RecordTypeGenesis {
+			if gr != nil && err == nil && gr.Type == RecordTypeGenesis {
 				if n.handleGenesisRecord(gr) {
 					gotGenesis = true
 				}
@@ -526,7 +526,6 @@ func (n *Node) AddRecord(r *Record) error {
 	}
 
 	rhash := r.Hash()
-	rtype := r.GetType()
 
 	// Check to see if we already have this record.
 	if n.db.hasRecord(rhash[:]) {
@@ -535,7 +534,9 @@ func (n *Node) AddRecord(r *Record) error {
 
 	// Check basic constraints first since this is less CPU intensive than signature
 	// and work validation.
-	if rtype == RecordTypeGenesis && !bytes.Equal(r.Owner, n.genesisOwner) {
+
+	// Genesis records and config updates can only come from the genesis owner.
+	if r.Type == RecordTypeGenesis && !bytes.Equal(r.Owner, n.genesisOwner) {
 		return ErrRecordProhibited
 	}
 
@@ -687,7 +688,7 @@ func (n *Node) handleSynchronizedRecord(doff uint64, dlen uint, reputation int, 
 				}
 
 				// Certain record types get special handling when they're synchronized.
-				switch r.GetType() {
+				switch r.Type {
 				case RecordTypeGenesis:
 					n.handleGenesisRecord(r)
 				case RecordTypeCommentary:
@@ -932,7 +933,7 @@ func (n *Node) commentaryGeneratorMain() {
 							minWorkDifficulty -= 0x00005000
 						}
 
-						n.log[LogLevelVerbose].Printf("commentary: %s submitted with %d comments (creation took %f seconds)", rec.HashString(), commentCount, duration)
+						n.log[LogLevelVerbose].Printf("commentary: %s submitted with %d comments (minimum difficulty %.8x created in %f seconds)", rec.HashString(), commentCount, minWorkDifficulty, duration)
 					} else {
 						n.log[LogLevelWarning].Printf("WARNING: error adding commentary record: %s", err.Error())
 					}

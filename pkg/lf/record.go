@@ -34,7 +34,6 @@ import (
 	"crypto/sha512"
 	"encoding/binary"
 	"fmt"
-	"hash/crc32"
 	"io"
 	"sort"
 
@@ -55,12 +54,19 @@ var (
 )
 
 const (
-	// Flags are protocol constants and can't be changed.
-	recordBodyFlagHasType           byte   = 0x01
-	recordBodyFlagHasValue          byte   = 0x02
-	recordBodyFlagHasAuthSignature  byte   = 0x04
-	recordBodyFlagValueIsHash       byte   = 0x08
-	recordValueFlagBrotliCompressed uint32 = 0x80000000 // these flags must occupy the most significant 4 bits of the value
+	// Flags are protocol constants and can't be changed. Bits are reserved as
+	// follows:
+	//   0-4   - boolean flags with bit 3 unused and reserved
+	//   4-8   - link count (0...15)
+	//   8-12  - record type (0...15)
+	//  12-63  - reserved for future use
+	recordBodyFlagHasValue         uint64 = 0x0000000000000001
+	recordBodyFlagHasAuthSignature uint64 = 0x0000000000000002
+	recordBodyFlagValueIsHash      uint64 = 0x0000000000000004
+
+	// Record value compression types are protocol constants. Range must be 0-3.
+	recordValueCompressionNone   = 0
+	recordValueCompressionBrotli = 1
 
 	// RecordDefaultWharrgarblMemory is the default amount of memory to use for Wharrgarbl momentum-type PoW.
 	RecordDefaultWharrgarblMemory = 1024 * 1024 * 512
@@ -71,35 +77,35 @@ const (
 
 	// RecordMaxLinks is the maximum number of links a valid record can have.
 	// This is a protocol constant and can't be changed. (It must also fit in 3 bits.)
-	RecordMaxLinks = 7
+	RecordMaxLinks = 15
 
 	// RecordMaxSelectors is a sanity limit on the number of selectors.
 	// This is a protocol constant and can't be changed.
-	RecordMaxSelectors = 8
+	RecordMaxSelectors = 15
 
 	// RecordWorkAlgorithmNone indicates no work algorithm.
 	// This is a protocol constant and can't be changed.
-	RecordWorkAlgorithmNone byte = 0
+	RecordWorkAlgorithmNone = 0
 
 	// RecordWorkAlgorithmWharrgarbl indicates the Wharrgarbl momentum-like proof of work algorithm.
 	// This is a protocol constant and can't be changed.
-	RecordWorkAlgorithmWharrgarbl byte = 1
+	RecordWorkAlgorithmWharrgarbl = 1
 
 	// RecordTypeDatum records are normal user data records (this is the default if unspecified).
 	// This is a protocol constant and can't be changed.
-	RecordTypeDatum byte = 0
+	RecordTypeDatum = 0
 
 	// RecordTypeGenesis indicates a genesis record containing possible network config updates (if any are amendable).
 	// This is a protocol constant and can't be changed.
-	RecordTypeGenesis byte = 1
+	RecordTypeGenesis = 1
 
 	// RecordTypeCommentary records contain commentary about other records in the DAG.
 	// This is a protocol constant and can't be changed.
-	RecordTypeCommentary byte = 2
+	RecordTypeCommentary = 2
 
 	// RecordTypeCertificate records contain an x509 certificate.
 	// This is a protocol constant and can't be changed.
-	RecordTypeCertificate byte = 3
+	RecordTypeCertificate = 3
 )
 
 // recordWharrgarblCost computes the cost in Wharrgarbl difficulty for a record of a given number of "billable" bytes.
@@ -176,7 +182,8 @@ type recordBody struct {
 	AuthSignature Blob        `json:",omitempty"` // Signature of owner by an auth cerficiate (if any)
 	Links         []HashBlob  `json:",omitempty"` // Links to previous records' hashes
 	Timestamp     uint64      ``                  // Timestamp (and revision ID) in SECONDS since Unix epoch
-	Type          *byte       `json:",omitempty"` // Record type byte, RecordTypeDatum (0) if nil
+	Type          int         ``                  // Record type ID
+	ValueIsHash   *bool       `json:",omitempty"` // True if value is actually the hash of an original elided value
 
 	sigHash *[48]byte
 }
@@ -184,39 +191,39 @@ type recordBody struct {
 func (rb *recordBody) unmarshalFrom(r io.Reader) error {
 	rr := byteAndArrayReader{r}
 
-	flags, err := rr.ReadByte()
+	flags, err := binary.ReadUvarint(&rr)
 	if err != nil {
 		return err
 	}
 
-	if (flags & recordBodyFlagHasType) != 0 {
-		rtype, err := rr.ReadByte()
-		if err != nil {
-			return err
-		}
-		if rtype != 0 {
-			rb.Type = &rtype
-		}
-	} else {
-		rb.Type = nil
-	}
-
 	if (flags & recordBodyFlagHasValue) != 0 {
-		l, err := binary.ReadUvarint(&rr)
-		if err != nil {
-			return err
-		}
-		if l > 0 {
-			if l > RecordMaxSize {
-				return ErrRecordInvalid
-			}
-			rb.Value = make([]byte, uint(l))
-			_, err = io.ReadFull(&rr, rb.Value)
+		if (flags & recordBodyFlagValueIsHash) != 0 {
+			var vh [48]byte
+			_, err = io.ReadFull(&rr, vh[:])
 			if err != nil {
 				return err
 			}
+			rb.Value = vh[:]
+			troo := true
+			rb.ValueIsHash = &troo
 		} else {
-			rb.Value = nil
+			l, err := binary.ReadUvarint(&rr)
+			if err != nil {
+				return err
+			}
+			if l > 0 {
+				if l > RecordMaxSize {
+					return ErrRecordInvalid
+				}
+				rb.Value = make([]byte, uint(l))
+				_, err = io.ReadFull(&rr, rb.Value)
+				if err != nil {
+					return err
+				}
+			} else {
+				rb.Value = nil
+			}
+			rb.ValueIsHash = nil
 		}
 	}
 
@@ -258,7 +265,7 @@ func (rb *recordBody) unmarshalFrom(r io.Reader) error {
 		rb.AuthSignature = nil
 	}
 
-	linkCount := int(flags >> 5)
+	linkCount := int((flags >> 4) & 0xf)
 	if linkCount > 0 {
 		rb.Links = make([]HashBlob, linkCount)
 		for i := 0; i < linkCount; i++ {
@@ -276,41 +283,46 @@ func (rb *recordBody) unmarshalFrom(r io.Reader) error {
 		return err
 	}
 
+	rb.Type = int((flags >> 8) & 0xf)
+
 	rb.sigHash = nil
 
 	return nil
 }
 
 func (rb *recordBody) marshalTo(w io.Writer, hashAsProxyForValue bool) error {
-	if len(rb.Links) > RecordMaxLinks {
+	if len(rb.Links) > 0xf || rb.Type < 0 || rb.Type > 0xf {
 		return ErrRecordInvalid
 	}
 
-	flags := byte(len(rb.Links) << 5)
+	flags := (uint64(len(rb.Links)) << 4) | (uint64(rb.Type) << 8)
 	if len(rb.Value) > 0 {
 		flags |= recordBodyFlagHasValue
 	}
 	if len(rb.AuthSignature) > 0 {
 		flags |= recordBodyFlagHasAuthSignature
 	}
+	if rb.ValueIsHash != nil && *rb.ValueIsHash {
+		hashAsProxyForValue = true
+	}
 	if hashAsProxyForValue {
 		flags |= recordBodyFlagValueIsHash
 	}
-	if rb.Type != nil && *rb.Type != 0 {
-		if _, err := w.Write([]byte{flags | recordBodyFlagHasType, *rb.Type}); err != nil {
-			return err
-		}
-	} else {
-		if _, err := w.Write([]byte{flags}); err != nil {
-			return err
-		}
+	if _, err := writeUVarint(w, flags); err != nil {
+		return err
 	}
 
 	if len(rb.Value) > 0 {
 		if hashAsProxyForValue {
-			h := sha512.Sum384(rb.Value)
-			if _, err := w.Write(h[:]); err != nil {
-				return err
+			if rb.ValueIsHash != nil && *rb.ValueIsHash {
+				if _, err := w.Write(rb.Value); err != nil {
+					return err
+				}
+			} else {
+				h := sha512.Sum384(rb.Value)
+				if _, err := w.Write(h[:]); err != nil {
+					return err
+				}
 			}
 		} else {
 			if _, err := writeUVarint(w, uint64(len(rb.Value))); err != nil {
@@ -371,30 +383,22 @@ func (rb *recordBody) sizeBytes() uint {
 // explicitly specified is the plain text name of the first selector or the owner if
 // there are no selectors. If nil is given here for a masking key, the owner is used.
 func (rb *recordBody) GetValue(maskingKey []byte) ([]byte, error) {
-	if len(rb.Value) < 4 {
+	if len(rb.Value) < 2 {
 		return nil, nil
 	}
 
 	unmaskedValue := make([]byte, len(rb.Value))
 	makeMaskingCipher(maskingKey, rb.Owner, nil, rb.Timestamp, true).XORKeyStream(unmaskedValue, rb.Value)
-	flagsAndCrc := binary.BigEndian.Uint32(unmaskedValue[0:4])
-	if (crc32.ChecksumIEEE(unmaskedValue[4:]) & 0x0fffffff) != (flagsAndCrc & 0x0fffffff) {
+	flagsAndCrc := (uint16(unmaskedValue[0]) << 8) | uint16(unmaskedValue[1])
+	if (flagsAndCrc >> 2) != (crc16(unmaskedValue[2:]) >> 2) {
 		return nil, ErrIncorrectKey
 	}
-	unmaskedValue = unmaskedValue[4:]
+	unmaskedValue = unmaskedValue[2:]
 
-	if (flagsAndCrc & recordValueFlagBrotliCompressed) != 0 {
+	if (flagsAndCrc & 3) == recordValueCompressionBrotli {
 		return brotlidec.DecompressBuffer(unmaskedValue, make([]byte, 0, len(unmaskedValue)+(len(unmaskedValue)/3)))
 	}
 	return unmaskedValue, nil
-}
-
-// GetType is a shortcut to both checking Type for nil and getting its value if not.
-func (rb *recordBody) GetType() byte {
-	if rb.Type == nil {
-		return RecordTypeDatum
-	}
-	return *rb.Type
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -406,7 +410,7 @@ type Record struct {
 
 	Selectors     []Selector `json:",omitempty"` // Things that can be used to find the record
 	Work          Blob       `json:",omitempty"` // Proof of work "paying" for this record
-	WorkAlgorithm byte       ``                  // Proof of work algorithm
+	WorkAlgorithm int        ``                  // Proof of work algorithm
 	Signature     Blob       `json:",omitempty"` // Signature of record (including work) by owner
 
 	hash, id *[32]byte
@@ -420,35 +424,33 @@ func (r *Record) UnmarshalFrom(rdr io.Reader) error {
 		return err
 	}
 
-	selCount, err := binary.ReadUvarint(rr)
+	selCountAndWorkAlg, err := rr.ReadByte()
 	if err != nil {
 		return err
 	}
-	if selCount > (RecordMaxSize / 64) {
-		return ErrRecordInvalid
-	}
-	r.Selectors = make([]Selector, uint(selCount))
-	for i := 0; i < len(r.Selectors); i++ {
+
+	selCount := int(selCountAndWorkAlg & 0xf)
+	r.Selectors = make([]Selector, selCount)
+	for i := 0; i < selCount; i++ {
 		err = r.Selectors[i].unmarshalFrom(rr)
 		if err != nil {
 			return err
 		}
 	}
 
-	walg, err := rr.ReadByte()
-	if err != nil {
-		return err
-	}
-	if walg == RecordWorkAlgorithmWharrgarbl {
+	r.WorkAlgorithm = int(selCountAndWorkAlg >> 4)
+	switch r.WorkAlgorithm {
+	case RecordWorkAlgorithmNone:
+		r.Work = nil
+	case RecordWorkAlgorithmWharrgarbl:
 		var work [WharrgarblOutputSize]byte
 		if _, err = io.ReadFull(&rr, work[:]); err != nil {
 			return err
 		}
 		r.Work = work[:]
-	} else if walg != RecordWorkAlgorithmNone {
+	default:
 		return ErrRecordUnsupportedAlgorithm
 	}
-	r.WorkAlgorithm = walg
 
 	siglen, err := binary.ReadUvarint(&rr)
 	if err != nil {
@@ -473,23 +475,23 @@ func (r *Record) UnmarshalFrom(rdr io.Reader) error {
 // of the actual value. These streams can't (currently) be unmarshaled and are
 // only used to compute further hashes.
 func (r *Record) MarshalTo(w io.Writer, hashAsProxyForValue bool) error {
+	if len(r.Selectors) > 0xf || r.WorkAlgorithm < 0 || r.WorkAlgorithm > 0xf {
+		return ErrRecordInvalid
+	}
 	if err := r.recordBody.marshalTo(w, hashAsProxyForValue); err != nil {
 		return err
 	}
 
-	if _, err := writeUVarint(w, uint64(len(r.Selectors))); err != nil {
+	if _, err := w.Write([]byte{byte(len(r.Selectors)) | byte(r.WorkAlgorithm<<4)}); err != nil {
 		return err
 	}
+
 	for i := 0; i < len(r.Selectors); i++ {
 		if err := r.Selectors[i].marshalTo(w); err != nil {
 			return err
 		}
 	}
 
-	// Work algorithm specifies work size
-	if _, err := w.Write([]byte{r.WorkAlgorithm}); err != nil {
-		return err
-	}
 	if _, err := w.Write(r.Work); err != nil {
 		return err
 	}
@@ -644,13 +646,13 @@ func (r *Record) Validate() (err error) {
 		return ErrRecordInsufficientWork
 	}
 
-	signingHash := sha512.New384()
-	signingHash.Write(workHash[:])
-	signingHash.Write(r.Work)
-	signingHash.Write([]byte{r.WorkAlgorithm})
+	signingHasher := sha512.New384()
+	signingHasher.Write(workHash[:])
+	signingHasher.Write(r.Work)
+	signingHasher.Write([]byte{byte(r.WorkAlgorithm)})
 	var hb [48]byte
 	owner := Owner{Public: r.recordBody.Owner}
-	if !owner.Verify(signingHash.Sum(hb[:0]), r.Signature) {
+	if !owner.Verify(signingHasher.Sum(hb[:0]), r.Signature) {
 		return ErrRecordOwnerSignatureCheckFailed
 	}
 
@@ -669,30 +671,33 @@ type RecordBuilder struct {
 }
 
 // Start begins creating a new record, resetting RecordBuilder if it contains any old state.
-func (rb *RecordBuilder) Start(recordType byte, value []byte, links [][32]byte, maskingKey []byte, selectorNames [][]byte, selectorOrdinals []uint64, ownerPublic, authSignature []byte, timestamp uint64) error {
+func (rb *RecordBuilder) Start(recordType int, value []byte, links [][32]byte, maskingKey []byte, selectorNames [][]byte, selectorOrdinals []uint64, ownerPublic, authSignature []byte, timestamp uint64) error {
 	rb.record = new(Record)
 	rb.workHash = nil
 	rb.workBillableBytes = 0
 
+	if recordType < 0 || recordType > 0xf || len(links) > 0xf {
+		return ErrInvalidParameter
+	}
 	if timestamp == 0 {
 		timestamp = TimeSec()
 	}
 
 	if len(value) > 0 {
-		var flags uint32
+		compressionType := uint16(recordValueCompressionNone)
 		if len(value) > 24 {
 			cout, err := brotlienc.CompressBuffer(brotliParams, value, make([]byte, 0, len(value)+4))
 			if err == nil && len(cout) > 0 && len(cout) < len(value) {
 				value = cout
-				flags = recordValueFlagBrotliCompressed
+				compressionType = uint16(recordValueCompressionBrotli)
 			}
 		}
 
-		valueMasked := make([]byte, 4+len(value))
-		binary.BigEndian.PutUint32(valueMasked[0:4], (crc32.ChecksumIEEE(value)&0x0fffffff)|flags) // most significant 4 bits are used for flags
 		cfb := makeMaskingCipher(maskingKey, ownerPublic, selectorNames, timestamp, false)
-		cfb.XORKeyStream(valueMasked[0:4], valueMasked[0:4])
-		cfb.XORKeyStream(valueMasked[4:], value)
+		valueMasked := make([]byte, 2+len(value))
+		binary.BigEndian.PutUint16(valueMasked[0:2], (crc16(value)&0xfffc)|compressionType)
+		cfb.XORKeyStream(valueMasked[0:2], valueMasked[0:2])
+		cfb.XORKeyStream(valueMasked[2:], value)
 		rb.record.recordBody.Value = valueMasked
 	}
 
@@ -708,9 +713,7 @@ func (rb *RecordBuilder) Start(recordType byte, value []byte, links [][32]byte, 
 		})
 	}
 	rb.record.recordBody.Timestamp = timestamp
-	if recordType != 0 {
-		rb.record.recordBody.Type = &recordType
-	}
+	rb.record.recordBody.Type = recordType
 
 	// Billable bytes equals the total serialized bytes of the record body plus the record's selectors' serialized sizes.
 	rb.workBillableBytes = rb.record.recordBody.sizeBytes()
@@ -762,7 +765,7 @@ func (rb *RecordBuilder) Complete(owner *Owner) (*Record, error) {
 	signingHasher := sha512.New384()
 	signingHasher.Write(rb.workHash)
 	signingHasher.Write(rb.record.Work)
-	signingHasher.Write([]byte{rb.record.WorkAlgorithm})
+	signingHasher.Write([]byte{byte(rb.record.WorkAlgorithm)})
 	var signingHash [48]byte
 	signingHasher.Sum(signingHash[:0])
 	var err error
@@ -774,7 +777,7 @@ func (rb *RecordBuilder) Complete(owner *Owner) (*Record, error) {
 }
 
 // NewRecord is a shortcut to running all incremental record creation functions.
-func NewRecord(recordType byte, value []byte, links [][32]byte, maskingKey []byte, selectorNames [][]byte, selectorOrdinals []uint64, authSignature []byte, timestamp uint64, workFunction *Wharrgarblr, owner *Owner) (*Record, error) {
+func NewRecord(recordType int, value []byte, links [][32]byte, maskingKey []byte, selectorNames [][]byte, selectorOrdinals []uint64, authSignature []byte, timestamp uint64, workFunction *Wharrgarblr, owner *Owner) (*Record, error) {
 	var rb RecordBuilder
 	err := rb.Start(recordType, value, links, maskingKey, selectorNames, selectorOrdinals, owner.Public, authSignature, timestamp)
 	if err != nil {

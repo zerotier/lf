@@ -9,15 +9,24 @@
 
 LF (pronounced "aleph") is a fully decentralized fully replicated key/value store.
 
-That means anyone can run LF nodes (on the public network), all nodes are effectively equal, and every LF node stores all data.
+Fully decentralized means anyone can run a node without obtaining special permission and all nodes are effectively equal. Fully replicated means every node stores all data.
 
-The purpose of LF is to provide for decentralized systems what the key/value store aspects of [etcd](https://github.com/etcd-io/etcd) and [consul](https://www.consul.io) provide in centrally managed environments. We at ZeroTier built it to fully decentralize our "root servers" and to provide extremely robust distributed data storage for enterprise clients on private networks, but we're releasing it to everyone in the hope that others will find it useful for other things.
-
-Most decentralized systems rely on distributed data stores like [Kademlia](https://en.wikipedia.org/wiki/Kademlia) and other DHTs. These are slow to query, fragile under unreliable network conditions, and tend to be vulnerable to denial of service and ["Sybil" attacks](https://en.wikipedia.org/wiki/Sybil_attack). LF provides very fast queries over all data, a strong security model, and continuity of operation when the network is down. The price for these features is high storage overhead, but [storage is cheap](https://www.backblaze.com/blog/hard-drive-cost-per-gigabyte/).
-
-LF is built around a [directed acyclic graph (DAG)](https://en.wikipedia.org/wiki/Directed_acyclic_graph) data model. Proof of work is used to rate limit writes to the shared data store on public networks and as one potential input to conflict resolution algorithms. See [DESIGN.md](doc/DESIGN.md) for details.
+LF is built on a [directed acyclic graph (DAG)](https://en.wikipedia.org/wiki/Directed_acyclic_graph) data model. Proof of work is used to rate limit writes to the shared data store on public networks and as one potential input to conflict resolution algorithms. See [DESIGN.md](doc/DESIGN.md) for details.
 
 The name LF comes from the short story [The Aleph](https://en.wikipedia.org/wiki/The_Aleph_%28short_story%29) by Jorge Luis Borges and the novel [Mona Lisa Overdrive](https://en.wikipedia.org/wiki/Mona_Lisa_Overdrive) by William Gibson. Borges' story involves a point in space that contains all other points, a fitting metaphor for a data store where every node stores everything. Gibson's novel features a sci-fi take on Borges' concept. At one point a character calls it the "LF" because "aleph" has been mis-heard as an acronym. We used LF because there's already an open source project called Aleph, it gives the command line client `lf` a short name, and because two levels of obscure literary reference recursion is cool.
+
+### Why Create LF?
+
+The purpose of LF is to provide for decentralized systems what the key/value store aspects of [etcd](https://github.com/etcd-io/etcd) and [consul](https://www.consul.io) provide in centrally managed environments, namely a fast reliable store for small but critical pieces of information.
+
+Most decentralized systems rely on distributed hash tables (DHTs) like [Kademlia](https://en.wikipedia.org/wiki/Kademlia) to fill this role. This has been the standard approach since [magnet links](https://en.wikipedia.org/wiki/Magnet_URI_scheme) were developed for open file sharing applications in the early 2000s, and not much else has been done for decentralized small data storage since that time.
+
+ZeroTier has for several years been researching ways to more completely decentralize our network. This drive is both economic and philosophical. We have multiple enterprise clients that want to minimize hard dependency on third party physical infrastructure and one very large customer that wants ultra-reliable operation on very unreliable and potentially insecure private networks. We also want to cut our hosting costs. Philosophically we began life as a "re-decentralize the Internet" open source effort, and that's still very much in our DNA.
+
+Unfortunately DHTs are very vulnerable to network level and ["Sybil"](https://en.wikipedia.org/wiki/Sybil_attack) attacks, are only as reliable as the entirity of the network, and tend to be slow. Because DHTs are distributed (meaning they scatter data across nodes) their performance and reliability issues are intrinsic, especially on wide area networks. They might be good enough
+
+Virtually all other mature projects in the decentralized data storage space like [IPFS](https://ipfs.io) and [Dat](https://dat.foundation) are trying to solve the problem of decentralizing large data storage.
+
 
 ### Features and Benefits
 
