@@ -846,12 +846,11 @@ func doOwner(cfg *lf.ClientConfig, basePath string, args []string) {
 //////////////////////////////////////////////////////////////////////////////
 
 func doURL(cfg *lf.ClientConfig, basePath string, args []string) {
-	if len(args) == 0 {
-		printHelp("")
-		return
+	cmd := "list"
+	if len(args) > 0 {
+		cmd = args[0]
 	}
-
-	switch args[0] {
+	switch cmd {
 	case "list":
 		for _, u := range cfg.URLs {
 			fmt.Println(u)
@@ -910,6 +909,8 @@ func doURL(cfg *lf.ClientConfig, basePath string, args []string) {
 		for _, u := range cfg.URLs {
 			fmt.Println(u)
 		}
+	default:
+		printHelp("")
 	}
 }
 
