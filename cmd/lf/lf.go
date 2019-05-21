@@ -607,10 +607,12 @@ func doSet(cfg *lf.ClientConfig, basePath string, args []string) {
 			return
 		}
 	}
-	for _, o := range cfg.Owners {
-		if o.Default {
-			owner = o
-			break
+	if owner == nil {
+		for _, o := range cfg.Owners {
+			if o.Default {
+				owner = o
+				break
+			}
 		}
 	}
 	if owner == nil {
