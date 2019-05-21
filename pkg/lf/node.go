@@ -815,19 +815,23 @@ func (n *Node) backgroundWorkerMain() {
 		// If we don't have enough connections, try to make more to peers we've learned about.
 		if (ticker % 10) == 5 {
 			n.peersLock.RLock()
-			connectionCount := len(n.peers) // this value is used in the next block too
-			n.peersLock.RUnlock()
-			if connectionCount < p2pDesiredConnectionCount {
-				wantMore := p2pDesiredConnectionCount - connectionCount
+			if len(n.peers) < p2pDesiredConnectionCount {
+				wantMore := p2pDesiredConnectionCount - len(n.peers)
 				n.knownPeersLock.Lock()
 				if len(n.knownPeers) > 0 {
 					visited := make(map[int]bool)
+				skipThisPeer:
 					for k := 0; k < wantMore; k++ {
 						idx := rand.Int() % len(n.knownPeers)
 						if _, have := visited[idx]; !have {
-							kp := n.knownPeers[idx]
-							n.Connect(kp.IP, kp.Port, kp.Identity)
 							visited[idx] = true
+							kp := n.knownPeers[idx]
+							for _, p := range n.peers {
+								if bytes.Equal(p.identity, kp.Identity) {
+									continue skipThisPeer
+								}
+							}
+							n.Connect(kp.IP, kp.Port, kp.Identity)
 						}
 					}
 				} else {
@@ -839,6 +843,7 @@ func (n *Node) backgroundWorkerMain() {
 				}
 				n.knownPeersLock.Unlock()
 			}
+			n.peersLock.RUnlock()
 		}
 
 		// Periodically check and update database full sync state.
