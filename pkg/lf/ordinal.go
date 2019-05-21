@@ -237,10 +237,13 @@ func (b *Ordinal) Set(value uint64, key []byte) {
 		ordinal16to32(nil, value&0xffffffffffff0000, uint(value&0xffff), 3, &keyHash, &result)
 	case 2, 3:
 		var wg sync.WaitGroup
-		wg.Add(2)
-		go ordinal16to32(&wg, 0, uint((value>>48)&0xffff), 0, &keyHash, &result)
-		ordinal16to32(nil, value&0xffff000000000000, uint((value>>32)&0xffff), 1, &keyHash, &result)
-		go ordinal16to32(&wg, value&0xffffffff00000000, uint((value>>16)&0xffff), 2, &keyHash, &result)
+		wg.Add(1)
+		go func() {
+			ordinal16to32(nil, 0, uint((value>>48)&0xffff), 0, &keyHash, &result)
+			ordinal16to32(nil, value&0xffff000000000000, uint((value>>32)&0xffff), 1, &keyHash, &result)
+			wg.Done()
+		}()
+		ordinal16to32(nil, value&0xffffffff00000000, uint((value>>16)&0xffff), 2, &keyHash, &result)
 		ordinal16to32(nil, value&0xffffffffffff0000, uint(value&0xffff), 3, &keyHash, &result)
 		wg.Wait()
 	default:
