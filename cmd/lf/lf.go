@@ -773,7 +773,7 @@ func doOwner(cfg *lf.ClientConfig, basePath string, args []string) {
 			if o.Default {
 				dfl = "*"
 			}
-			fmt.Printf("%-24s %s %5s %s\n", n, dfl, o.Public.TypeString(), o.Public.String())
+			fmt.Printf("%-24s %s %-7s %s\n", n, dfl, o.Public.TypeString(), o.Public.String())
 		}
 
 	case "new":
@@ -812,7 +812,7 @@ func doOwner(cfg *lf.ClientConfig, basePath string, args []string) {
 		if isDfl {
 			dfl = "*"
 		}
-		fmt.Printf("%-24s %s %5s %s\n", name, dfl, owner.TypeString(), owner.String())
+		fmt.Printf("%-24s %s %-7s %s\n", name, dfl, owner.TypeString(), owner.String())
 
 	case "default":
 		if len(args) < 2 {
@@ -828,7 +828,7 @@ func doOwner(cfg *lf.ClientConfig, basePath string, args []string) {
 			o.Default = (n == name)
 		}
 		cfg.Dirty = true
-		fmt.Printf("%-24s * %5s %s\n", name, cfg.Owners[name].Public.TypeString(), cfg.Owners[name].Public.String())
+		fmt.Printf("%-24s * %-7s %s\n", name, cfg.Owners[name].Public.TypeString(), cfg.Owners[name].Public.String())
 
 	case "delete":
 		if len(args) < 2 {
