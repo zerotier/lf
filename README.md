@@ -63,22 +63,24 @@ Once you build the binary just run it for help.
 
 LF ships out of the box with its command line client configured to query `lf.zerotier.com`, a public network node operated by ZeroTier. That means you can try a simple query right away:
 
-    $ ./lf get bad horse#
-    Bad Horse, Bad Horse                                      | bad#0 horse#0
-    Bad Horse, Bad Horse                                      | bad#0 horse#1
-    He rides across the nation, the thoroughbred of sin       | bad#0 horse#2
-    He got the application that you just sent in              | bad#0 horse#3
-    It needs evaluation, so let the games begin               | bad#0 horse#4
-    A heinous crime, a show of force                          | bad#0 horse#5
-    (a murder would be nice of course!)                       | bad#0 horse#6
-    Bad Horse, Bad Horse                                      | bad#0 horse#7
-    Bad Horse, He's Bad!                                      | bad#0 horse#8
-    The evil league of evil is watching so beware             | bad#0 horse#9
-    The grade that you receive'll be your last, we swear      | bad#0 horse#10
-    So make the bad horse gleeful, or he'll make you his mare | bad#0 horse#11
-    You're saddled up; there's no recourse                    | bad#0 horse#12
-    It's "hi-yo, silver!"                                     | bad#0 horse#13
-    Signed: Bad Horse.                                        | bad#0 horse#14
+```
+$ ./lf get bad horse#
+Bad Horse, Bad Horse                                      | bad#0 horse#0
+Bad Horse, Bad Horse                                      | bad#0 horse#1
+He rides across the nation, the thoroughbred of sin       | bad#0 horse#2
+He got the application that you just sent in              | bad#0 horse#3
+It needs evaluation, so let the games begin               | bad#0 horse#4
+A heinous crime, a show of force                          | bad#0 horse#5
+(a murder would be nice of course!)                       | bad#0 horse#6
+Bad Horse, Bad Horse                                      | bad#0 horse#7
+Bad Horse, He's Bad!                                      | bad#0 horse#8
+The evil league of evil is watching so beware             | bad#0 horse#9
+The grade that you receive'll be your last, we swear      | bad#0 horse#10
+So make the bad horse gleeful, or he'll make you his mare | bad#0 horse#11
+You're saddled up; there's no recourse                    | bad#0 horse#12
+It's "hi-yo, silver!"                                     | bad#0 horse#13
+Signed: Bad Horse.                                        | bad#0 horse#14
+```
 
 Don't forget the trailing hash sign on `horse#`. Drop the `./` if you put the binary somewhere in your path.
 
@@ -90,19 +92,21 @@ Record keys are cryptographic objects called *selectors* that are generated from
 
 Bad Horse is stored as a series of records with two selectors and with the ordinals in the second selector placing them in order. You can see them in the output above. Now try a few variations:
 
-    $ ./lf get bad horse
-    Bad Horse, Bad Horse | bad#0 horse#0
+```
+$ ./lf get bad horse
+Bad Horse, Bad Horse | bad#0 horse#0
 
-    $ ./lf get bad horse#2#10
-    He rides across the nation, the thoroughbred of sin  | bad#0 horse#2
-    He got the application that you just sent in         | bad#0 horse#3
-    It needs evaluation, so let the games begin          | bad#0 horse#4
-    A heinous crime, a show of force                     | bad#0 horse#5
-    (a murder would be nice of course!)                  | bad#0 horse#6
-    Bad Horse, Bad Horse                                 | bad#0 horse#7
-    Bad Horse, He's Bad!                                 | bad#0 horse#8
-    The evil league of evil is watching so beware        | bad#0 horse#9
-    The grade that you receive'll be your last, we swear | bad#0 horse#10
+$ ./lf get bad horse#2#10
+He rides across the nation, the thoroughbred of sin  | bad#0 horse#2
+He got the application that you just sent in         | bad#0 horse#3
+It needs evaluation, so let the games begin          | bad#0 horse#4
+A heinous crime, a show of force                     | bad#0 horse#5
+(a murder would be nice of course!)                  | bad#0 horse#6
+Bad Horse, Bad Horse                                 | bad#0 horse#7
+Bad Horse, He's Bad!                                 | bad#0 horse#8
+The evil league of evil is watching so beware        | bad#0 horse#9
+The grade that you receive'll be your last, we swear | bad#0 horse#10
+```
 
 In the first command above the trailing hash is interpreted as `#0#18446744073709551615`. That huge number is the maximum value of a 64-bit unsigned integer. Leaving off the trailing hash is equivalent to `#0` and gets only ordinal zero. Using `#2#10` asks for ordinals two through ten inclusive.
 
@@ -110,7 +114,9 @@ In the first command above the trailing hash is interpreted as `#0#1844674407370
 
 If LF is open and decentralized, what happens if someone does this?
 
-    $ ./lf set bad horse#0 'Good Horse, Good Horse'
+```
+$ ./lf set bad horse#0 'Good Horse, Good Horse'
+```
 
 A record will be created and published. Chances are nobody will see it.
 
@@ -122,7 +128,9 @@ The already existing Bad Horse records have three big things going for them:
 
 But what does happen to lower weight or lower reputation records? Try this:
 
-    $ ./lf -json get bad horse#0
+```
+$ ./lf -json get bad horse#0
+```
 
 Results are returned as lists of records sorted in descending order of trust according to the selected metric. The default behavior of the command line client is to show only the highest scoring result for each set of selectors and ordinals. The `-json` flag requests and dumps everything. If there are any impostors you'll see them in this output.
 
@@ -132,18 +140,22 @@ Since names are first come first serve, short names like `bad` aren't the sorts 
 
 What if someone does this?
 
-    $ ./lf set bad cow '!ooM !ooM'
+```
+$ ./lf set bad cow '!ooM !ooM'
+```
 
 A record is identified by all its selector names. That means anyone can claim a different series of selector names even if the beginning of that series overlaps with another.
 
 Try this:
 
-    $ ./lf get bad
-    !ooM !ooM                                                 | bad#0 ?byGYyeZPawCV1GTzQEcONgzdbZw3Qm2aLc3Ov8HNoc3
-    Bad Horse, Bad Horse                                      | bad#0 ?Iu9lUHgVNfAMBIkQiS7AMw51quhj5qnsR8NVD6U30h
-    Bad Horse, Bad Horse                                      | bad#0 ?Iu9lUHgVNfAMBIkQiS7AMw51quhj5qnsR8NVD6UG4e
-    ... and so on ...
-    ... and who knows what else! ...
+```
+$ ./lf get bad
+!ooM !ooM                                                 | bad#0 ?byGYyeZPawCV1GTzQEcONgzdbZw3Qm2aLc3Ov8HNoc3
+Bad Horse, Bad Horse                                      | bad#0 ?Iu9lUHgVNfAMBIkQiS7AMw51quhj5qnsR8NVD6U30h
+Bad Horse, Bad Horse                                      | bad#0 ?Iu9lUHgVNfAMBIkQiS7AMw51quhj5qnsR8NVD6UG4e
+... and so on ...
+... and who knows what else! ...
+```
 
 **Be warned** before you execute the above command that the output could contain virtually anything including profanity, URLs to malware, and so on!
 
@@ -155,13 +167,17 @@ In most cases application developers will want to fully specify the selectors fo
 
 Running a node on the public network is easy:
 
-    $ ./lf node-start &
+```
+$ ./lf node-start &
+```
 
 Obviously you'll want to set this up via *systemd* or some other process-supervising system to run it on a real server.
 
 To see what your new node is doing, type:
 
-    $ tail -f ~/.lf/node.log
+```
+$ tail -f ~/.lf/node.log
+```
 
 If you are running as root instead of a normal user, that will be `/var/lib/lf/node.log`. In the same directory as the log you'll see numerous other files that contain data and meta-data.
 
