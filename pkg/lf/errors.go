@@ -26,7 +26,9 @@
 
 package lf
 
-import "fmt"
+import (
+	"fmt"
+)
 
 // Err indicates a general LF error such as an invalid parameter or state.
 type Err string

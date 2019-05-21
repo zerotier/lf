@@ -106,6 +106,10 @@ const (
 	// RecordTypeCertificate records contain an x509 certificate.
 	// This is a protocol constant and can't be changed.
 	RecordTypeCertificate = 3
+
+	// RecordTypeDelete is a record that hides all other records by the same owner. The timestamp must also be UINT64_MAX.
+	// This is a protocol constant and can't be changed.
+	RecordTypeDelete = 15 // reserved, not implemented yet
 )
 
 // recordWharrgarblCost computes the cost in Wharrgarbl difficulty for a record of a given number of "billable" bytes.
