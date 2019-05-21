@@ -482,24 +482,26 @@ func (n *Node) ConnectedPeerCount() int {
 
 // Connect attempts to establish a peer-to-peer connection to a remote node.
 func (n *Node) Connect(ip net.IP, port int, identity []byte) {
+	if bytes.Equal(identity, n.identity) {
+		return
+	}
+
+	n.peersLock.RLock()
+	for _, p := range n.peers {
+		if bytes.Equal(identity, p.identity) {
+			n.peersLock.RUnlock()
+			return
+		}
+	}
+	n.peersLock.RUnlock()
+
 	n.backgroundThreadWG.Add(1)
 	go func() {
 		defer n.backgroundThreadWG.Done()
 
-		ta := net.TCPAddr{
-			IP:   ip,
-			Port: port,
-		}
-
-		n.peersLock.RLock()
-		if n.peers[ta.String()] != nil {
-			n.peersLock.RUnlock()
-			return
-		}
-		n.peersLock.RUnlock()
-
 		n.log[LogLevelVerbose].Printf("P2P attempting to connect to %s %d %s", ip.String(), port, Base62Encode(identity))
 
+		ta := net.TCPAddr{IP: ip, Port: port}
 		conn, err := net.DialTimeout("tcp", ta.String(), time.Second*10)
 		if atomic.LoadUint32(&n.shutdown) == 0 {
 			if err == nil {
@@ -815,22 +817,18 @@ func (n *Node) backgroundWorkerMain() {
 		// If we don't have enough connections, try to make more to peers we've learned about.
 		if (ticker % 10) == 5 {
 			n.peersLock.RLock()
-			if len(n.peers) < p2pDesiredConnectionCount {
-				wantMore := p2pDesiredConnectionCount - len(n.peers)
+			connectedCount := len(n.peers)
+			n.peersLock.RUnlock()
+			if connectedCount < p2pDesiredConnectionCount {
+				wantMore := p2pDesiredConnectionCount - connectedCount
 				n.knownPeersLock.Lock()
 				if len(n.knownPeers) > 0 {
 					visited := make(map[int]bool)
-				skipThisPeer:
 					for k := 0; k < wantMore; k++ {
 						idx := rand.Int() % len(n.knownPeers)
 						if _, have := visited[idx]; !have {
 							visited[idx] = true
 							kp := n.knownPeers[idx]
-							for _, p := range n.peers {
-								if bytes.Equal(p.identity, kp.Identity) {
-									continue skipThisPeer
-								}
-							}
 							n.Connect(kp.IP, kp.Port, kp.Identity)
 						}
 					}
@@ -843,7 +841,6 @@ func (n *Node) backgroundWorkerMain() {
 				}
 				n.knownPeersLock.Unlock()
 			}
-			n.peersLock.RUnlock()
 		}
 
 		// Periodically check and update database full sync state.
