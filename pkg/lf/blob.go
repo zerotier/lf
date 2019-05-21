@@ -68,8 +68,6 @@ func (b *Blob) UnmarshalJSON(j []byte) error {
 	return nil
 }
 
-//////////////////////////////////////////////////////////////////////////////
-
 // HashBlob is a 32-byte array that serializes to a =hash base62-encoded string.
 type HashBlob [32]byte
 

@@ -860,12 +860,10 @@ func (n *Node) backgroundWorkerMain() {
 
 // commentaryGeneratorMain is run to generate commentary and add work to the DAG (if enabled).
 func (n *Node) commentaryGeneratorMain() {
-	desiredMinOverhead := 1024
+	minWorkDifficulty := uint64(0x00080000)
 	for atomic.LoadUint32(&n.shutdown) == 0 {
 		time.Sleep(time.Second) // 1s pause between each new record
 		if atomic.LoadUint32(&n.commentary) != 0 && atomic.LoadUint32(&n.shutdown) == 0 {
-			overhead := desiredMinOverhead
-
 			var commentary []byte
 			commentCount := 0
 			n.commentsLock.Lock()
@@ -883,24 +881,11 @@ func (n *Node) commentaryGeneratorMain() {
 					break
 				}
 				commentCount++
-				overhead -= s
 				n.comments.Remove(f)
 			}
 			n.commentsLock.Unlock()
 
-			if overhead < 0 {
-				overhead = 0
-			}
-			nlinks := uint(overhead / 32)
-			if nlinks < n.genesisParameters.RecordMinLinks {
-				nlinks = n.genesisParameters.RecordMinLinks
-			}
-			if nlinks < 1 {
-				nlinks = 1
-			} else if nlinks > RecordMaxLinks {
-				nlinks = RecordMaxLinks
-			}
-			links, err := n.db.getLinks2(nlinks)
+			links, err := n.db.getLinks2(RecordMaxLinks)
 
 			if err == nil && len(links) > 0 {
 				var wf *Wharrgarblr
@@ -919,8 +904,16 @@ func (n *Node) commentaryGeneratorMain() {
 				}
 				n.commentaryWorkFunctionLock.Unlock()
 
+				var rb RecordBuilder
+				var rec *Record
 				startTime := time.Now()
-				rec, err := NewRecord(RecordTypeCommentary, commentary, links, nil, nil, nil, nil, TimeSec(), wf, n.owner)
+				err = rb.Start(RecordTypeCommentary, commentary, links, nil, nil, nil, n.owner.Public, nil, TimeSec())
+				if err == nil {
+					err = rb.AddWork(wf, uint32(minWorkDifficulty))
+					if err == nil {
+						rec, err = rb.Complete(n.owner)
+					}
+				}
 				endTime := time.Now()
 
 				if err == nil {
@@ -931,12 +924,15 @@ func (n *Node) commentaryGeneratorMain() {
 						// the probabilistic nature of the work function.
 						duration := endTime.Sub(startTime).Seconds()
 						if duration < 120.0 {
-							desiredMinOverhead += 32
-						} else if desiredMinOverhead > 32 {
-							desiredMinOverhead -= 32
+							minWorkDifficulty += 0x00005000
+							if minWorkDifficulty > 0xffffffff {
+								minWorkDifficulty = 0xffffffff
+							}
+						} else if minWorkDifficulty > 0x00010000 {
+							minWorkDifficulty -= 0x00005000
 						}
 
-						n.log[LogLevelVerbose].Printf("commentary: %s submitted with %d comments and %d links (creation took %f seconds)", rec.HashString(), commentCount, len(links), duration)
+						n.log[LogLevelVerbose].Printf("commentary: %s submitted with %d comments (creation took %f seconds)", rec.HashString(), commentCount, duration)
 					} else {
 						n.log[LogLevelWarning].Printf("WARNING: error adding commentary record: %s", err.Error())
 					}

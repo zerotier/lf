@@ -443,11 +443,9 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 				rc, ds := n.db.stats()
 				req.Header.Set("Content-Type", "text/plain")
 				out.WriteHeader(200)
-				out.Write([]byte(`------------------------------------------------------------------------------
-LF Global Key/Value Store ` + VersionStr + `
+				out.Write([]byte(`LF Global Key/Value Store ` + VersionStr + `
 (c)2018-2019 ZeroTier, Inc.  https://www.zerotier.com/
 MIT License
-------------------------------------------------------------------------------
 
 Software:            ` + SoftwareName + `
 Version:             ` + VersionStr + `
@@ -457,22 +455,21 @@ Clock:               ` + now.Format(time.RFC1123) + `
 Network:             ` + n.genesisParameters.Name + `
 Record Count:        ` + strconv.FormatUint(rc, 10) + `
 Data Size:           ` + strconv.FormatUint(ds, 10) + `
-
-------------------------------------------------------------------------------
-Peer Connections
-------------------------------------------------------------------------------
-
 `))
 				n.peersLock.RLock()
+				out.Write([]byte("\nIncoming Peer-to-Peer Connections\n\n"))
 				for _, p := range n.peers {
-					inout := "OUT"
 					if p.inbound {
-						inout = " IN"
+						out.Write([]byte(fmt.Sprintf("%-39s %s\n", p.address, Base62Encode(p.identity))))
 					}
-					out.Write([]byte(fmt.Sprintf("%s %-42s %s\n", inout, p.address, Base62Encode(p.identity))))
+				}
+				out.Write([]byte("\nOutgoing Peer-to-Peer Connections\n\n"))
+				for _, p := range n.peers {
+					if !p.inbound {
+						out.Write([]byte(fmt.Sprintf("%-39s %s\n", p.address, Base62Encode(p.identity))))
+					}
 				}
 				n.peersLock.RUnlock()
-				out.Write([]byte("\n------------------------------------------------------------------------------\n"))
 			} else {
 				apiSendObj(out, req, http.StatusNotFound, &APIError{Code: http.StatusNotFound, Message: req.URL.Path + " is not a valid path"})
 			}

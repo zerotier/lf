@@ -30,7 +30,7 @@
 #include "common.h"
 #include "vector.h"
 
-#define ZTLF_ISET_BUCKET_COUNT 2097152
+#define ZTLF_ISET_BUCKET_COUNT 4194304
 
 /**
  * A fast integer set with a currently fixed number of buckets

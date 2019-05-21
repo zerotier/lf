@@ -57,7 +57,8 @@ var (
 const (
 	// Flags are protocol constants and can't be changed.
 	recordBodyFlagHasType           byte   = 0x01
-	recordBodyFlagHasAuthSignature  byte   = 0x02
+	recordBodyFlagHasValue          byte   = 0x02
+	recordBodyFlagHasAuthSignature  byte   = 0x04
 	recordValueFlagBrotliCompressed uint32 = 0x80000000 // these flags must occupy the most significant 4 bits of the value
 
 	// RecordDefaultWharrgarblMemory is the default amount of memory to use for Wharrgarbl momentum-type PoW.
@@ -68,8 +69,8 @@ const (
 	RecordMaxSize = 65536
 
 	// RecordMaxLinks is the maximum number of links a valid record can have.
-	// This is a protocol constant and can't be changed.
-	RecordMaxLinks = 255
+	// This is a protocol constant and can't be changed. (It must also fit in 3 bits.)
+	RecordMaxLinks = 7
 
 	// RecordMaxSelectors is a sanity limit on the number of selectors.
 	// This is a protocol constant and can't be changed.
@@ -199,24 +200,26 @@ func (rb *recordBody) unmarshalFrom(r io.Reader) error {
 		rb.Type = nil
 	}
 
-	l, err := binary.ReadUvarint(&rr)
-	if err != nil {
-		return err
-	}
-	if l > 0 {
-		if l > RecordMaxSize {
-			return ErrRecordInvalid
-		}
-		rb.Value = make([]byte, uint(l))
-		_, err = io.ReadFull(&rr, rb.Value)
+	if (flags & recordBodyFlagHasValue) != 0 {
+		l, err := binary.ReadUvarint(&rr)
 		if err != nil {
 			return err
 		}
-	} else {
-		rb.Value = nil
+		if l > 0 {
+			if l > RecordMaxSize {
+				return ErrRecordInvalid
+			}
+			rb.Value = make([]byte, uint(l))
+			_, err = io.ReadFull(&rr, rb.Value)
+			if err != nil {
+				return err
+			}
+		} else {
+			rb.Value = nil
+		}
 	}
 
-	l, err = binary.ReadUvarint(&rr)
+	l, err := binary.ReadUvarint(&rr)
 	if err != nil {
 		return err
 	}
@@ -254,16 +257,10 @@ func (rb *recordBody) unmarshalFrom(r io.Reader) error {
 		rb.AuthSignature = nil
 	}
 
-	l, err = binary.ReadUvarint(&rr)
-	if err != nil {
-		return err
-	}
-	if l > 0 {
-		if (l * 32) > RecordMaxSize {
-			return ErrRecordInvalid
-		}
-		rb.Links = make([]HashBlob, uint(l))
-		for i := 0; i < len(rb.Links); i++ {
+	linkCount := int(flags >> 5)
+	if linkCount > 0 {
+		rb.Links = make([]HashBlob, linkCount)
+		for i := 0; i < linkCount; i++ {
 			_, err = io.ReadFull(&rr, rb.Links[i][:])
 			if err != nil {
 				return err
@@ -284,16 +281,23 @@ func (rb *recordBody) unmarshalFrom(r io.Reader) error {
 }
 
 func (rb *recordBody) marshalTo(w io.Writer, hashAsProxyForValue bool) error {
-	var hasAuthFlag byte
+	if len(rb.Links) > RecordMaxLinks {
+		return ErrRecordInvalid
+	}
+
+	flags := byte(len(rb.Links) << 5)
+	if len(rb.Value) > 0 {
+		flags |= recordBodyFlagHasValue
+	}
 	if len(rb.AuthSignature) > 0 {
-		hasAuthFlag = recordBodyFlagHasAuthSignature
+		flags |= recordBodyFlagHasAuthSignature
 	}
 	if rb.Type != nil && *rb.Type != 0 {
-		if _, err := w.Write([]byte{hasAuthFlag | recordBodyFlagHasType, *rb.Type}); err != nil {
+		if _, err := w.Write([]byte{flags | recordBodyFlagHasType, *rb.Type}); err != nil {
 			return err
 		}
 	} else {
-		if _, err := w.Write([]byte{hasAuthFlag}); err != nil {
+		if _, err := w.Write([]byte{flags}); err != nil {
 			return err
 		}
 	}
@@ -303,7 +307,7 @@ func (rb *recordBody) marshalTo(w io.Writer, hashAsProxyForValue bool) error {
 		if _, err := w.Write(h[:]); err != nil {
 			return err
 		}
-	} else {
+	} else if len(rb.Value) > 0 {
 		if _, err := writeUVarint(w, uint64(len(rb.Value))); err != nil {
 			return err
 		}
@@ -328,9 +332,6 @@ func (rb *recordBody) marshalTo(w io.Writer, hashAsProxyForValue bool) error {
 		}
 	}
 
-	if _, err := writeUVarint(w, uint64(len(rb.Links))); err != nil {
-		return err
-	}
 	for i := 0; i < len(rb.Links); i++ {
 		if _, err := w.Write(rb.Links[i][:]); err != nil {
 			return err
@@ -731,9 +732,15 @@ func (rb *RecordBuilder) Start(recordType byte, value []byte, links [][32]byte, 
 
 // AddWork actually computes the work and sets the Work field in the RecordBuilder.
 // This doesn't need to be called if there is no work to be done, e.g. an auth signature only record.
-func (rb *RecordBuilder) AddWork(workFunction *Wharrgarblr) error {
+// The minWorkFunctionDifficulty parameter can be used if you want to do extra work to altruistically
+// add work to the DAG. Otherwise it should be zero.
+func (rb *RecordBuilder) AddWork(workFunction *Wharrgarblr, minWorkFunctionDifficulty uint32) error {
 	if workFunction != nil {
-		w, iter := workFunction.Compute(rb.workHash, recordWharrgarblCost(rb.workBillableBytes))
+		diff := recordWharrgarblCost(rb.workBillableBytes)
+		if diff < minWorkFunctionDifficulty {
+			diff = minWorkFunctionDifficulty
+		}
+		w, iter := workFunction.Compute(rb.workHash, diff)
 		if iter == 0 {
 			return ErrWharrgarblFailed
 		}
@@ -767,7 +774,7 @@ func NewRecord(recordType byte, value []byte, links [][32]byte, maskingKey []byt
 	if err != nil {
 		return nil, err
 	}
-	err = rb.AddWork(workFunction)
+	err = rb.AddWork(workFunction, 0)
 	if err != nil {
 		return nil, err
 	}
