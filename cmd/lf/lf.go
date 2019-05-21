@@ -186,11 +186,11 @@ Commands:
   status                                  Get status from remote node/proxy
   set [-...] <name[#ord]> [...] <value>   Set a value in the data store
     -file                                 Value is a file path ("-" for stdin)
-    -mask <key>                           Encrypt value using masking key
+    -mask <key>                           Override default masking key
     -owner <owner>                        Use this owner instead of default
     -url <url[,url,...]>                  Override configured node/proxy URLs
   get [-...] <name[#start[#end]]> [...]   Find by selector (optional range)
-    -mask <key>                           Decrypt value(s) with masking key
+    -mask <key>                           Override default masking key
     -tstart <time>                        Constrain to after this time
     -tend <time>                          Constrain to before this time
     -url <url[,url,...]>                  Override configured node/proxy URLs

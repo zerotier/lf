@@ -80,18 +80,23 @@ type Peer struct {
 
 // APIStatusResult contains status information about this node and the network it belongs to.
 type APIStatusResult struct {
-	Software            string            `json:",omitempty"` // Software implementation name
-	Version             [4]int            ``                  // Version of software
-	APIVersion          int               ``                  // Current version of API
-	MinAPIVersion       int               ``                  // Minimum API version supported
-	MaxAPIVersion       int               ``                  // Maximum API version supported
-	Uptime              uint64            ``                  // Node uptime in seconds
-	Clock               uint64            ``                  // Node local clock in seconds since epoch
-	DBRecordCount       uint64            ``                  // Number of records in database
-	DBSize              uint64            ``                  // Total size of records in database in bytes
-	DBFullySynchronized bool              ``                  // True if there are no dangling links (excluding abandoned ones)
-	PeerCount           int               ``                  // Number of connected peers
-	GenesisParameters   GenesisParameters ``                  // Network parameters
+	Software          string            `json:",omitempty"` // Software implementation name
+	Version           [4]int            ``                  // Version of software
+	APIVersion        int               ``                  // Current version of API
+	MinAPIVersion     int               ``                  // Minimum API version supported
+	MaxAPIVersion     int               ``                  // Maximum API version supported
+	Uptime            uint64            ``                  // Node uptime in seconds
+	Clock             uint64            ``                  // Node local clock in seconds since epoch
+	RecordCount       uint64            ``                  // Number of records in database
+	DataSize          uint64            ``                  // Total size of records in database in bytes
+	FullySynchronized bool              ``                  // True if there are no dangling links (excluding abandoned ones)
+	GenesisParameters GenesisParameters ``                  // Network parameters
+	OracleOwnerPublic OwnerPublic       `json:",omitempty"` // This node's oracle owner public
+	Oracle            bool              ``                  // Is this node a currently active oracle?
+	P2PPort           int               ``                  // This node's P2P port
+	HTTPPort          int               ``                  // This node's HTTP port
+	Identity          Blob              `json:",omitempty"` // This node's peer identity
+	Peers             []Peer            `json:",omitempty"` // Currently connected peers
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -391,24 +396,38 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 	smux.HandleFunc("/status", func(out http.ResponseWriter, req *http.Request) {
 		apiSetStandardHeaders(out)
 		if req.Method == http.MethodGet || req.Method == http.MethodHead {
+			var peers []Peer
 			n.peersLock.RLock()
-			pcount := len(n.peers)
+			for _, p := range n.peers {
+				peers = append(peers, Peer{
+					IP:       p.tcpAddress.IP,
+					Port:     p.tcpAddress.Port,
+					Identity: p.identity,
+				})
+			}
 			n.peersLock.RUnlock()
+
 			rc, ds := n.db.stats()
 			now := time.Now()
+
 			apiSendObj(out, req, http.StatusOK, &APIStatusResult{
-				Software:            SoftwareName,
-				Version:             Version,
-				APIVersion:          APIVersion,
-				MinAPIVersion:       APIVersion,
-				MaxAPIVersion:       APIVersion,
-				Uptime:              uint64(math.Round(now.Sub(n.startTime).Seconds())),
-				Clock:               uint64(now.Unix()),
-				DBRecordCount:       rc,
-				DBSize:              ds,
-				DBFullySynchronized: (atomic.LoadUint32(&n.synchronized) != 0),
-				PeerCount:           pcount,
-				GenesisParameters:   n.genesisParameters,
+				Software:          SoftwareName,
+				Version:           Version,
+				APIVersion:        APIVersion,
+				MinAPIVersion:     APIVersion,
+				MaxAPIVersion:     APIVersion,
+				Uptime:            uint64(math.Round(now.Sub(n.startTime).Seconds())),
+				Clock:             uint64(now.Unix()),
+				RecordCount:       rc,
+				DataSize:          ds,
+				FullySynchronized: (atomic.LoadUint32(&n.synchronized) != 0),
+				GenesisParameters: n.genesisParameters,
+				OracleOwnerPublic: n.owner.Public,
+				Oracle:            (atomic.LoadUint32(&n.commentary) != 0),
+				P2PPort:           n.p2pPort,
+				HTTPPort:          n.httpPort,
+				Identity:          n.identity,
+				Peers:             peers,
 			})
 		} else {
 			out.Header().Set("Allow", "GET, HEAD")
