@@ -894,13 +894,7 @@ func (n *Node) commentaryGeneratorMain() {
 				if n.commentaryWorkFunction != nil {
 					wf = n.commentaryWorkFunction
 				} else {
-					threads := runtime.NumCPU()
-					if threads >= 3 {
-						threads -= 2
-					} else {
-						threads = 1
-					}
-					n.commentaryWorkFunction = NewWharrgarblr(RecordDefaultWharrgarblMemory, threads)
+					n.commentaryWorkFunction = NewWharrgarblr(RecordDefaultWharrgarblMemory, runtime.NumCPU()-1)
 					wf = n.commentaryWorkFunction
 				}
 				n.commentaryWorkFunctionLock.Unlock()
