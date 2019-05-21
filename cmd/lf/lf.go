@@ -47,7 +47,6 @@ import (
 	"os"
 	"os/signal"
 	"path"
-	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -60,14 +59,6 @@ import (
 
 	"../../pkg/lf"
 )
-
-//#if defined(_WIN32) || defined(WIN32) || defined(_WIN64) || defined(WIN64)
-//static inline int fork() { return -1; }
-//#else
-//#include <stdlib.h>
-//#include <unistd.h>
-//#endif
-import "C"
 
 var (
 	lfDefaultPath = func() string {
@@ -163,19 +154,25 @@ func prompt(prompt string, required bool, dfl string) string {
 	}
 }
 
-// HACK warning: can only be called before any goroutines start...
 func stickAForkInIt() {
-	if strings.HasPrefix(runtime.GOOS, "windows") {
-		logger.Printf("FATAL: fork not supported on Windows")
-		os.Exit(-1)
+	if os.Getenv("_LF_DAEMON_SUBPROCESS") == "1" {
+		return
 	}
-	fr := int(C.fork())
-	if fr < 0 {
-		logger.Printf("FATAL: fork into background failed")
+	executable, err := os.Executable()
+	if err != nil {
+		logger.Printf("FATAL: cannot locate executable: %s", err.Error())
 		os.Exit(-1)
-	} else if fr > 0 {
-		os.Exit(0)
+		return
 	}
+	os.Setenv("_LF_DAEMON_SUBPROCESS", "1")
+	_, err = os.StartProcess(executable, os.Args, nil)
+	if err != nil {
+		logger.Printf("FATAL: cannot restart executable: %s", err.Error())
+		os.Exit(-1)
+		return
+	}
+	os.Exit(0)
+	return
 }
 
 func printHelp(cmd string) {
@@ -586,14 +583,20 @@ func doGet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool
 				}
 				fmt.Print(" | ")
 				for i := range selectorNames {
-					for si := range res.Record.Selectors {
-						sn := []byte(selectorNames[i])
-						if res.Record.SelectorIs(sn, si) {
-							fmt.Printf("%s#%d", selectorNames[i], res.Record.Selectors[si].Ordinal.Get(sn))
-							if i != len(selectorNames)-1 {
-								fmt.Print("\t")
-							}
+					sn := []byte(selectorNames[i])
+					if res.Record.SelectorIs(sn, i) {
+						fmt.Printf("%s#%d", selectorNames[i], res.Record.Selectors[i].Ordinal.Get(sn))
+						if i != len(res.Record.Selectors)-1 {
+							fmt.Print("\t")
 						}
+					}
+				}
+				for i := len(selectorNames); i < len(res.Record.Selectors); i++ {
+					sk := lf.Base62Encode(res.Record.SelectorKey(i))
+					if i != len(res.Record.Selectors)-1 {
+						fmt.Printf("?%s\t", sk)
+					} else {
+						fmt.Printf("?%s", sk)
 					}
 				}
 				fmt.Println("")
