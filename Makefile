@@ -15,7 +15,4 @@ lf: FORCE
 clean:	FORCE
 	rm -rf lf lf-db-test
 
-godeps:	FORCE
-	go get -u $(GOPKGS)
-
 FORCE:
