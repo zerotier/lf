@@ -76,7 +76,7 @@ const (
 	p2pDesiredConnectionCount = 32
 
 	// Delete peers that haven't been used in this long.
-	p2pPeerExpiration = 432000000 // 5 days
+	p2pPeerExpiration = 1000 * 60 * 60 * 24 * 3 // 3 days
 
 	// DefaultHTTPPort is the default LF HTTP API port
 	DefaultHTTPPort = 9980
@@ -166,6 +166,8 @@ type Node struct {
 	commentary         uint32         // set to non-zero to add work and render commentary
 }
 
+//////////////////////////////////////////////////////////////////////////////
+
 // NewNode creates and starts a node.
 func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, logLevel int) (*Node, error) {
 	n := new(Node)
@@ -202,13 +204,13 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 
 	n.log[LogLevelNormal].Printf("--- node starting up at %s", n.startTime.String())
 
-	// Open node database and associated flat data files.
 	err := n.db.open(basePath, n.log, n.handleSynchronizedRecord)
 	if err != nil {
 		return nil, err
 	}
 
-	// Load or generate this node's public owner / public key.
+	// Load or generate this node's identity, which is an owner that it uses to generate
+	// commentary if enabled and also a key pair for P2P key agreement.
 	ownerPath := path.Join(basePath, "identity-secret.pem")
 	ownerBytes, _ := ioutil.ReadFile(ownerPath)
 	if len(ownerBytes) > 0 {

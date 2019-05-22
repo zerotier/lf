@@ -439,7 +439,6 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 		}
 	})
 
-	// /connect is only accepted from localhost
 	smux.HandleFunc("/connect", func(out http.ResponseWriter, req *http.Request) {
 		apiSetStandardHeaders(out)
 		if req.Method == http.MethodPost || req.Method == http.MethodPut {
@@ -460,47 +459,7 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 
 	smux.HandleFunc("/", func(out http.ResponseWriter, req *http.Request) {
 		apiSetStandardHeaders(out)
-		if req.Method == http.MethodGet || req.Method == http.MethodHead {
-			if req.URL.Path == "/" {
-				now := time.Now()
-				rc, ds := n.db.stats()
-				req.Header.Set("Content-Type", "text/plain")
-				out.WriteHeader(200)
-				out.Write([]byte(`LF Global Key/Value Store ` + VersionStr + `
-(c)2018-2019 ZeroTier, Inc.  https://www.zerotier.com/
-MIT License
-
-Software:            ` + SoftwareName + `
-Version:             ` + VersionStr + `
-API Version:         ` + apiVersionStr + `
-Uptime:              ` + (now.Sub(n.startTime)).String() + `
-Clock:               ` + now.Format(time.RFC1123) + `
-Network:             ` + n.genesisParameters.Name + `
-Record Count:        ` + strconv.FormatUint(rc, 10) + `
-Data Size:           ` + strconv.FormatUint(ds, 10) + `
-`))
-				n.peersLock.RLock()
-				out.Write([]byte("\nIncoming Peer-to-Peer Connections\n\n"))
-				for _, p := range n.peers {
-					if p.inbound {
-						out.Write([]byte(fmt.Sprintf("%-39s %s\n", p.address, Base62Encode(p.identity))))
-					}
-				}
-				out.Write([]byte("\nOutgoing Peer-to-Peer Connections\n\n"))
-				for _, p := range n.peers {
-					if !p.inbound {
-						out.Write([]byte(fmt.Sprintf("%-39s %s\n", p.address, Base62Encode(p.identity))))
-					}
-				}
-				n.peersLock.RUnlock()
-				out.Write([]byte("\n"))
-			} else {
-				apiSendObj(out, req, http.StatusNotFound, &APIError{Code: http.StatusNotFound, Message: req.URL.Path + " is not a valid path"})
-			}
-		} else {
-			out.Header().Set("Allow", "GET, HEAD")
-			apiSendObj(out, req, http.StatusMethodNotAllowed, &APIError{Code: http.StatusMethodNotAllowed, Message: req.Method + " not supported for this path"})
-		}
+		apiSendObj(out, req, http.StatusNotFound, &APIError{Code: http.StatusNotFound, Message: req.URL.Path + " is not a valid path"})
 	})
 
 	return smux
