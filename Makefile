@@ -10,8 +10,7 @@ GOPKGS=\
 all: lf
 
 lf: FORCE
-	go get $(GOPKGS)
-	go build -o lf -a cmd/lf/*.go
+	go build cmd/lf/lf.go
 
 clean:	FORCE
 	rm -rf lf lf-db-test

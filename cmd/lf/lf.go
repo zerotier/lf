@@ -57,7 +57,7 @@ import (
 
 	"golang.org/x/crypto/acme/autocert"
 
-	"../../pkg/lf"
+	"lf/pkg/lf"
 )
 
 var (

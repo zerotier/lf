@@ -45,7 +45,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"../../third_party/lfmd5"
+	"lf/third_party/lfmd5"
 )
 
 func sliceContainsUInt(s []uint, e uint) bool {
