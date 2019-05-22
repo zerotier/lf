@@ -1217,7 +1217,7 @@ struct ZTLF_QueryResults *ZTLF_DB_Query(struct ZTLF_DB *db,const int64_t tsMin,c
 			qr->weightL = 0;
 			qr->weightH = 0;
 			qr->ownerSize = (unsigned int)ownerSize;
-			qr->localReputation = 1; /* this gets set to minimum of all records in a group */
+			qr->localReputation = ZTLF_DB_REPUTATION_DEFAULT; /* this gets set to minimum of all records in a group */
 			qr->key = (uint64_t)key;
 			memcpy(qr->owner,owner,ownerSize);
 		} else {

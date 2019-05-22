@@ -183,7 +183,7 @@ func (m *Query) Execute(n *Node) (qr QueryResults, err error) {
 		tsMax = int64(m.TimeRange[1])
 	}
 
-	// Get all results grouped by selector key
+	// Get all results grouped by selector key.
 	bySelectorKey := make(map[uint64]*[]apiQueryResultTmp)
 	n.db.query(tsMin, tsMax, selectorRanges, func(ts, weightL, weightH, doff, dlen uint64, localReputation int, key uint64, owner []byte) bool {
 		rptr := bySelectorKey[key]
