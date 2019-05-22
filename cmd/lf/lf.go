@@ -193,6 +193,7 @@ Commands:
     -mask <key>                           Override default masking key
     -tstart <time>                        Constrain to after this time
     -tend <time>                          Constrain to before this time
+    -raw                                  Dump raw un-escaped value(s) only
     -url <url[,url,...]>                  Override configured node/proxy URLs
   owner <operation> [...]
     list                                  List owners
@@ -407,6 +408,7 @@ func doGet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool
 	maskKey := getOpts.String("mask", "", "")
 	tStart := getOpts.String("tstart", "", "")
 	tEnd := getOpts.String("tend", "", "")
+	rawOutput := getOpts.Bool("raw",false,"")
 	urlOverride := getOpts.String("url", "", "")
 	json2 := getOpts.Bool("json", jsonOutput, "") // allow -json after get for convenience
 	getOpts.SetOutput(ioutil.Discard)
@@ -482,6 +484,9 @@ func doGet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool
 		Range:     ranges,
 		TimeRange: tr,
 	}
+	if *rawOutput {
+		jsonOutput = false
+	}
 	if !jsonOutput {
 		req.Limit = &one
 	}
@@ -514,6 +519,12 @@ func doGet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool
 			fmt.Println(lf.PrettyJSON(results))
 		} else {
 			fmt.Println("[]")
+		}
+	} else if *rawOutput {
+		for _, ress := range results {
+			if len(ress) > 0 {
+				os.Stdout.Write(ress[0].Value)
+			}
 		}
 	} else {
 		maxStrLen := 2
