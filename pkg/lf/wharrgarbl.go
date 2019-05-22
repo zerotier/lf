@@ -40,7 +40,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"../../third_party/lfmd5"
+	"lf/third_party/lfmd5"
 )
 
 // wharrgarblTableSize is the size of the static table used by wharrgarblHash
