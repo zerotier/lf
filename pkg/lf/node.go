@@ -1265,16 +1265,11 @@ func (n *Node) p2pConnectionHandler(c *net.TCPConn, identity []byte, inbound boo
 	}
 	p.send(append([]byte{p2pProtoMessageTypeHello}, msgbuf...))
 
-	// Check to make sure this isn't a redundant connection, announce this
-	// peer to other peers (if outbound), and announce other peers to this
-	// peer. Then if everything is okay add to peers map.
 	n.peersLock.Lock()
 	for _, existingPeer := range n.peers {
 		if bytes.Equal(existingPeer.identity, remoteIdentity) {
 			n.log[LogLevelNormal].Printf("P2P connection to %s closed: replaced by new link %s to same peer", existingPeer.tcpAddress.String(), peerAddressStr)
-			if existingPeer.c != nil {
-				existingPeer.c.Close()
-			}
+			existingPeer.c.Close()
 		} else {
 			if !inbound {
 				existingPeer.sendPeerAnnouncement(tcpAddr, p.identity)
@@ -1298,8 +1293,9 @@ func (n *Node) p2pConnectionHandler(c *net.TCPConn, identity []byte, inbound boo
 	n.log[LogLevelNormal].Printf("P2P connection established to %s %d %s", tcpAddr.IP.String(), tcpAddr.Port, Base62Encode(remoteIdentity))
 
 	performedInboundReachabilityTest := false
+mainReaderLoop:
 	for atomic.LoadUint32(&n.shutdown) == 0 {
-		c.SetReadDeadline(time.Now().Add(time.Second * 30))
+		c.SetReadDeadline(time.Now().Add(time.Second * 120))
 
 		// Read size of message (varint)
 		msgSize, err := binary.ReadUvarint(reader)
@@ -1360,7 +1356,11 @@ func (n *Node) p2pConnectionHandler(c *net.TCPConn, identity []byte, inbound boo
 
 		case p2pProtoMessageTypeHello:
 			if len(msg) > 0 {
-				json.Unmarshal(msg, &p.peerHelloMsg)
+				err := json.Unmarshal(msg, &p.peerHelloMsg)
+				if err != nil {
+					n.log[LogLevelNormal].Printf("P2P connection to %s closed: %s", peerAddressStr, err.Error())
+					break mainReaderLoop
+				}
 
 				// Test inbound connections for reachability in the opposite direction, and
 				// if they are reachable learn them and announce them. This helps the network
