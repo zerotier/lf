@@ -32,6 +32,7 @@ import (
 	secrand "crypto/rand"
 	"encoding/binary"
 	"encoding/json"
+	"hash/fnv"
 	"io"
 	"os"
 	"time"
@@ -104,14 +105,9 @@ func integerSqrtRounded(op uint32) (res uint32) {
 type paranoidSecureRandom struct{ cipher cipher.Stream }
 
 func (r *paranoidSecureRandom) Read(buf []byte) (int, error) {
-	_, err := io.ReadFull(secrand.Reader, nil)
-	if err == nil {
-		// Encrypting with a cipher initialized from some other sources of entropy
-		// defends in depth against broken/compromised system random sources.
-		r.cipher.XORKeyStream(buf, buf)
-		return len(buf), nil
-	}
-	return 0, err
+	_, err := io.ReadFull(secrand.Reader, buf)
+	r.cipher.XORKeyStream(buf, buf)
+	return len(buf), err
 }
 
 var secureRandom = func() *paranoidSecureRandom {
@@ -134,6 +130,20 @@ func crc16(bs []byte) (crc uint16) {
 		crc = (crc << 8) ^ crc16tab[(crc>>8)^uint16(b)]
 	}
 	return
+}
+
+var randomizedFnvBytes = func() []byte {
+	var tmp [8]byte
+	secureRandom.Read(tmp[:])
+	return tmp[:]
+}()
+
+// randomizedFnvHash computes a 64-bit FNV-1a hash randomized with runtime-generated random bytes.
+func randomizedFnvHash(in []byte) uint64 {
+	f64 := fnv.New64a()
+	f64.Write(in)
+	f64.Write(randomizedFnvBytes)
+	return f64.Sum64()
 }
 
 var jsonPrettyOptions = pretty.Options{

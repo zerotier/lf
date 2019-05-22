@@ -73,9 +73,9 @@ func (e APIError) Error() string {
 
 // Peer contains information about a peer
 type Peer struct {
-	IP       net.IP
-	Port     int
-	Identity Blob
+	IP       net.IP //
+	Port     int    // -1 indicates inbound TCP connection with unknown/unreachable port
+	Identity Blob   //
 }
 
 // APIStatusResult contains status information about this node and the network it belongs to.
@@ -399,9 +399,13 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 			var peers []Peer
 			n.peersLock.RLock()
 			for _, p := range n.peers {
+				port := p.tcpAddress.Port
+				if p.inbound {
+					port = -1
+				}
 				peers = append(peers, Peer{
 					IP:       p.tcpAddress.IP,
-					Port:     p.tcpAddress.Port,
+					Port:     port,
 					Identity: p.identity,
 				})
 			}

@@ -49,7 +49,6 @@ import (
 	"os"
 	"path"
 	"runtime"
-	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -138,22 +137,26 @@ type Node struct {
 	commentaryWorkFunctionLock sync.Mutex
 	db                         db
 
-	owner                      *Owner                    // Owner for commentary, key also currently used for ECDH on link
-	identity                   []byte                    // Compressed public key from owner
-	identityStr                string                    //
-	genesisParameters          GenesisParameters         // Genesis configuration for this node's network
-	genesisOwner               OwnerPublic               // Owner of genesis record(s)
-	lastGenesisRecordTimestamp uint64                    //
-	knownPeers                 []*knownPeer              // Peers we know about
-	knownPeersLock             sync.Mutex                //
-	connectionsInStartup       map[*net.TCPConn]bool     // Connections in startup state but not yet in peers[]
-	connectionsInStartupLock   sync.Mutex                //
-	peers                      map[string]*connectedPeer // Currently connected peers by address
-	peersLock                  sync.RWMutex              //
-	recordsRequested           map[[32]byte]uintptr      // When records were last requested
-	recordsRequestedLock       sync.Mutex                //
-	comments                   *list.List                // Accumulates commentary if commentary is enabled
-	commentsLock               sync.Mutex                //
+	owner       *Owner // Owner for commentary, key also currently used for ECDH on link
+	identity    []byte // Compressed public key from owner
+	identityStr string // Identity in base62 format
+
+	genesisParameters          GenesisParameters // Genesis configuration for this node's network
+	genesisOwner               OwnerPublic       // Owner of genesis record(s)
+	lastGenesisRecordTimestamp uint64            //
+
+	knownPeers               map[string]*knownPeer // Peers we know about by base62-encoded identity
+	knownPeersLock           sync.Mutex            //
+	connectionsInStartup     map[*net.TCPConn]bool // Connections in startup state but not yet in peers[]
+	connectionsInStartupLock sync.Mutex            //
+	peers                    []*connectedPeer      // Currently connected peers by randomized FNV hash of identity
+	peersLock                sync.RWMutex          //
+
+	recordsRequested     map[[32]byte]uintptr // When records were last requested
+	recordsRequestedLock sync.Mutex           //
+
+	comments     *list.List // Accumulates commentary if commentary is enabled
+	commentsLock sync.Mutex //
 
 	backgroundThreadWG sync.WaitGroup // used to wait for all goroutines
 	startTime          time.Time      // time node started
@@ -171,8 +174,8 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 	n.peersFilePath = path.Join(basePath, "peers.json")
 	n.p2pPort = p2pPort
 	n.httpPort = httpPort
+	n.knownPeers = make(map[string]*knownPeer)
 	n.connectionsInStartup = make(map[*net.TCPConn]bool)
-	n.peers = make(map[string]*connectedPeer)
 	n.recordsRequested = make(map[[32]byte]uintptr)
 	n.comments = list.New()
 	n.startTime = time.Now()
@@ -340,7 +343,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 	peersJSON, err := ioutil.ReadFile(n.peersFilePath)
 	if err == nil && len(peersJSON) > 0 {
 		if json.Unmarshal(peersJSON, &n.knownPeers) != nil {
-			n.knownPeers = nil
+			n.knownPeers = make(map[string]*knownPeer)
 		}
 	}
 
@@ -816,23 +819,19 @@ func (n *Node) backgroundWorkerMain() {
 		}
 
 		// If we don't have enough connections, try to make more to peers we've learned about.
-		if (ticker % 10) == 5 {
+		if (ticker % 5) == 1 {
 			n.peersLock.RLock()
 			connectedCount := len(n.peers)
 			n.peersLock.RUnlock()
 			if connectedCount < p2pDesiredConnectionCount {
-				wantMore := p2pDesiredConnectionCount - connectedCount
 				n.knownPeersLock.Lock()
 				if len(n.knownPeers) > 0 {
-					visited := make(map[int]bool)
-					for k := 0; k < wantMore; k++ {
-						idx := rand.Int() % len(n.knownPeers)
-						if _, have := visited[idx]; !have {
-							visited[idx] = true
-							kp := n.knownPeers[idx]
-							n.Connect(kp.IP, kp.Port, kp.Identity)
-						}
+					var kp *knownPeer
+					for _, kp2 := range n.knownPeers { // exploits Go's random map iteration order
+						kp = kp2
+						break
 					}
+					n.Connect(kp.IP, kp.Port, kp.Identity)
 				} else {
 					sp := n.genesisParameters.SeedPeers
 					if len(sp) > 0 {
@@ -975,32 +974,65 @@ func (n *Node) requestWantedRecords(minRetries, maxRetries int) {
 	}
 }
 
+// updateKnownPeersWithConnectResult is called from p2pConnectionHandler to update n.knownPeers
+func (n *Node) updateKnownPeersWithConnectResult(ip net.IP, port int, identity []byte) {
+	if len(identity) == 0 {
+		return
+	}
+	if bytes.Equal(n.identity, identity) {
+		return
+	}
+
+	n.knownPeersLock.Lock()
+	defer n.knownPeersLock.Unlock()
+
+	now := TimeMs()
+
+	idStr := Base62Encode(identity)
+	kp := n.knownPeers[idStr]
+	if kp == nil {
+		kp = &knownPeer{
+			Peer: Peer{
+				IP:       ip,
+				Port:     port,
+				Identity: identity,
+			},
+			FirstConnect:               now,
+			LastSuccessfulConnection:   now,
+			TotalSuccessfulConnections: 1,
+		}
+		n.knownPeers[idStr] = kp
+	} else {
+		if kp.IP.Equal(ip) {
+			kp.Port = port
+			if kp.FirstConnect == 0 {
+				kp.FirstConnect = now
+			}
+			kp.LastSuccessfulConnection = now
+			kp.TotalSuccessfulConnections++
+		} else {
+			kp.IP = ip
+			kp.Port = port
+			kp.FirstConnect = now
+			kp.LastSuccessfulConnection = now
+			kp.TotalSuccessfulConnections = 1
+		}
+	}
+}
+
 // writeKnownPeers writes the current known peer list
 func (n *Node) writeKnownPeers() {
 	n.knownPeersLock.Lock()
 	defer n.knownPeersLock.Unlock()
-	if len(n.knownPeers) > 0 {
-		// Clean old peers before writing
-		var p []*knownPeer
-		now := TimeMs()
-		for _, kp := range n.knownPeers {
-			if (now - kp.LastSuccessfulConnection) < p2pPeerExpiration {
-				p = append(p, kp)
-			}
-		}
-		if len(p) != len(n.knownPeers) {
-			n.knownPeers = p
-		}
 
-		// Peers are sorted in descending order of first connection
-		sort.Slice(n.knownPeers, func(b, a int) bool {
-			return n.knownPeers[b].FirstConnect < n.knownPeers[a].FirstConnect
-		})
-
-		ioutil.WriteFile(n.peersFilePath, []byte(PrettyJSON(&n.knownPeers)), 0644)
-	} else {
-		ioutil.WriteFile(n.peersFilePath, []byte("[]"), 0644)
+	now := TimeMs()
+	for kpid, kp := range n.knownPeers {
+		if (now - kp.LastSuccessfulConnection) > p2pPeerExpiration {
+			delete(n.knownPeers, kpid)
+		}
 	}
+
+	ioutil.WriteFile(n.peersFilePath, []byte(PrettyJSON(&n.knownPeers)), 0644)
 }
 
 // sendPeerAnnouncement sends a peer announcement to this peer for the given address and public key
@@ -1056,83 +1088,17 @@ func (p *connectedPeer) send(msg []byte) {
 	}()
 }
 
-// updateKnownPeersWithConnectResult is called from p2pConnectionHandler to update n.knownPeers
-func (n *Node) updateKnownPeersWithConnectResult(ip net.IP, port int, identity []byte) {
-	if bytes.Equal(n.identity, identity) {
-		return
-	}
-
-	ip4 := ip.To4()
-	if len(ip4) == 4 {
-		ip = ip4
-	}
-
-	n.knownPeersLock.Lock()
-	defer n.knownPeersLock.Unlock()
-
-	now := TimeMs()
-	haveIdx := -1
-	haveFC := uint64(0xffffffffffffffff)
-	for kpi, kp := range n.knownPeers {
-		if bytes.Equal(kp.Identity, identity) {
-			if kp.FirstConnect == 0 || !kp.IP.Equal(ip) || kp.Port != port {
-				kp.IP = ip
-				kp.Port = port
-				kp.FirstConnect = now
-				kp.LastSuccessfulConnection = now
-				kp.TotalSuccessfulConnections = 1
-			} else {
-				kp.LastSuccessfulConnection = now
-				kp.TotalSuccessfulConnections++
-			}
-			if kp.FirstConnect <= haveFC {
-				haveFC = kp.FirstConnect
-				haveIdx = kpi
-			}
-		} else if kp.IP.Equal(ip) && kp.Port == port && !bytes.Equal(kp.Identity, identity) {
-			kp.Identity = identity
-			kp.FirstConnect = now
-			kp.LastSuccessfulConnection = now
-			kp.TotalSuccessfulConnections = 1
-			if kp.FirstConnect <= haveFC {
-				haveFC = kp.FirstConnect
-				haveIdx = kpi
-			}
-		}
-	}
-
-	if haveIdx >= 0 {
-		kp2 := make([]*knownPeer, 0, len(n.knownPeers))
-		for kpi, kp := range n.knownPeers {
-			if kpi == haveIdx || !bytes.Equal(kp.Identity, identity) {
-				kp2 = append(kp2, kp)
-			}
-		}
-		n.knownPeers = kp2
-	} else {
-		n.knownPeers = append(n.knownPeers, &knownPeer{
-			Peer: Peer{
-				IP:       ip,
-				Port:     port,
-				Identity: identity,
-			},
-			FirstConnect:               now,
-			LastSuccessfulConnection:   now,
-			TotalSuccessfulConnections: 1,
-		})
-	}
-}
-
 func (n *Node) p2pConnectionHandler(c *net.TCPConn, identity []byte, inbound bool) {
 	var err error
 	var p *connectedPeer
-	var msgbuf []byte
-	peerAddressStr := c.RemoteAddr().String()
+
 	tcpAddr, tcpAddrOk := c.RemoteAddr().(*net.TCPAddr)
 	if tcpAddr == nil || !tcpAddrOk {
 		n.log[LogLevelWarning].Print("BUG: P2P connection RemoteAddr() did not return a TCPAddr object, connection closed")
+		c.Close()
 		return
 	}
+	peerAddressStr := tcpAddr.String()
 
 	defer func() {
 		e := recover()
@@ -1147,7 +1113,21 @@ func (n *Node) p2pConnectionHandler(c *net.TCPConn, identity []byte, inbound boo
 		n.connectionsInStartupLock.Unlock()
 
 		n.peersLock.Lock()
-		delete(n.peers, peerAddressStr)
+		if p != nil {
+			j := 0
+			for i := 0; i < len(n.peers); i++ {
+				if n.peers[i] != p {
+					if i != j {
+						n.peers[j] = n.peers[i]
+					}
+					j++
+				}
+			}
+			if j < len(n.peers) {
+				n.peers[j] = nil
+				n.peers = n.peers[0:j]
+			}
+		}
 		n.peersLock.Unlock()
 
 		n.backgroundThreadWG.Done()
@@ -1168,6 +1148,7 @@ func (n *Node) p2pConnectionHandler(c *net.TCPConn, identity []byte, inbound boo
 	helloMessage[0] = p2pProtoModeAES256GCMECCP384
 	helloMessage[1] = byte(len(n.identity))
 	copy(helloMessage[2:], n.identity)
+	c.SetWriteDeadline(time.Now().Add(time.Second * 30))
 	_, err = c.Write(helloMessage)
 	if err != nil {
 		n.log[LogLevelNormal].Printf("P2P connection to %s closed: %s", peerAddressStr, err.Error())
@@ -1175,6 +1156,7 @@ func (n *Node) p2pConnectionHandler(c *net.TCPConn, identity []byte, inbound boo
 	}
 
 	// Read remote public key
+	c.SetReadDeadline(time.Now().Add(time.Second * 30))
 	_, err = io.ReadFull(reader, helloMessage[0:2])
 	if err != nil {
 		n.log[LogLevelNormal].Printf("P2P connection to %s closed: %s", peerAddressStr, err.Error())
@@ -1185,6 +1167,7 @@ func (n *Node) p2pConnectionHandler(c *net.TCPConn, identity []byte, inbound boo
 		return
 	}
 	remoteIdentity := make([]byte, uint(helloMessage[1]))
+	c.SetReadDeadline(time.Now().Add(time.Second * 30))
 	_, err = io.ReadFull(reader, remoteIdentity)
 	if err != nil {
 		n.log[LogLevelNormal].Printf("P2P connection to %s closed: %s", peerAddressStr, err.Error())
@@ -1226,11 +1209,13 @@ func (n *Node) p2pConnectionHandler(c *net.TCPConn, identity []byte, inbound boo
 		return
 	}
 	aesCipher.Encrypt(nonceExchangeTmp[:], outgoingNonce[:])
+	c.SetWriteDeadline(time.Now().Add(time.Second * 30))
 	_, err = c.Write(nonceExchangeTmp[:])
 	if err != nil {
 		n.log[LogLevelNormal].Printf("P2P connection to %s closed: %s", peerAddressStr, err.Error())
 		return
 	}
+	c.SetReadDeadline(time.Now().Add(time.Second * 30))
 	_, err = io.ReadFull(reader, incomingNonce[:])
 	if err != nil {
 		n.log[LogLevelNormal].Printf("P2P connection to %s closed: %s", peerAddressStr, err.Error())
@@ -1240,11 +1225,13 @@ func (n *Node) p2pConnectionHandler(c *net.TCPConn, identity []byte, inbound boo
 
 	// Exchange hashes of decrypted nonces to verify correct key.
 	outgoingNonceHash, incomingNonceHash := sha256.Sum256(outgoingNonce[:]), sha256.Sum256(incomingNonce[:])
+	c.SetWriteDeadline(time.Now().Add(time.Second * 30))
 	_, err = c.Write(incomingNonceHash[0:16])
 	if err != nil {
 		n.log[LogLevelNormal].Printf("P2P connection to %s closed: %s", peerAddressStr, err.Error())
 		return
 	}
+	c.SetReadDeadline(time.Now().Add(time.Second * 30))
 	_, err = io.ReadFull(reader, nonceExchangeTmp[:])
 	if !bytes.Equal(outgoingNonceHash[0:16], nonceExchangeTmp[:]) {
 		n.log[LogLevelNormal].Printf("P2P connection to %s closed: challenge/response failed (key incorrect?)", peerAddressStr)
@@ -1263,7 +1250,7 @@ func (n *Node) p2pConnectionHandler(c *net.TCPConn, identity []byte, inbound boo
 		inbound:       inbound,
 	}
 
-	msgbuf, err = json.Marshal(&peerHelloMsg{
+	msgbuf, err := json.Marshal(&peerHelloMsg{
 		ProtocolVersion:       ProtocolVersion,
 		MinProtocolVersion:    MinProtocolVersion,
 		Version:               Version,
@@ -1282,27 +1269,22 @@ func (n *Node) p2pConnectionHandler(c *net.TCPConn, identity []byte, inbound boo
 	// peer to other peers (if outbound), and announce other peers to this
 	// peer. Then if everything is okay add to peers map.
 	n.peersLock.Lock()
-	redundant := false
 	for _, existingPeer := range n.peers {
 		if bytes.Equal(existingPeer.identity, remoteIdentity) {
-			redundant = true
-		}
-		if !inbound {
-			existingPeer.sendPeerAnnouncement(tcpAddr, p.identity)
-		}
-		if !existingPeer.inbound {
-			p.sendPeerAnnouncement(existingPeer.tcpAddress, existingPeer.identity)
+			n.log[LogLevelNormal].Printf("P2P connection to %s closed: replaced by new link %s to same peer", existingPeer.tcpAddress.String(), peerAddressStr)
+			if existingPeer.c != nil {
+				existingPeer.c.Close()
+			}
+		} else {
+			if !inbound {
+				existingPeer.sendPeerAnnouncement(tcpAddr, p.identity)
+			}
+			if !existingPeer.inbound {
+				p.sendPeerAnnouncement(existingPeer.tcpAddress, existingPeer.identity)
+			}
 		}
 	}
-	if redundant {
-		if !inbound {
-			n.updateKnownPeersWithConnectResult(tcpAddr.IP, tcpAddr.Port, remoteIdentity) // we can still remember this peer
-		}
-		n.log[LogLevelNormal].Printf("P2P connection to %s closed: closing redundant link to already connected peer", peerAddressStr)
-		n.peersLock.Unlock()
-		return
-	}
-	n.peers[peerAddressStr] = p
+	n.peers = append(n.peers, p)
 	n.peersLock.Unlock()
 
 	n.connectionsInStartupLock.Lock()
@@ -1317,6 +1299,8 @@ func (n *Node) p2pConnectionHandler(c *net.TCPConn, identity []byte, inbound boo
 
 	performedInboundReachabilityTest := false
 	for atomic.LoadUint32(&n.shutdown) == 0 {
+		c.SetReadDeadline(time.Now().Add(time.Second * 30))
+
 		// Read size of message (varint)
 		msgSize, err := binary.ReadUvarint(reader)
 		if err != nil {
@@ -1471,21 +1455,14 @@ func (n *Node) p2pConnectionHandler(c *net.TCPConn, identity []byte, inbound boo
 				var peerMsg Peer
 				if json.Unmarshal(msg, &peerMsg) == nil {
 					if len(peerMsg.Identity) > 0 {
-						var tmp net.TCPAddr
-						tmp.IP = peerMsg.IP
-						tmp.Port = peerMsg.Port
-
 						n.peersLock.RLock()
-						_, alreadyConnected := n.peers[tmp.String()]
 						connectionCount := len(n.peers)
 						n.peersLock.RUnlock()
 						n.connectionsInStartupLock.Lock()
 						connectionCount += len(n.connectionsInStartup) // include this to prevent flooding attacks
 						n.connectionsInStartupLock.Unlock()
-
-						if !alreadyConnected && connectionCount < p2pDesiredConnectionCount {
+						if connectionCount < p2pDesiredConnectionCount {
 							n.Connect(peerMsg.IP, peerMsg.Port, peerMsg.Identity)
-							time.Sleep(time.Millisecond * 50) // also helps limit flooding, giving connects time to update connections in startup map
 						}
 					}
 				}
