@@ -647,21 +647,22 @@ func doSet(cfg *lf.ClientConfig, basePath string, args []string) {
 		}
 	}
 
-	value := []byte(args[len(args)-1])
+	vstr := args[len(args)-1]
+	value := []byte(vstr)
 	if *valueIsFile {
-		if string(value) == "-" {
+		if vstr == "-" {
 			value, err = ioutil.ReadAll(os.Stdin)
 			if err != nil {
 				logger.Println("ERROR: set failed: error reading data from stdin (\"-\" specified as input file)")
 				return
 			}
+		} else {
+			value, err = ioutil.ReadFile(vstr)
+			if err != nil {
+				logger.Println("ERROR: set failed: file '" + vstr + "' not found or not readable (" + err.Error() + ")")
+				return
+			}
 		}
-		vdata, err := ioutil.ReadFile(string(value))
-		if err != nil {
-			logger.Println("ERROR: set failed: file '" + err.Error() + "' not found")
-			return
-		}
-		value = vdata
 	}
 
 	var links []lf.HashBlob
