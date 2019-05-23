@@ -862,7 +862,7 @@ func (n *Node) backgroundWorkerMain() {
 
 // commentaryGeneratorMain is run to generate commentary and add work to the DAG (if enabled).
 func (n *Node) commentaryGeneratorMain() {
-	minWorkDifficulty := uint64(0x00080000)
+	minWorkDifficulty := uint64(0x000f0000)
 	for atomic.LoadUint32(&n.shutdown) == 0 {
 		time.Sleep(time.Second) // 1s pause between each new record
 		if atomic.LoadUint32(&n.commentary) != 0 && atomic.LoadUint32(&n.shutdown) == 0 {

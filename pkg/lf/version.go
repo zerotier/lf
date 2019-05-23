@@ -38,6 +38,8 @@ const (
 	ProtocolVersion    = 1
 	MinProtocolVersion = 1
 
+	APIVersion = 1
+
 	SoftwareName = "ZeroTier LF Reference"
 	License      = "GPL-3"
 )

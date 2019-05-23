@@ -134,7 +134,7 @@ $ ./lf -json get bad horse#0
 
 Results are returned as lists of records sorted in descending order of trust according to the selected metric. The default behavior of the command line client is to show only the highest scoring result for each set of selectors and ordinals. The `-json` flag requests and dumps everything. If there are any impostors you'll see them in this output.
 
-Since names are first come first serve, short names like `bad` aren't the sorts of names you'll want to use for the first selector for records in a production system. (Subsequent selectors could have short names if they make sense.) We suggest a backwards DNS naming scheme similar to Java's class names and many other sorts of identifiers, which would cause us to create keys that start with `com.zerotier...`. That's only a suggestion though. It doesn't really matter as long as the odds of an accidental collision are extremely low.
+Since names are first come first serve, short names like `bad` aren't the sorts of names you'll want to use for the first selector for records in a production system. (Subsequent selectors could have short names if they make sense.) We suggest a backwards DNS naming scheme similar to Java's class names and many other sorts of identifiers, which would cause us to create keys that start with `com.zerotier...`. Another option would be to use randomized identifiers like GUIDs or other globally unique identifiers.
 
 ### Selector Hierarchies and Ownership
 
@@ -143,8 +143,6 @@ What if someone does this?
 ```text
 $ ./lf set bad cow '!ooM !ooM'
 ```
-
-A record is identified by all its selector names. That means anyone can claim a different series of selector names even if the beginning of that series overlaps with another.
 
 Try this:
 
@@ -159,9 +157,11 @@ Bad Horse, Bad Horse                                      | bad#0 ?Iu9lUHgVNfAMB
 
 **Be warned** before you execute the above command that the output could contain virtually anything including profanity, URLs to malware, and so on!
 
-Note that the second selector is a string of random base68-encoded bytes prefixed by a question mark. That's because you didn't specify it and therefore don't know what it is.
+A record's key for ownership and conflict resolution purposes is computed from all its selector names in the order in which they appear. This means that `bad cow` and `bad horse` can have different non-conflicting ownership. This doesn't apply to ordinals, so `bad horse#1` and `bad horse#2` will be treated as a single record in terms of ownership.
 
-In most cases application developers will want to fully specify the selectors for their queries to exclude things that aren't wanted. The exception would be cases where an application is designed to allow open submissions under a given prefix.
+Application developers must be aware of this behavior and issue fully specified queries and filter results. Which records to consider and under what circumstance is an application data storage schema question and will depend on your application's data and security model.
+
+Also note that the second selector is cryptographic gobbleddegook. You didn't tell LF what it is, so all it can show you is its raw form. Selectors are blind (but still sortable) binary keys to those who don't know them.
 
 ### Running a Node
 

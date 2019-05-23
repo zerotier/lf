@@ -42,9 +42,6 @@ import (
 	"time"
 )
 
-// APIVersion is the version of the current implementation's REST API
-const APIVersion = 1
-
 const (
 	// APIErrorRecordRejected indicates that a posted record was considered invalid or too suspect to import.
 	APIErrorRecordRejected = -1
