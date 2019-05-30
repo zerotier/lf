@@ -695,13 +695,14 @@ func (fsn *fsFile) internalCommit() error {
 		return nil
 	}
 
-	rdata := make([]byte, 0, len(fsn.data)+128)
-	rdata = fsn.fsFileHeader.appendTo(rdata)
-	var err error
-	rdata, err = BrotliCompress(fsn.data, rdata)
+	cdata, err := BrotliCompress(fsn.data, make([]byte, 0, len(fsn.data)+4))
 	if err != nil {
 		return err
 	}
+
+	rdata := make([]byte, 0, len(cdata)+128)
+	rdata = fsn.fsFileHeader.appendTo(rdata)
+	rdata = append(rdata, cdata...)
 
 	links, err := fsn.parent.fs.node.db.getLinks2(fsn.parent.fs.node.genesisParameters.RecordMinLinks)
 	if err != nil {
