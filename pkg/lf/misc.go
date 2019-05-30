@@ -27,16 +27,19 @@
 package lf
 
 import (
+	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
 	secrand "crypto/rand"
 	"encoding/binary"
 	"encoding/json"
 	"io"
+	"io/ioutil"
 	"os"
 	"time"
 	"unsafe"
 
+	"github.com/andybalholm/brotli"
 	"github.com/tidwall/pretty"
 )
 
@@ -146,4 +149,22 @@ func PrettyJSON(obj interface{}) string {
 		return "null"
 	}
 	return string(pretty.PrettyOptions(j, &jsonPrettyOptions))
+}
+
+// BrotliCompress is a shortcut method to compress a block of data using Brotli at max compression.
+// Output is appended to out if it is non-nil.
+func BrotliCompress(in []byte, out []byte) ([]byte, error) {
+	buf := bytes.NewBuffer(out)
+	writer := brotli.NewWriterOptions(buf, brotli.WriterOptions{Quality: brotli.BestCompression})
+	_, err := writer.Write(in)
+	if closeErr := writer.Close(); err == nil {
+		err = closeErr
+	}
+	return buf.Bytes(), err
+}
+
+// BrotliDecompress decompresses a Brotli compressed blob.
+// The readLimit parameter limits the maximum size of the decompressed object to prevent "compression bomb" attacks.
+func BrotliDecompress(in []byte, readLimit int) ([]byte, error) {
+	return ioutil.ReadAll(io.LimitReader(brotli.NewReader(bytes.NewReader(in)), int64(readLimit)))
 }

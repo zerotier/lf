@@ -36,21 +36,11 @@ import (
 	"fmt"
 	"io"
 	"sort"
-
-	brotlidec "gopkg.in/kothar/brotli-go.v0/dec"
-	brotlienc "gopkg.in/kothar/brotli-go.v0/enc"
 )
 
 var (
 	b1_0 = []byte{0x00}
 	b1_1 = []byte{0x01}
-
-	brotliParams = func() (bp *brotlienc.BrotliParams) {
-		bp = brotlienc.NewBrotliParams()
-		bp.SetQuality(11)
-		bp.SetMode(brotlienc.GENERIC)
-		return
-	}()
 )
 
 const (
@@ -400,7 +390,7 @@ func (rb *recordBody) GetValue(maskingKey []byte) ([]byte, error) {
 	unmaskedValue = unmaskedValue[2:]
 
 	if (flagsAndCrc & 3) == recordValueCompressionBrotli {
-		return brotlidec.DecompressBuffer(unmaskedValue, make([]byte, 0, len(unmaskedValue)+(len(unmaskedValue)/3)))
+		return BrotliDecompress(unmaskedValue, RecordMaxSize)
 	}
 	return unmaskedValue, nil
 }
@@ -616,7 +606,7 @@ func (r *Record) ID() (id [32]byte) {
 }
 
 // Validate checks this record's signatures and other attributes and returns an error or nil if there is no problem.
-func (r *Record) Validate() (err error) {
+func (r *Record) Validate(ignoreWork bool) (err error) {
 	defer func() {
 		e := recover()
 		if e != nil {
@@ -640,14 +630,16 @@ func (r *Record) Validate() (err error) {
 	var workHash [48]byte
 	workHasher.Sum(workHash[:0])
 
-	switch r.WorkAlgorithm {
-	case RecordWorkAlgorithmNone:
-	case RecordWorkAlgorithmWharrgarbl:
-		if WharrgarblVerify(r.Work, workHash[:]) < recordWharrgarblCost(workBillableBytes) {
+	if !ignoreWork {
+		switch r.WorkAlgorithm {
+		case RecordWorkAlgorithmNone:
+		case RecordWorkAlgorithmWharrgarbl:
+			if WharrgarblVerify(r.Work, workHash[:]) < recordWharrgarblCost(workBillableBytes) {
+				return ErrRecordInsufficientWork
+			}
+		default:
 			return ErrRecordInsufficientWork
 		}
-	default:
-		return ErrRecordInsufficientWork
 	}
 
 	signingHasher := sha512.New384()
@@ -690,7 +682,7 @@ func (rb *RecordBuilder) Start(recordType int, value []byte, links [][32]byte, m
 	if len(value) > 0 {
 		compressionType := uint16(recordValueCompressionNone)
 		if len(value) > 24 {
-			cout, err := brotlienc.CompressBuffer(brotliParams, value, make([]byte, 0, len(value)+4))
+			cout, err := BrotliCompress(value, make([]byte, 0, len(value)+4))
 			if err == nil && len(cout) > 0 && len(cout) < len(value) {
 				value = cout
 				compressionType = uint16(recordValueCompressionBrotli)

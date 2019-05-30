@@ -39,6 +39,9 @@ import (
 // OrdinalSize is the size of an ordinal in bytes.
 const OrdinalSize = 16
 
+// OrdinalMaxValue is just the maximum value of a 64-bit unsigned int.
+const OrdinalMaxValue uint64 = 0xffffffffffffffff
+
 // Ordinal is the sortable/comparable part of a selector.
 // It consists of a 64-bit integer masked using a simple order-preserving encryption algorithm.
 type Ordinal [16]byte

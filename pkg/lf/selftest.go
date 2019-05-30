@@ -417,7 +417,7 @@ func TestCore(out io.Writer) bool {
 		fmt.Fprintf(out, "FAILED (new record creation): %s\n", err.Error())
 		return false
 	}
-	err = rec.Validate()
+	err = rec.Validate(false)
 	if err != nil {
 		fmt.Fprintf(out, "FAILED (validate): %s\n", err.Error())
 		return false

@@ -182,6 +182,7 @@ Commands:
     -loglevel <normal|verbose|trace>      Node log level
     -logstderr                            Log to stderr, not HOME/node.log
     -letsencrypt <host[,host]>            Run LetsEncrypt HTTPS on port 443
+    -localtest                            Disable P2P and ignore proof of work
   node-connect <ip> <port> <identity>     Tell node to try a P2P endpoint
   status                                  Get status from remote node/proxy
   set [-...] <name[#ord]> [...] <value>   Set a value in the data store
@@ -246,6 +247,7 @@ func doNodeStart(cfg *lf.ClientConfig, basePath string, args []string) {
 	logLevel := nodeOpts.String("loglevel", "verbose", "")
 	logToStderr := nodeOpts.Bool("logstderr", false, "")
 	letsEncrypt := nodeOpts.String("letsencrypt", "", "")
+	localTest := nodeOpts.Bool("localtest", false, "")
 	nodeOpts.SetOutput(ioutil.Discard)
 	err := nodeOpts.Parse(args)
 	if err != nil {
@@ -322,7 +324,7 @@ func doNodeStart(cfg *lf.ClientConfig, basePath string, args []string) {
 	signal.Notify(osSignalChannel, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGINT, syscall.SIGBUS)
 	signal.Ignore(syscall.SIGUSR1, syscall.SIGUSR2)
 
-	node, err := lf.NewNode(basePath, *p2pPort, *httpPort, logger, ll)
+	node, err := lf.NewNode(basePath, *p2pPort, *httpPort, logger, ll, *localTest)
 	if err != nil {
 		logger.Printf("FATAL: unable to start node: %s\n", err.Error())
 		return

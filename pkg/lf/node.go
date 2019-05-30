@@ -125,21 +125,26 @@ type knownPeer struct {
 
 // Node is an instance of a full LF node supporting both P2P and HTTP access.
 type Node struct {
-	basePath                   string
-	peersFilePath              string
-	p2pPort                    int
-	httpPort                   int
-	log                        [logLevelCount]*log.Logger
-	httpTCPListener            *net.TCPListener
-	httpServer                 *http.Server
-	p2pTCPListener             *net.TCPListener
-	commentaryWorkFunction     *Wharrgarblr
-	commentaryWorkFunctionLock sync.Mutex
-	db                         db
+	basePath                 string
+	peersFilePath            string
+	p2pPort                  int
+	httpPort                 int
+	localTest                bool
+	log                      [logLevelCount]*log.Logger
+	httpTCPListener          *net.TCPListener
+	httpServer               *http.Server
+	p2pTCPListener           *net.TCPListener
+	workFunction             *Wharrgarblr
+	workFunctionLock         sync.Mutex
+	mountPoints              map[string]*FS
+	mountPointCloseWaitGroup sync.WaitGroup
+	mountPointsLock          sync.Mutex
+	db                       db
 
-	owner       *Owner // Owner for commentary, key also currently used for ECDH on link
-	identity    []byte // Compressed public key from owner
-	identityStr string // Identity in base62 format
+	owner        *Owner // Owner for commentary, key also currently used for ECDH on link
+	identity     []byte // Compressed public key from owner
+	identityStr  string // Identity in base62 format
+	apiAuthToken string // Secret auth token for HTTP API privileged commands
 
 	genesisParameters          GenesisParameters // Genesis configuration for this node's network
 	genesisOwner               OwnerPublic       // Owner of genesis record(s)
@@ -169,13 +174,15 @@ type Node struct {
 //////////////////////////////////////////////////////////////////////////////
 
 // NewNode creates and starts a node.
-func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, logLevel int) (*Node, error) {
+func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, logLevel int, localTest bool) (*Node, error) {
 	n := new(Node)
 
 	n.basePath = basePath
 	n.peersFilePath = path.Join(basePath, "peers.json")
 	n.p2pPort = p2pPort
 	n.httpPort = httpPort
+	n.localTest = localTest
+	n.mountPoints = make(map[string]*FS)
 	n.knownPeers = make(map[string]*knownPeer)
 	n.connectionsInStartup = make(map[*net.TCPConn]bool)
 	n.recordsRequested = make(map[[32]byte]uintptr)
@@ -243,33 +250,54 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 	}
 	n.identityStr = Base62Encode(n.identity)
 
-	// Listen for HTTP connections
-	var ta net.TCPAddr
-	ta.Port = httpPort
-	n.httpTCPListener, err = net.ListenTCP("tcp", &ta)
-	if err != nil {
-		return nil, err
-	}
-	n.httpServer = &http.Server{
-		MaxHeaderBytes: 4096,
-		ErrorLog:       n.log[LogLevelWarning],
-		Handler:        httpCompressionHandler(apiCreateHTTPServeMux(n)),
-		IdleTimeout:    10 * time.Second,
-		ReadTimeout:    10 * time.Second,
-		WriteTimeout:   30 * time.Second,
-	}
-	n.httpServer.SetKeepAlivesEnabled(true)
-
-	// Listen for P2P connections
-	ta.Port = p2pPort
-	n.p2pTCPListener, err = net.ListenTCP("tcp", &ta)
-	if err != nil {
-		return nil, err
+	// Load or generate authtoken.secret for API.
+	authTokenPath := path.Join(basePath, "authtoken.secret")
+	authTokenBytes, _ := ioutil.ReadFile(authTokenPath)
+	if len(authTokenBytes) > 0 {
+		n.apiAuthToken = string(authTokenBytes)
+	} else {
+		var junk [24]byte
+		secureRandom.Read(junk[:])
+		n.apiAuthToken = Base62Encode(junk[:])
+		err = ioutil.WriteFile(authTokenPath, []byte(n.apiAuthToken), 0600)
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	n.log[LogLevelNormal].Printf("TCP ports: P2P: %d HTTP: %d", p2pPort, httpPort)
-	n.log[LogLevelNormal].Printf("P2P identity: %s", n.identityStr)
-	n.log[LogLevelNormal].Printf("oracle: %s", n.owner.String())
+	if httpPort > 0 {
+		n.httpTCPListener, err = net.ListenTCP("tcp", &net.TCPAddr{Port: httpPort})
+		if err != nil {
+			return nil, err
+		}
+		n.httpServer = &http.Server{
+			MaxHeaderBytes: 4096,
+			ErrorLog:       n.log[LogLevelWarning],
+			Handler:        httpCompressionHandler(apiCreateHTTPServeMux(n)),
+			IdleTimeout:    10 * time.Second,
+			ReadTimeout:    10 * time.Second,
+			WriteTimeout:   30 * time.Second,
+		}
+		n.httpServer.SetKeepAlivesEnabled(true)
+	}
+
+	if p2pPort > 0 && !n.localTest {
+		n.p2pTCPListener, err = net.ListenTCP("tcp", &net.TCPAddr{Port: p2pPort})
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if n.localTest {
+		n.log[LogLevelNormal].Print("--- running in local test mode, p2p disabled, proof of work optional")
+	}
+	if n.p2pTCPListener != nil {
+		n.log[LogLevelNormal].Printf("P2P port: %d identity: %s", p2pPort, n.identityStr)
+	}
+	if n.httpTCPListener != nil {
+		n.log[LogLevelNormal].Printf("HTTP API port: %d", httpPort)
+	}
+	n.log[LogLevelNormal].Printf("oracle commentary owner: %s (if generated)", n.owner.String())
 
 	// Load genesis.lf or use compiled-in defaults for global LF network
 	var genesisReader io.Reader
@@ -349,34 +377,36 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 		}
 	}
 
-	// Start P2P connection listener
-	n.backgroundThreadWG.Add(1)
-	go func() {
-		defer n.backgroundThreadWG.Done()
-		for atomic.LoadUint32(&n.shutdown) == 0 && n.p2pTCPListener != nil {
-			c, _ := n.p2pTCPListener.AcceptTCP()
-			if atomic.LoadUint32(&n.shutdown) != 0 {
-				if c != nil {
-					c.Close()
+	if n.p2pTCPListener != nil {
+		n.backgroundThreadWG.Add(1)
+		go func() {
+			defer n.backgroundThreadWG.Done()
+			for atomic.LoadUint32(&n.shutdown) == 0 && n.p2pTCPListener != nil {
+				c, _ := n.p2pTCPListener.AcceptTCP()
+				if atomic.LoadUint32(&n.shutdown) != 0 {
+					if c != nil {
+						c.Close()
+					}
+					break
 				}
-				break
+				if c != nil {
+					n.backgroundThreadWG.Add(1)
+					go n.p2pConnectionHandler(c, nil, true)
+				}
 			}
-			if c != nil {
-				n.backgroundThreadWG.Add(1)
-				go n.p2pConnectionHandler(c, nil, true)
-			}
-		}
-	}()
+		}()
+	}
 
-	// Start HTTP server
-	n.backgroundThreadWG.Add(1)
-	go func() {
-		defer n.backgroundThreadWG.Done()
-		n.httpServer.Serve(n.httpTCPListener)
-		if n.httpServer != nil {
-			n.httpServer.Close()
-		}
-	}()
+	if n.httpTCPListener != nil {
+		n.backgroundThreadWG.Add(1)
+		go func() {
+			defer n.backgroundThreadWG.Done()
+			n.httpServer.Serve(n.httpTCPListener)
+			if n.httpServer != nil {
+				n.httpServer.Close()
+			}
+		}()
+	}
 
 	// Start background housekeeping thread
 	n.backgroundThreadWG.Add(1)
@@ -392,21 +422,32 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 		n.commentaryGeneratorMain()
 	}()
 
+	/*
+		go func() {
+			_, err := NewFS(n, "/tmp/lf-test", []byte("com.zerotier"), n.owner, nil, nil)
+			if err != nil {
+				fmt.Printf("\n%s\n", err.Error())
+			}
+		}()
+	*/
+
 	// Add server's local URL to client config if it's not there already.
-	clientConfigPath := path.Join(basePath, ClientConfigName)
-	var cc ClientConfig
-	cc.Load(clientConfigPath)
-	myURL := fmt.Sprintf("http://127.0.0.1:%d", httpPort)
-	haveURL := false
-	for _, u := range cc.URLs {
-		if u == myURL {
-			haveURL = true
-			break
+	if n.httpTCPListener != nil {
+		clientConfigPath := path.Join(basePath, ClientConfigName)
+		var cc ClientConfig
+		cc.Load(clientConfigPath)
+		myURL := fmt.Sprintf("http://127.0.0.1:%d", httpPort)
+		haveURL := false
+		for _, u := range cc.URLs {
+			if u == myURL {
+				haveURL = true
+				break
+			}
 		}
-	}
-	if !haveURL {
-		cc.URLs = append([]string{myURL}, cc.URLs...)
-		cc.Save(clientConfigPath)
+		if !haveURL {
+			cc.URLs = append([]string{myURL}, cc.URLs...)
+			cc.Save(clientConfigPath)
+		}
 	}
 
 	initOk = true
@@ -421,11 +462,13 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 func (n *Node) Stop() {
 	n.log[LogLevelNormal].Printf("shutting down")
 	if atomic.SwapUint32(&n.shutdown, 1) == 0 {
-		n.commentaryWorkFunctionLock.Lock()
-		if n.commentaryWorkFunction != nil {
-			n.commentaryWorkFunction.Abort()
+		n.mountPointsLock.Lock()
+		for mpp, mp := range n.mountPoints {
+			mp.Close(&n.mountPointCloseWaitGroup)
+			delete(n.mountPoints, mpp)
 		}
-		n.commentaryWorkFunctionLock.Unlock()
+		n.mountPointsLock.Unlock()
+		n.mountPointCloseWaitGroup.Wait()
 
 		n.connectionsInStartupLock.Lock()
 		if n.connectionsInStartup != nil {
@@ -452,6 +495,12 @@ func (n *Node) Stop() {
 			n.p2pTCPListener.Close()
 		}
 
+		n.workFunctionLock.Lock()
+		if n.workFunction != nil {
+			n.workFunction.Abort()
+		}
+		n.workFunctionLock.Unlock()
+
 		n.backgroundThreadWG.Wait()
 
 		n.httpServer = nil
@@ -472,8 +521,49 @@ func (n *Node) Stop() {
 	}
 }
 
+// Mount mounts the data store under a given root selector name into the host filesystem using FUSE.
+func (n *Node) Mount(mountPoint string, rootSelectorName []byte, maskingKey []byte) (*FS, error) {
+	n.mountPointsLock.Lock()
+	defer n.mountPointsLock.Unlock()
+	if _, have := n.mountPoints[mountPoint]; have {
+		return nil, ErrAlreadyMounted
+	}
+	fs, err := NewFS(n, mountPoint, rootSelectorName, n.owner, nil, maskingKey)
+	if err != nil {
+		return nil, err
+	}
+	n.mountPoints[mountPoint] = fs
+	return fs, nil
+}
+
+// Unmount unmounts a mount point or does nothing if not mounted.
+func (n *Node) Unmount(mountPoint string) error {
+	n.mountPointsLock.Lock()
+	defer n.mountPointsLock.Unlock()
+	fs := n.mountPoints[mountPoint]
+	delete(n.mountPoints, mountPoint)
+	if fs != nil {
+		return fs.Close(&n.mountPointCloseWaitGroup)
+	}
+	return nil
+}
+
+// Mounts returns a list of mount points for this node.
+func (n *Node) Mounts() (m []MountPoint) {
+	n.mountPointsLock.Lock()
+	for p, fs := range n.mountPoints {
+		m = append(m, MountPoint{
+			Path:             p,
+			RootSelectorName: fs.rootSelectorName,
+			Owner:            fs.owner.Public,
+		})
+	}
+	n.mountPointsLock.Unlock()
+	return
+}
+
 // GetHTTPHandler gets the HTTP handler for this Node.
-// If you want to handle requests via e.g. a Lets Encrypt server you can use
+// If you want to handle requests via e.g. a Lets Encrypt HTTPS server you can use
 // this to get the handler to pass to your server.
 func (n *Node) GetHTTPHandler() http.Handler { return n.httpServer.Handler }
 
@@ -487,7 +577,7 @@ func (n *Node) ConnectedPeerCount() int {
 
 // Connect attempts to establish a peer-to-peer connection to a remote node.
 func (n *Node) Connect(ip net.IP, port int, identity []byte) {
-	if bytes.Equal(identity, n.identity) {
+	if n.localTest || bytes.Equal(identity, n.identity) {
 		return
 	}
 
@@ -581,7 +671,7 @@ func (n *Node) AddRecord(r *Record) error {
 	}
 
 	// Validate record's internal structure and check signatures and work.
-	err := r.Validate()
+	err := r.Validate(n.localTest) // ignore work in local test mode
 	if err != nil {
 		return err
 	}
@@ -611,6 +701,19 @@ func (n *Node) SetCommentaryEnabled(j bool) {
 		n.comments = list.New()
 		n.commentsLock.Unlock()
 	}
+}
+
+func (n *Node) getWorkFunction() *Wharrgarblr {
+	var wf *Wharrgarblr
+	n.workFunctionLock.Lock()
+	if n.workFunction != nil {
+		wf = n.workFunction
+	} else {
+		n.workFunction = NewWharrgarblr(RecordDefaultWharrgarblMemory, runtime.NumCPU()-1)
+		wf = n.workFunction
+	}
+	n.workFunctionLock.Unlock()
+	return wf
 }
 
 // handleGenesisRecord handles new genesis records when starting up or if they arrive over the net.
@@ -768,80 +871,82 @@ func (n *Node) backgroundWorkerMain() {
 		}
 		ticker := atomic.AddUintptr(&n.timeTicker, 1)
 
-		// Clean record tracking entries of items older than 5 minutes.
-		if (ticker % 120) == 0 {
-			n.peersLock.RLock()
-			for _, p := range n.peers {
-				p.hasRecordsLock.Lock()
-				for h, ts := range p.hasRecords {
-					if (ticker - ts) > 300 {
-						delete(p.hasRecords, h)
-					}
-				}
-				p.hasRecordsLock.Unlock()
-			}
-			n.peersLock.RUnlock()
-
-			n.recordsRequestedLock.Lock()
-			for h, t := range n.recordsRequested {
-				if (ticker - t) > 300 {
-					delete(n.recordsRequested, h)
-				}
-			}
-			n.recordsRequestedLock.Unlock()
-		}
-
-		// Periodically announce that we have a few recent records to prompt syncing
-		if (ticker % 10) == 0 {
-			_, links, err := n.db.getLinks(2)
-			if err == nil && len(links) >= 32 {
-				hr := make([]byte, 1, 1+len(links))
-				hr[0] = p2pProtoMessageTypeHaveRecords
-				hr = append(hr, links...)
+		if !n.localTest {
+			// Clean record tracking entries of items older than 5 minutes.
+			if (ticker % 120) == 0 {
 				n.peersLock.RLock()
 				for _, p := range n.peers {
-					p.send(hr)
+					p.hasRecordsLock.Lock()
+					for h, ts := range p.hasRecords {
+						if (ticker - ts) > 300 {
+							delete(p.hasRecords, h)
+						}
+					}
+					p.hasRecordsLock.Unlock()
 				}
 				n.peersLock.RUnlock()
-			}
-		}
 
-		// Peroidically clean and write peers.json
-		if (ticker % 120) == 0 {
-			n.writeKnownPeers()
-		}
-
-		// Request wanted records (if connected), requesting newly wanted records with
-		// zero retries immediately and then requesting records with higher numbers of
-		// retries less often.
-		if (ticker % 30) == 0 {
-			n.requestWantedRecords(1, p2pProtoMaxRetries)
-		} else {
-			n.requestWantedRecords(0, 0)
-		}
-
-		// If we don't have enough connections, try to make more to peers we've learned about.
-		if (ticker % 5) == 1 {
-			n.peersLock.RLock()
-			connectedCount := len(n.peers)
-			n.peersLock.RUnlock()
-			if connectedCount < p2pDesiredConnectionCount {
-				n.knownPeersLock.Lock()
-				if len(n.knownPeers) > 0 {
-					var kp *knownPeer
-					for _, kp2 := range n.knownPeers { // exploits Go's random map iteration order
-						kp = kp2
-						break
-					}
-					n.Connect(kp.IP, kp.Port, kp.Identity)
-				} else {
-					sp := n.genesisParameters.SeedPeers
-					if len(sp) > 0 {
-						spp := &sp[rand.Int()%len(sp)]
-						n.Connect(spp.IP, spp.Port, spp.Identity)
+				n.recordsRequestedLock.Lock()
+				for h, t := range n.recordsRequested {
+					if (ticker - t) > 300 {
+						delete(n.recordsRequested, h)
 					}
 				}
-				n.knownPeersLock.Unlock()
+				n.recordsRequestedLock.Unlock()
+			}
+
+			// Periodically announce that we have a few recent records to prompt syncing
+			if (ticker % 10) == 0 {
+				_, links, err := n.db.getLinks(2)
+				if err == nil && len(links) >= 32 {
+					hr := make([]byte, 1, 1+len(links))
+					hr[0] = p2pProtoMessageTypeHaveRecords
+					hr = append(hr, links...)
+					n.peersLock.RLock()
+					for _, p := range n.peers {
+						p.send(hr)
+					}
+					n.peersLock.RUnlock()
+				}
+			}
+
+			// Peroidically clean and write peers.json
+			if (ticker % 120) == 0 {
+				n.writeKnownPeers()
+			}
+
+			// Request wanted records (if connected), requesting newly wanted records with
+			// zero retries immediately and then requesting records with higher numbers of
+			// retries less often.
+			if (ticker % 30) == 0 {
+				n.requestWantedRecords(1, p2pProtoMaxRetries)
+			} else {
+				n.requestWantedRecords(0, 0)
+			}
+
+			// If we don't have enough connections, try to make more to peers we've learned about.
+			if (ticker % 5) == 1 {
+				n.peersLock.RLock()
+				connectedCount := len(n.peers)
+				n.peersLock.RUnlock()
+				if connectedCount < p2pDesiredConnectionCount {
+					n.knownPeersLock.Lock()
+					if len(n.knownPeers) > 0 {
+						var kp *knownPeer
+						for _, kp2 := range n.knownPeers { // exploits Go's random map iteration order
+							kp = kp2
+							break
+						}
+						n.Connect(kp.IP, kp.Port, kp.Identity)
+					} else {
+						sp := n.genesisParameters.SeedPeers
+						if len(sp) > 0 {
+							spp := &sp[rand.Int()%len(sp)]
+							n.Connect(spp.IP, spp.Port, spp.Identity)
+						}
+					}
+					n.knownPeersLock.Unlock()
+				}
 			}
 		}
 
@@ -890,22 +995,12 @@ func (n *Node) commentaryGeneratorMain() {
 			links, err := n.db.getLinks2(RecordMaxLinks)
 
 			if err == nil && len(links) > 0 {
-				var wf *Wharrgarblr
-				n.commentaryWorkFunctionLock.Lock()
-				if n.commentaryWorkFunction != nil {
-					wf = n.commentaryWorkFunction
-				} else {
-					n.commentaryWorkFunction = NewWharrgarblr(RecordDefaultWharrgarblMemory, runtime.NumCPU()-1)
-					wf = n.commentaryWorkFunction
-				}
-				n.commentaryWorkFunctionLock.Unlock()
-
 				var rb RecordBuilder
 				var rec *Record
 				startTime := time.Now()
 				err = rb.Start(RecordTypeCommentary, commentary, links, nil, nil, nil, n.owner.Public, nil, TimeSec())
 				if err == nil {
-					err = rb.AddWork(wf, uint32(minWorkDifficulty))
+					err = rb.AddWork(n.getWorkFunction(), uint32(minWorkDifficulty))
 					if err == nil {
 						rec, err = rb.Complete(n.owner)
 					}
@@ -938,9 +1033,9 @@ func (n *Node) commentaryGeneratorMain() {
 			}
 		} else {
 			// If commentary is disabled, go ahead and let go of work function RAM.
-			n.commentaryWorkFunctionLock.Lock()
-			n.commentaryWorkFunction = nil
-			n.commentaryWorkFunctionLock.Unlock()
+			n.workFunctionLock.Lock()
+			n.workFunction = nil
+			n.workFunctionLock.Unlock()
 		}
 	}
 }

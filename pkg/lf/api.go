@@ -75,6 +75,13 @@ type Peer struct {
 	Identity Blob   //
 }
 
+// MountPoint describes a FUSE lffs mount point
+type MountPoint struct {
+	Path             string
+	RootSelectorName []byte
+	Owner            OwnerPublic
+}
+
 // APIStatusResult contains status information about this node and the network it belongs to.
 type APIStatusResult struct {
 	Software          string            `json:",omitempty"` // Software implementation name
@@ -92,6 +99,7 @@ type APIStatusResult struct {
 	Oracle            bool              ``                  // Is this node a currently active oracle?
 	P2PPort           int               ``                  // This node's P2P port
 	HTTPPort          int               ``                  // This node's HTTP port
+	LocalTestMode     bool              ``                  // If true, this node is in local test mode
 	Identity          Blob              `json:",omitempty"` // This node's peer identity
 	Peers             []Peer            `json:",omitempty"` // Currently connected peers
 }
@@ -427,6 +435,7 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 				Oracle:            (atomic.LoadUint32(&n.commentary) != 0),
 				P2PPort:           n.p2pPort,
 				HTTPPort:          n.httpPort,
+				LocalTestMode:     n.localTest,
 				Identity:          n.identity,
 				Peers:             peers,
 			})

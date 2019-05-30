@@ -80,6 +80,7 @@ const (
 	ErrInvalidMessageSize     Err = "message size invalid"
 	ErrQueryRequiresSelectors Err = "query requires at least one selector"
 	ErrQueryInvalidSortOrder  Err = "invalid sort order value"
+	ErrAlreadyMounted         Err = "mount point already mounted"
 )
 
 // Errs indicating that a record is invalid
