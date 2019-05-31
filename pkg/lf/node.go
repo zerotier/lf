@@ -422,15 +422,6 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 		n.commentaryGeneratorMain()
 	}()
 
-	/*
-		go func() {
-			_, err := NewFS(n, "/tmp/lf-test", []byte("com.zerotier"), n.owner, nil, nil)
-			if err != nil {
-				fmt.Printf("\n%s\n", err.Error())
-			}
-		}()
-	*/
-
 	// Add server's local URL to client config if it's not there already.
 	if n.httpTCPListener != nil {
 		clientConfigPath := path.Join(basePath, ClientConfigName)
@@ -453,6 +444,8 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 	initOk = true
 
 	n.log[LogLevelNormal].Print("--- node startup successful")
+
+	n.Mount("/tmp/lffs", []byte("com.zerotier.lffs"), nil)
 
 	return n, nil
 }
