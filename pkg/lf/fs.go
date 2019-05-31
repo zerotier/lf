@@ -123,17 +123,23 @@ const (
 	fsFileTypeMask  = 0x600   // bit mask for file type from mode
 	fsMaxNameLength = 511     // max length of the name field in fsFileHeader (9-bit size)
 	fsMaxFileSize   = 1048576 // sanity limit to max file size... this would take FOREVER to store with PoW!
+
+	fsFileFlagOversize uint64 = 0x100000
 )
 
 type fsFileHeader struct {
-	mode          uint   // 2-bit type and 9-bit Unix rwxrwxrwx mode (11 bits total)
-	largeFileSize uint   // size of large file or 0 if file fits in just this record
-	name          []byte // full name of file
+	mode     uint   // 2-bit type and 9-bit Unix rwxrwxrwx mode (11 bits total)
+	name     []byte // full name of file
+	oversize bool   // if true, this is an oversized file that must be retrieved recursively
 }
 
 func (h *fsFileHeader) appendTo(b []byte) []byte {
 	var qw [10]byte
-	b = append(b, qw[0:binary.PutUvarint(qw[:], uint64(h.mode)|(uint64(len(h.name))<<11)|(uint64(h.largeFileSize)<<20))]...)
+	var flags uint64
+	if h.oversize {
+		flags = fsFileFlagOversize
+	}
+	b = append(b, qw[0:binary.PutUvarint(qw[:], uint64(h.mode)|(uint64(len(h.name))<<11)|flags)]...)
 	b = append(b, h.name...)
 	return b
 }
@@ -145,8 +151,8 @@ func (h *fsFileHeader) readFrom(b []byte) ([]byte, error) {
 	}
 	b = b[n:]
 	h.mode = uint(i & 0x7ff)
-	h.largeFileSize = uint(i >> 20)
 	h.name = make([]byte, uint((i>>11)&fsMaxNameLength))
+	h.oversize = (i & fsFileFlagOversize) != 0
 	if len(b) < len(h.name) {
 		return nil, ErrInvalidObject
 	}
@@ -372,17 +378,16 @@ func (fsn *fsDir) Lookup(ctx context.Context, name string) (fusefs.Node, error) 
 			fsn.fs.passwdLock.Unlock()
 			return &fsFile{
 				fsFileHeader: fsFileHeader{
-					mode:          0444 | fsFileTypeNormal,
-					largeFileSize: 0,
-					name:          []byte(".passwd"),
+					mode: 0444 | fsFileTypeNormal,
+					name: []byte(".passwd"),
 				},
-				inode:     2,
-				ts:        time.Now(),
-				uid:       fsn.fs.root.uid,
-				gid:       fsn.fs.root.gid,
-				parent:    fsn,
-				data:      []byte(pwdata.String()),
-				ephemeral: true,
+				inode:  2,
+				ts:     time.Now(),
+				uid:    fsn.fs.root.uid,
+				gid:    fsn.fs.root.gid,
+				parent: fsn,
+				data:   []byte(pwdata.String()),
+				pseudo: true,
 			}, nil
 		}
 		return nil, fuse.EPERM
@@ -595,9 +600,8 @@ func (fsn *fsDir) Remove(ctx context.Context, req *fuse.RemoveRequest) error {
 
 	f := &fsFile{
 		fsFileHeader: fsFileHeader{
-			mode:          fsFileTypeDeleted,
-			largeFileSize: 0,
-			name:          []byte(req.Name),
+			mode: fsFileTypeDeleted,
+			name: []byte(req.Name),
 		},
 		inode:  fsn.fs.GenerateInode(fsn.inode, req.Name),
 		ts:     time.Now(),
@@ -697,9 +701,8 @@ func (fsn *fsDir) Symlink(ctx context.Context, req *fuse.SymlinkRequest) (fusefs
 
 	f := &fsFile{
 		fsFileHeader: fsFileHeader{
-			mode:          0666 | fsFileTypeLink,
-			largeFileSize: 0,
-			name:          []byte(req.NewName),
+			mode: 0666 | fsFileTypeLink,
+			name: []byte(req.NewName),
 		},
 		inode:  fsn.fs.GenerateInode(fsn.inode, req.NewName),
 		ts:     time.Now(),
@@ -810,12 +813,12 @@ func (fsn *fsDir) Release(ctx context.Context, req *fuse.ReleaseRequest) error {
 // fsFile implements Node and Handle for regular files and links (for links the data is the link target)
 type fsFile struct {
 	fsFileHeader
-	inode     uint64    // inode a.k.a. ordinal computed from parent inode + CRC64-ECMA(name)
-	ts        time.Time // timestamp from LF record
-	uid, gid  uint32    // Unix UID/GID
-	parent    *fsDir    // parent directory node
-	data      []byte    // file's data
-	ephemeral bool      // if true this file should not be commited to LF
+	inode    uint64    // inode a.k.a. ordinal computed from parent inode + CRC64-ECMA(name)
+	ts       time.Time // timestamp from LF record
+	uid, gid uint32    // Unix UID/GID
+	parent   *fsDir    // parent directory node
+	data     []byte    // file's data
+	pseudo   bool      // if true this file should not be commited to LF
 }
 
 func (fsn *fsFile) Attr(ctx context.Context, a *fuse.Attr) error {
@@ -876,7 +879,7 @@ func (fsn *fsFile) Read(ctx context.Context, req *fuse.ReadRequest, resp *fuse.R
 }
 
 func (fsn *fsFile) Write(ctx context.Context, req *fuse.WriteRequest, resp *fuse.WriteResponse) error {
-	if (fsn.fsFileHeader.mode & fsFileTypeMask) != fsFileTypeNormal {
+	if (fsn.fsFileHeader.mode&fsFileTypeMask) != fsFileTypeNormal || fsn.pseudo {
 		return fuse.EIO
 	}
 
@@ -913,22 +916,27 @@ func (fsn *fsFile) Write(ctx context.Context, req *fuse.WriteRequest, resp *fuse
 func (fsn *fsFile) commit() error {
 	defer fsn.parent.fs.commitWaitGroup.Done()
 
-	if fsn.ephemeral || ((fsn.mode&fsFileTypeMask) == fsFileTypeLink && len(fsn.data) == 0) {
+	if fsn.pseudo || ((fsn.mode&fsFileTypeMask) == fsFileTypeLink && len(fsn.data) == 0) {
 		return nil
 	}
 
-	var cdata []byte
+	var fdata []byte
 	if len(fsn.data) > 0 {
 		var err error
-		cdata, err = BrotliCompress(fsn.data, make([]byte, 0, len(fsn.data)+4))
+		fdata, err = BrotliCompress(fsn.data, make([]byte, 0, len(fsn.data)+4))
 		if err != nil {
 			return err
 		}
 	}
 
-	rdata := make([]byte, 0, len(cdata)+len(fsn.fsFileHeader.name)+16)
+	fsn.fsFileHeader.oversize = false
+	rdata := make([]byte, 0, len(fdata)+len(fsn.fsFileHeader.name)+16)
 	rdata = fsn.fsFileHeader.appendTo(rdata)
-	rdata = append(rdata, cdata...)
+	rdata = append(rdata, fdata...)
+
+	if uint(len(rdata)) > fsn.parent.fs.node.genesisParameters.RecordMaxValueSize {
+		fsn.fsFileHeader.oversize = true
+	}
 
 	links, err := fsn.parent.fs.node.db.getLinks2(fsn.parent.fs.node.genesisParameters.RecordMinLinks)
 	if err != nil {
@@ -957,7 +965,7 @@ func (fsn *fsFile) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 }
 
 func (fsn *fsFile) Release(ctx context.Context, req *fuse.ReleaseRequest) error {
-	if fsn.ephemeral {
+	if fsn.pseudo {
 		return nil
 	}
 	fsn.parent.fs.dirtyLock.Lock()
