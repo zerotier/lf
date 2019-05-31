@@ -63,6 +63,7 @@ type db struct {
 	globalLoggerIdx       uint
 	globalSyncCallbackIdx uint
 	cdb                   *C.struct_ZTLF_DB
+	cdbLock               sync.Mutex
 }
 
 // Global variables that store logger instances for use by the callback in db-log-callback.go.
@@ -112,6 +113,9 @@ func (db *db) open(basePath string, loggers [logLevelCount]*log.Logger, syncCall
 }
 
 func (db *db) close() {
+	db.cdbLock.Lock()
+	defer db.cdbLock.Unlock()
+
 	if db.cdb != nil {
 		C.ZTLF_DB_Close(db.cdb)
 	}
@@ -162,6 +166,9 @@ func (db *db) putRecord(r *Record) error {
 		lptr = unsafe.Pointer(&l[0])
 	}
 
+	db.cdbLock.Lock()
+	defer db.cdbLock.Unlock()
+
 	cerr := C.ZTLF_DB_PutRecord_fromGo(
 		db.cdb,
 		unsafe.Pointer(&rdata[0]),
@@ -190,6 +197,9 @@ func (db *db) getDataByHash(h []byte, buf []byte) (int, []byte, error) {
 		return 0, buf, ErrInvalidParameter
 	}
 
+	db.cdbLock.Lock()
+	defer db.cdbLock.Unlock()
+
 	var doff, ts uint64
 	dlen := int(C.ZTLF_DB_GetByHash(db.cdb, unsafe.Pointer(&(h[0])), (*C.uint64_t)(unsafe.Pointer(&doff)), (*C.uint64_t)(unsafe.Pointer(&ts))))
 	if dlen == 0 {
@@ -209,6 +219,8 @@ func (db *db) getDataByHash(h []byte, buf []byte) (int, []byte, error) {
 
 // getDataByOffset gets record data by its doff and dlen (offset and length in record data flat file).
 func (db *db) getDataByOffset(doff uint64, dlen uint, buf []byte) ([]byte, error) {
+	db.cdbLock.Lock()
+	defer db.cdbLock.Unlock()
 	startPos := len(buf)
 	buf = append(buf, make([]byte, dlen)...)
 	ok := int(C.ZTLF_DB_GetRecordData(db.cdb, C.uint64_t(doff), unsafe.Pointer(&(buf[startPos])), C.uint(dlen)))
@@ -222,6 +234,8 @@ func (db *db) getDataByOffset(doff uint64, dlen uint, buf []byte) ([]byte, error
 // hasRecord returns true if the record with the given hash exists (rejected table is not checked)
 func (db *db) hasRecord(h []byte) bool {
 	if len(h) == 32 {
+		db.cdbLock.Lock()
+		defer db.cdbLock.Unlock()
 		var doff, ts uint64
 		dlen := int(C.ZTLF_DB_GetByHash(db.cdb, unsafe.Pointer(&(h[0])), (*C.uint64_t)(unsafe.Pointer(&doff)), (*C.uint64_t)(unsafe.Pointer(&ts))))
 		return dlen > 0
@@ -232,6 +246,8 @@ func (db *db) hasRecord(h []byte) bool {
 // getRecordTimestampByHash returns whether or not the record exists and its timestamp in seconds since epoch.
 func (db *db) getRecordTimestampByHash(h []byte) (bool, uint64) {
 	if len(h) == 32 {
+		db.cdbLock.Lock()
+		defer db.cdbLock.Unlock()
 		var doff, ts uint64
 		if C.ZTLF_DB_GetByHash(db.cdb, unsafe.Pointer(&(h[0])), (*C.uint64_t)(unsafe.Pointer(&doff)), (*C.uint64_t)(unsafe.Pointer(&ts))) > 0 {
 			return true, ts
@@ -245,6 +261,8 @@ func (db *db) getLinks(count uint) (uint, []byte, error) {
 	if count == 0 {
 		return 0, nil, nil
 	}
+	db.cdbLock.Lock()
+	defer db.cdbLock.Unlock()
 	lbuf := make([]byte, 32*count)
 	lc := uint(C.ZTLF_DB_GetLinks(db.cdb, unsafe.Pointer(&(lbuf[0])), C.uint(count)))
 	return lc, lbuf[0 : 32*lc], nil
@@ -268,18 +286,24 @@ func (db *db) getLinks2(count uint) (ll [][32]byte, err error) {
 
 func (db *db) updateRecordReputationByHash(h []byte, reputation int) {
 	if len(h) == 32 {
+		db.cdbLock.Lock()
+		defer db.cdbLock.Unlock()
 		C.ZTLF_DB_UpdateRecordReputationByHash(db.cdb, unsafe.Pointer(&h[0]), C.int(reputation))
 	}
 }
 
 // stats returns some basic statistics about this database.
 func (db *db) stats() (recordCount, dataSize uint64) {
+	db.cdbLock.Lock()
+	defer db.cdbLock.Unlock()
 	C.ZTLF_DB_Stats(db.cdb, (*C.uint64_t)(unsafe.Pointer(&recordCount)), (*C.uint64_t)(unsafe.Pointer(&dataSize)))
 	return
 }
 
 // crc64 returns a CRC64 of this database's important state information including hashes, graph weights, etc.
 func (db *db) crc64() uint64 {
+	db.cdbLock.Lock()
+	defer db.cdbLock.Unlock()
 	return uint64(C.ZTLF_DB_CRC64(db.cdb))
 }
 
@@ -287,11 +311,15 @@ func (db *db) crc64() uint64 {
 // This can also be used to check whether synchronization is complete since it returns true only if there are records
 // and all links for them are satisfied.
 func (db *db) hasPending() bool {
+	db.cdbLock.Lock()
+	defer db.cdbLock.Unlock()
 	return (C.ZTLF_DB_HasPending(db.cdb) > 0)
 }
 
 // haveDanglingLinks returns true if we have dangling links that haven't been retried more than N times.
 func (db *db) haveDanglingLinks(ignoreAfterNRetries int) bool {
+	db.cdbLock.Lock()
+	defer db.cdbLock.Unlock()
 	return (C.ZTLF_DB_HaveDanglingLinks(db.cdb, C.int(ignoreAfterNRetries)) > 0)
 }
 
@@ -318,7 +346,9 @@ func (db *db) query(tsMin, tsMax int64, selectorRanges [][2][]byte, f func(uint6
 		selSizes[ii] = C.uint(len(selectorRanges[i][1]))
 	}
 
+	db.cdbLock.Lock()
 	cresults := C.ZTLF_DB_Query_fromGo(db.cdb, C.int64_t(tsMin), C.int64_t(tsMax), C.uintptr_t(uintptr(unsafe.Pointer(&sel[0]))), &selSizes[0], C.uint(len(selectorRanges)))
+	db.cdbLock.Unlock()
 	if uintptr(unsafe.Pointer(cresults)) != 0 {
 		var owner [dbMaxOwnerSize]byte
 		for i := C.long(0); i < cresults.count; i++ {
@@ -345,7 +375,9 @@ func (db *db) getAllByOwner(owner []byte, f func(uint64, uint64, int) bool) erro
 	if len(owner) == 0 {
 		return nil
 	}
+	db.cdbLock.Lock()
 	results := C.ZTLF_DB_GetAllByOwner(db.cdb, unsafe.Pointer(&owner[0]), C.uint(len(owner)))
+	db.cdbLock.Unlock()
 	if uintptr(unsafe.Pointer(results)) != 0 {
 		for i := C.long(0); i < results.count; i++ {
 			rec := (*C.struct_ZTLF_RecordIndex)(unsafe.Pointer(uintptr(unsafe.Pointer(&results.records[0])) + (uintptr(i) * unsafe.Sizeof(results.records[0]))))
@@ -367,7 +399,9 @@ func (db *db) getAllByIDNotOwner(id []byte, owner []byte, f func(uint64, uint64,
 	if len(owner) == 0 {
 		return nil
 	}
+	db.cdbLock.Lock()
 	results := C.ZTLF_DB_GetAllByIDNotOwner(db.cdb, unsafe.Pointer(&id[0]), unsafe.Pointer(&owner[0]), C.uint(len(owner)))
+	db.cdbLock.Unlock()
 	if uintptr(unsafe.Pointer(results)) != 0 {
 		for i := C.long(0); i < results.count; i++ {
 			rec := (*C.struct_ZTLF_RecordIndex)(unsafe.Pointer(uintptr(unsafe.Pointer(&results.records[0])) + (uintptr(i) * unsafe.Sizeof(results.records[0]))))
@@ -392,7 +426,9 @@ func (db *db) getWanted(max, retryCountMin, retryCountMax int, incrementRetryCou
 		increment = 1
 	}
 	buf := make([]byte, max*32)
+	db.cdbLock.Lock()
 	count := int(C.ZTLF_DB_GetWanted(db.cdb, unsafe.Pointer(&buf[0]), C.uint(max), C.uint(retryCountMin), C.uint(retryCountMax), increment))
+	db.cdbLock.Unlock()
 	return count, buf[0 : count*32]
 }
 
@@ -401,7 +437,9 @@ func (db *db) logComment(byRecordDoff uint64, assertion, reason int, subject []b
 	if len(subject) > 0 {
 		sub = unsafe.Pointer(&subject[0])
 	}
+	db.cdbLock.Lock()
 	e := C.ZTLF_DB_LogComment(db.cdb, C.int64_t(byRecordDoff), C.int(assertion), C.int(reason), sub, C.int(len(subject)))
+	db.cdbLock.Unlock()
 	if e != 0 {
 		return fmt.Errorf("database error %d", int(e))
 	}
@@ -409,6 +447,8 @@ func (db *db) logComment(byRecordDoff uint64, assertion, reason int, subject []b
 }
 
 func (db *db) getConfig(key string) []byte {
+	db.cdbLock.Lock()
+	defer db.cdbLock.Unlock()
 	var tmp [dbMaxConfigValueSize]byte
 	l := C.ZTLF_DB_GetConfig(db.cdb, C.CString(key), unsafe.Pointer(&tmp[0]), C.uint(dbMaxConfigValueSize))
 	if l > 0 {
@@ -420,14 +460,14 @@ func (db *db) getConfig(key string) []byte {
 }
 
 func (db *db) setConfig(key string, value []byte) error {
-	if len(value) > 0 {
-		if len(value) > dbMaxConfigValueSize {
-			return ErrInvalidParameter
-		}
-		e := C.ZTLF_DB_SetConfig(db.cdb, C.CString(key), unsafe.Pointer(&value[0]), C.uint(len(value)))
-		if e != 0 {
-			return fmt.Errorf("database error %d", int(e))
-		}
+	if len(value) > dbMaxConfigValueSize {
+		return ErrInvalidParameter
+	}
+	db.cdbLock.Lock()
+	defer db.cdbLock.Unlock()
+	e := C.ZTLF_DB_SetConfig(db.cdb, C.CString(key), unsafe.Pointer(&value[0]), C.uint(len(value)))
+	if e != 0 {
+		return fmt.Errorf("database error %d", int(e))
 	}
 	return nil
 }

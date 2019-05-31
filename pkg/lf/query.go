@@ -60,7 +60,7 @@ type QueryRange struct {
 
 // Query (request) describes a query for records in the form of an ordered series of selector ranges.
 type Query struct {
-	Range      []QueryRange `json:",omitempty"` // Selectors or selector range(s)
+	Ranges     []QueryRange `json:",omitempty"` // Selectors or selector range(s)
 	TimeRange  []uint64     `json:",omitempty"` // If present, constrain record times to after first value (if [1]) or range (if [2])
 	MaskingKey Blob         `json:",omitempty"` // Masking key to unmask record value(s) server-side (if non-empty)
 	SortOrder  string       `json:",omitempty"` // Sort order within each result (default: trust)
@@ -137,7 +137,7 @@ type apiQueryResultTmp struct {
 // Execute executes this query against a local Node instance.
 func (m *Query) Execute(n *Node) (qr QueryResults, err error) {
 	// Set up selector ranges using sender-supplied or computed selector keys.
-	mm := m.Range
+	mm := m.Ranges
 	if len(mm) == 0 {
 		return nil, ErrQueryRequiresSelectors
 	}

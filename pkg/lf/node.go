@@ -634,7 +634,7 @@ func (n *Node) AddRecord(r *Record) error {
 	}
 
 	// Is value too big?
-	if uint(len(r.Value)) > n.genesisParameters.RecordMaxValueSize {
+	if uint(r.ValueDataSize()) > n.genesisParameters.RecordMaxValueSize {
 		return ErrRecordValueTooLarge
 	}
 

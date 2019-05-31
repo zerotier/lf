@@ -27,9 +27,11 @@
 package lf
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"hash/crc64"
 	"io/ioutil"
 	"os"
@@ -49,6 +51,8 @@ import (
 
 var crc64ECMATable = crc64.MakeTable(crc64.ECMA)
 var fsUsernamePrefixes = [14]string{"lf0000000000000", "lf000000000000", "lf00000000000", "lf0000000000", "lf000000000", "lf00000000", "lf0000000", "lf000000", "lf00000", "lf0000", "lf000", "lf00", "lf0", "lf"}
+var one = 1
+var eight = 8
 
 // fsLfOwnerToUser generates a Unix username and UID from a hash of an owner's public key.
 // A cryptographic hash is used instead of CRC64 just to make it a little bit harder to
@@ -72,10 +76,9 @@ type fsFuseNode interface {
 }
 
 type fsCacheEntry struct {
-	parent  *fsDir
-	fsn     fsFuseNode
-	ts      uint64
-	deleted bool
+	parent *fsDir
+	fsn    fsFuseNode
+	ts     uint64
 }
 
 // FS allows the LF to be mounted as a FUSE filesystem.
@@ -133,26 +136,21 @@ const (
 	fsFileTypeLink    = 0x400 // symbolic link
 	fsFileTypeDeleted = 0x600 // dead entry (LF itself has no suitable delete semantic, so just mark it as such)
 
-	fsFileTypeMask  = 0x600   // bit mask for file type from mode
-	fsMaxNameLength = 511     // max length of the name field in fsFileHeader (9-bit size)
-	fsMaxFileSize   = 1048576 // sanity limit to max file size... this would take FOREVER to store with PoW!
-
-	fsFileFlagOversize uint64 = 0x100000
+	fsFileTypeMask       = 0x600   // bit mask for file type from mode
+	fsMaxNameLength      = 511     // max length of the name field in fsFileHeader (9-bit size, must be a bit mask)
+	fsMaxFileSize        = 1048576 // sanity limit to max file size... this would take FOREVER to store with PoW!
+	fsMinRecordValueSize = 1024    // minimum record value size in LF data store to use lffs
 )
 
 type fsFileHeader struct {
-	mode     uint   // 2-bit type and 9-bit Unix rwxrwxrwx mode (11 bits total)
-	name     []byte // full name of file
-	oversize bool   // if true, this is an oversized file that must be retrieved recursively
+	mode          uint   // 2-bit type and 9-bit Unix rwxrwxrwx mode (11 bits total)
+	oversizeDepth uint   // depth of oversize file decomposition recursion
+	name          []byte // full name of file
 }
 
 func (h *fsFileHeader) appendTo(b []byte) []byte {
 	var qw [10]byte
-	var flags uint64
-	if h.oversize {
-		flags = fsFileFlagOversize
-	}
-	b = append(b, qw[0:binary.PutUvarint(qw[:], uint64(h.mode)|(uint64(len(h.name))<<11)|flags)]...)
+	b = append(b, qw[0:binary.PutUvarint(qw[:], uint64(h.mode&0x7ff)|(uint64(len(h.name)&fsMaxNameLength)<<11)|uint64(h.oversizeDepth<<20))]...)
 	b = append(b, h.name...)
 	return b
 }
@@ -164,8 +162,8 @@ func (h *fsFileHeader) readFrom(b []byte) ([]byte, error) {
 	}
 	b = b[n:]
 	h.mode = uint(i & 0x7ff)
+	h.oversizeDepth = uint(i >> 20)
 	h.name = make([]byte, uint((i>>11)&fsMaxNameLength))
-	h.oversize = (i & fsFileFlagOversize) != 0
 	if len(b) < len(h.name) {
 		return nil, ErrInvalidObject
 	}
@@ -178,6 +176,10 @@ func (h *fsFileHeader) readFrom(b []byte) ([]byte, error) {
 
 // NewFS creates and mounts a new virtual filesystem.
 func NewFS(n *Node, mountPoint string, rootSelectorName []byte, owner *Owner, authSignature []byte, maskingKey []byte) (*FS, error) {
+	if n.genesisParameters.RecordMaxValueSize < fsMinRecordValueSize {
+		return nil, fmt.Errorf("LF data store must allow record values of at least %d bytes to use lffs", fsMinRecordValueSize)
+	}
+
 	os.MkdirAll(mountPoint, 0755)
 	mpInfo, err := os.Stat(mountPoint)
 	if err != nil || !mpInfo.IsDir() {
@@ -285,35 +287,9 @@ func NewFS(n *Node, mountPoint string, rootSelectorName []byte, owner *Owner, au
 	}()
 
 	go func() {
-		var lastChecked uint64
-		for {
-			fs.fconnLock.Lock()
-			if fs.fconn == nil {
-				fs.fconnLock.Unlock()
-				break
-			}
-			fs.fconnLock.Unlock()
-
-			time.Sleep(time.Millisecond * 500)
-
-			now := TimeSec()
-			if (now - lastChecked) >= 60 {
-				lastChecked = now
-
-				fs.cacheLock.Lock()
-				for ci, ce := range fs.cache {
-					if (now - ce.ts) >= 600 {
-						delete(fs.cache, ci)
-					}
-				}
-				fs.cacheLock.Unlock()
-			}
-		}
-	}()
-
-	go func() {
 		var fswg sync.WaitGroup
-		inflightLimit := runtime.NumCPU()
+		var lastCheckedCache uint64
+		inflightLimit := runtime.NumCPU() * 16
 		for {
 			for inflight := 0; inflight < inflightLimit; inflight++ { // limit in-flight commits to something sane for this machine
 				fsn := <-fs.commitQueue
@@ -322,6 +298,7 @@ func NewFS(n *Node, mountPoint string, rootSelectorName []byte, owner *Owner, au
 					fs.runningLock.Unlock()
 					return
 				}
+
 				fswg.Add(1)
 				go func() {
 					defer func() {
@@ -334,6 +311,19 @@ func NewFS(n *Node, mountPoint string, rootSelectorName []byte, owner *Owner, au
 					fsn.commit()
 				}()
 			}
+
+			now := TimeSec()
+			if (now - lastCheckedCache) >= 60 {
+				lastCheckedCache = now
+				fs.cacheLock.Lock()
+				for ci, ce := range fs.cache {
+					if (now - ce.ts) >= 600 {
+						delete(fs.cache, ci)
+					}
+				}
+				fs.cacheLock.Unlock()
+			}
+
 			fswg.Wait()
 		}
 	}()
@@ -459,8 +449,9 @@ func (fsn *fsDir) Lookup(ctx context.Context, name string) (fusefs.Node, error) 
 		maskingKey = fsn.selectorName
 	}
 	q := Query{
-		Range:      []QueryRange{QueryRange{KeyRange: []Blob{MakeSelectorKey(fsn.selectorName, inode)}}},
+		Ranges:     []QueryRange{QueryRange{KeyRange: []Blob{MakeSelectorKey(fsn.selectorName, inode)}}},
 		MaskingKey: maskingKey,
+		Limit:      &eight,
 	}
 	qr, _ := q.Execute(fsn.fs.node)
 
@@ -476,7 +467,7 @@ func (fsn *fsDir) Lookup(ctx context.Context, name string) (fusefs.Node, error) 
 					fsn.fs.passwdLock.Unlock()
 
 					if ce.ts > result.Record.Timestamp {
-						if ce.deleted {
+						if (ce.fsn.header().mode & fsFileTypeMask) == fsFileTypeDeleted {
 							return nil, fuse.ENOENT
 						}
 						return ce.fsn, nil
@@ -488,25 +479,18 @@ func (fsn *fsDir) Lookup(ctx context.Context, name string) (fusefs.Node, error) 
 					switch f.fsFileHeader.mode & fsFileTypeMask {
 
 					case fsFileTypeNormal, fsFileTypeLink:
-						var data []byte
-						if len(v) > 0 {
-							data, err = BrotliDecompress(v, fsMaxFileSize)
-							if err != nil {
-								return nil, fuse.EIO
-							}
-						}
 						f.inode = inode
 						f.ts = time.Unix(int64(result.Record.Timestamp), 0)
 						f.uid = ownerUID
 						f.gid = fsn.fs.root.gid
 						f.parent = fsn
-						f.data = data
+						f.data = v
 						return &f, nil
 
 					case fsFileTypeDir:
 						sn := make([]byte, 0, len(fsn.selectorName)+len(f.fsFileHeader.name)+1)
 						sn = append(sn, fsn.selectorName...)
-						sn = append(sn, 0)
+						sn = append(sn, byte('/'))
 						sn = append(sn, f.fsFileHeader.name...)
 						return &fsDir{
 							fsFileHeader: fsFileHeader{
@@ -532,25 +516,30 @@ func (fsn *fsDir) Lookup(ctx context.Context, name string) (fusefs.Node, error) 
 		}
 	}
 
-	if ce.fsn != nil && !ce.deleted {
+	if ce.fsn != nil && (ce.fsn.header().mode&fsFileTypeMask) != fsFileTypeDeleted {
 		return ce.fsn, nil
 	}
 
 	return nil, fuse.ENOENT
 }
 
-var one = 1
+type fsDirEntryTmp struct {
+	de fuse.Dirent
+	ts uint64
+}
 
 func (fsn *fsDir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
-	var dir []fuse.Dirent
-	haveInodes := make(map[uint64]bool)
+	dirByName := make(map[string]fsDirEntryTmp)
 
 	if len(fsn.fsFileHeader.name) == 0 {
-		dir = append(dir, fuse.Dirent{
-			Inode: 2,
-			Type:  fuse.DT_File,
-			Name:  ".passwd",
-		})
+		dirByName[".passwd"] = fsDirEntryTmp{
+			de: fuse.Dirent{
+				Inode: 2,
+				Type:  fuse.DT_File,
+				Name:  ".passwd",
+			},
+			ts: 0xffffffffffffffff,
+		}
 	}
 
 	maskingKey := fsn.fs.maskingKey
@@ -558,11 +547,14 @@ func (fsn *fsDir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 		maskingKey = fsn.selectorName
 	}
 	q := Query{
-		Range:      []QueryRange{QueryRange{KeyRange: []Blob{MakeSelectorKey(fsn.selectorName, 0), MakeSelectorKey(fsn.selectorName, OrdinalMaxValue)}}},
+		Ranges:     []QueryRange{QueryRange{KeyRange: []Blob{MakeSelectorKey(fsn.selectorName, 0), MakeSelectorKey(fsn.selectorName, OrdinalMaxValue)}}},
 		MaskingKey: maskingKey,
 		Limit:      &one,
 	}
 	qr, _ := q.Execute(fsn.fs.node)
+
+	fsn.fs.cacheLock.Lock()
+	defer fsn.fs.cacheLock.Unlock()
 
 	for _, results := range qr {
 		for _, result := range results {
@@ -574,79 +566,84 @@ func (fsn *fsDir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 
 				var fh fsFileHeader
 				_, err := fh.readFrom(result.Value)
-				if err == nil {
+				if err == nil && len(fh.name) > 0 {
 					name := string(fh.name)
-					inode := fsn.fs.GenerateInode(fsn.inode, name)
+					if name != ".." && name != "." && !strings.ContainsAny(name, "/\\") {
+						inode := fsn.fs.GenerateInode(fsn.inode, name)
 
-					fsn.fs.cacheLock.Lock()
-					ce := fsn.fs.cache[inode]
-					if ce.ts > result.Record.Timestamp {
-						fsn.fs.cacheLock.Unlock()
-						if ce.deleted {
-							break
+						ts := result.Record.Timestamp
+						ce := fsn.fs.cache[inode]
+						if ce.ts > ts {
+							ts = ce.ts
+							fh = *ce.fsn.header()
+						} else {
+							delete(fsn.fs.cache, inode)
 						}
-						fh = *ce.fsn.header()
-					} else {
-						delete(fsn.fs.cache, inode)
-						fsn.fs.cacheLock.Unlock()
-					}
 
-					haveInodes[inode] = true
+						if dirByName[name].ts < ts {
+							var dt fuse.DirentType
+							switch fh.mode & fsFileTypeMask {
+							case fsFileTypeNormal:
+								dt = fuse.DT_File
+							case fsFileTypeDir:
+								dt = fuse.DT_Dir
+							case fsFileTypeLink:
+								dt = fuse.DT_Link
+							default:
+								dt = fuse.DT_Unknown
+							}
+							dirByName[name] = fsDirEntryTmp{
+								de: fuse.Dirent{
+									Inode: inode,
+									Type:  dt,
+									Name:  name,
+								},
+								ts: ts,
+							}
+						}
 
-					switch fh.mode & fsFileTypeMask {
-					case fsFileTypeNormal:
-						dir = append(dir, fuse.Dirent{
-							Inode: inode,
-							Type:  fuse.DT_File,
-							Name:  name,
-						})
-					case fsFileTypeDir:
-						dir = append(dir, fuse.Dirent{
-							Inode: inode,
-							Type:  fuse.DT_Dir,
-							Name:  name,
-						})
-					case fsFileTypeLink:
-						dir = append(dir, fuse.Dirent{
-							Inode: inode,
-							Type:  fuse.DT_Link,
-							Name:  name,
-						})
+						break
 					}
-					break
 				}
 			}
 		}
 	}
 
-	fsn.fs.cacheLock.Lock()
 	for ci, ce := range fsn.fs.cache {
-		if ce.parent == fsn && !haveInodes[ci] && !ce.deleted {
+		if ce.parent == fsn {
 			fh := ce.fsn.header()
-			switch fh.mode & fsFileTypeMask {
-			case fsFileTypeNormal:
-				dir = append(dir, fuse.Dirent{
-					Inode: ci,
-					Type:  fuse.DT_File,
-					Name:  string(fh.name),
-				})
-			case fsFileTypeDir:
-				dir = append(dir, fuse.Dirent{
-					Inode: ci,
-					Type:  fuse.DT_Dir,
-					Name:  string(fh.name),
-				})
-			case fsFileTypeLink:
-				dir = append(dir, fuse.Dirent{
-					Inode: ci,
-					Type:  fuse.DT_Link,
-					Name:  string(fh.name),
-				})
+			name := string(fh.name)
+
+			if dirByName[name].ts < ce.ts {
+				var dt fuse.DirentType
+				switch fh.mode & fsFileTypeMask {
+				case fsFileTypeNormal:
+					dt = fuse.DT_File
+				case fsFileTypeDir:
+					dt = fuse.DT_Dir
+				case fsFileTypeLink:
+					dt = fuse.DT_Link
+				default:
+					dt = fuse.DT_Unknown
+				}
+				dirByName[name] = fsDirEntryTmp{
+					de: fuse.Dirent{
+						Inode: ci,
+						Type:  dt,
+						Name:  name,
+					},
+					ts: ce.ts,
+				}
 			}
 		}
 	}
-	fsn.fs.cacheLock.Unlock()
 
+	dir := make([]fuse.Dirent, 0, len(dirByName))
+	for _, e := range dirByName {
+		if e.de.Type != fuse.DT_Unknown {
+			dir = append(dir, e.de)
+		}
+	}
 	sort.Slice(dir, func(a, b int) bool {
 		return strings.Compare(dir[a].Name, dir[b].Name) < 0
 	})
@@ -667,7 +664,7 @@ func (fsn *fsDir) internalMkdir(ctx context.Context, name string, mode uint, com
 	nameBytes := []byte(name)
 	sn := make([]byte, 0, len(fsn.selectorName)+1+len(nameBytes))
 	sn = append(sn, fsn.selectorName...)
-	sn = append(sn, 0)
+	sn = append(sn, byte('/'))
 	sn = append(sn, nameBytes...)
 
 	d := &fsDir{
@@ -844,10 +841,9 @@ func (fsn *fsDir) Create(ctx context.Context, req *fuse.CreateRequest, resp *fus
 
 		fsn.fs.cacheLock.Lock()
 		fsn.fs.cache[nn.inode] = fsCacheEntry{
-			parent:  nn.parent,
-			fsn:     nn,
-			ts:      uint64(nn.ts.Unix()),
-			deleted: false,
+			parent: nn.parent,
+			fsn:    nn,
+			ts:     uint64(nn.ts.Unix()),
 		}
 		fsn.fs.cacheLock.Unlock()
 
@@ -879,10 +875,9 @@ func (fsn *fsDir) Create(ctx context.Context, req *fuse.CreateRequest, resp *fus
 
 		fsn.fs.cacheLock.Lock()
 		fsn.fs.cache[f.inode] = fsCacheEntry{
-			parent:  f.parent,
-			fsn:     f,
-			ts:      uint64(f.ts.Unix()),
-			deleted: false,
+			parent: f.parent,
+			fsn:    f,
+			ts:     uint64(f.ts.Unix()),
 		}
 		fsn.fs.cacheLock.Unlock()
 
@@ -914,10 +909,9 @@ func (fsn *fsDir) commit() error {
 
 	fsn.fs.cacheLock.Lock()
 	fsn.fs.cache[fsn.inode] = fsCacheEntry{
-		parent:  fsn.parent,
-		fsn:     fsn,
-		ts:      ts,
-		deleted: false,
+		parent: fsn.parent,
+		fsn:    fsn,
+		ts:     ts,
 	}
 	fsn.fs.cacheLock.Unlock()
 
@@ -957,34 +951,63 @@ func (fsn *fsDir) Release(ctx context.Context, req *fuse.ReleaseRequest) error {
 // fsFile implements Node and Handle for regular files and links (for links the data is the link target)
 type fsFile struct {
 	fsFileHeader
-	inode    uint64    // inode a.k.a. ordinal computed from parent inode + CRC64-ECMA(name)
-	ts       time.Time // timestamp from LF record
-	uid, gid uint32    // Unix UID/GID
-	parent   *fsDir    // parent directory node
-	data     []byte    // file's data
-	pseudo   bool      // if true this file should not be commited to LF
+	inode     uint64     // inode a.k.a. ordinal computed from parent inode + CRC64-ECMA(name)
+	ts        time.Time  // timestamp from LF record
+	uid, gid  uint32     // Unix UID/GID
+	parent    *fsDir     // parent directory node
+	data      []byte     // file's data
+	writeLock sync.Mutex //
+	pseudo    bool       // if true this file should not be commited to LF
+}
+
+func (fsn *fsFile) dechunk() error {
+	db := &fsn.parent.fs.node.db
+	var buf []byte
+	var err error
+	for fsn.fsFileHeader.oversizeDepth > 0 {
+		fsn.fsFileHeader.oversizeDepth--
+		newData := make([]byte, 0, 1024)
+		for i := 0; (i + 48) <= len(fsn.data); i += 48 {
+			_, buf, err = db.getDataByHash(fsn.data[i:i+32], buf)
+			if err != nil {
+				return err
+			}
+			if len(buf) > 0 {
+				rec, err := NewRecordFromBytes(buf)
+				if err != nil {
+					return err
+				}
+				rdata, err := rec.GetValue(fsn.data[i+32 : i+48])
+				if err != nil {
+					return err
+				}
+				newData = append(newData, rdata...)
+				buf = buf[:0]
+			}
+		}
+		fsn.data = newData
+	}
+	return nil
 }
 
 func (fsn *fsFile) Attr(ctx context.Context, a *fuse.Attr) error {
+	err := fsn.dechunk()
+	if err != nil {
+		return fuse.EIO
+	}
 	a.Valid = time.Second * 30
 	a.Inode = fsn.inode
-	var modeMask os.FileMode
-	switch fsn.fsFileHeader.mode & fsFileTypeMask {
-	case fsFileTypeNormal:
-		a.Size = uint64(len(fsn.data))
-		a.Blocks = a.Size / 512
-	case fsFileTypeLink:
-		modeMask = os.ModeSymlink
-		a.Size = uint64(len(fsn.data))
-		a.Blocks = a.Size / 512
-	default:
-		return fuse.ENOENT
-	}
+	a.Size = uint64(len(fsn.data))
+	a.Blocks = a.Size / 512
 	a.Atime = fsn.ts
 	a.Mtime = fsn.ts
 	a.Ctime = fsn.ts
 	a.Crtime = fsn.ts
-	a.Mode = os.FileMode(fsn.fsFileHeader.mode&0x1ff) | modeMask
+	if (fsn.fsFileHeader.mode & fsFileTypeMask) == fsFileTypeLink {
+		a.Mode = os.FileMode(fsn.fsFileHeader.mode&0x1ff) | os.ModeSymlink
+	} else {
+		a.Mode = os.FileMode(fsn.fsFileHeader.mode & 0x1ff)
+	}
 	a.Nlink = 1
 	a.Uid = fsn.uid
 	a.Gid = fsn.gid
@@ -994,14 +1017,18 @@ func (fsn *fsFile) Attr(ctx context.Context, a *fuse.Attr) error {
 
 func (fsn *fsFile) ReadAll(ctx context.Context) ([]byte, error) {
 	if (fsn.fsFileHeader.mode & fsFileTypeMask) == fsFileTypeNormal {
-		return fsn.data, nil
+		if fsn.dechunk() == nil {
+			return fsn.data, nil
+		}
 	}
 	return nil, fuse.EIO
 }
 
 func (fsn *fsFile) Readlink(ctx context.Context, req *fuse.ReadlinkRequest) (string, error) {
 	if (fsn.fsFileHeader.mode & fsFileTypeMask) == fsFileTypeLink {
-		return string(fsn.data), nil
+		if fsn.dechunk() == nil {
+			return string(fsn.data), nil
+		}
 	}
 	return "", fuse.EIO
 }
@@ -1033,6 +1060,15 @@ func (fsn *fsFile) Write(ctx context.Context, req *fuse.WriteRequest, resp *fuse
 	if req.Offset >= fsMaxFileSize {
 		return fuse.EIO
 	}
+
+	err := fsn.dechunk()
+	if err != nil {
+		return fuse.EIO
+	}
+
+	fsn.writeLock.Lock()
+	defer fsn.writeLock.Unlock()
+
 	eofPos := int(req.Offset + int64(len(req.Data)))
 	if eofPos > fsMaxFileSize {
 		eofPos = fsMaxFileSize
@@ -1041,18 +1077,23 @@ func (fsn *fsFile) Write(ctx context.Context, req *fuse.WriteRequest, resp *fuse
 		return nil
 	}
 
+	written := eofPos - int(req.Offset)
 	if eofPos > len(fsn.data) {
 		d2 := make([]byte, eofPos)
 		copy(d2, fsn.data)
+		copy(d2[int(req.Offset):], req.Data[0:written])
 		fsn.data = d2
+	} else if bytes.Equal(fsn.data[int(req.Offset):], req.Data[0:written]) {
+		return nil // avoid unnecessary commits by just returning if the data hasn't changed
+	} else {
+		copy(fsn.data[int(req.Offset):], req.Data[0:written])
 	}
-	copy(fsn.data[int(req.Offset):], req.Data[0:eofPos-int(req.Offset)])
 
 	fsn.parent.fs.dirtyLock.Lock()
 	fsn.parent.fs.dirty[fsn.inode] = fsn
 	fsn.parent.fs.dirtyLock.Unlock()
 
-	resp.Size = len(req.Data)
+	resp.Size = written
 
 	return nil
 }
@@ -1065,30 +1106,6 @@ func (fsn *fsFile) commit() error {
 		return ErrInvalidObject
 	}
 
-	var fdata []byte
-	if len(fsn.data) > 0 {
-		var err error
-		fdata, err = BrotliCompress(fsn.data, make([]byte, 0, len(fsn.data)+4))
-		if err != nil {
-			return err
-		}
-	}
-
-	fsn.fsFileHeader.oversize = false
-	rdata := make([]byte, 0, len(fdata)+len(fsn.fsFileHeader.name)+16)
-	rdata = fsn.fsFileHeader.appendTo(rdata)
-	rdata = append(rdata, fdata...)
-
-	maxValueSize := fsn.parent.fs.node.genesisParameters.RecordMaxValueSize
-	if uint(len(rdata)) > maxValueSize {
-		fsn.fsFileHeader.oversize = true
-	}
-
-	links, err := fsn.parent.fs.node.db.getLinks2(fsn.parent.fs.node.genesisParameters.RecordMinLinks)
-	if err != nil {
-		return err
-	}
-
 	var wf *Wharrgarblr
 	if !fsn.parent.fs.node.localTest && len(fsn.parent.fs.authSignature) == 0 {
 		wf = fsn.parent.fs.node.getWorkFunction()
@@ -1098,13 +1115,111 @@ func (fsn *fsFile) commit() error {
 
 	fsn.parent.fs.cacheLock.Lock()
 	fsn.parent.fs.cache[fsn.inode] = fsCacheEntry{
-		parent:  fsn.parent,
-		fsn:     fsn,
-		ts:      ts,
-		deleted: (fsn.fsFileHeader.mode & fsFileTypeMask) == fsFileTypeDeleted,
+		parent: fsn.parent,
+		fsn:    fsn,
+		ts:     ts,
 	}
 	fsn.parent.fs.cacheLock.Unlock()
 
+	fdata := fsn.data
+	rdata := make([]byte, 0, len(fdata)+len(fsn.fsFileHeader.name)+16)
+	rdata = fsn.fsFileHeader.appendTo(rdata)
+	rdata = append(rdata, fdata...)
+
+	// If record data is too large, break it into chunks at data dependent breakage
+	// points and store these chunks. The file then becomes hashes of chunks. This
+	// is done recursively until it fits. Chunks are stored by their hash with a
+	// selector name and masking key that is their content hash, meaning that this
+	// acts as a global (across the whole LF data store) deduplicating storage
+	// system. This doesn't compromise data privacy since if you don't know the hash
+	// of the content you want you can't look it up or decrypt it.
+	maxValueSize := int(fsn.parent.fs.node.genesisParameters.RecordMaxValueSize)
+	if len(rdata) > maxValueSize {
+		fh := fsn.fsFileHeader
+		fh.oversizeDepth = 0
+
+		storeChunkByIdentityHash := func(chunk, chunkHash []byte) (*Record, error) {
+			q := Query{
+				Ranges:     []QueryRange{QueryRange{KeyRange: []Blob{MakeSelectorKey(chunkHash, 0)}}},
+				MaskingKey: chunkHash[0:16],
+				Limit:      &one,
+			}
+			qr, _ := q.Execute(fsn.parent.fs.node)
+			for _, results := range qr {
+				for _, result := range results {
+					if len(result.Value) > 0 {
+						return result.Record, nil
+					}
+				}
+			}
+
+			links, err := fsn.parent.fs.node.db.getLinks2(fsn.parent.fs.node.genesisParameters.RecordMinLinks)
+			if err != nil {
+				return nil, err
+			}
+			rec, err := NewRecord(RecordTypeDatum, chunk, links, chunkHash[0:16], [][]byte{chunkHash}, []uint64{0}, fsn.parent.fs.authSignature, ts, wf, fsn.parent.fs.owner)
+			if err != nil {
+				return nil, err
+			}
+			err = fsn.parent.fs.node.AddRecord(rec)
+			if err != nil {
+				return nil, err
+			}
+			return rec, nil
+		}
+
+		// Make average chunk size a little more than half the value size. Chunks will be
+		// cut off at random data-dependent positions for lengths near this or when their
+		// size equals the maximum record value size. We also don't bother storing chunks
+		// smaller than 64 bytes unless they happen to be final chunks.
+		chunkModulus := (uint64(maxValueSize) / 3) * 2
+
+		// Perform identity keyed chunking repeatedly until the list of hashes is small
+		// enough to fit in the final record.
+		chunk := make([]byte, 0, maxValueSize)
+		for len(rdata) > maxValueSize {
+			newfdata := make([]byte, 0, maxValueSize)
+			var accum uint64
+			for _, b := range fdata {
+				chunk = append(chunk, b)
+				accum += uint64(b)
+				if len(chunk) >= maxValueSize || ((accum%chunkModulus) == 0 && len(chunk) >= 64) {
+					chunkHash := sha256.Sum256(chunk)
+					rec, err := storeChunkByIdentityHash(chunk, chunkHash[:])
+					if err != nil {
+						return err
+					}
+					rh := rec.Hash()
+					newfdata = append(newfdata, rh[:]...)
+					newfdata = append(newfdata, chunkHash[0:16]...)
+					chunk = chunk[:0]
+				}
+			}
+			if len(chunk) > 0 {
+				chunkHash := sha256.Sum256(chunk)
+				rec, err := storeChunkByIdentityHash(chunk, chunkHash[:])
+				if err != nil {
+					fmt.Printf("%v\n", err)
+					return err
+				}
+				rh := rec.Hash()
+				newfdata = append(newfdata, rh[:]...)
+				newfdata = append(newfdata, chunkHash[0:16]...)
+				chunk = chunk[:0]
+			}
+
+			fdata = newfdata
+			rdata = rdata[:0]
+			fh.oversizeDepth++
+			rdata = fh.appendTo(rdata)
+			rdata = append(rdata, fdata...)
+		}
+	}
+
+	links, err := fsn.parent.fs.node.db.getLinks2(fsn.parent.fs.node.genesisParameters.RecordMinLinks)
+	if err != nil {
+		return err
+	}
 	rec, err := NewRecord(RecordTypeDatum, rdata, links, fsn.parent.fs.maskingKey, [][]byte{fsn.parent.selectorName}, []uint64{fsn.inode}, fsn.parent.fs.authSignature, ts, wf, fsn.parent.fs.owner)
 	if err != nil {
 		return err

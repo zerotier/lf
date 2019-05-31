@@ -395,6 +395,17 @@ func (rb *recordBody) GetValue(maskingKey []byte) ([]byte, error) {
 	return unmaskedValue, nil
 }
 
+// ValueDataSize returns the size of the value minus CRC16 overhead.
+// This is the number that's used to check to see if records are below the network's max value size.
+// Checking against just len(Value) excludes records whose payload is exactly the maximum
+// and that are not compressable.
+func (rb *recordBody) ValueDataSize() int {
+	if len(rb.Value) <= 2 {
+		return 0
+	}
+	return len(rb.Value) - 2
+}
+
 //////////////////////////////////////////////////////////////////////////////
 
 // Record combines the record body with one or more selectors, work, and a signature.

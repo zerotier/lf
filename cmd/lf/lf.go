@@ -483,7 +483,7 @@ func doGet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool
 	}
 
 	req := &lf.Query{
-		Range:     ranges,
+		Ranges:    ranges,
 		TimeRange: tr,
 	}
 	if *rawOutput {
