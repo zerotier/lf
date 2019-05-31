@@ -137,7 +137,6 @@ type Node struct {
 	workFunction             *Wharrgarblr
 	workFunctionLock         sync.Mutex
 	mountPoints              map[string]*FS
-	mountPointCloseWaitGroup sync.WaitGroup
 	mountPointsLock          sync.Mutex
 	db                       db
 
@@ -457,11 +456,10 @@ func (n *Node) Stop() {
 	if atomic.SwapUint32(&n.shutdown, 1) == 0 {
 		n.mountPointsLock.Lock()
 		for mpp, mp := range n.mountPoints {
-			mp.Close(&n.mountPointCloseWaitGroup)
+			mp.Close()
 			delete(n.mountPoints, mpp)
 		}
 		n.mountPointsLock.Unlock()
-		n.mountPointCloseWaitGroup.Wait()
 
 		n.connectionsInStartupLock.Lock()
 		if n.connectionsInStartup != nil {
@@ -536,7 +534,7 @@ func (n *Node) Unmount(mountPoint string) error {
 	fs := n.mountPoints[mountPoint]
 	delete(n.mountPoints, mountPoint)
 	if fs != nil {
-		return fs.Close(&n.mountPointCloseWaitGroup)
+		go fs.Close()
 	}
 	return nil
 }

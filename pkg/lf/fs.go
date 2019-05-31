@@ -64,8 +64,18 @@ func fsLfOwnerToUser(o []byte) (string, uint32) {
 	return (fsUsernamePrefixes[len(es)] + es), uid
 }
 
-type fsNodeWithCommit interface {
+type fsFuseNode interface {
+	fusefs.Node
+	fusefs.Handle
 	commit() error
+	header() *fsFileHeader
+}
+
+type fsCacheEntry struct {
+	parent  *fsDir
+	fsn     fsFuseNode
+	ts      uint64
+	deleted bool
 }
 
 // FS allows the LF to be mounted as a FUSE filesystem.
@@ -80,11 +90,14 @@ type FS struct {
 	maskingKey       []byte
 	passwd           map[string]uint32
 	passwdLock       sync.Mutex
-	dirty            map[uint64]fsNodeWithCommit
+	dirty            map[uint64]fsFuseNode
 	dirtyLock        sync.Mutex
+	cache            map[uint64]fsCacheEntry
+	cacheLock        sync.Mutex
 	fconn            *fuse.Conn
 	fconnLock        sync.Mutex
-	commitWaitGroup  sync.WaitGroup
+	commitQueue      chan fsFuseNode
+	runningLock      sync.Mutex
 }
 
 // fsImpl just hides FUSE methods from everyone outside the LF package.
@@ -193,7 +206,9 @@ func NewFS(n *Node, mountPoint string, rootSelectorName []byte, owner *Owner, au
 		authSignature: authSignature,
 		maskingKey:    maskingKey,
 		passwd:        make(map[string]uint32),
-		dirty:         make(map[uint64]fsNodeWithCommit),
+		dirty:         make(map[uint64]fsFuseNode),
+		cache:         make(map[uint64]fsCacheEntry),
+		commitQueue:   make(chan fsFuseNode),
 	}}
 	fs.root.fs = fs
 	fs.passwd[ownerName] = ownerUID
@@ -269,6 +284,62 @@ func NewFS(n *Node, mountPoint string, rootSelectorName []byte, owner *Owner, au
 		fs.fconnLock.Unlock()
 	}()
 
+	go func() {
+		var lastChecked uint64
+		for {
+			fs.fconnLock.Lock()
+			if fs.fconn == nil {
+				fs.fconnLock.Unlock()
+				break
+			}
+			fs.fconnLock.Unlock()
+
+			time.Sleep(time.Millisecond * 500)
+
+			now := TimeSec()
+			if (now - lastChecked) >= 60 {
+				lastChecked = now
+
+				fs.cacheLock.Lock()
+				for ci, ce := range fs.cache {
+					if (now - ce.ts) >= 600 {
+						delete(fs.cache, ci)
+					}
+				}
+				fs.cacheLock.Unlock()
+			}
+		}
+	}()
+
+	go func() {
+		var fswg sync.WaitGroup
+		inflightLimit := runtime.NumCPU()
+		for {
+			for inflight := 0; inflight < inflightLimit; inflight++ { // limit in-flight commits to something sane for this machine
+				fsn := <-fs.commitQueue
+				if fsn == nil {
+					fswg.Wait()
+					fs.runningLock.Unlock()
+					return
+				}
+				fswg.Add(1)
+				go func() {
+					defer func() {
+						e := recover()
+						if e != nil {
+							fs.node.log[LogLevelWarning].Printf("WARNING: panic during FS commit operation: %v", e)
+						}
+						fswg.Done()
+					}()
+					fsn.commit()
+				}()
+			}
+			fswg.Wait()
+		}
+	}()
+
+	fs.runningLock.Lock()
+
 	return &fs.FS, nil
 }
 
@@ -280,19 +351,22 @@ func (fs *FS) IsOpen() bool {
 	return o
 }
 
-// Close unmounts this filesystem
-// If a wait group is passed into this function, the goroutine that
-// will be spawned to commit dirty records will be added to it and
-// then will notify it when done.
-func (fs *FS) Close(wg *sync.WaitGroup) error {
+// Close unmounts this filesystem.
+// If this FS has outstanding commits that need proof of work this may block
+// for a period of time.
+func (fs *FS) Close() error {
+	fs.commitQueue <- nil
+	fs.runningLock.Lock()
+	fs.runningLock.Unlock()
+
 	fs.fconnLock.Lock()
 	fconn := fs.fconn
 	fs.fconn = nil
 	fs.fconnLock.Unlock()
 
 	if fconn != nil {
-		// The loop accessing .passwd here is a stupid hack to get Linux to actually unmount and close.
-		// It has no effect on other architectures.
+		// HACK: Linux likes to hang on Close() until something touches the filesystem, so
+		// frob the filesystem until it actually closes. This has no effect on Mac or others.
 		var closed uint32
 		go func() {
 			fconn.Close()
@@ -303,28 +377,6 @@ func (fs *FS) Close(wg *sync.WaitGroup) error {
 			ioutil.ReadFile(path.Join(fs.mountPoint, ".passwd"))
 			time.Sleep(time.Millisecond * 50)
 		}
-
-		fs.dirtyLock.Lock()
-		dirty := fs.dirty
-		fs.dirty = make(map[uint64]fsNodeWithCommit)
-		fs.dirtyLock.Unlock()
-
-		if len(dirty) > 0 {
-			if wg != nil {
-				wg.Add(1)
-			}
-			go func() {
-				for _, d := range dirty {
-					fs.commitWaitGroup.Add(1)
-					d.commit()
-				}
-				if wg != nil {
-					wg.Done()
-				}
-			}()
-		}
-
-		fs.commitWaitGroup.Wait()
 	}
 
 	return nil
@@ -394,6 +446,14 @@ func (fsn *fsDir) Lookup(ctx context.Context, name string) (fusefs.Node, error) 
 	}
 
 	inode := fsn.fs.GenerateInode(fsn.inode, name)
+
+	// Grab cache entry but note that we still check LF itself to make sure LF is
+	// not newer. The main purpose of the cache is to hold entries while insertion
+	// is taking place, especially when PoW is needed as this might take a while.
+	fsn.fs.cacheLock.Lock()
+	ce := fsn.fs.cache[inode]
+	fsn.fs.cacheLock.Unlock()
+
 	maskingKey := fsn.fs.maskingKey
 	if len(maskingKey) == 0 {
 		maskingKey = fsn.selectorName
@@ -409,15 +469,21 @@ func (fsn *fsDir) Lookup(ctx context.Context, name string) (fusefs.Node, error) 
 			if len(result.Value) > 0 {
 				var f fsFile
 				v, err := f.fsFileHeader.readFrom(result.Value)
-				if err != nil {
-					return nil, fuse.EIO
-				}
-
-				if string(f.fsFileHeader.name) == name {
+				if err == nil && string(f.fsFileHeader.name) == name {
 					ownerName, ownerUID := fsLfOwnerToUser(result.Record.Owner)
 					fsn.fs.passwdLock.Lock()
 					fsn.fs.passwd[ownerName] = ownerUID
 					fsn.fs.passwdLock.Unlock()
+
+					if ce.ts > result.Record.Timestamp {
+						if ce.deleted {
+							return nil, fuse.ENOENT
+						}
+						return ce.fsn, nil
+					}
+					fsn.fs.cacheLock.Lock()
+					delete(fsn.fs.cache, inode)
+					fsn.fs.cacheLock.Unlock()
 
 					switch f.fsFileHeader.mode & fsFileTypeMask {
 
@@ -438,11 +504,9 @@ func (fsn *fsDir) Lookup(ctx context.Context, name string) (fusefs.Node, error) 
 						return &f, nil
 
 					case fsFileTypeDir:
-						var sn []byte
-						if fsn.parent != nil {
-							sn = append(sn, fsn.parent.selectorName...)
-							sn = append(sn, byte('/'))
-						}
+						sn := make([]byte, 0, len(fsn.selectorName)+len(f.fsFileHeader.name)+1)
+						sn = append(sn, fsn.selectorName...)
+						sn = append(sn, 0)
 						sn = append(sn, f.fsFileHeader.name...)
 						return &fsDir{
 							fsFileHeader: fsFileHeader{
@@ -468,6 +532,10 @@ func (fsn *fsDir) Lookup(ctx context.Context, name string) (fusefs.Node, error) 
 		}
 	}
 
+	if ce.fsn != nil && !ce.deleted {
+		return ce.fsn, nil
+	}
+
 	return nil, fuse.ENOENT
 }
 
@@ -475,6 +543,7 @@ var one = 1
 
 func (fsn *fsDir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 	var dir []fuse.Dirent
+	haveInodes := make(map[uint64]bool)
 
 	if len(fsn.fsFileHeader.name) == 0 {
 		dir = append(dir, fuse.Dirent{
@@ -494,7 +563,6 @@ func (fsn *fsDir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 		Limit:      &one,
 	}
 	qr, _ := q.Execute(fsn.fs.node)
-	//fmt.Printf("%s\n", PrettyJSON(qr))
 
 	for _, results := range qr {
 		for _, result := range results {
@@ -508,22 +576,39 @@ func (fsn *fsDir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 				_, err := fh.readFrom(result.Value)
 				if err == nil {
 					name := string(fh.name)
+					inode := fsn.fs.GenerateInode(fsn.inode, name)
+
+					fsn.fs.cacheLock.Lock()
+					ce := fsn.fs.cache[inode]
+					if ce.ts > result.Record.Timestamp {
+						fsn.fs.cacheLock.Unlock()
+						if ce.deleted {
+							break
+						}
+						fh = *ce.fsn.header()
+					} else {
+						delete(fsn.fs.cache, inode)
+						fsn.fs.cacheLock.Unlock()
+					}
+
+					haveInodes[inode] = true
+
 					switch fh.mode & fsFileTypeMask {
 					case fsFileTypeNormal:
 						dir = append(dir, fuse.Dirent{
-							Inode: fsn.fs.GenerateInode(fsn.inode, name),
+							Inode: inode,
 							Type:  fuse.DT_File,
 							Name:  name,
 						})
 					case fsFileTypeDir:
 						dir = append(dir, fuse.Dirent{
-							Inode: fsn.fs.GenerateInode(fsn.inode, name),
+							Inode: inode,
 							Type:  fuse.DT_Dir,
 							Name:  name,
 						})
 					case fsFileTypeLink:
 						dir = append(dir, fuse.Dirent{
-							Inode: fsn.fs.GenerateInode(fsn.inode, name),
+							Inode: inode,
 							Type:  fuse.DT_Link,
 							Name:  name,
 						})
@@ -533,6 +618,34 @@ func (fsn *fsDir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 			}
 		}
 	}
+
+	fsn.fs.cacheLock.Lock()
+	for ci, ce := range fsn.fs.cache {
+		if ce.parent == fsn && !haveInodes[ci] && !ce.deleted {
+			fh := ce.fsn.header()
+			switch fh.mode & fsFileTypeMask {
+			case fsFileTypeNormal:
+				dir = append(dir, fuse.Dirent{
+					Inode: ci,
+					Type:  fuse.DT_File,
+					Name:  string(fh.name),
+				})
+			case fsFileTypeDir:
+				dir = append(dir, fuse.Dirent{
+					Inode: ci,
+					Type:  fuse.DT_Dir,
+					Name:  string(fh.name),
+				})
+			case fsFileTypeLink:
+				dir = append(dir, fuse.Dirent{
+					Inode: ci,
+					Type:  fuse.DT_Link,
+					Name:  string(fh.name),
+				})
+			}
+		}
+	}
+	fsn.fs.cacheLock.Unlock()
 
 	sort.Slice(dir, func(a, b int) bool {
 		return strings.Compare(dir[a].Name, dir[b].Name) < 0
@@ -551,17 +664,16 @@ func (fsn *fsDir) internalMkdir(ctx context.Context, name string, mode uint, com
 		return nil, fuse.EEXIST
 	}
 
-	var sn []byte
-	if fsn.parent != nil {
-		sn = append(sn, fsn.parent.selectorName...)
-		sn = append(sn, byte('/'))
-	}
-	sn = append(sn, fsn.fsFileHeader.name...)
+	nameBytes := []byte(name)
+	sn := make([]byte, 0, len(fsn.selectorName)+1+len(nameBytes))
+	sn = append(sn, fsn.selectorName...)
+	sn = append(sn, 0)
+	sn = append(sn, nameBytes...)
 
 	d := &fsDir{
 		fsFileHeader: fsFileHeader{
 			mode: mode | fsFileTypeDir,
-			name: []byte(name),
+			name: nameBytes,
 		},
 		inode:        fsn.fs.GenerateInode(fsn.inode, name),
 		ts:           time.Now(),
@@ -574,15 +686,14 @@ func (fsn *fsDir) internalMkdir(ctx context.Context, name string, mode uint, com
 	}
 
 	if commitNow {
-		fsn.fs.commitWaitGroup.Add(1)
-		go d.commit()
+		fsn.fs.commitQueue <- d
 	}
 
 	return d, nil
 }
 
 func (fsn *fsDir) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (fusefs.Node, error) {
-	return fsn.internalMkdir(ctx, req.Name, uint(req.Mode.Perm()), true)
+	return fsn.internalMkdir(ctx, req.Name, 0777, true) // TODO: right now we just set permission rw on everything
 }
 
 func (fsn *fsDir) Remove(ctx context.Context, req *fuse.RemoveRequest) error {
@@ -611,8 +722,7 @@ func (fsn *fsDir) Remove(ctx context.Context, req *fuse.RemoveRequest) error {
 		data:   nil,
 	}
 
-	fsn.fs.commitWaitGroup.Add(1)
-	go f.commit()
+	fsn.fs.commitQueue <- f
 
 	return nil
 }
@@ -654,8 +764,7 @@ func (fsn *fsDir) Rename(ctx context.Context, req *fuse.RenameRequest, newDir fu
 			nnf.data = of.data
 		}
 
-		fsn.fs.commitWaitGroup.Add(1)
-		go nnf.commit()
+		fsn.fs.commitQueue <- nnf
 
 		fsn.Remove(ctx, &fuse.RemoveRequest{
 			Header: req.Header,
@@ -668,8 +777,7 @@ func (fsn *fsDir) Rename(ctx context.Context, req *fuse.RenameRequest, newDir fu
 
 	nnd, _ := newNode.(*fsDir)
 	if nnd != nil {
-		fsn.fs.commitWaitGroup.Add(1)
-		go nnd.commit()
+		fsn.fs.commitQueue <- nnd
 
 		fsn.Remove(ctx, &fuse.RemoveRequest{
 			Header: req.Header,
@@ -712,8 +820,7 @@ func (fsn *fsDir) Symlink(ctx context.Context, req *fuse.SymlinkRequest) (fusefs
 		data:   []byte(req.Target),
 	}
 
-	fsn.fs.commitWaitGroup.Add(1)
-	go f.commit()
+	fsn.fs.commitQueue <- f
 
 	return f, nil
 }
@@ -729,8 +836,21 @@ func (fsn *fsDir) Create(ctx context.Context, req *fuse.CreateRequest, resp *fus
 		return nil, nil, fuse.EPERM
 	}
 
+	//perm := uint(req.Mode.Perm())
+	perm := uint(0666) // TODO: right now we don't support setattr and perm == rw for all
+
 	if req.Mode.IsDir() {
-		nn, err := fsn.internalMkdir(ctx, req.Name, uint(req.Mode.Perm()), false)
+		nn, err := fsn.internalMkdir(ctx, req.Name, perm|0111, false)
+
+		fsn.fs.cacheLock.Lock()
+		fsn.fs.cache[nn.inode] = fsCacheEntry{
+			parent:  nn.parent,
+			fsn:     nn,
+			ts:      uint64(nn.ts.Unix()),
+			deleted: false,
+		}
+		fsn.fs.cacheLock.Unlock()
+
 		return nn, nn, err
 	}
 
@@ -739,9 +859,10 @@ func (fsn *fsDir) Create(ctx context.Context, req *fuse.CreateRequest, resp *fus
 		if exists != nil {
 			return nil, nil, fuse.EEXIST
 		}
+
 		f := &fsFile{
 			fsFileHeader: fsFileHeader{
-				mode: uint(req.Mode.Perm()) | fsFileTypeNormal,
+				mode: perm | fsFileTypeNormal,
 				name: []byte(req.Name),
 			},
 			inode:  fsn.fs.GenerateInode(fsn.inode, req.Name),
@@ -751,9 +872,20 @@ func (fsn *fsDir) Create(ctx context.Context, req *fuse.CreateRequest, resp *fus
 			parent: fsn,
 			data:   nil,
 		}
+
 		fsn.fs.dirtyLock.Lock()
 		fsn.fs.dirty[f.inode] = f
 		fsn.fs.dirtyLock.Unlock()
+
+		fsn.fs.cacheLock.Lock()
+		fsn.fs.cache[f.inode] = fsCacheEntry{
+			parent:  f.parent,
+			fsn:     f,
+			ts:      uint64(f.ts.Unix()),
+			deleted: false,
+		}
+		fsn.fs.cacheLock.Unlock()
+
 		return f, f, nil
 	}
 
@@ -761,8 +893,6 @@ func (fsn *fsDir) Create(ctx context.Context, req *fuse.CreateRequest, resp *fus
 }
 
 func (fsn *fsDir) commit() error {
-	defer fsn.fs.commitWaitGroup.Done()
-
 	if fsn.parent == nil {
 		return fuse.EIO
 	}
@@ -780,7 +910,18 @@ func (fsn *fsDir) commit() error {
 		wf = fsn.fs.node.getWorkFunction()
 	}
 
-	rec, err := NewRecord(RecordTypeDatum, rdata, links, fsn.fs.maskingKey, [][]byte{fsn.parent.selectorName}, []uint64{fsn.inode}, fsn.fs.authSignature, TimeSec(), wf, fsn.fs.owner)
+	ts := TimeSec()
+
+	fsn.fs.cacheLock.Lock()
+	fsn.fs.cache[fsn.inode] = fsCacheEntry{
+		parent:  fsn.parent,
+		fsn:     fsn,
+		ts:      ts,
+		deleted: false,
+	}
+	fsn.fs.cacheLock.Unlock()
+
+	rec, err := NewRecord(RecordTypeDatum, rdata, links, fsn.fs.maskingKey, [][]byte{fsn.parent.selectorName}, []uint64{fsn.inode}, fsn.fs.authSignature, ts, wf, fsn.fs.owner)
 	if err != nil {
 		return err
 	}
@@ -788,8 +929,12 @@ func (fsn *fsDir) commit() error {
 	return fsn.fs.node.AddRecord(rec)
 }
 
+func (fsn *fsDir) header() *fsFileHeader {
+	return &fsn.fsFileHeader
+}
+
 func (fsn *fsDir) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fuse.SetattrResponse) error {
-	return fuse.ENOTSUP
+	return nil
 }
 
 func (fsn *fsDir) Flush(ctx context.Context, req *fuse.FlushRequest) error {
@@ -802,8 +947,7 @@ func (fsn *fsDir) Release(ctx context.Context, req *fuse.ReleaseRequest) error {
 	delete(fsn.fs.dirty, fsn.inode)
 	fsn.fs.dirtyLock.Unlock()
 	if dirty {
-		fsn.fs.commitWaitGroup.Add(1)
-		go fsn.commit()
+		fsn.fs.commitQueue <- fsn
 	}
 	return nil
 }
@@ -914,10 +1058,11 @@ func (fsn *fsFile) Write(ctx context.Context, req *fuse.WriteRequest, resp *fuse
 }
 
 func (fsn *fsFile) commit() error {
-	defer fsn.parent.fs.commitWaitGroup.Done()
-
-	if fsn.pseudo || ((fsn.mode&fsFileTypeMask) == fsFileTypeLink && len(fsn.data) == 0) {
+	if fsn.pseudo {
 		return nil
+	}
+	if fsn.parent == nil { // sanity check, should be impossible
+		return ErrInvalidObject
 	}
 
 	var fdata []byte
@@ -934,7 +1079,8 @@ func (fsn *fsFile) commit() error {
 	rdata = fsn.fsFileHeader.appendTo(rdata)
 	rdata = append(rdata, fdata...)
 
-	if uint(len(rdata)) > fsn.parent.fs.node.genesisParameters.RecordMaxValueSize {
+	maxValueSize := fsn.parent.fs.node.genesisParameters.RecordMaxValueSize
+	if uint(len(rdata)) > maxValueSize {
 		fsn.fsFileHeader.oversize = true
 	}
 
@@ -948,7 +1094,18 @@ func (fsn *fsFile) commit() error {
 		wf = fsn.parent.fs.node.getWorkFunction()
 	}
 
-	rec, err := NewRecord(RecordTypeDatum, rdata, links, fsn.parent.fs.maskingKey, [][]byte{fsn.parent.selectorName}, []uint64{fsn.inode}, fsn.parent.fs.authSignature, TimeSec(), wf, fsn.parent.fs.owner)
+	ts := TimeSec()
+
+	fsn.parent.fs.cacheLock.Lock()
+	fsn.parent.fs.cache[fsn.inode] = fsCacheEntry{
+		parent:  fsn.parent,
+		fsn:     fsn,
+		ts:      ts,
+		deleted: (fsn.fsFileHeader.mode & fsFileTypeMask) == fsFileTypeDeleted,
+	}
+	fsn.parent.fs.cacheLock.Unlock()
+
+	rec, err := NewRecord(RecordTypeDatum, rdata, links, fsn.parent.fs.maskingKey, [][]byte{fsn.parent.selectorName}, []uint64{fsn.inode}, fsn.parent.fs.authSignature, ts, wf, fsn.parent.fs.owner)
 	if err != nil {
 		return err
 	}
@@ -956,8 +1113,12 @@ func (fsn *fsFile) commit() error {
 	return fsn.parent.fs.node.AddRecord(rec)
 }
 
+func (fsn *fsFile) header() *fsFileHeader {
+	return &fsn.fsFileHeader
+}
+
 func (fsn *fsFile) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fuse.SetattrResponse) error {
-	return fuse.ENOTSUP
+	return nil
 }
 
 func (fsn *fsFile) Flush(ctx context.Context, req *fuse.FlushRequest) error {
@@ -965,7 +1126,7 @@ func (fsn *fsFile) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 }
 
 func (fsn *fsFile) Release(ctx context.Context, req *fuse.ReleaseRequest) error {
-	if fsn.pseudo {
+	if fsn.pseudo || fsn.parent == nil {
 		return nil
 	}
 	fsn.parent.fs.dirtyLock.Lock()
@@ -973,8 +1134,7 @@ func (fsn *fsFile) Release(ctx context.Context, req *fuse.ReleaseRequest) error 
 	delete(fsn.parent.fs.dirty, fsn.inode)
 	fsn.parent.fs.dirtyLock.Unlock()
 	if dirty {
-		fsn.parent.fs.commitWaitGroup.Add(1)
-		go fsn.commit()
+		fsn.parent.fs.commitQueue <- fsn
 	}
 	return nil
 }
