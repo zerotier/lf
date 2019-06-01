@@ -5,6 +5,5 @@
 .DS_Store
 *.dSYM
 /lf
-/lf-db-test
 *~
 /genesis*

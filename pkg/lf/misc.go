@@ -104,23 +104,30 @@ func integerSqrtRounded(op uint32) (res uint32) {
 	return
 }
 
-type paranoidSecureRandom struct{ cipher cipher.Stream }
+type paranoidSecureRandom struct {
+	b [16]byte
+	c cipher.Block
+}
 
 func (r *paranoidSecureRandom) Read(buf []byte) (int, error) {
 	_, err := io.ReadFull(secrand.Reader, buf)
-	r.cipher.XORKeyStream(buf, buf)
+	for i := range buf {
+		ii := i & 15
+		if ii == 0 {
+			r.c.Encrypt(r.b[:],r.b[:])
+		}
+		buf[i] ^= r.b[ii]
+	}
 	return len(buf), err
 }
 
 var secureRandom = func() *paranoidSecureRandom {
 	var r paranoidSecureRandom
-	var cipherKey [32]byte
+	var cipherKey [16]byte
 	binary.LittleEndian.PutUint64(cipherKey[0:8], uint64(time.Now().UnixNano()))
 	binary.LittleEndian.PutUint32(cipherKey[8:12], uint32(os.Getpid()))
 	binary.LittleEndian.PutUint32(cipherKey[12:16], uint32(uintptr(unsafe.Pointer(&cipherKey))))
-	secrand.Read(cipherKey[16:32])
-	c, _ := aes.NewCipher(cipherKey[0:16])
-	r.cipher = cipher.NewCFBEncrypter(c, cipherKey[16:32])
+	r.c, _ = aes.NewCipher(cipherKey[:])
 	return &r
 }()
 

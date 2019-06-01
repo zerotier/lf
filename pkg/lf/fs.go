@@ -305,6 +305,7 @@ func NewFS(n *Node, mountPoint string, rootSelectorName []byte, owner *Owner, au
 						e := recover()
 						if e != nil {
 							fs.node.log[LogLevelWarning].Printf("WARNING: panic during FS commit operation: %v", e)
+							//debug.PrintStack()
 						}
 						fswg.Done()
 					}()
@@ -1148,7 +1149,10 @@ func (fsn *fsFile) commit() error {
 			for _, results := range qr {
 				for _, result := range results {
 					if len(result.Value) > 0 {
-						return result.Record, nil
+						h := sha256.Sum256(result.Value)
+						if bytes.Equal(h[:], chunkHash) {
+							return result.Record, nil
+						}
 					}
 				}
 			}

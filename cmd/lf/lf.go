@@ -1197,7 +1197,11 @@ func main() {
 			go lf.WharrgarblInitTable(path.Join(*basePath, "wharrgarbl-table.bin"))
 			lf.TestWharrgarbl(os.Stdout)
 		case "database":
-			lf.TestDatabase("./lf-db-test", os.Stdout)
+			tmpdir,err := ioutil.TempDir("", "lf-db-test")
+			if err != nil {
+				fmt.Printf("ERROR: cannot create temporary test database directory: %s\n",err.Error())
+			}
+			lf.TestDatabase(tmpdir, os.Stdout)
 		default:
 			printHelp("")
 		}
