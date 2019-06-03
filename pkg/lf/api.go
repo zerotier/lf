@@ -77,9 +77,10 @@ type Peer struct {
 
 // MountPoint describes a FUSE lffs mount point
 type MountPoint struct {
-	Path             string
-	RootSelectorName []byte
-	Owner            *Owner
+	Path             string `json:",omitempty"`
+	RootSelectorName Blob   `json:",omitempty"`
+	Owner            *Owner `json:",omitempty"`
+	MaskingKey       Blob   `json:",omitempty"`
 	MaxFileSize      int
 }
 

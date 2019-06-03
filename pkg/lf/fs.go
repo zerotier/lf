@@ -261,7 +261,7 @@ func NewFS(n *Node, mountPoint string, rootSelectorName []byte, owner *Owner, ma
 		fuse.AllowOther(),
 	)
 	if err != nil {
-		n.log[LogLevelWarning].Printf("fs: FUSE mount failed: %s", err.Error())
+		n.log[LogLevelWarning].Printf("lffs: FUSE mount failed: %s", err.Error())
 		return nil, err
 	}
 
@@ -280,18 +280,18 @@ func NewFS(n *Node, mountPoint string, rootSelectorName []byte, owner *Owner, ma
 			isClosed := fs.fconn == nil
 			fs.fconnLock.Unlock()
 			if !isClosed {
-				n.log[LogLevelWarning].Printf("WARNING: fs: FUSE subsystem failed to enter server mode: %s", fs.fconn.MountError.Error())
+				n.log[LogLevelWarning].Printf("WARNING: lffs: FUSE subsystem failed to enter server mode: %s", fs.fconn.MountError.Error())
 			}
 		} else {
-			n.log[LogLevelNormal].Printf("fs: serving at %s", mountPoint)
+			n.log[LogLevelNormal].Printf("lffs: serving at %s", mountPoint)
 			err := fusefs.Serve(fs.fconn, fs)
 			fs.fconnLock.Lock()
 			isClosed := fs.fconn == nil
 			fs.fconnLock.Unlock()
 			if err != nil && !isClosed {
-				n.log[LogLevelWarning].Printf("WARNING: fs: FUSE subsystem failed to enter server mode: %s", err.Error())
+				n.log[LogLevelWarning].Printf("WARNING: lffs: FUSE subsystem failed to enter server mode: %s", err.Error())
 			} else {
-				n.log[LogLevelNormal].Printf("fs: unmounted from %s", mountPoint)
+				n.log[LogLevelNormal].Printf("lffs: unmounted from %s", mountPoint)
 			}
 			fuse.Unmount(mountPoint)
 		}
@@ -322,7 +322,7 @@ func NewFS(n *Node, mountPoint string, rootSelectorName []byte, owner *Owner, ma
 					defer func() {
 						e := recover()
 						if e != nil {
-							fs.node.log[LogLevelWarning].Printf("WARNING: panic during FS commit operation: %v", e)
+							fs.node.log[LogLevelWarning].Printf("WARNING: lffs: panic during FS commit operation: %v", e)
 							//debug.PrintStack()
 						}
 						fswg.Done()
@@ -587,7 +587,7 @@ func (fsn *fsDir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 				_, err := fh.readFrom(result.Value)
 				if err == nil && len(fh.name) > 0 {
 					name := string(fh.name)
-					if name != ".." && name != "." && !strings.ContainsAny(name, "/\\") {
+					if fsIsValidExternalFilename(name) {
 						inode := fsn.fs.GenerateInode(fsn.inode, name)
 
 						ts := result.Record.Timestamp

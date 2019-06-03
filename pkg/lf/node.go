@@ -444,6 +444,27 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 
 	n.log[LogLevelNormal].Print("--- node startup successful")
 
+	go func() {
+		var mounts []MountPoint
+		mj, _ := ioutil.ReadFile(path.Join(basePath, "mounts.json"))
+		if len(mj) > 0 {
+			err := json.Unmarshal(mj, &mounts)
+			if err != nil {
+				n.log[LogLevelWarning].Printf("WARNING: lffs: ignoring mounts.json due to JSON parse error: %s", err.Error())
+			}
+			for _, mp := range mounts {
+				if atomic.LoadUint32(&n.shutdown) != 0 {
+					break
+				}
+				_, err = n.Mount(mp.Owner, mp.MaxFileSize, mp.Path, mp.RootSelectorName, mp.MaskingKey)
+				if err != nil {
+					n.log[LogLevelWarning].Printf("WARNING: lffs: cannot mount %s: %s", mp.Path, err.Error())
+				}
+				n.log[LogLevelNormal].Printf("lffs: mounted %s", mp.Path)
+			}
+		}
+	}()
+
 	return n, nil
 }
 
