@@ -68,6 +68,16 @@ func fsLfOwnerToUser(o []byte) (string, uint32) {
 	return (fsUsernamePrefixes[len(es)] + es), uid
 }
 
+func fsIsValidExternalFilename(name string) bool {
+	if len(name) > 0 {
+		if name == "." || name == ".." || name == ".passwd" || strings.ContainsAny(name, "/\\") {
+			return false
+		}
+		return true
+	}
+	return false
+}
+
 type fsFuseNode interface {
 	fusefs.Node
 	fusefs.Handle
@@ -85,6 +95,7 @@ type fsCacheEntry struct {
 type FS struct {
 	node             *Node
 	mountPoint       string
+	maxFileSize      int
 	rootSelectorName []byte
 	root             fsDir
 	owner            *Owner
@@ -175,7 +186,7 @@ func (h *fsFileHeader) readFrom(b []byte) ([]byte, error) {
 //////////////////////////////////////////////////////////////////////////////
 
 // NewFS creates and mounts a new virtual filesystem.
-func NewFS(n *Node, mountPoint string, rootSelectorName []byte, owner *Owner, authSignature []byte, maskingKey []byte) (*FS, error) {
+func NewFS(n *Node, mountPoint string, rootSelectorName []byte, owner *Owner, maxFileSize int,authSignature []byte, maskingKey []byte) (*FS, error) {
 	if n.genesisParameters.RecordMaxValueSize < fsMinRecordValueSize {
 		return nil, fmt.Errorf("LF data store must allow record values of at least %d bytes to use lffs", fsMinRecordValueSize)
 	}
@@ -186,10 +197,17 @@ func NewFS(n *Node, mountPoint string, rootSelectorName []byte, owner *Owner, au
 		return nil, errors.New("mount point is not a directory (mkdir attempt failed)")
 	}
 
+	if maxFileSize <= 0 {
+		maxFileSize = fsMaxFileSize
+	}
+	if maxFileSize > fsMaxFileSize {
+		return nil, fmt.Errorf("max file size cannot be larger than %d", fsMaxFileSize)
+	}
 	ownerName, ownerUID := fsLfOwnerToUser(owner.Public)
 	fs := &fsImpl{FS: FS{
 		node:             n,
 		mountPoint:       mountPoint,
+		maxFileSize:      maxFileSize,
 		rootSelectorName: rootSelectorName,
 		root: fsDir{
 			fsFileHeader: fsFileHeader{
@@ -653,7 +671,7 @@ func (fsn *fsDir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 }
 
 func (fsn *fsDir) internalMkdir(ctx context.Context, name string, mode uint, commitNow bool) (*fsDir, error) {
-	if len(name) == 0 || name == "." || name == ".." {
+	if !fsIsValidExternalFilename(name) {
 		return nil, fuse.EIO
 	}
 
@@ -695,11 +713,8 @@ func (fsn *fsDir) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (fusefs.Nod
 }
 
 func (fsn *fsDir) Remove(ctx context.Context, req *fuse.RemoveRequest) error {
-	if req.Name == ".passwd" {
-		if len(fsn.fsFileHeader.name) == 0 {
-			return fuse.EPERM
-		}
-		return fuse.ENOENT
+	if !fsIsValidExternalFilename(req.Name) {
+		return fuse.EIO
 	}
 
 	exists, _ := fsn.Lookup(ctx, req.Name)
@@ -727,6 +742,9 @@ func (fsn *fsDir) Remove(ctx context.Context, req *fuse.RemoveRequest) error {
 
 func (fsn *fsDir) Rename(ctx context.Context, req *fuse.RenameRequest, newDir fusefs.Node) error {
 	if newDir == nil {
+		return fuse.EIO
+	}
+	if !fsIsValidExternalFilename(req.NewName) {
 		return fuse.EIO
 	}
 	nd, ok := newDir.(*fsDir)
@@ -790,14 +808,8 @@ func (fsn *fsDir) Rename(ctx context.Context, req *fuse.RenameRequest, newDir fu
 }
 
 func (fsn *fsDir) Symlink(ctx context.Context, req *fuse.SymlinkRequest) (fusefs.Node, error) {
-	if len(req.NewName) == 0 || len(req.Target) == 0 {
+	if !fsIsValidExternalFilename(req.NewName) || len(req.Target) == 0 {
 		return nil, fuse.EIO
-	}
-	if req.NewName == ".passwd" {
-		if len(fsn.fsFileHeader.name) == 0 {
-			return nil, fuse.EEXIST
-		}
-		return nil, fuse.EPERM
 	}
 
 	exists, _ := fsn.Lookup(ctx, req.NewName)
@@ -824,14 +836,8 @@ func (fsn *fsDir) Symlink(ctx context.Context, req *fuse.SymlinkRequest) (fusefs
 }
 
 func (fsn *fsDir) Create(ctx context.Context, req *fuse.CreateRequest, resp *fuse.CreateResponse) (fusefs.Node, fusefs.Handle, error) {
-	if len(req.Name) == 0 || req.Name == "." || req.Name == ".." {
+	if !fsIsValidExternalFilename(req.Name) {
 		return nil, nil, fuse.EIO
-	}
-	if req.Name == ".passwd" {
-		if len(fsn.fsFileHeader.name) == 0 {
-			return nil, nil, fuse.EEXIST
-		}
-		return nil, nil, fuse.EPERM
 	}
 
 	//perm := uint(req.Mode.Perm())
@@ -1058,7 +1064,7 @@ func (fsn *fsFile) Write(ctx context.Context, req *fuse.WriteRequest, resp *fuse
 	if len(req.Data) == 0 {
 		return nil
 	}
-	if req.Offset >= fsMaxFileSize {
+	if req.Offset >= int64(fsn.parent.fs.maxFileSize) {
 		return fuse.EIO
 	}
 
@@ -1071,8 +1077,8 @@ func (fsn *fsFile) Write(ctx context.Context, req *fuse.WriteRequest, resp *fuse
 	defer fsn.writeLock.Unlock()
 
 	eofPos := int(req.Offset + int64(len(req.Data)))
-	if eofPos > fsMaxFileSize {
-		eofPos = fsMaxFileSize
+	if eofPos > fsn.parent.fs.maxFileSize {
+		eofPos = fsn.parent.fs.maxFileSize
 	}
 	if eofPos == int(req.Offset) {
 		return nil

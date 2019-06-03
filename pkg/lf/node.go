@@ -125,20 +125,20 @@ type knownPeer struct {
 
 // Node is an instance of a full LF node supporting both P2P and HTTP access.
 type Node struct {
-	basePath                 string
-	peersFilePath            string
-	p2pPort                  int
-	httpPort                 int
-	localTest                bool
-	log                      [logLevelCount]*log.Logger
-	httpTCPListener          *net.TCPListener
-	httpServer               *http.Server
-	p2pTCPListener           *net.TCPListener
-	workFunction             *Wharrgarblr
-	workFunctionLock         sync.Mutex
-	mountPoints              map[string]*FS
-	mountPointsLock          sync.Mutex
-	db                       db
+	basePath         string
+	peersFilePath    string
+	p2pPort          int
+	httpPort         int
+	localTest        bool
+	log              [logLevelCount]*log.Logger
+	httpTCPListener  *net.TCPListener
+	httpServer       *http.Server
+	p2pTCPListener   *net.TCPListener
+	workFunction     *Wharrgarblr
+	workFunctionLock sync.Mutex
+	mountPoints      map[string]*FS
+	mountPointsLock  sync.Mutex
+	db               db
 
 	owner        *Owner // Owner for commentary, key also currently used for ECDH on link
 	identity     []byte // Compressed public key from owner
@@ -444,8 +444,6 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 
 	n.log[LogLevelNormal].Print("--- node startup successful")
 
-	n.Mount("/tmp/lffs", []byte("com.zerotier.lffs"), nil)
-
 	return n, nil
 }
 
@@ -513,13 +511,16 @@ func (n *Node) Stop() {
 }
 
 // Mount mounts the data store under a given root selector name into the host filesystem using FUSE.
-func (n *Node) Mount(mountPoint string, rootSelectorName []byte, maskingKey []byte) (*FS, error) {
+func (n *Node) Mount(owner *Owner, maxFileSize int, mountPoint string, rootSelectorName []byte, maskingKey []byte) (*FS, error) {
 	n.mountPointsLock.Lock()
 	defer n.mountPointsLock.Unlock()
 	if _, have := n.mountPoints[mountPoint]; have {
 		return nil, ErrAlreadyMounted
 	}
-	fs, err := NewFS(n, mountPoint, rootSelectorName, n.owner, nil, maskingKey)
+	if owner == nil {
+		owner = n.owner
+	}
+	fs, err := NewFS(n, mountPoint, rootSelectorName, owner, maxFileSize, nil, maskingKey)
 	if err != nil {
 		return nil, err
 	}
@@ -546,7 +547,8 @@ func (n *Node) Mounts() (m []MountPoint) {
 		m = append(m, MountPoint{
 			Path:             p,
 			RootSelectorName: fs.rootSelectorName,
-			Owner:            fs.owner.Public,
+			Owner:            fs.owner,
+			MaxFileSize:      fs.maxFileSize,
 		})
 	}
 	n.mountPointsLock.Unlock()

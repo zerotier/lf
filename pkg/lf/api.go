@@ -79,7 +79,8 @@ type Peer struct {
 type MountPoint struct {
 	Path             string
 	RootSelectorName []byte
-	Owner            OwnerPublic
+	Owner            *Owner
+	MaxFileSize      int
 }
 
 // APIStatusResult contains status information about this node and the network it belongs to.

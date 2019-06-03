@@ -163,7 +163,7 @@ Application developers must be aware of this behavior and issue fully specified 
 
 Also note that the second selector is cryptographic gobbleddegook. You didn't tell LF what it is, so all it can show you is its raw form. Selectors are blind (but still sortable) binary keys to those who don't know them.
 
-### Running a Node
+### Running a Full Node
 
 Running a node on the public network is easy:
 
@@ -171,19 +171,51 @@ Running a node on the public network is easy:
 $ ./lf node-start &
 ```
 
-Obviously you'll want to set this up via *systemd* or some other process-supervising system to run it on a real server.
+If you are a normal user the node will keep its files in `$HOME/.lf`. If you are root it will be `/var/lib/lf`. Obviously you'll want to set this up via *systemd* or some other process-supervising system to run it on a real server.
 
-To see what your new node is doing, type:
+Nodes listen by default on P2P port 9908 and HTTP port 9980. These can be changed with command line options.
 
-```text
-$ tail -f ~/.lf/node.log
-```
+Here are some of the node-specific files you'll see in the node's home directory:
 
-If you are running as root instead of a normal user, that will be `/var/lib/lf/node.log`. In the same directory as the log you'll see numerous other files that contain data and meta-data.
+* `lf.pid`: PID of running node
+* `node.log`: Node log output (`tail -f` this file to watch your node synchronize)
+* `identity-secret.pem`: Secret ECC key for node's commentary and also for encryption of node-to-node P2P communications
+* `authtoken.secret`: HTTP API bearer auth token.
+* `peers.json`: Periodically updated to cache information about P2P peers of this node
+* `genesis.lf`: Genesis records for the network this node participates in
+* `node.db`: SQLite indexing and meta-data database
+* `records.lf`: Flat data file containing all records in binary serialized format. This file will get quite large over time.
+* `weights.b??`: Record proof of work weights with 96-bit weights striped across three memory mapped files
+* `graph.bin`: Memory mapped record linkage graph data structure
+* `wharrgarbl-table.bin`: Static table used by proof of work algorithm
 
-You can watch the log and watch your node synchronize. Once that happens you can execute queries against it instead of against `lf.zerotier.com`. Type `./lf url list` and you'll see that the local URL of the node should have been added to the top of the client URL list automatically (assuming you're running the client as the same user as the node).
+The node will also modify `client.json` to add its own local (127.0.0.1) HTTP URL so that client queries will by default go to the local LF node.
 
-Nodes are currently pretty sensitive to crashes and loss of power. If that happens you might have to delete the node's data files and re-synchronize it. We'll probably improve this in the future.
+Watch `node.log` after you start your server for the first time and you'll see it synchronizing with the network. This can take a while. Once the node is fully synchronized you should be able to make queries against any data.
+
+A few caveats for running nodes:
+
+* We recommend a 64-bit system with a bare minimum of 1gb RAM for full nodes. Full nodes usually use between 384mb and 1gb of RAM and may also use upwards of 1gb of virtual address space for memory mapped files. 32-bit systems may have issues with address space exhaustion.
+* Don't locate the node's files on a network share (NFS, CIFS, VM-host mount, etc.) as LF makes heavy use of memory mapping and this does not always play well with network drives. It could be slow, unreliable, or might not work at all. Needless to say a cluster of LF nodes must all have their own storage. Pooling storage isn't possible and defeats the purpose anyway.
+* Hard-stopping a node with `kill -9` or a hard system shutdown may corrupt the database. We plan to improve this in the future but right now the code is not very tolerant of this.
+
+### LFFS
+
+Full nodes have the capability to mount sections of the data store on the host as a filesystem using FUSE. This works on Linux and Macintosh systems as long as FUSE is installed (see [OSXFUSE](https://osxfuse.github.io) for Mac). This offers a very easy and fast way for other software to use LF as a shared state cache.
+
+Right now LFFS is somewhat limited:
+
+* This virtual filesystem is absolutely **not** suitable for things like databases or other things that do a lot of random writes and use advanced I/O features!
+* Sizes are limited to 1mb, which is quite excessive for LF! Setting a lower limit in `mounts.json` is recommended.
+* Hard links, special modes like setuid/setgid, named pipes, device nodes, and extended attributes are not supported.
+* Filesystem permission and ownership changes are not supported and chmod/chown are silently ignored.
+* Name length is limited to 511 bytes. This is for names within a directory. There is no limit to how many directories can be nested.
+* Committing writes is slow if you must perform proof of work, and there's currently no way to cancel a commit in progress. Local writes will appear immediately but their propagation across the network might take a while especially if PoW is needed.
+* Changes to `mounts.json` require a node restart (we'll add it to the API at some point).
+* A single LF owner is used for all new files under a mount and there's no way to change this without remounting.
+* Once a filename is claimed by an owner there is currently no way to transfer ownership.
+
+Some of these limitations might get fixed in the future. Others are intrinsic to the system.
 
 ## Sol: The Public Network
 
