@@ -26,15 +26,15 @@
 
 package lf
 
-// #cgo CFLAGS: -O3
-// #cgo LDFLAGS: -lsqlite3
+//#cgo CFLAGS: -O -g
+//#cgo LDFLAGS: -lsqlite3
 //#include <stdint.h>
 //#define ZTLF_GOLANG 1
 //struct ZTLF_DB;
 //extern void ztlfLogOutputCCallback(int,const char *,int,const char *,void *);
 //extern void ztlfSyncCCallback(struct ZTLF_DB *db,const void *,uint64_t,unsigned int,int,void *);
-// #include "./native/db.h"
-// #include "./native/db.c"
+//#include "./native/db.h"
+//#include "./native/db.c"
 import "C"
 
 import (

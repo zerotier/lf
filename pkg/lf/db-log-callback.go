@@ -28,8 +28,7 @@ package lf
 
 // Callbacks called from C have to be in a separate file due to cgo linking weirdness.
 
-// #cgo CFLAGS: -O3
-// #include "./native/db.h"
+//#include <stdint.h>
 import "C"
 
 import (
