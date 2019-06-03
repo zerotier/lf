@@ -75,15 +75,6 @@ type Peer struct {
 	Identity Blob   //
 }
 
-// MountPoint describes a FUSE lffs mount point
-type MountPoint struct {
-	Path             string `json:",omitempty"`
-	RootSelectorName Blob   `json:",omitempty"`
-	Owner            *Owner `json:",omitempty"`
-	MaskingKey       Blob   `json:",omitempty"`
-	MaxFileSize      int
-}
-
 // APIStatusResult contains status information about this node and the network it belongs to.
 type APIStatusResult struct {
 	Software          string            `json:",omitempty"` // Software implementation name
@@ -104,6 +95,15 @@ type APIStatusResult struct {
 	LocalTestMode     bool              ``                  // If true, this node is in local test mode
 	Identity          Blob              `json:",omitempty"` // This node's peer identity
 	Peers             []Peer            `json:",omitempty"` // Currently connected peers
+}
+
+// MountPoint describes a FUSE lffs mount point
+type MountPoint struct {
+	Path             string `json:",omitempty"`
+	RootSelectorName Blob   `json:",omitempty"`
+	Owner            *Owner `json:",omitempty"`
+	MaskingKey       Blob   `json:",omitempty"`
+	MaxFileSize      int
 }
 
 //////////////////////////////////////////////////////////////////////////////
