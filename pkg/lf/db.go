@@ -26,7 +26,7 @@
 
 package lf
 
-//#cgo CFLAGS: -O -g
+//#cgo CFLAGS: -O3
 //#cgo LDFLAGS: -lsqlite3
 //#include <stdint.h>
 //#define ZTLF_GOLANG 1
