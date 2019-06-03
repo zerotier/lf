@@ -88,8 +88,7 @@ type APIStatusResult struct {
 	DataSize          uint64            ``                  // Total size of records in database in bytes
 	FullySynchronized bool              ``                  // True if there are no dangling links (excluding abandoned ones)
 	GenesisParameters GenesisParameters ``                  // Network parameters
-	OracleOwnerPublic OwnerPublic       `json:",omitempty"` // This node's oracle owner public
-	Oracle            bool              ``                  // Is this node a currently active oracle?
+	Oracle            OwnerPublic       `json:",omitempty"` // Owner public if this node is an oracle, empty otherwise
 	P2PPort           int               ``                  // This node's P2P port
 	HTTPPort          int               ``                  // This node's HTTP port
 	LocalTestMode     bool              ``                  // If true, this node is in local test mode
@@ -99,10 +98,12 @@ type APIStatusResult struct {
 
 // MountPoint describes a FUSE lffs mount point
 type MountPoint struct {
-	Path             string `json:",omitempty"`
-	RootSelectorName Blob   `json:",omitempty"`
-	Owner            *Owner `json:",omitempty"`
-	MaskingKey       Blob   `json:",omitempty"`
+	Path             string      `json:",omitempty"`
+	RootSelectorName Blob        `json:",omitempty"`
+	Owner            OwnerPublic `json:",omitempty"`
+	OwnerPrivate     Blob        `json:",omitempty"`
+	MaskingKey       Blob        `json:",omitempty"` // masking key to override default value which is the root selector name
+	Passphrase       string      `json:",omitempty"` // if present is used to deterministically compute OwnerPrivate and MaskingKey
 	MaxFileSize      int
 }
 
@@ -421,6 +422,11 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 			rc, ds := n.db.stats()
 			now := time.Now()
 
+			var oracle OwnerPublic
+			if atomic.LoadUint32(&n.commentary) != 0 {
+				oracle = n.owner.Public
+			}
+
 			apiSendObj(out, req, http.StatusOK, &APIStatusResult{
 				Software:          SoftwareName,
 				Version:           Version,
@@ -433,8 +439,7 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 				DataSize:          ds,
 				FullySynchronized: (atomic.LoadUint32(&n.synchronized) != 0),
 				GenesisParameters: n.genesisParameters,
-				OracleOwnerPublic: n.owner.Public,
-				Oracle:            (atomic.LoadUint32(&n.commentary) != 0),
+				Oracle:            oracle,
 				P2PPort:           n.p2pPort,
 				HTTPPort:          n.httpPort,
 				LocalTestMode:     n.localTest,

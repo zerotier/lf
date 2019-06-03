@@ -456,7 +456,31 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 				if atomic.LoadUint32(&n.shutdown) != 0 {
 					break
 				}
-				_, err = n.Mount(mp.Owner, mp.MaxFileSize, mp.Path, mp.RootSelectorName, mp.MaskingKey)
+				var owner *Owner
+				var maskingKey []byte
+				if len(mp.Passphrase) > 0 {
+					pp := []byte(mp.Passphrase)
+					mkh := sha256.Sum256(pp)
+					mkh = sha256.Sum256(mkh[:]) // double hash to ensure difference from seededprng
+					maskingKey = mkh[:]
+					owner, err = NewOwnerFromSeed(OwnerTypeEd25519, pp)
+					if err != nil {
+						n.log[LogLevelWarning].Printf("WARNING: lffs: cannot mount %s: error generating owner from passphrase: %s", mp.Path, err.Error())
+						continue
+					}
+				} else {
+					if len(mp.OwnerPrivate) > 0 {
+						owner,err = NewOwnerFromPrivateBytes(mp.OwnerPrivate)
+						if err != nil {
+							n.log[LogLevelWarning].Printf("WARNING: lffs: cannot mount %s: invalid owner private key: %s", mp.Path, err.Error())
+							continue
+						}
+					}
+					if len(mp.MaskingKey) > 0 {
+						maskingKey = mp.MaskingKey
+					}
+				}
+				_, err = n.Mount(owner, mp.MaxFileSize, mp.Path, mp.RootSelectorName, maskingKey)
 				if err != nil {
 					n.log[LogLevelWarning].Printf("WARNING: lffs: cannot mount %s: %s", mp.Path, err.Error())
 				}
@@ -561,13 +585,21 @@ func (n *Node) Unmount(mountPoint string) error {
 }
 
 // Mounts returns a list of mount points for this node.
-func (n *Node) Mounts() (m []MountPoint) {
+func (n *Node) Mounts(includeSecrets bool) (m []MountPoint) {
 	n.mountPointsLock.Lock()
 	for p, fs := range n.mountPoints {
+		var op Blob
+		var mk Blob
+		if includeSecrets {
+			op, _ = fs.owner.PrivateBytes()
+			mk = fs.maskingKey
+		}
 		m = append(m, MountPoint{
 			Path:             p,
 			RootSelectorName: fs.rootSelectorName,
-			Owner:            fs.owner,
+			Owner:            fs.owner.Public,
+			OwnerPrivate:     op,
+			MaskingKey:       mk,
 			MaxFileSize:      fs.maxFileSize,
 		})
 	}
