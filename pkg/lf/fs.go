@@ -83,6 +83,7 @@ type fsFuseNode interface {
 	fusefs.Handle
 	commit() error
 	header() *fsFileHeader
+	writable() bool
 }
 
 type fsCacheEntry struct {
@@ -220,6 +221,7 @@ func NewFS(n *Node, mountPoint string, rootSelectorName []byte, owner *Owner, ma
 			gid:          uint32(os.Getgid()),
 			selectorName: rootSelectorName,
 			keyRange:     [2]Blob{MakeSelectorKey(rootSelectorName, 0), MakeSelectorKey(rootSelectorName, OrdinalMaxValue)},
+			owner:        owner,
 		},
 		owner:         owner,
 		ownerUID:      ownerUID,
@@ -245,7 +247,7 @@ func NewFS(n *Node, mountPoint string, rootSelectorName []byte, owner *Owner, ma
 
 	//fuse.Debug = func(msg interface{}) { fmt.Printf("%v\n", msg) }
 
-	n.log[LogLevelNormal].Printf("fs: mounting %s at %s with records owned by %s", rootSelectorName, mountPoint, owner.String())
+	n.log[LogLevelNormal].Printf("lffs: mounting %s at %s with records owned by %s", rootSelectorName, mountPoint, owner.String())
 	fuse.Unmount(mountPoint)
 	fs.fconn, err = fuse.Mount(
 		mountPoint,
@@ -253,7 +255,6 @@ func NewFS(n *Node, mountPoint string, rootSelectorName []byte, owner *Owner, ma
 		fuse.FSName("lffs"),
 		fuse.Subtype("lffs"),
 		fuse.VolumeName("lf-"+n.genesisParameters.Name+"-"+string(nameEscaped)),
-		fuse.WritebackCache(),
 		fuse.LocalVolume(),
 		fuse.NoAppleXattr(),
 		fuse.NoAppleDouble(),
@@ -403,10 +404,11 @@ type fsDir struct {
 	keyRange     [2]Blob   // precomputed (for performance) key range to query all ordinals for entries in this directory
 	parent       *fsDir    // parent directory, if any
 	fs           *fsImpl   // parent FS instance
+	owner        *Owner    // owner instance or nil if none
 }
 
 func (fsn *fsDir) Attr(ctx context.Context, a *fuse.Attr) error {
-	a.Valid = time.Second * 30
+	a.Valid = time.Second * 10
 	a.Inode = fsn.inode
 	a.Size = 0
 	a.Blocks = 0
@@ -414,7 +416,11 @@ func (fsn *fsDir) Attr(ctx context.Context, a *fuse.Attr) error {
 	a.Mtime = fsn.ts
 	a.Ctime = fsn.ts
 	a.Crtime = fsn.ts
-	a.Mode = (os.FileMode(fsn.fsFileHeader.mode) & os.ModePerm) | os.ModeDir
+	modeMask := uint(0x1ff)
+	if !fsn.writable() {
+		modeMask = 0x16d // mask off write flags if we do not own this file
+	}
+	a.Mode = os.FileMode(fsn.fsFileHeader.mode & modeMask) | os.ModeDir
 	a.Nlink = 1
 	a.Uid = fsn.uid
 	a.Gid = fsn.gid
@@ -448,7 +454,7 @@ func (fsn *fsDir) Lookup(ctx context.Context, name string) (fusefs.Node, error) 
 				gid:    fsn.fs.root.gid,
 				parent: fsn,
 				data:   []byte(pwdata.String()),
-				pseudo: true,
+				owner:  nil,
 			}, nil
 		}
 		return nil, fuse.EPERM
@@ -480,7 +486,13 @@ func (fsn *fsDir) Lookup(ctx context.Context, name string) (fusefs.Node, error) 
 				var f fsFile
 				v, err := f.fsFileHeader.readFrom(result.Value)
 				if err == nil && string(f.fsFileHeader.name) == name {
-					ownerName, ownerUID := fsLfOwnerToUser(result.Record.Owner)
+					var owner *Owner
+					if bytes.Equal(result.Record.Owner,fsn.fs.owner.Public) {
+						owner = fsn.fs.owner
+					} else {
+						owner = &Owner{Private: nil, Public: result.Record.Owner}
+					}
+					ownerName, ownerUID := fsLfOwnerToUser(owner.Public)
 					fsn.fs.passwdLock.Lock()
 					fsn.fs.passwd[ownerName] = ownerUID
 					fsn.fs.passwdLock.Unlock()
@@ -504,6 +516,7 @@ func (fsn *fsDir) Lookup(ctx context.Context, name string) (fusefs.Node, error) 
 						f.gid = fsn.fs.root.gid
 						f.parent = fsn
 						f.data = v
+						f.owner = owner
 						return &f, nil
 
 					case fsFileTypeDir:
@@ -524,6 +537,7 @@ func (fsn *fsDir) Lookup(ctx context.Context, name string) (fusefs.Node, error) 
 							keyRange:     [2]Blob{MakeSelectorKey(sn, 0), MakeSelectorKey(sn, OrdinalMaxValue)},
 							parent:       fsn,
 							fs:           fsn.fs,
+							owner:        owner,
 						}, nil
 
 					case fsFileTypeDeleted:
@@ -671,6 +685,9 @@ func (fsn *fsDir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 }
 
 func (fsn *fsDir) internalMkdir(ctx context.Context, name string, mode uint, commitNow bool) (*fsDir, error) {
+	if !fsn.writable() {
+		return nil, fuse.EPERM
+	}
 	if !fsIsValidExternalFilename(name) {
 		return nil, fuse.EIO
 	}
@@ -699,6 +716,7 @@ func (fsn *fsDir) internalMkdir(ctx context.Context, name string, mode uint, com
 		keyRange:     [2]Blob{MakeSelectorKey(sn, 0), MakeSelectorKey(sn, OrdinalMaxValue)},
 		parent:       fsn,
 		fs:           fsn.fs,
+		owner:        fsn.fs.owner,
 	}
 
 	if commitNow {
@@ -721,6 +739,10 @@ func (fsn *fsDir) Remove(ctx context.Context, req *fuse.RemoveRequest) error {
 	if exists == nil {
 		return fuse.ENOENT
 	}
+	existsFsn, _  := exists.(fsFuseNode)
+	if existsFsn == nil || !existsFsn.writable() {
+		return fuse.EPERM
+	}
 
 	f := &fsFile{
 		fsFileHeader: fsFileHeader{
@@ -733,6 +755,7 @@ func (fsn *fsDir) Remove(ctx context.Context, req *fuse.RemoveRequest) error {
 		gid:    fsn.fs.root.gid,
 		parent: fsn,
 		data:   nil,
+		owner:  fsn.fs.owner,
 	}
 
 	fsn.fs.commitQueue <- f
@@ -741,14 +764,18 @@ func (fsn *fsDir) Remove(ctx context.Context, req *fuse.RemoveRequest) error {
 }
 
 func (fsn *fsDir) Rename(ctx context.Context, req *fuse.RenameRequest, newDir fusefs.Node) error {
-	if newDir == nil {
-		return fuse.EIO
-	}
 	if !fsIsValidExternalFilename(req.NewName) {
 		return fuse.EIO
 	}
-	nd, ok := newDir.(*fsDir)
-	if !ok {
+
+	if newDir == nil {
+		return fuse.EIO
+	}
+	nd, _ := newDir.(*fsDir)
+	if nd == nil {
+		return fuse.EIO
+	}
+	if !nd.writable() {
 		return fuse.EIO
 	}
 
@@ -759,6 +786,11 @@ func (fsn *fsDir) Rename(ctx context.Context, req *fuse.RenameRequest, newDir fu
 	if oldNode == nil {
 		return fuse.ENOENT
 	}
+	oldNodeFsn, _ := oldNode.(fsFuseNode)
+	if oldNodeFsn == nil || !oldNodeFsn.writable() {
+		return fuse.EPERM
+	}
+
 	var oldAttr fuse.Attr
 	oldNode.Attr(ctx, &oldAttr)
 
@@ -828,6 +860,7 @@ func (fsn *fsDir) Symlink(ctx context.Context, req *fuse.SymlinkRequest) (fusefs
 		gid:    fsn.fs.root.gid,
 		parent: fsn,
 		data:   []byte(req.Target),
+		owner:  fsn.fs.owner,
 	}
 
 	fsn.fs.commitQueue <- f
@@ -874,6 +907,7 @@ func (fsn *fsDir) Create(ctx context.Context, req *fuse.CreateRequest, resp *fus
 			gid:    fsn.fs.root.gid,
 			parent: fsn,
 			data:   nil,
+			owner:  fsn.fs.owner,
 		}
 
 		fsn.fs.dirtyLock.Lock()
@@ -934,6 +968,10 @@ func (fsn *fsDir) header() *fsFileHeader {
 	return &fsn.fsFileHeader
 }
 
+func (fsn *fsDir) writable() bool {
+	return fsn.owner != nil && fsn.owner.Private != nil
+}
+
 func (fsn *fsDir) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fuse.SetattrResponse) error {
 	return nil
 }
@@ -964,7 +1002,7 @@ type fsFile struct {
 	parent    *fsDir     // parent directory node
 	data      []byte     // file's data
 	writeLock sync.Mutex //
-	pseudo    bool       // if true this file should not be commited to LF
+	owner     *Owner     // owner or nil for pseudo-files
 }
 
 func (fsn *fsFile) dechunk() error {
@@ -1002,7 +1040,7 @@ func (fsn *fsFile) Attr(ctx context.Context, a *fuse.Attr) error {
 	if err != nil {
 		return fuse.EIO
 	}
-	a.Valid = time.Second * 30
+	a.Valid = time.Second * 10
 	a.Inode = fsn.inode
 	a.Size = uint64(len(fsn.data))
 	a.Blocks = a.Size / 512
@@ -1010,10 +1048,14 @@ func (fsn *fsFile) Attr(ctx context.Context, a *fuse.Attr) error {
 	a.Mtime = fsn.ts
 	a.Ctime = fsn.ts
 	a.Crtime = fsn.ts
+	modeMask := uint(0x1ff)
+	if !fsn.writable() {
+		modeMask = 0x16d // mask off write flags if we do not own this file
+	}
 	if (fsn.fsFileHeader.mode & fsFileTypeMask) == fsFileTypeLink {
-		a.Mode = os.FileMode(fsn.fsFileHeader.mode&0x1ff) | os.ModeSymlink
+		a.Mode = os.FileMode(fsn.fsFileHeader.mode&modeMask) | os.ModeSymlink
 	} else {
-		a.Mode = os.FileMode(fsn.fsFileHeader.mode & 0x1ff)
+		a.Mode = os.FileMode(fsn.fsFileHeader.mode & modeMask)
 	}
 	a.Nlink = 1
 	a.Uid = fsn.uid
@@ -1057,8 +1099,11 @@ func (fsn *fsFile) Read(ctx context.Context, req *fuse.ReadRequest, resp *fuse.R
 }
 
 func (fsn *fsFile) Write(ctx context.Context, req *fuse.WriteRequest, resp *fuse.WriteResponse) error {
-	if (fsn.fsFileHeader.mode&fsFileTypeMask) != fsFileTypeNormal || fsn.pseudo {
+	if (fsn.fsFileHeader.mode&fsFileTypeMask) != fsFileTypeNormal {
 		return fuse.EIO
+	}
+	if !fsn.writable() {
+		return fuse.EPERM
 	}
 
 	if len(req.Data) == 0 {
@@ -1106,8 +1151,8 @@ func (fsn *fsFile) Write(ctx context.Context, req *fuse.WriteRequest, resp *fuse
 }
 
 func (fsn *fsFile) commit() error {
-	if fsn.pseudo {
-		return nil
+	if !fsn.writable() {
+		return fuse.EPERM
 	}
 	if fsn.parent == nil { // sanity check, should be impossible
 		return ErrInvalidObject
@@ -1242,6 +1287,10 @@ func (fsn *fsFile) header() *fsFileHeader {
 	return &fsn.fsFileHeader
 }
 
+func (fsn *fsFile) writable() bool {
+	return fsn.owner != nil && fsn.owner.Private != nil
+}
+
 func (fsn *fsFile) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fuse.SetattrResponse) error {
 	return nil
 }
@@ -1251,7 +1300,7 @@ func (fsn *fsFile) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 }
 
 func (fsn *fsFile) Release(ctx context.Context, req *fuse.ReleaseRequest) error {
-	if fsn.pseudo || fsn.parent == nil {
+	if fsn.parent == nil {
 		return nil
 	}
 	fsn.parent.fs.dirtyLock.Lock()

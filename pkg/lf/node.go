@@ -460,7 +460,6 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 				if err != nil {
 					n.log[LogLevelWarning].Printf("WARNING: lffs: cannot mount %s: %s", mp.Path, err.Error())
 				}
-				n.log[LogLevelNormal].Printf("lffs: mounted %s", mp.Path)
 			}
 		}
 	}()
