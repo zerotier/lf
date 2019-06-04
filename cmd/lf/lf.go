@@ -410,7 +410,7 @@ func doGet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool
 	maskKey := getOpts.String("mask", "", "")
 	tStart := getOpts.String("tstart", "", "")
 	tEnd := getOpts.String("tend", "", "")
-	rawOutput := getOpts.Bool("raw",false,"")
+	rawOutput := getOpts.Bool("raw", false, "")
 	urlOverride := getOpts.String("url", "", "")
 	json2 := getOpts.Bool("json", jsonOutput, "") // allow -json after get for convenience
 	getOpts.SetOutput(ioutil.Discard)
@@ -981,8 +981,13 @@ func doMakeGenesis(cfg *lf.ClientConfig, basePath string, args []string) {
 		}
 		g.RecordMaxTimeDrift = atoUI(prompt("Record maximum time drift (seconds) [60]: ", false, "60"))
 		for {
-			err := g.SetAmendableFields(strings.Split(prompt("Amendable fields (comma separated) []: ", false, ""), ","))
-			if err == nil {
+			af := prompt("Amendable fields (comma separated) []: ", false, "")
+			if len(af) > 0 {
+				err := g.SetAmendableFields(strings.Split(af, ","))
+				if err == nil {
+					break
+				}
+			} else {
 				break
 			}
 		}
@@ -1097,7 +1102,7 @@ func doMakeGenesis(cfg *lf.ClientConfig, basePath string, args []string) {
 		g.AuthRequired = q == "Y" || q == "y" || q == "1"
 	}
 
-	fmt.Printf("Genesis parameters:\n%s\nCreating %d genesis records...\n", lf.PrettyJSON(g), g.RecordMinLinks)
+	fmt.Printf("\n%s\nCreating %d genesis records...\n\n", lf.PrettyJSON(g), g.RecordMinLinks)
 
 	genesisRecords, genesisOwner, err := lf.CreateGenesisRecords(lf.OwnerTypeNistP384, &g)
 	if err != nil {
@@ -1197,9 +1202,9 @@ func main() {
 			go lf.WharrgarblInitTable(path.Join(*basePath, "wharrgarbl-table.bin"))
 			lf.TestWharrgarbl(os.Stdout)
 		case "database":
-			tmpdir,err := ioutil.TempDir("", "lf-db-test")
+			tmpdir, err := ioutil.TempDir("", "lf-db-test")
 			if err != nil {
-				fmt.Printf("ERROR: cannot create temporary test database directory: %s\n",err.Error())
+				fmt.Printf("ERROR: cannot create temporary test database directory: %s\n", err.Error())
 			}
 			lf.TestDatabase(tmpdir, os.Stdout)
 		default:

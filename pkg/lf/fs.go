@@ -92,6 +92,11 @@ type fsCacheEntry struct {
 	ts     uint64
 }
 
+type fsPasswdEntry struct {
+	public string // @base62
+	uid    uint32 // computed UID
+}
+
 // FS allows the LF to be mounted as a FUSE filesystem.
 type FS struct {
 	node             *Node
@@ -103,7 +108,7 @@ type FS struct {
 	ownerUID         uint32
 	authSignature    []byte
 	maskingKey       []byte
-	passwd           map[string]uint32
+	passwd           map[string]fsPasswdEntry
 	passwdLock       sync.Mutex
 	dirty            map[uint64]fsFuseNode
 	dirtyLock        sync.Mutex
@@ -149,9 +154,9 @@ const (
 	fsFileTypeDeleted = 0x600 // dead entry (LF itself has no suitable delete semantic, so just mark it as such)
 	fsFileTypeMask    = 0x600 // bit mask for file type from mode
 
-	fsMaxNameLength      = 511       // max length of the name field in fsFileHeader (9-bit size, must be a bit mask)
-	fsMaxFileSize        = 134217728 // sanity limit for global max file size (can be increased... but 128mb is already crazy)
-	fsMinRecordValueSize = 1024      // minimum record value size in LF data store to use lffs
+	fsMaxNameLength      = 511     // max length of the name field in fsFileHeader (9-bit size, must be a bit mask)
+	fsMaxFileSize        = 4194304 // sanity limit for global max file size (can be increased... but 4mb is already crazy)
+	fsMinRecordValueSize = 1024    // minimum record value size in LF data store to use lffs
 )
 
 type fsFileHeader struct {
@@ -227,13 +232,13 @@ func NewFS(n *Node, mountPoint string, rootSelectorName []byte, owner *Owner, ma
 		ownerUID:      ownerUID,
 		authSignature: authSignature,
 		maskingKey:    maskingKey,
-		passwd:        make(map[string]uint32),
+		passwd:        make(map[string]fsPasswdEntry),
 		dirty:         make(map[uint64]fsFuseNode),
 		cache:         make(map[uint64]fsCacheEntry),
 		commitQueue:   make(chan fsFuseNode),
 	}}
 	fs.root.fs = fs
-	fs.passwd[ownerName] = ownerUID
+	fs.passwd[ownerName] = fsPasswdEntry{uid: ownerUID, public: owner.Public.String()}
 
 	// Include only ASCII printable characters in volume name so as not to cause UI issues (Mac Finder only AFIAK).
 	nameEscaped := make([]byte, 0, len(rootSelectorName))
@@ -434,13 +439,15 @@ func (fsn *fsDir) Lookup(ctx context.Context, name string) (fusefs.Node, error) 
 		if len(fsn.fsFileHeader.name) == 0 {
 			var pwdata strings.Builder
 			fsn.fs.passwdLock.Lock()
-			for o, i := range fsn.fs.passwd {
+			for o, pe := range fsn.fs.passwd {
 				pwdata.WriteString(o)
 				pwdata.WriteString(":x:")
-				pwdata.WriteString(strconv.FormatUint(uint64(i), 10))
+				pwdata.WriteString(strconv.FormatUint(uint64(pe.uid), 10))
 				pwdata.WriteRune(':')
 				pwdata.WriteString(strconv.FormatUint(uint64(fsn.gid), 10))
-				pwdata.WriteString("::")
+				pwdata.WriteRune(':')
+				pwdata.WriteString(pe.public)
+				pwdata.WriteRune(':')
 				pwdata.WriteString(fsn.fs.mountPoint)
 				pwdata.WriteString(":/usr/bin/false\n")
 			}
@@ -496,7 +503,7 @@ func (fsn *fsDir) Lookup(ctx context.Context, name string) (fusefs.Node, error) 
 					}
 					ownerName, ownerUID := fsLfOwnerToUser(owner.Public)
 					fsn.fs.passwdLock.Lock()
-					fsn.fs.passwd[ownerName] = ownerUID
+					fsn.fs.passwd[ownerName] = fsPasswdEntry{uid: ownerUID, public: owner.Public.String()}
 					fsn.fs.passwdLock.Unlock()
 
 					if ce.ts > result.Record.Timestamp {
@@ -596,7 +603,7 @@ func (fsn *fsDir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 			if len(result.Value) > 0 {
 				ownerName, ownerUID := fsLfOwnerToUser(result.Record.Owner)
 				fsn.fs.passwdLock.Lock()
-				fsn.fs.passwd[ownerName] = ownerUID
+				fsn.fs.passwd[ownerName] = fsPasswdEntry{uid: ownerUID, public: result.Record.Owner.String()}
 				fsn.fs.passwdLock.Unlock()
 
 				var fh fsFileHeader

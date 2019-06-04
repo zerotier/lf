@@ -141,7 +141,7 @@ $ ./lf node-start &
 
 If you are a normal user the node will keep its files in `$HOME/.lf`. If you are root it will be `/var/lib/lf`. Obviously you'll want to set this up via *systemd* or some other process-supervising system to run it on a real server.
 
-Nodes listen by default on P2P port 9908 and HTTP port 9980. These can be changed with command line options.
+Nodes listen by default on P2P port 9908 and HTTP port 9980. These can be changed with command line options. If you're on a server on the open Internet and are root (or can bind port 443) you can use `-letsencrypt <hostname>` to enable SSL and automatically obtain a certificate from [Let's Encrypt](https://letsencrypt.org).
 
 Here are some of the node-specific files you'll see in the node's home directory:
 
@@ -153,11 +153,11 @@ Here are some of the node-specific files you'll see in the node's home directory
 * `genesis.lf`: Genesis records for the network this node participates in
 * `node.db`: SQLite indexing and meta-data database
 * `records.lf`: Flat data file containing all records in binary serialized format. This file will get quite large over time.
-* `weights.b??`: Record proof of work weights with 96-bit weights striped across three memory mapped files
+* `weights.b??`: Record proof of work weights with 96-bit weights striped across three memory mapped files to reduce I/O load during weight updates
 * `graph.bin`: Memory mapped record linkage graph data structure
 * `wharrgarbl-table.bin`: Static table used by proof of work algorithm
 
-The node will also modify `client.json` to add its own local (127.0.0.1) HTTP URL so that client queries will by default go to the local LF node.
+The node will also create or modify `client.json` to add its own local (127.0.0.1) HTTP URL so that client queries on the local system will use it.
 
 Watch `node.log` after you start your server for the first time and you'll see it synchronizing with the network. This can take a while. Once the node is fully synchronized you should be able to make queries against any data.
 
@@ -171,6 +171,30 @@ A few caveats for running nodes:
 
 Full nodes have the capability to mount sections of the data store on the host as a filesystem using FUSE. This works on Linux and Macintosh systems as long as FUSE is installed (see [OSXFUSE](https://osxfuse.github.io) for Mac). This offers a very easy and fast way for other software to use LF as a shared state cache.
 
+Right now configuring LFFS requires a file called `mounts.json` to be edited in the node's home directory and then the node must be restarted. This file consists of an array of objects representing mount points. Here's an example:
+
+```json
+[
+	{
+		"Path": "/tmp/lffs-public-test",
+		"RootSelectorName": "com.zerotier.lffs.public-test",
+		"MaxFileSize": 4096,
+		"Passphrase": "The sparrow perches on the steeple in the rain."
+	}
+]
+```
+
+That fill will mount a public LFFS data store. **Be aware** that much like ZeroTier public networks we have no control over what is stored there! Of course since the passphrase is shared everyone has the same owner and users are free to delete anything nasty that gets stored.
+
+The complete schema for mount points is:
+
+* **Path**: Path to mount FUSE filesystem on host (must have read/write access).
+* **RootSelectorName**: LF selector name (without ordinal) of filesystem root.
+* **OwnerPrivate**: Owner private key (if omitted the node's identity is used).
+* **MaskingKey**: Masking key to encrypt record (file) contents (if omitted root selector name is used).
+* **Passphrase**: If present this overrides both **OwnerPrivate** and **MaskingKey** and is used to generate both.
+* **MaxFileSize**: This limits the maximum size of locally written files. Files larger than this can appear if someone else wrote them. The hard global maximum is 4mb. Note that large files can take a *very* long time to commit due to proof of work on public networks!
+
 Right now LFFS is somewhat limited:
 
 * This virtual filesystem is absolutely **not** suitable for things like databases or other things that do a lot of random writes and use advanced I/O features!
@@ -179,11 +203,22 @@ Right now LFFS is somewhat limited:
 * Filesystem permission and ownership changes are not supported and chmod/chown are silently ignored.
 * Name length is limited to 511 bytes. This is for names within a directory. There is no limit to how many directories can be nested.
 * Committing writes is slow if you must perform proof of work, and there's currently no way to cancel a commit in progress. Local writes will appear immediately but their propagation across the network might take a while especially if PoW is needed.
-* Changes to `mounts.json` require a node restart (we'll add it to the API at some point).
 * A single LF owner is used for all new files under a mount and there's no way to change this without remounting.
 * Once a filename is claimed by an owner there is currently no way to transfer ownership.
 
 Some of these limitations might get fixed in the future. Others are intrinsic to the system.
+
+Files in LFFS are stored in LF itself using a simple schema designed for speed.
+
+All entries in a given directory are stored under that directory's selector with ordinals equal to their inodes. A file's inode is the CRC64 of its name plus the inode of its parent directory. There is a very small chance of inode collision but this shouldn't be an issue unless a directory were to accumulate billions of files. Subdirectories exist as entries within their parent directory to allow them to show up in listings, but the files beneath them will be under their selector and not the parent's. A subdirectory's selector name is simply equal to the parent's selector name followed by `/<subdirectory>`.
+
+Nested multiple selectors could have been used but this would have been a bit slower and would have limited depth to 15.
+
+Small files are stored as record values prefixed by a header containing the file's full name and other information. Files larger than the maximum size of a record value are stored by being broken down into chunks and those chunks stored if they don't already exist in the data store. The selector and masking key for each chunk is the SHA256 hash of its content. This content addressing scheme creates global (across the entire data store) deduplicating storage behavior without compromising privacy since the expected hashed content of a chunk must be known to find it. Chunking is done iteratively until the root of this tree of chunks fits in a single record. The chunking algorithm breaks chunks at data-dependent positions in a manner similar to a binary patching algorithm, causing small changes to the file to often require only a few records to be written.
+
+Deletes are accomplished by storing a special record indicating that the file was deleted. Note that right now deleted names are still claimed by their owner. This might change in the future.
+
+All files in the FUSE mount will appear as globally readable on the host system. UIDs are computed from a hash of the corresponding record's owner. File permissions will indicate that a file is writable if this is the same owner as the one used to mount the filesystem. The GID of all files will equal the GID of the running LF node process. A virtual file called `.passwd` is always present in the root of the FUSE mount and contains a simulated Unix password file mapping all the owners that have so far been observed to hash-based usernames.
 
 ## Sol: The Public Network
 
@@ -194,6 +229,64 @@ Sol permits record values up to 1024 bytes in size, though records that big take
 We intend to use LF (via Sol) to decentralize our root server infrastructure. Our roots service quite a few ZeroTier customers so that means they'll be forced to create quite a lot of (tiny) LF records. Doing proof of work for all those is possible but costly, so we stuffed a certificate into Sol's configuration to let us cheat and be special. Think of it as our "fee" for creating and maintaining LF and donating it as open source to the community.
 
 LF is open source. It's possible to make your own LF networks and configure them however you like. You can even create private LF networks that *require* signatures for anyone to add records. These will be of interest to our enterprise customers with private air-gapped environments.
+
+## Creating Private Networks
+
+To create a private network you need to create your own *genesis records*. These serve as the first anchor points in the DAG (and are exempt from the normal linkage and other rules) and contain your network's configuration.
+
+To do this use the undocumented (in the help output) command `makegenesis`. Here's a simple example:
+
+```text
+$ ./lf makegenesis
+Network name: Test
+Network ID will be 3bee213bd4f522cf7fb0dd0dfd282274b423800ef6237e3a4b03e93806fcdc4c
+Network contact []: test@test.com
+Network comment or description []: Test network
+Record minimum links [2]:
+Record maximum value size [1024]:
+Record maximum time drift (seconds) [60]:
+Amendable fields (comma separated) []:
+Create a record authorization certificate? [y/N]:
+
+{
+  "ID": [59, 238, 33, 59, 212, 245, 34, 207, 127, 176, 221, 13, 253, 40, 34, 116, 180, 35, 128, 14, 246, 35, 126, 58, 75, 3, 233, 56, 6, 252, 220, 76],
+  "Name": "Test",
+  "Contact": "test@test.com",
+  "Comment": "Test network",
+  "AuthRequired": false,
+  "RecordMinLinks": 2,
+  "RecordMaxValueSize": 1024,
+  "RecordMaxTimeDrift": 60
+}
+
+Creating 2 genesis records...
+
+{
+  "Value": "\b1NRxUEv6TMkj9W1Axhi2q43vIJ4Ym3WPQAyuWhUuDq12mSa8wrMuGTHvHCiaRVAJ4kZ9K4V3814aJDq8ZMTdrnx82rAqoexDkX2yAkn0pAFZBOubxtwcSCxyRz6jEk4V88kceD9eJZoueCdlasXhCcTavZg9St6maiKDMUjCsQB6joAw2eKj6KJmj9T2jLqHpdCv1jDSxbp0EWmg8ZWpQcoAHdPj6l41uqr3NSM2zSRTjPwdU33OzT1XW",
+  "Owner": "@ITfjM17BeR3hKXBIboHL47ZCV4BW1LBN",
+  "Timestamp": 1559670505,
+  "Type": 1,
+  "Work": "\bEJCFhkG4wTfl0mjjLxW",
+  "WorkAlgorithm": 1,
+  "Signature": "\bk8cIwUuEqqO7vkUxmHEJuruVSuguMS2Y9paDVNc01Dipee67nN7bm802AL3847BB0ZgnWqQH3kAQGMoJbnoMoW1gEPEkDsiHzrogrOZZ8Mg0szj2rFEE2cmF6W0A1t3AD"
+}
+
+{
+  "Owner": "@ITfjM17BeR3hKXBIboHL47ZCV4BW1LBN",
+  "Links": ["=Ppgm1j4vlMFMjOMrQlTKl4cy4VOXfgQwAvxB1S9EnSW"],
+  "Timestamp": 1559670506,
+  "Type": 1,
+  "Work": "\bJQtb3wX18tPEPWLnhia",
+  "WorkAlgorithm": 1,
+  "Signature": "\bLxaUamrKULQ8IJnRngLbflFtysp9CQH73F6vO0Yj8H7Rs942am2HkZTDiNPNjUAwFEdVrFWXsH8hvNIJV3vO9QDchQhN6lOlQCpPEpfwXFgKlbdNbBZpIepIoBSrWlqc"
+}
+```
+
+In addition to the above output the files `genesis.lf` and `genesis.go` will be saved in the current directory. If you place `genesis.lf` in a new node's home directory *before* starting it, it will join that network instead of the default. The `genesis.go` file just contains the genesis records as a Go byte array literal for inclusion in the code and you can safely delete it.
+
+If you listed any amendable fields or created any certificates the private keys for those will also be saved as .pem files in the current directory. Keep these somewhere safe.
+
+LF peers will not talk to one another if they aren't members of the same network. This is accomplished by cryptographic means using the network's unique 256-bit ID as a pre-shared key. Beyond this simple mechanism there is no system built into LF to control node access over the network. It's the responsibility of those running private networks to secure them by (for example) running them only over ZeroTier virtual networks instead of over the public Internet.
 
 ## Future Work
 
