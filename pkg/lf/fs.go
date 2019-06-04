@@ -324,7 +324,6 @@ func NewFS(n *Node, mountPoint string, rootSelectorName []byte, owner *Owner, ma
 						e := recover()
 						if e != nil {
 							fs.node.log[LogLevelWarning].Printf("WARNING: lffs: panic during FS commit operation: %v", e)
-							//debug.PrintStack()
 						}
 						fswg.Done()
 					}()
