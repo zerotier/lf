@@ -11,11 +11,11 @@ LF (pronounced "aleph") is a fully decentralized fully replicated key/value stor
 
 Fully decentralized means anyone can run a node without obtaining special permission and all nodes are effectively equal. Fully replicated means every node stores all data.
 
-LF is built on a [directed acyclic graph (DAG)](https://en.wikipedia.org/wiki/Directed_acyclic_graph) data model. Proof of work is used to rate limit writes to the shared data store on public networks and as one thing that can be considered by conflict resolution and trust algorithms. See [DESIGN.md](doc/DESIGN.md) for details.
+LF is built on a [directed acyclic graph (DAG)](https://en.wikipedia.org/wiki/Directed_acyclic_graph) data model that makes synchronization easy and allows many different security and conflict resolution strategies to be used. Proof of work is used to rate limit writes to the shared data store on public networks and as one thing that can be considered by conflict resolution and trust algorithms. See [DESIGN.md](doc/DESIGN.md) for details. (This document is under construction.)
 
 The name LF comes from the short story [The Aleph](https://en.wikipedia.org/wiki/The_Aleph_%28short_story%29) by Jorge Luis Borges and the novel [Mona Lisa Overdrive](https://en.wikipedia.org/wiki/Mona_Lisa_Overdrive) by William Gibson. Borges' story involves a point in space that contains all other points, a fitting metaphor for a data store where every node stores everything. Gibson's novel features a sci-fi take on Borges' concept. At one point a character calls it the "LF" because "aleph" has been mis-heard as an acronym. We used LF because there's already an open source project called Aleph, it gives the command line client `lf` a short name, and because two levels of obscure literary reference recursion is cool.
 
-### Why?
+### Why Does This Exist?
 
 The purpose of LF is to provide for decentralized systems what the key/value store aspects of [etcd](https://github.com/etcd-io/etcd) and [consul](https://www.consul.io) provide in centrally managed environments, namely a fast reliable store for small but critical pieces of information.
 
@@ -23,29 +23,24 @@ Most decentralized systems rely on distributed hash tables (DHTs) like [Kademlia
 
 For several years ZeroTier has researched ways to more completely decentralize our network. This drive is both economic and philosophical. We have multiple enterprise clients that want to minimize hard dependency on third party physical infrastructure and one that wants very reliable operation in very unreliable environments. We don't mind cutting our hosting costs either. Philosophically we began life as a "re-decentralize the Internet" open source effort and that's still very much in our DNA.
 
-We looked at DHTs but unfortunately they are not up to the task. They're vulnerable to multiple types of network level denial of service and ["Sybil"](https://en.wikipedia.org/wiki/Sybil_attack) attacks, lose access to data if even parts of the network become unreachable, and are slow. Unfortunately everyone in the decentralization space seems to think DHTs solve the small data problem. More recent serious projects like [IPFS](https://ipfs.io) and [Dat](https://dat.foundation) are concentrating on decentralizing storage for medium to large data objects.
-
-ZeroTier's initial minimally centralized design might offend decentralization purists but it's fast and secure. We wanted something just as good. Until mid-2018 we [weren't sure it was possible](http://adamierymenko.com/decentralization.html). Then we realized certain ideas from the cryptocurrency space combined with certain other ideas from the decentralized trust arena could be combined to yield something new, and we started creating LF.
-
-LF will allow us to completely decentralize our root server infrastructure, letting customers use only their own roots or other third party roots without sacrificing ZeroTier's powerful and convenient single unified namespace. It will also let us deliver network virtualization solutions to our enterprise customers that are no less reliable than the network itself, continuing to operate even when sections of the overall network become slow or unreachable.
+DHTs are simply not good enough for our needs. They're vulnerable to multiple types of network level denial of service and ["Sybil"](https://en.wikipedia.org/wiki/Sybil_attack) attacks, are slow, and require a very reliable network to maintain full access to the entire global data set. We built LF to provide an alternative that trades much higher local storage overhead (which is cheap) for continuous availability, high performance, and much stronger security guarantees.
 
 ### Features and Benefits
 
 * Easy to use and easy to deploy.
 * Fully decentralized network with no mandatory single points of control or failure.
-* Multi-paradigm trust model allowing user choice between different conflict resolution mechanisms including cumulative proof of work "weight," local node heuristics, elective trust of oracle nodes, and (eventually) certificates.
-* Fast (milliseconds) nearline queries against the entire global data set at all times.
-* Multiple record keys (up to 15) allow nested directory-like relationships.
-* Range queries are possible against a 64-bit ordinal value assocaited with each record key.
-* Encrypted record keys and values for improved privacy and security.
-* Novel proof-of-knowledge mechanism makes it impossible to generate valid records identified by a key whose plain text is not known.
+* Versatile security model allowing user choice between different conflict resolution mechanisms that can be used alone or in combination with one another. These include local heuristics, proof of work "weight," elective trust of other nodes, and (eventually) certificates.
+* Fast sub-second nearline queries against the entire global data set at all times.
+* Flexible record lookup API allowing multiple nested keys and range queries against 64-bit ordinals associated with each key.
+* Encrypted record keys and values for strong security and privacy despite full global data set replication. Order preserving encryption techinques are leveraged to allow range queries without revealing keys or exact ordinal values.
+* Novel proof-of-knowledge mechanism makes it impossible to generate valid records identified by a key whose plain text is not known, increasing the difficulty of data set poisoning attacks by naive attackers.
 
 ### Limitations and Disadvantages
 
 * LF is only useful for small bits of information that don't change very often like certificates, keys, IP addresses, names, etc.
 * The [CAP theorem](https://en.wikipedia.org/wiki/CAP_theorem) trade-off is availability and partition-tolerance, meaning eventual consistency and no transactions.
-* High storage requirements for full nodes make LF unsuitable for resource constrained devices. These devices usually work by querying larger servers or stationary devices anyway.
-* Storage requirements grow over time in a manner not unlike a block chain. Fortunately [storage is getting cheaper over time too](https://www.backblaze.com/blog/hard-drive-cost-per-gigabyte/) and unlike transistor density on conventional 2d silicon wafers we do not appear to be near a physical limit. The way LF records are stored and hashed allows some old data to be discarded too, but this is not implemented yet.
+* High storage and moderately high bandwidth requirements for full nodes make full node operation unsuitable for small resource constrained devices.
+* Storage requirements grow over time in a manner not unlike a block chain. Fortunately [storage is getting cheaper over time too](https://www.backblaze.com/blog/hard-drive-cost-per-gigabyte/). LF is designed to allow partial nodes and discarding of some old data to migitate data set growth but these features are not implemented yet and likely won't be needed for years.
 
 ## Building and Running
 
@@ -57,7 +52,7 @@ Once we get out of beta we'll probably provide some pre-built binaries as is the
 
 ## Getting Started
 
-LF comes with a full node implementation and a command line client that can be used to create and query records and to some limited extent control nodes (if accessing them from localhost). All of these things exist in the same `lf` binary that gets built when you type `make`.
+LF comes with a full node implementation and a command line client that can be used to create and query records and to some limited extent control nodes. All of these things exist in the same `lf` binary that gets built when you type `make`.
 
 Once you build the binary just run it for help.
 
@@ -108,7 +103,7 @@ The evil league of evil is watching so beware        | bad#0 horse#9
 The grade that you receive'll be your last, we swear | bad#0 horse#10
 ```
 
-In the first command above the trailing hash is interpreted as `#0#18446744073709551615`. That huge number is the maximum value of a 64-bit unsigned integer. Leaving off the trailing hash is equivalent to `#0` and gets only ordinal zero. Using `#2#10` asks for ordinals two through ten inclusive.
+When you ask for `bad horse#` (in the very first example) the trailing hash is expanded to `#0#18446744073709551615`. That huge number is the maximum value of a 64-bit unsigned integer. Leaving off the trailing hash is equivalent to `#0` and gets only ordinal zero. Using `#2#10` asks for ordinals two through ten inclusive.
 
 ### First Come, First Serve!
 
@@ -124,7 +119,7 @@ The already existing Bad Horse records have three big things going for them:
 
 1. They're older and therefore more work (in a proof of work sense) has been added to the DAG since their creation. Each record references older records and when it gets stitched into the DAG its work is transferred to its ancestors all the way back to the beginning of time, increasing a metric called their *weight*. A determined attacker willing to buy a lot of compute power could overcome this, but the more time passes the more costly this attack becomes.
 2. They are going to have lower *local reputation* scores on current nodes, including the one you are likely querying. When a record arrives at a running node that collides with an existing fully synchronized and verified record, it gets flagged as suspect. Lower reptuation records also don't get picked to be links for new records, meaning they pick up weight more slowly and get replicated more slowly (if at all).
-3. Their reputation won't have been tarnished by gossip. Nodes can be configured to generate *commentary*. When such a node sees a suspect record, it adds it to a running set of records it publishes called commentary records. These are received and parsed by all other nodes and can (optionally) be taken into account if elected by a user (this isn't fully implemented yet as of 0.5).
+3. *Oracle nodes* will gossip about the impostor, but not the original. An oracle node is a node configured to generate *commentary*, special records that perform the dual function of adding work to the DAG and commenting on records these nodes find suspect. The commentary of all oracle nodes is available but users are free to decide whether or not to trust it.
 
 But what does happen to lower weight or lower reputation records? Try this:
 
@@ -132,36 +127,9 @@ But what does happen to lower weight or lower reputation records? Try this:
 $ ./lf -json get bad horse#0
 ```
 
-Results are returned as lists of records sorted in descending order of trust according to the selected metric. The default behavior of the command line client is to show only the highest scoring result for each set of selectors and ordinals. The `-json` flag requests and dumps everything. If there are any impostors you'll see them in this output.
+The LF API returns results as an array of arrays. Each array in the first dimension represents a set of records that share the same set of selector keys. The array in the second dimension is these records sorted in descending order of trust according to whatever conflict resolution mechanism(s) are active. The default behavior of the command line client is to show only the "winner" for each set of selectors, but `-json` tells it to request and dump everything.
 
-Since names are first come first serve, short names like `bad` aren't the sorts of names you'll want to use for the first selector for records in a production system. (Subsequent selectors could have short names if they make sense.) We suggest a backwards DNS naming scheme similar to Java's class names and many other sorts of identifiers, which would cause us to create keys that start with `com.zerotier...`. Another option would be to use randomized identifiers like GUIDs or other globally unique identifiers.
-
-### Selector Hierarchies and Ownership
-
-What if someone does this?
-
-```text
-$ ./lf set bad cow '!ooM !ooM'
-```
-
-Try this:
-
-```text
-$ ./lf get bad
-!ooM !ooM                                                 | bad#0 ?byGYyeZPawCV1GTzQEcONgzdbZw3Qm2aLc3Ov8HNoc3
-Bad Horse, Bad Horse                                      | bad#0 ?Iu9lUHgVNfAMBIkQiS7AMw51quhj5qnsR8NVD6U30h
-Bad Horse, Bad Horse                                      | bad#0 ?Iu9lUHgVNfAMBIkQiS7AMw51quhj5qnsR8NVD6UG4e
-... and so on ...
-... and who knows what else! ...
-```
-
-**Be warned** before you execute the above command that the output could contain virtually anything including profanity, URLs to malware, and so on!
-
-A record's key for ownership and conflict resolution purposes is computed from all its selector names in the order in which they appear. This means that `bad cow` and `bad horse` can have different non-conflicting ownership. This doesn't apply to ordinals, so `bad horse#1` and `bad horse#2` will be treated as a single record in terms of ownership.
-
-Application developers must be aware of this behavior and issue fully specified queries and filter results. Which records to consider and under what circumstance is an application data storage schema question and will depend on your application's data and security model.
-
-Also note that the second selector is cryptographic gobbleddegook. You didn't tell LF what it is, so all it can show you is its raw form. Selectors are blind (but still sortable) binary keys to those who don't know them.
+Since names are first come first serve, short names like `bad` aren't the sorts of names you'll want to use for the first selector for records in a production system. Good naming strategies include reverse-DNS-order names similar to Java class names (e.g. `com.zerotier...`), unique GUIDs, and random strings. The latter options are good for systems that don't want to advertise their keys globally and want to avoid making their records available to users not in-the-know. Just remember that [naming things is one of the two hard things in computing](https://www.martinfowler.com/bliki/TwoHardThings.html).
 
 ### Running a Full Node
 

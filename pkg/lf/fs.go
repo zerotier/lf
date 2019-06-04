@@ -147,11 +147,11 @@ const (
 	fsFileTypeDir     = 0x200 // name of a subdirectory, no data
 	fsFileTypeLink    = 0x400 // symbolic link
 	fsFileTypeDeleted = 0x600 // dead entry (LF itself has no suitable delete semantic, so just mark it as such)
+	fsFileTypeMask    = 0x600 // bit mask for file type from mode
 
-	fsFileTypeMask       = 0x600   // bit mask for file type from mode
-	fsMaxNameLength      = 511     // max length of the name field in fsFileHeader (9-bit size, must be a bit mask)
-	fsMaxFileSize        = 1048576 // sanity limit to max file size... this would take FOREVER to store with PoW!
-	fsMinRecordValueSize = 1024    // minimum record value size in LF data store to use lffs
+	fsMaxNameLength      = 511       // max length of the name field in fsFileHeader (9-bit size, must be a bit mask)
+	fsMaxFileSize        = 134217728 // sanity limit for global max file size (can be increased... but 128mb is already crazy)
+	fsMinRecordValueSize = 1024      // minimum record value size in LF data store to use lffs
 )
 
 type fsFileHeader struct {
@@ -187,7 +187,7 @@ func (h *fsFileHeader) readFrom(b []byte) ([]byte, error) {
 //////////////////////////////////////////////////////////////////////////////
 
 // NewFS creates and mounts a new virtual filesystem.
-func NewFS(n *Node, mountPoint string, rootSelectorName []byte, owner *Owner, maxFileSize int,authSignature []byte, maskingKey []byte) (*FS, error) {
+func NewFS(n *Node, mountPoint string, rootSelectorName []byte, owner *Owner, maxFileSize int, authSignature []byte, maskingKey []byte) (*FS, error) {
 	if n.genesisParameters.RecordMaxValueSize < fsMinRecordValueSize {
 		return nil, fmt.Errorf("LF data store must allow record values of at least %d bytes to use lffs", fsMinRecordValueSize)
 	}
@@ -249,9 +249,12 @@ func NewFS(n *Node, mountPoint string, rootSelectorName []byte, owner *Owner, ma
 
 	n.log[LogLevelNormal].Printf("lffs: mounting %s at %s with records owned by %s", rootSelectorName, mountPoint, owner.String())
 	fuse.Unmount(mountPoint)
+	time.Sleep(time.Millisecond * 100)
+	fuse.Unmount(mountPoint)
+	time.Sleep(time.Millisecond * 100) // HACK for already mounted to dead daemon case
 	fs.fconn, err = fuse.Mount(
 		mountPoint,
-		fuse.DaemonTimeout("300"),
+		fuse.DaemonTimeout("30"),
 		fuse.FSName("lffs"),
 		fuse.Subtype("lffs"),
 		fuse.VolumeName("lf-"+n.genesisParameters.Name+"-"+string(nameEscaped)),
@@ -419,7 +422,7 @@ func (fsn *fsDir) Attr(ctx context.Context, a *fuse.Attr) error {
 	if !fsn.writable() {
 		modeMask = 0x16d // mask off write flags if we do not own this file
 	}
-	a.Mode = os.FileMode(fsn.fsFileHeader.mode & modeMask) | os.ModeDir
+	a.Mode = os.FileMode(fsn.fsFileHeader.mode&modeMask) | os.ModeDir
 	a.Nlink = 1
 	a.Uid = fsn.uid
 	a.Gid = fsn.gid
@@ -486,7 +489,7 @@ func (fsn *fsDir) Lookup(ctx context.Context, name string) (fusefs.Node, error) 
 				v, err := f.fsFileHeader.readFrom(result.Value)
 				if err == nil && string(f.fsFileHeader.name) == name {
 					var owner *Owner
-					if bytes.Equal(result.Record.Owner,fsn.fs.owner.Public) {
+					if bytes.Equal(result.Record.Owner, fsn.fs.owner.Public) {
 						owner = fsn.fs.owner
 					} else {
 						owner = &Owner{Private: nil, Public: result.Record.Owner}
@@ -738,7 +741,7 @@ func (fsn *fsDir) Remove(ctx context.Context, req *fuse.RemoveRequest) error {
 	if exists == nil {
 		return fuse.ENOENT
 	}
-	existsFsn, _  := exists.(fsFuseNode)
+	existsFsn, _ := exists.(fsFuseNode)
 	if existsFsn == nil || !existsFsn.writable() {
 		return fuse.EPERM
 	}
@@ -1098,7 +1101,7 @@ func (fsn *fsFile) Read(ctx context.Context, req *fuse.ReadRequest, resp *fuse.R
 }
 
 func (fsn *fsFile) Write(ctx context.Context, req *fuse.WriteRequest, resp *fuse.WriteResponse) error {
-	if (fsn.fsFileHeader.mode&fsFileTypeMask) != fsFileTypeNormal {
+	if (fsn.fsFileHeader.mode & fsFileTypeMask) != fsFileTypeNormal {
 		return fuse.EIO
 	}
 	if !fsn.writable() {

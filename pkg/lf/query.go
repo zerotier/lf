@@ -65,6 +65,7 @@ type Query struct {
 	MaskingKey Blob         `json:",omitempty"` // Masking key to unmask record value(s) server-side (if non-empty)
 	SortOrder  string       `json:",omitempty"` // Sort order within each result (default: trust)
 	Limit      *int         `json:",omitempty"` // If non-zero, limit maximum lower trust records per result
+	Open       *bool        `json:",omitempty"` // If true, include records with extra selectors not named in Ranges
 }
 
 // QueryResultWeight is a 128-bit value broken into four 32-bit valu
@@ -208,6 +209,10 @@ func (m *Query) Execute(n *Node) (qr QueryResults, err error) {
 			rec, err := NewRecordFromBytes(rdata)
 			if err != nil {
 				return nil, err
+			}
+
+			if len(rec.Selectors) != len(selectorRanges) && (m.Open == nil || !*m.Open) {
+				continue
 			}
 
 			v, err := rec.GetValue(maskingKey)

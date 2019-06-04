@@ -470,7 +470,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 					}
 				} else {
 					if len(mp.OwnerPrivate) > 0 {
-						owner,err = NewOwnerFromPrivateBytes(mp.OwnerPrivate)
+						owner, err = NewOwnerFromPrivateBytes(mp.OwnerPrivate)
 						if err != nil {
 							n.log[LogLevelWarning].Printf("WARNING: lffs: cannot mount %s: invalid owner private key: %s", mp.Path, err.Error())
 							continue
@@ -1016,6 +1016,7 @@ func (n *Node) commentaryGeneratorMain() {
 	for atomic.LoadUint32(&n.shutdown) == 0 {
 		time.Sleep(time.Second) // 1s pause between each new record
 		if atomic.LoadUint32(&n.commentary) != 0 && atomic.LoadUint32(&n.shutdown) == 0 {
+			minWorkDifficultyThisIteration := minWorkDifficulty
 			var commentary []byte
 			commentCount := 0
 			n.commentsLock.Lock()
@@ -1024,6 +1025,7 @@ func (n *Node) commentaryGeneratorMain() {
 				c := f.Value.(*comment)
 				s := c.sizeBytes()
 				if len(commentary)+s > int(n.genesisParameters.RecordMaxValueSize) {
+					minWorkDifficultyThisIteration = 0 // if we have a lot of commentary, don't do extra work this time and get it out there!
 					break
 				}
 				var err error
@@ -1045,7 +1047,7 @@ func (n *Node) commentaryGeneratorMain() {
 				startTime := time.Now()
 				err = rb.Start(RecordTypeCommentary, commentary, links, nil, nil, nil, n.owner.Public, nil, TimeSec())
 				if err == nil {
-					err = rb.AddWork(n.getWorkFunction(), uint32(minWorkDifficulty))
+					err = rb.AddWork(n.getWorkFunction(), uint32(minWorkDifficultyThisIteration))
 					if err == nil {
 						rec, err = rb.Complete(n.owner)
 					}
@@ -1056,16 +1058,18 @@ func (n *Node) commentaryGeneratorMain() {
 					err = n.AddRecord(rec)
 					if err == nil {
 						// Tune desired overhead to attempt to achieve a commentary rate of one
-						// new record every two minutes. Actual results will vary a lot due to
+						// new record every five minutes. Actual results will vary a lot due to
 						// the probabilistic nature of the work function.
 						duration := endTime.Sub(startTime).Seconds()
-						if duration < 120.0 {
-							minWorkDifficulty += 0x00005000
-							if minWorkDifficulty > 0xffffffff {
-								minWorkDifficulty = 0xffffffff
+						if minWorkDifficultyThisIteration == minWorkDifficulty { // only adjust when we've run at the desired min difficulty
+							if duration < 300.0 {
+								minWorkDifficulty += 0x00005000
+								if minWorkDifficulty > 0xffffffff {
+									minWorkDifficulty = 0xffffffff
+								}
+							} else if minWorkDifficulty > 0x00010000 {
+								minWorkDifficulty -= 0x00005000
 							}
-						} else if minWorkDifficulty > 0x00010000 {
-							minWorkDifficulty -= 0x00005000
 						}
 
 						n.log[LogLevelVerbose].Printf("oracle: %s submitted with %d comments (minimum difficulty %.8x created in %f seconds)", rec.HashString(), commentCount, minWorkDifficulty, duration)
