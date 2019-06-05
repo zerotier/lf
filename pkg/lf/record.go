@@ -96,6 +96,10 @@ const (
 	// This is a protocol constant and can't be changed.
 	RecordTypeCertificate = 3
 
+	// RecordTypeCRL contains a DER encoded x509 CRL.
+	// This is a protocol constant and can't be changed.
+	RecordTypeCRL = 4
+
 	// RecordTypeDelete is a record that hides all other records by the same owner.
 	// This is a protocol constant and can't be changed.
 	RecordTypeDelete = 15 // reserved, not implemented yet
@@ -527,10 +531,7 @@ func (r *Record) HashString() string {
 	return "=" + Base62Encode(h[:])
 }
 
-// Score returns this record's work score, which is algorithm dependent.
-// The returned value is scaled to the range of uint32 so that future
-// work algorithms can coexist with or at least be comparable relative to
-// current ones.
+// Score returns this record's work score scaled to be work algorithm independent.
 func (r *Record) Score() uint32 {
 	switch r.WorkAlgorithm {
 	case RecordWorkAlgorithmNone:
@@ -581,8 +582,8 @@ func (r *Record) ID() (id [32]byte) {
 	return
 }
 
-// Validate checks this record's signatures and other attributes and returns an error or nil if there is no problem.
-func (r *Record) Validate(ignoreWork bool) (err error) {
+// Validate this record structurally and validates its cryptographic signatures.
+func (r *Record) Validate() (err error) {
 	defer func() {
 		e := recover()
 		if e != nil {
@@ -594,32 +595,26 @@ func (r *Record) Validate(ignoreWork bool) (err error) {
 		return ErrRecordOwnerSignatureCheckFailed
 	}
 
-	recordBodyHash := r.recordBody.signingHash()
-	workBillableBytes := r.recordBody.sizeBytes()
-	workHasher := sha512.New384()
-	workHasher.Write(recordBodyHash[:])
-	for i := 0; i < len(r.Selectors); i++ {
-		sb := r.Selectors[i].bytes()
-		workHasher.Write(sb)
-		workBillableBytes += uint(len(sb))
+	if len(r.Selectors) > RecordMaxSelectors {
+		return ErrRecordTooManySelectors
 	}
-	var workHash [48]byte
-	workHasher.Sum(workHash[:0])
 
-	if !ignoreWork {
-		switch r.WorkAlgorithm {
-		case RecordWorkAlgorithmNone:
-		case RecordWorkAlgorithmWharrgarbl:
-			if WharrgarblVerify(r.Work, workHash[:]) < recordWharrgarblCost(workBillableBytes) {
-				return ErrRecordInsufficientWork
-			}
-		default:
-			return ErrRecordInsufficientWork
+	if len(r.Links) > RecordMaxLinks {
+		return ErrRecordTooManyLinks
+	}
+	for i := 1; i < len(r.Links); i++ {
+		if bytes.Compare(r.Links[i-1][:], r.Links[i][:]) >= 0 {
+			return ErrRecordInvalidLinks
 		}
 	}
 
+	if r.SizeBytes() > RecordMaxSize {
+		return ErrRecordTooLarge
+	}
+
+	workHash, _ := r.workHash()
 	signingHasher := sha512.New384()
-	signingHasher.Write(workHash[:])
+	signingHasher.Write(workHash)
 	signingHasher.Write(r.Work)
 	signingHasher.Write([]byte{byte(r.WorkAlgorithm)})
 	var hb [48]byte
@@ -629,6 +624,35 @@ func (r *Record) Validate(ignoreWork bool) (err error) {
 	}
 
 	return nil
+}
+
+// ValidateWork checks that this record's work is enough to "pay" for it.
+// Note that this doesn't check whether work is needed, just that it is sufficient.
+// It returns false for WorkAlgorithmNone as well as if there is simply not enough work.
+func (r *Record) ValidateWork() bool {
+	workHash, workBillableBytes := r.workHash()
+	switch r.WorkAlgorithm {
+	case RecordWorkAlgorithmWharrgarbl:
+		if WharrgarblVerify(r.Work, workHash[:]) >= recordWharrgarblCost(workBillableBytes) {
+			return true
+		}
+	}
+	return false
+}
+
+// WorkHash returns a 384-bit hash used to compute and verify PoW and also the number of billable bytes for PoW.
+func (r *Record) workHash() ([]byte, uint) {
+	recordBodyHash := r.recordBody.signingHash()
+	workBillableBytes := r.recordBody.sizeBytes()
+	workHasher := sha512.New384()
+	workHasher.Write(recordBodyHash[:])
+	for i := 0; i < len(r.Selectors); i++ {
+		sb := r.Selectors[i].bytes()
+		workHasher.Write(sb)
+		workBillableBytes += uint(len(sb))
+	}
+	var wh [48]byte
+	return workHasher.Sum(wh[:0]), workBillableBytes
 }
 
 //////////////////////////////////////////////////////////////////////////////

@@ -716,7 +716,7 @@ func doSet(cfg *lf.ClientConfig, basePath string, args []string) {
 		for _, l := range links {
 			lnks = append(lnks, l)
 		}
-		rec, err = lf.NewRecord(lf.RecordTypeDatum, value, lnks, mk, plainTextSelectorNames, plainTextSelectorOrdinals, nil, ts, lf.NewWharrgarblr(lf.RecordDefaultWharrgarblMemory, 0), o)
+		rec, err = lf.NewRecord(lf.RecordTypeDatum, value, lnks, mk, plainTextSelectorNames, plainTextSelectorOrdinals, ts, lf.NewWharrgarblr(lf.RecordDefaultWharrgarblMemory, 0), o)
 		if err == nil {
 			rb := rec.Bytes()
 			for _, u := range urls {
@@ -1092,12 +1092,8 @@ func doMakeGenesis(cfg *lf.ClientConfig, basePath string, args []string) {
 		q = prompt("Create another record authorization certificate? [y/N]: ", false, "n")
 	}
 	if len(g.AuthCertificates) > 0 {
-		certs, err := g.GetAuthCertificates()
-		if err != nil {
-			logger.Printf("ERROR: unable to create CA certificate: %s", err.Error())
-			return
-		}
-		fmt.Printf("  (%d authorization certificates, %d bytes)\n", len(certs), len(g.AuthCertificates))
+		certs := g.GetAuthCertificates()
+		fmt.Printf("  (%d authorization certificates, %d bytes)\n", len(certs.Subjects()), len(g.AuthCertificates))
 		q = prompt("Authorization certificates required? [y/N]: ", false, "n")
 		g.AuthRequired = q == "Y" || q == "y" || q == "1"
 	}

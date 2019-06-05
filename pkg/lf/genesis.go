@@ -33,6 +33,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
+	"sync/atomic"
+	"unsafe"
 )
 
 const asn1PrivateOIDBase = 1426727994
@@ -64,6 +67,12 @@ func GetAuthCertificatePseudoWork(c *x509.Certificate) uint32 {
 	return 0
 }
 
+type genesisParametersState struct {
+	certs   *x509.CertPool
+	history []GenesisParameters
+	lock    sync.Mutex
+}
+
 // GenesisParameters is the payload (JSON encoded) of the first RecordMinLinks records in a global data store.
 type GenesisParameters struct {
 	ID                 [32]byte ``                  // Unique arbitrary 32-byte ID of this network (always immutable)
@@ -78,9 +87,8 @@ type GenesisParameters struct {
 	RecordMaxTimeDrift uint     ``                  // Maximum number of seconds of time drift permitted for records
 	SeedPeers          []Peer   `json:",omitempty"` // Some peer nodes with static IPs to help bootstrap
 
-	certs       []*x509.Certificate
-	history     []GenesisParameters
-	initialized bool
+	state  unsafe.Pointer
+	stateP *genesisParametersState
 }
 
 // Update updates these GenesisParameters from a JSON encoded parameter set, obeying AmendableFields constraints.
@@ -95,11 +103,15 @@ func (gp *GenesisParameters) Update(jsonValue []byte) (bool, error) {
 		return false, err
 	}
 
-	if !gp.initialized {
+	gps := (*genesisParametersState)(atomic.LoadPointer(&gp.state))
+	if gps == nil {
 		*gp = ngp
-		gp.initialized = true
-		return true, nil
+		gps = new(genesisParametersState)
+		atomic.StorePointer(&gp.state, unsafe.Pointer(gps))
 	}
+	gp.stateP = gps
+	gps.lock.Lock()
+	defer gps.lock.Unlock()
 
 	old := *gp
 	changed := false
@@ -123,7 +135,6 @@ func (gp *GenesisParameters) Update(jsonValue []byte) (bool, error) {
 		case "authcertificates":
 			if !bytes.Equal(gp.AuthCertificates, ngp.AuthCertificates) {
 				gp.AuthCertificates = ngp.AuthCertificates
-				gp.certs = nil // forget previously cached certs
 				changed = true
 			}
 		case "authrequired":
@@ -163,9 +174,10 @@ func (gp *GenesisParameters) Update(jsonValue []byte) (bool, error) {
 	}
 
 	if changed {
-		old.certs = nil
-		old.history = nil
-		gp.history = append(gp.history, old)
+		gps.certs = nil
+		old.state = unsafe.Pointer(nil)
+		old.stateP = nil
+		gps.history = append(gps.history, old)
 	}
 
 	return changed, nil
@@ -191,19 +203,28 @@ func (gp *GenesisParameters) SetAmendableFields(fields []string) error {
 }
 
 // GetAuthCertificates returns the fully deserialized auth CAs in this parameter set.
-func (gp *GenesisParameters) GetAuthCertificates() ([]*x509.Certificate, error) {
-	if len(gp.certs) > 0 {
-		return gp.certs, nil
-	}
+func (gp *GenesisParameters) GetAuthCertificates() *x509.CertPool {
 	if len(gp.AuthCertificates) == 0 {
-		return nil, nil
+		return new(x509.CertPool)
+	}
+	gps := (*genesisParametersState)(atomic.LoadPointer(&gp.state))
+	if gps == nil {
+		return new(x509.CertPool)
+	}
+	gps.lock.Lock()
+	defer gps.lock.Unlock()
+	if gps.certs != nil {
+		return gps.certs
 	}
 	certs, err := x509.ParseCertificates(gp.AuthCertificates)
 	if err != nil {
-		return nil, err
+		return new(x509.CertPool)
 	}
-	gp.certs = certs
-	return certs, nil
+	gps.certs = new(x509.CertPool)
+	for _, cert := range certs {
+		gps.certs.AddCert(cert)
+	}
+	return gps.certs
 }
 
 // CreateGenesisRecords creates a set of genesis records for a new LF data store.

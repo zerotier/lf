@@ -33,8 +33,8 @@ package lf
 //struct ZTLF_DB;
 //extern void ztlfLogOutputCCallback(int,const char *,int,const char *,void *);
 //extern void ztlfSyncCCallback(struct ZTLF_DB *db,const void *,uint64_t,unsigned int,int,void *);
-//#include "./native/db.h"
-//#include "./native/db.c"
+//#include "../../native/db.h"
+//#include "../../native/db.c"
 import "C"
 
 import (

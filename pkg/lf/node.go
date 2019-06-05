@@ -672,19 +672,9 @@ func (n *Node) AddRecord(r *Record) error {
 		return ErrDuplicateRecord
 	}
 
-	// Check basic constraints first since this is less CPU intensive than signature
-	// and work validation.
-
 	// Genesis records and config updates can only come from the genesis owner.
 	if r.Type == RecordTypeGenesis && !bytes.Equal(r.Owner, n.genesisOwner) {
 		return ErrRecordProhibited
-	}
-
-	// Genesis records can only come from the genesis owner
-	// Is record too big according to protocol or genesis parameter constraints?
-	rsize := uint(r.SizeBytes())
-	if rsize > RecordMaxSize {
-		return ErrRecordTooLarge
 	}
 
 	// Is value too big?
@@ -692,22 +682,9 @@ func (n *Node) AddRecord(r *Record) error {
 		return ErrRecordValueTooLarge
 	}
 
-	// Check links: not too few, not too many, must be sorted, no duplicates
+	// Are there enough links?
 	if uint(len(r.Links)) < n.genesisParameters.RecordMinLinks {
 		return ErrRecordInsufficientLinks
-	}
-	if len(r.Links) > RecordMaxLinks {
-		return ErrRecordTooManyLinks
-	}
-	for i := 1; i < len(r.Links); i++ {
-		if bytes.Compare(r.Links[i-1][:], r.Links[i][:]) >= 0 {
-			return ErrRecordInvalidLinks
-		}
-	}
-
-	// Not too many selectors
-	if len(r.Selectors) > RecordMaxSelectors {
-		return ErrRecordTooManySelectors
 	}
 
 	// Timestamp must not be too far in the future
@@ -715,10 +692,17 @@ func (n *Node) AddRecord(r *Record) error {
 		return ErrRecordViolatesSpecialRelativity
 	}
 
-	// Validate record's internal structure and check signatures and work.
-	err := r.Validate(n.localTest) // ignore work in local test mode
+	// Validate record's internal structure and check cryptographic signatures.
+	err := r.Validate()
 	if err != nil {
 		return err
+	}
+
+	// Validate work and if insufficient check for a certificate for this record.
+	// If the record lacks a cert, cache it and ask other nodes. We hold records for
+	// a short period to see if other nodes have certs for them.
+	if !n.localTest && !r.ValidateWork() {
+		return ErrRecordInsufficientWork
 	}
 
 	// Add record to database, aborting if this generates some kind of error.
@@ -858,7 +842,6 @@ func (n *Node) handleSynchronizedRecord(doff uint64, dlen uint, reputation int, 
 							}
 						}
 					}
-					//case RecordTypeCertificate: // TODO: not implemented yet
 				}
 
 				// If record is of good reputation, announce that we have it to peers. Low reputation records
