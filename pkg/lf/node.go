@@ -1045,7 +1045,7 @@ func (n *Node) commentaryGeneratorMain() {
 				var rb RecordBuilder
 				var rec *Record
 				startTime := time.Now()
-				err = rb.Start(RecordTypeCommentary, commentary, links, nil, nil, nil, n.owner.Public, nil, TimeSec())
+				err = rb.Start(RecordTypeCommentary, commentary, links, nil, nil, nil, n.owner.Public, TimeSec())
 				if err == nil {
 					err = rb.AddWork(n.getWorkFunction(), uint32(minWorkDifficultyThisIteration))
 					if err == nil {

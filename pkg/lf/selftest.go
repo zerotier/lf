@@ -367,7 +367,7 @@ func TestCore(out io.Writer) bool {
 			return false
 		}
 		testVal := []byte("Supercalifragilisticexpealidocious!")
-		rec, err := NewRecord(RecordTypeDatum, testVal, testLinks, []byte("test"), [][]byte{[]byte("test0")}, []uint64{0}, nil, uint64(k), nil, owner)
+		rec, err := NewRecord(RecordTypeDatum, testVal, testLinks, []byte("test"), [][]byte{[]byte("test0")}, []uint64{0}, uint64(k), nil, owner)
 		if err != nil {
 			fmt.Fprintf(out, "FAILED (create record): %s\n", err.Error())
 			return false
@@ -412,7 +412,7 @@ func TestCore(out io.Writer) bool {
 		return false
 	}
 	wg := NewWharrgarblr(RecordDefaultWharrgarblMemory, 0)
-	rec, err := NewRecord(RecordTypeDatum, testValue[:], testLinks, []byte("test"), [][]byte{[]byte("full record test")}, []uint64{0}, nil, TimeSec(), wg, owner)
+	rec, err := NewRecord(RecordTypeDatum, testValue[:], testLinks, []byte("test"), [][]byte{[]byte("full record test")}, []uint64{0}, TimeSec(), wg, owner)
 	if err != nil {
 		fmt.Fprintf(out, "FAILED (new record creation): %s\n", err.Error())
 		return false
@@ -547,7 +547,6 @@ func TestDatabase(testBasePath string, out io.Writer) bool {
 			testMaskingKey,
 			[][]byte{selectors[ri]},
 			[]uint64{ordinals[ri]},
-			nil,
 			ts,
 			nil,
 			owners[ownerIdx])

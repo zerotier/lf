@@ -42,6 +42,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	fuse "bazil.org/fuse"
@@ -106,7 +107,6 @@ type FS struct {
 	root             fsDir
 	owner            *Owner
 	ownerUID         uint32
-	authSignature    []byte
 	maskingKey       []byte
 	passwd           map[string]fsPasswdEntry
 	passwdLock       sync.Mutex
@@ -118,6 +118,7 @@ type FS struct {
 	fconnLock        sync.Mutex
 	commitQueue      chan fsFuseNode
 	runningLock      sync.Mutex
+	workFunc         *Wharrgarblr
 }
 
 // fsImpl just hides FUSE methods from everyone outside the LF package.
@@ -228,17 +229,20 @@ func NewFS(n *Node, mountPoint string, rootSelectorName []byte, owner *Owner, ma
 			keyRange:     [2]Blob{MakeSelectorKey(rootSelectorName, 0), MakeSelectorKey(rootSelectorName, OrdinalMaxValue)},
 			owner:        owner,
 		},
-		owner:         owner,
-		ownerUID:      ownerUID,
-		authSignature: authSignature,
-		maskingKey:    maskingKey,
-		passwd:        make(map[string]fsPasswdEntry),
-		dirty:         make(map[uint64]fsFuseNode),
-		cache:         make(map[uint64]fsCacheEntry),
-		commitQueue:   make(chan fsFuseNode),
+		owner:       owner,
+		ownerUID:    ownerUID,
+		maskingKey:  maskingKey,
+		passwd:      make(map[string]fsPasswdEntry),
+		dirty:       make(map[uint64]fsFuseNode),
+		cache:       make(map[uint64]fsCacheEntry),
+		commitQueue: make(chan fsFuseNode),
 	}}
 	fs.root.fs = fs
 	fs.passwd[ownerName] = fsPasswdEntry{uid: ownerUID, public: owner.Public.String()}
+
+	if !n.localTest { // TODO: periodically check to see if owner has a cert
+		fs.workFunc = NewWharrgarblr(RecordDefaultWharrgarblMemory, runtime.NumCPU())
+	}
 
 	// Include only ASCII printable characters in volume name so as not to cause UI issues (Mac Finder only AFIAK).
 	nameEscaped := make([]byte, 0, len(rootSelectorName))
@@ -950,11 +954,6 @@ func (fsn *fsDir) commit() error {
 		return err
 	}
 
-	var wf *Wharrgarblr
-	if !fsn.fs.node.localTest && len(fsn.fs.authSignature) == 0 {
-		wf = fsn.fs.node.getWorkFunction()
-	}
-
 	ts := TimeSec()
 
 	fsn.fs.cacheLock.Lock()
@@ -965,7 +964,7 @@ func (fsn *fsDir) commit() error {
 	}
 	fsn.fs.cacheLock.Unlock()
 
-	rec, err := NewRecord(RecordTypeDatum, rdata, links, fsn.fs.maskingKey, [][]byte{fsn.parent.selectorName}, []uint64{fsn.inode}, fsn.fs.authSignature, ts, wf, fsn.fs.owner)
+	rec, err := NewRecord(RecordTypeDatum, rdata, links, fsn.fs.maskingKey, [][]byte{fsn.parent.selectorName}, []uint64{fsn.inode}, ts, fsn.fs.workFunc, fsn.fs.owner)
 	if err != nil {
 		return err
 	}
@@ -1118,14 +1117,19 @@ func (fsn *fsFile) Write(ctx context.Context, req *fuse.WriteRequest, resp *fuse
 	if len(req.Data) == 0 {
 		return nil
 	}
-	if req.Offset >= int64(fsn.parent.fs.maxFileSize) {
-		return fuse.EIO
-	}
 
 	err := fsn.dechunk()
 	if err != nil {
 		return fuse.EIO
 	}
+
+	if req.Offset >= int64(fsn.parent.fs.maxFileSize) {
+		return syscall.ENOSPC
+	}
+
+	fsn.parent.fs.dirtyLock.Lock()
+	fsn.parent.fs.dirty[fsn.inode] = fsn
+	fsn.parent.fs.dirtyLock.Unlock()
 
 	fsn.writeLock.Lock()
 	defer fsn.writeLock.Unlock()
@@ -1150,10 +1154,6 @@ func (fsn *fsFile) Write(ctx context.Context, req *fuse.WriteRequest, resp *fuse
 		copy(fsn.data[int(req.Offset):], req.Data[0:written])
 	}
 
-	fsn.parent.fs.dirtyLock.Lock()
-	fsn.parent.fs.dirty[fsn.inode] = fsn
-	fsn.parent.fs.dirtyLock.Unlock()
-
 	resp.Size = written
 
 	return nil
@@ -1165,11 +1165,6 @@ func (fsn *fsFile) commit() error {
 	}
 	if fsn.parent == nil { // sanity check, should be impossible
 		return ErrInvalidObject
-	}
-
-	var wf *Wharrgarblr
-	if !fsn.parent.fs.node.localTest && len(fsn.parent.fs.authSignature) == 0 {
-		wf = fsn.parent.fs.node.getWorkFunction()
 	}
 
 	ts := TimeSec()
@@ -1221,7 +1216,7 @@ func (fsn *fsFile) commit() error {
 			if err != nil {
 				return nil, err
 			}
-			rec, err := NewRecord(RecordTypeDatum, chunk, links, chunkHash[0:16], [][]byte{chunkHash}, []uint64{0}, fsn.parent.fs.authSignature, ts, wf, fsn.parent.fs.owner)
+			rec, err := NewRecord(RecordTypeDatum, chunk, links, chunkHash[0:16], [][]byte{chunkHash}, []uint64{0}, ts, fsn.parent.fs.workFunc, fsn.parent.fs.owner)
 			if err != nil {
 				return nil, err
 			}
@@ -1284,7 +1279,7 @@ func (fsn *fsFile) commit() error {
 	if err != nil {
 		return err
 	}
-	rec, err := NewRecord(RecordTypeDatum, rdata, links, fsn.parent.fs.maskingKey, [][]byte{fsn.parent.selectorName}, []uint64{fsn.inode}, fsn.parent.fs.authSignature, ts, wf, fsn.parent.fs.owner)
+	rec, err := NewRecord(RecordTypeDatum, rdata, links, fsn.parent.fs.maskingKey, [][]byte{fsn.parent.selectorName}, []uint64{fsn.inode}, ts, fsn.parent.fs.workFunc, fsn.parent.fs.owner)
 	if err != nil {
 		return err
 	}

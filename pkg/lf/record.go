@@ -50,9 +50,8 @@ const (
 	//   4-8   - link count (0...15)
 	//   8-12  - record type (0...15)
 	//  12-63  - reserved for future use
-	recordBodyFlagHasValue         uint64 = 0x0000000000000001
-	recordBodyFlagHasAuthSignature uint64 = 0x0000000000000002
-	recordBodyFlagValueIsHash      uint64 = 0x0000000000000004
+	recordBodyFlagHasValue    uint64 = 0x0000000000000001
+	recordBodyFlagValueIsHash uint64 = 0x0000000000000004
 
 	// Record value compression types are protocol constants. Range must be 0-3.
 	recordValueCompressionNone   = 0
@@ -171,13 +170,12 @@ func makeMaskingCipher(maskingKey, ownerPublic []byte, selectorNames [][]byte, t
 // recordBody represents the main body of a record including its value, owner public keys, etc.
 // It's included as part of Record but separated since in record construction we want to treat it as a separate element.
 type recordBody struct {
-	Value         Blob        `json:",omitempty"` // Record value (possibly masked and/or compressed, use GetValue() to get)
-	Owner         OwnerPublic `json:",omitempty"` // Owner of this record
-	AuthSignature Blob        `json:",omitempty"` // Signature of owner by an auth cerficiate (if any)
-	Links         []HashBlob  `json:",omitempty"` // Links to previous records' hashes
-	Timestamp     uint64      ``                  // Timestamp (and revision ID) in SECONDS since Unix epoch
-	Type          int         ``                  // Record type ID
-	ValueIsHash   *bool       `json:",omitempty"` // True if value is actually the hash of an original elided value
+	Value       Blob        `json:",omitempty"` // Record value (possibly masked and/or compressed, use GetValue() to get)
+	Owner       OwnerPublic `json:",omitempty"` // Owner of this record
+	Links       []HashBlob  `json:",omitempty"` // Links to previous records' hashes
+	Timestamp   uint64      ``                  // Timestamp (and revision ID) in SECONDS since Unix epoch
+	Type        int         ``                  // Record type ID
+	ValueIsHash *bool       `json:",omitempty"` // True if value is actually the hash of an original elided value
 
 	sigHash *[48]byte
 }
@@ -238,27 +236,6 @@ func (rb *recordBody) unmarshalFrom(r io.Reader) error {
 		rb.Owner = nil
 	}
 
-	if (flags & recordBodyFlagHasAuthSignature) != 0 {
-		l, err = binary.ReadUvarint(&rr)
-		if err != nil {
-			return err
-		}
-		if l > 0 {
-			if l > RecordMaxSize {
-				return ErrRecordInvalid
-			}
-			rb.AuthSignature = make([]byte, uint(l))
-			_, err = io.ReadFull(&rr, rb.Owner)
-			if err != nil {
-				return err
-			}
-		} else {
-			rb.AuthSignature = nil
-		}
-	} else {
-		rb.AuthSignature = nil
-	}
-
 	linkCount := int((flags >> 4) & 0xf)
 	if linkCount > 0 {
 		rb.Links = make([]HashBlob, linkCount)
@@ -292,9 +269,6 @@ func (rb *recordBody) marshalTo(w io.Writer, hashAsProxyForValue bool) error {
 	flags := (uint64(len(rb.Links)) << 4) | (uint64(rb.Type) << 8)
 	if len(rb.Value) > 0 {
 		flags |= recordBodyFlagHasValue
-	}
-	if len(rb.AuthSignature) > 0 {
-		flags |= recordBodyFlagHasAuthSignature
 	}
 	if rb.ValueIsHash != nil && *rb.ValueIsHash {
 		hashAsProxyForValue = true
@@ -333,15 +307,6 @@ func (rb *recordBody) marshalTo(w io.Writer, hashAsProxyForValue bool) error {
 	}
 	if _, err := w.Write(rb.Owner); err != nil {
 		return err
-	}
-
-	if len(rb.AuthSignature) > 0 {
-		if _, err := writeUVarint(w, uint64(len(rb.AuthSignature))); err != nil {
-			return err
-		}
-		if _, err := w.Write(rb.AuthSignature); err != nil {
-			return err
-		}
 	}
 
 	for i := 0; i < len(rb.Links); i++ {
@@ -678,7 +643,7 @@ type RecordBuilder struct {
 }
 
 // Start begins creating a new record, resetting RecordBuilder if it contains any old state.
-func (rb *RecordBuilder) Start(recordType int, value []byte, links [][32]byte, maskingKey []byte, selectorNames [][]byte, selectorOrdinals []uint64, ownerPublic, authSignature []byte, timestamp uint64) error {
+func (rb *RecordBuilder) Start(recordType int, value []byte, links [][32]byte, maskingKey []byte, selectorNames [][]byte, selectorOrdinals []uint64, ownerPublic []byte, timestamp uint64) error {
 	rb.record = new(Record)
 	rb.workHash = nil
 	rb.workBillableBytes = 0
@@ -709,7 +674,6 @@ func (rb *RecordBuilder) Start(recordType int, value []byte, links [][32]byte, m
 	}
 
 	rb.record.recordBody.Owner = ownerPublic
-	rb.record.recordBody.AuthSignature = authSignature
 	if len(links) > 0 {
 		rb.record.recordBody.Links = make([]HashBlob, 0, len(links))
 		for i := 0; i < len(links); i++ {
@@ -784,9 +748,9 @@ func (rb *RecordBuilder) Complete(owner *Owner) (*Record, error) {
 }
 
 // NewRecord is a shortcut to running all incremental record creation functions.
-func NewRecord(recordType int, value []byte, links [][32]byte, maskingKey []byte, selectorNames [][]byte, selectorOrdinals []uint64, authSignature []byte, timestamp uint64, workFunction *Wharrgarblr, owner *Owner) (*Record, error) {
+func NewRecord(recordType int, value []byte, links [][32]byte, maskingKey []byte, selectorNames [][]byte, selectorOrdinals []uint64, timestamp uint64, workFunction *Wharrgarblr, owner *Owner) (*Record, error) {
 	var rb RecordBuilder
-	err := rb.Start(recordType, value, links, maskingKey, selectorNames, selectorOrdinals, owner.Public, authSignature, timestamp)
+	err := rb.Start(recordType, value, links, maskingKey, selectorNames, selectorOrdinals, owner.Public, timestamp)
 	if err != nil {
 		return nil, err
 	}
