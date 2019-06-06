@@ -184,7 +184,7 @@ Commands:
     -localtest                            Disable P2P and ignore proof of work
   node-connect <ip> <port> <identity>     Tell node to try a P2P endpoint
   status                                  Get status from remote node/proxy
-  set [-...] <name[#ord]> [...] <value>   Set a value in the data store
+  set [-...] [name[#ord]...] <value>      Set a value in the data store
     -file                                 Value is a file path ("-" for stdin)
     -mask <key>                           Override default masking key
     -owner <owner>                        Use this owner instead of default
@@ -201,6 +201,7 @@ Commands:
     default <name>                        Set default owner
     delete <name>                         Delete an owner (PERMANENT)
     rename <old name> <new name>          Rename an owner
+    csr <name>                            Generate a CSR for an owner
   url <operation> [...]
     list                                  Show client URLs
     add <url>                             Add a URL
@@ -852,6 +853,44 @@ func doOwner(cfg *lf.ClientConfig, basePath string, args []string) {
 			return
 		}
 
+	case "csr":
+		if len(args) < 2 {
+			printHelp("")
+			return
+		}
+
+		cfgOwner := cfg.Owners[strings.TrimSpace(args[1])]
+		if cfgOwner == nil {
+			fmt.Println("ERROR: an owner named '" + args[1] + "' does not exist.")
+			return
+		}
+		owner, _ := cfgOwner.GetOwner()
+		if owner == nil {
+			fmt.Println("ERROR: an owner named '" + args[1] + "' does not exist.")
+			return
+		}
+
+		fmt.Printf("Creating certificate signing request for %s\n", owner.Public.String())
+		var name pkix.Name
+		name.Country = []string{prompt("  Country []: ", false, "")}
+		name.Organization = []string{prompt("  Organization []: ", false, "")}
+		name.OrganizationalUnit = []string{prompt("  Organizational unit []: ", false, "")}
+		name.Locality = []string{prompt("  Locality []: ", false, "")}
+		name.Province = []string{prompt("  Province []: ", false, "")}
+		name.StreetAddress = []string{prompt("  Street address []: ", false, "")}
+		name.PostalCode = []string{prompt("  Postal code []: ", false, "")}
+		name.CommonName = prompt("  Common name []: ", false, "")
+		fmt.Println()
+
+		csr, err := owner.CreateCSR(&name)
+		if err != nil {
+			fmt.Printf("ERROR: unable to create CSR: %s\n", err.Error())
+			return
+		}
+		pem := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csr})
+		ioutil.WriteFile(owner.Public.String()+".csr", pem, 0644)
+		fmt.Printf("%s\nWritten to %s.csr\n", string(pem), owner.Public.String())
+
 	default:
 		printHelp("")
 	}
@@ -1057,7 +1096,9 @@ func doMakeGenesis(cfg *lf.ClientConfig, basePath string, args []string) {
 				return
 			}
 
-			err = ioutil.WriteFile("genesis-auth-"+serialNoStr+"-secret.pem", []byte(pem.EncodeToMemory(&pem.Block{Type: "ECDSA PRIVATE KEY", Bytes: keyBytes})), 0600)
+			certPem := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: keyBytes})
+			certPem = append(certPem, pem.EncodeToMemory(&pem.Block{Type: "ECDSA PRIVATE KEY", Bytes: keyBytes})...)
+			err = ioutil.WriteFile("genesis-auth-"+serialNoStr+".pem", certPem, 0600)
 			if err != nil {
 				logger.Printf("ERROR: unable to write cert key PEM: %s", err.Error())
 				return

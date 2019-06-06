@@ -783,7 +783,7 @@ func (n *Node) GetOwnerCertificates(owner OwnerPublic) (certs []*x509.Certificat
 				intermediate := certsBySerialNo[ownerCert.Issuer.SerialNumber]
 				if intermediate != nil {
 					intermediateIssuer := rootsBySerialNo[intermediate.Issuer.SerialNumber]
-					if intermediateIssuer != nil && (intermediateIssuer.KeyUsage&x509.KeyUsageCertSign) != 0 && intermediate.NotBefore.After(intermediateIssuer.NotBefore) && intermediate.CheckSignatureFrom(intermediateIssuer) == nil {
+					if intermediateIssuer != nil && intermediateIssuer.IsCA && (intermediateIssuer.KeyUsage&x509.KeyUsageCertSign) != 0 && intermediate.NotBefore.After(intermediateIssuer.NotBefore) && intermediate.CheckSignatureFrom(intermediateIssuer) == nil {
 						intCrls := crlsByRevokedSerialNo[ownerCert.Issuer.SerialNumber]
 						if (intermediateIssuer.KeyUsage & x509.KeyUsageCRLSign) != 0 {
 							for _, crl := range intCrls {
@@ -798,7 +798,7 @@ func (n *Node) GetOwnerCertificates(owner OwnerPublic) (certs []*x509.Certificat
 				}
 			}
 
-			if ownerCertIssuer != nil && (ownerCertIssuer.KeyUsage&x509.KeyUsageCertSign) == 0 && ownerCert.NotBefore.After(ownerCertIssuer.NotBefore) && ownerCert.CheckSignatureFrom(ownerCertIssuer) == nil {
+			if ownerCertIssuer != nil && ownerCertIssuer.IsCA && (ownerCertIssuer.KeyUsage&x509.KeyUsageCertSign) == 0 && ownerCert.NotBefore.After(ownerCertIssuer.NotBefore) && ownerCert.CheckSignatureFrom(ownerCertIssuer) == nil {
 				ownerCertCrls := crlsByRevokedSerialNo[Base62Encode(ownerCert.SerialNumber.Bytes())]
 				ownerCertRevoked := ownerCertIssuerRevoked
 				if !ownerCertRevoked && (ownerCertIssuer.KeyUsage&x509.KeyUsageCRLSign) != 0 {

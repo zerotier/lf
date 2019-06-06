@@ -31,9 +31,12 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
 	"errors"
 	"io"
+	"math/big"
+	"time"
 
 	"golang.org/x/crypto/ed25519"
 )
@@ -327,4 +330,59 @@ func (o *Owner) Verify(hash, sig []byte) (verdict bool) {
 		verdict = false
 	}
 	return
+}
+
+// CreateCSR creates a CSR (certificate signing request) for an Owner.
+// The owner must contain its Private key. Currently only P224 and P384 type
+// owners can have CSRs generated for them. When GoLang x509 gets EDDSA support
+// then support for ed25519 CSRs will be added. The supplied subject is used
+// as a template but its SerialNumber will always be set to the Base62 encoded
+// owner public value (minus the leading @).
+func (o *Owner) CreateCSR(subject *pkix.Name) ([]byte, error) {
+	if o.Private == nil {
+		return nil, ErrPrivateKeyRequired
+	}
+	var sa x509.SignatureAlgorithm
+	switch o.Type() {
+	case OwnerTypeNistP224:
+		sa = x509.ECDSAWithSHA256
+	case OwnerTypeNistP384:
+		sa = x509.ECDSAWithSHA384
+	default:
+		return nil, ErrUnsupportedType
+	}
+	tmpl := x509.CertificateRequest{
+		SignatureAlgorithm: sa,
+		Subject:            *subject,
+	}
+	tmpl.Subject.SerialNumber = Base62Encode(o.Public)
+	return x509.CreateCertificateRequest(secureRandom, &tmpl, o.Private)
+}
+
+// CreateOwnerCertificate generates a certificate for an owner from an owner CSR.
+// The CSR is validated and the auth certificate is checked to ensure that it has
+// the proper key usage flags. The returned certificate data should be placed in
+// the value field of a record of type RecordTypeCertificate.
+func CreateOwnerCertificate(ownerCertificateRequest *x509.CertificateRequest, ttl time.Duration, authCertificate *x509.Certificate, authPrivateKey interface{}) ([]byte, error) {
+	err := ownerCertificateRequest.CheckSignature()
+	if err != nil {
+		return nil, err
+	}
+
+	if !authCertificate.IsCA || (authCertificate.KeyUsage|x509.KeyUsageCertSign) == 0 {
+		return nil, errors.New("auth certificate is not a root or intermediate CA certificate")
+	}
+
+	var randomSerial [32]byte
+	secureRandom.Read(randomSerial[:])
+	now := time.Now().UTC()
+	return x509.CreateCertificate(secureRandom, &x509.Certificate{
+		SerialNumber:          new(big.Int).SetBytes(randomSerial[:]),
+		Subject:               ownerCertificateRequest.Subject,
+		NotBefore:             now,
+		NotAfter:              now.Add(ttl),
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyAgreement,
+		BasicConstraintsValid: true,
+		IsCA:                  false,
+	}, authCertificate, authCertificate.PublicKey, authPrivateKey)
 }
