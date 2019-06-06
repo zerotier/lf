@@ -67,6 +67,23 @@ static void *_ZTLF_DB_graphThreadMain(void *arg);
  *   ckey                     CRC64 of all selector keys
  *   owner                    owner of this record or NULL if same as previous
  *
+ * cert
+ *   subject_serial_no        subject serial (base62)
+ *   serial_no                serial number (base62)
+ *   record_doff              doff of record containing certificate
+ *   certificate              DER encoded x509 certificate
+ *
+ * cert_revocation
+ *   revoked_serial_no        revoked certificate serial (base62)
+ *   record_doff              doff of record containing CRL
+ *   record_dlen              dlen of record containing CRL
+ * 
+ * limbo
+ *   hash                     hash of record awaiting potential future authorization
+ *   owner                    owner of record
+ *   data                     record data
+ *   receive_time             local record receive time in seconds since epoch
+ *
  * comment
  *   by_record_doff           doff (key) of record containing comment
  *   assertion                assertion (see comment.go)
@@ -147,6 +164,30 @@ static void *_ZTLF_DB_graphThreadMain(void *arg);
 "CREATE INDEX IF NOT EXISTS record_reputation_linked_count ON record(reputation,linked_count);\n" \
 "CREATE INDEX IF NOT EXISTS record_id_owner_ts ON record(id,owner,ts);\n" \
 "CREATE INDEX IF NOT EXISTS record_owner_ts ON record(owner,ts);\n" \
+\
+"CREATE TABLE IF NOT EXISTS cert (" \
+"subject_serial_no TEXT NOT NULL," \
+"serial_no TEXT NOT NULL," \
+"record_doff INTEGER NOT NULL," \
+"certificate BLOB NOT NULL," \
+"PRIMARY KEY(subject_serial_no,serial_no,record_doff)" \
+") WITHOUT ROWID;\n" \
+\
+"CREATE TABLE IF NOT EXISTS cert_revocation (" \
+"revoked_serial_no TEXT NOT NULL," \
+"record_doff INTEGER NOT NULL," \
+"record_dlen INTEGER NOT NULL," \
+"PRIMARY KEY(revoked_serial_no,record_doff,record_dlen)" \
+") WITHOUT ROWID;\n" \
+\
+"CREATE TABLE IF NOT EXISTS limbo (" \
+"hash BLOB PRIMARY KEY NOT NULL," \
+"owner BLOB NOT NULL," \
+"ts INTEGER NOT NULL," \
+"receive_time INTEGER NOT NULL" \
+") WITHOUT ROWID;\n" \
+\
+"CREATE INDEX IF NOT EXISTS limbo_owner ON limbo(owner);" \
 \
 "CREATE TABLE IF NOT EXISTS comment (" \
 "subject BLOB," \
@@ -374,10 +415,10 @@ int ZTLF_DB_Open(
 		"DELETE FROM graph_pending WHERE record_goff = ?");
 	S(db->sGetPendingCount,
 		"SELECT COUNT(1) FROM graph_pending AS gp");
-	S(db->sHaveDanglingLinks,
-		"SELECT w.retries FROM wanted AS w,dangling_link AS dl WHERE w.retries <= ? AND dl.hash = w.hash LIMIT 1");
-	S(db->sGetWanted,
-		"SELECT hash FROM wanted WHERE retries BETWEEN ? AND ? ORDER BY retries LIMIT ?");
+	S(db->sHaveDanglingLinks, /* this excludes records in limbo since these could otherwise prevent us from ever being fully synchronized */
+		"SELECT w.retries FROM wanted AS w,dangling_link AS dl WHERE w.retries <= ? AND dl.hash = w.hash AND NOT EXISTS (SELECT l.hash FROM limbo AS l WHERE l.hash = w.hash) LIMIT 1");
+	S(db->sGetWanted, /* this excludes records in limbo since we already have those and are possibly awaiting a cert */
+		"SELECT w.hash FROM wanted AS w WHERE w.retries BETWEEN ? AND ? AND NOT EXISTS (SELECT l.hash FROM limbo AS l WHERE l.hash = w.hash) ORDER BY w.retries LIMIT ?");
 	S(db->sIncWantedRetries,
 		"UPDATE wanted SET retries = (retries + 1) WHERE hash = ?");
 	S(db->sLogComment,
@@ -399,8 +440,22 @@ int ZTLF_DB_Open(
 		"AND NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) "
 		"AND NOT EXISTS (SELECT gp.record_goff FROM graph_pending AS gp WHERE gp.record_goff = r.goff) "
 		"ORDER BY r.ckey,r.owner,r.ts");
+	S(db->sPutCert,
+		"INSERT OR REPLACE INTO cert (subject_serial_no,serial_no,record_doff,certificate) VALUES (?,?,?,?)");
+	S(db->sPutCertRevocation,
+		"INSERT OR REPLACE INTO cert_revocation (revoked_serial_no,record_doff,record_dlen) VALUES (?,?,?)");
+	S(db->sGetCertsBySubject, /* note: we only support a depth of 2 for certificates: owner -> intermediate -> root */
+		"SELECT serial_no,certificate FROM cert WHERE subject_serial_no IN (?,(SELECT serial_no FROM cert WHERE subject_serial_no = ?))");
+	S(db->sGetCertRevocationsByRevokedSerial,
+		"SELECT record_doff,record_dlen FROM cert_revocation WHERE revoked_serial_no = ?");
+	S(db->sMarkInLimbo,
+		"INSERT OR REPLACE INTO limbo (hash,owner,ts,receive_time) VALUES (?,?,?,?)");
+	S(db->sTakeFromLimbo,
+		"DELETE FROM limbo WHERE hash = ?");
+	S(db->sHaveRecordInLimbo,
+		"SELECT hash FROM limbo WHERE hash = ?");
 
-	/* Open and memory map graph and data files. */
+ /* Open and memory map graph and data files. */
 	snprintf(tmp,sizeof(tmp),"%s" ZTLF_PATH_SEPARATOR "graph.bin",path);
 	e = ZTLF_MappedFile_Open(&db->gf,tmp,ZTLF_GRAPH_FILE_CAPACITY_INCREMENT,ZTLF_GRAPH_FILE_CAPACITY_INCREMENT);
 	if (e) {
@@ -804,6 +859,13 @@ void ZTLF_DB_Close(struct ZTLF_DB *db)
 		if (db->sQueryOrSelectorRange)                sqlite3_finalize(db->sQueryOrSelectorRange);
 		if (db->sQueryAndSelectorRange)               sqlite3_finalize(db->sQueryAndSelectorRange);
 		if (db->sQueryGetResults)                     sqlite3_finalize(db->sQueryGetResults);
+		if (db->sPutCert)                             sqlite3_finalize(db->sPutCert);
+		if (db->sPutCertRevocation)                   sqlite3_finalize(db->sPutCertRevocation);
+		if (db->sGetCertsBySubject)                   sqlite3_finalize(db->sGetCertsBySubject);
+		if (db->sGetCertRevocationsByRevokedSerial)   sqlite3_finalize(db->sGetCertRevocationsByRevokedSerial);
+		if (db->sMarkInLimbo)                         sqlite3_finalize(db->sMarkInLimbo);
+		if (db->sTakeFromLimbo)                       sqlite3_finalize(db->sTakeFromLimbo);
+		if (db->sHaveRecordInLimbo)                   sqlite3_finalize(db->sHaveRecordInLimbo);
 		sqlite3_close_v2(db->dbc);
 	}
 
@@ -1099,6 +1161,13 @@ int ZTLF_DB_PutRecord(
 	}
 
 	pthread_mutex_unlock(graphNodeLock);
+
+	/* Delete any limbo entries for this record. */
+	sqlite3_reset(db->sTakeFromLimbo);
+	sqlite3_bind_blob(db->sTakeFromLimbo,1,hash,32,SQLITE_STATIC);
+	if ((e = sqlite3_step(db->sTakeFromLimbo)) != SQLITE_DONE) {
+		ZTLF_L_warning("database error deleting limbo entry: %d (%s)",e,sqlite3_errmsg(db->dbc));
+	}
 
 	/* Delete dangling link records referencing this record. */
 	sqlite3_reset(db->sDeleteDanglingLinks);
@@ -1477,4 +1546,136 @@ unsigned int ZTLF_DB_GetConfig(struct ZTLF_DB *db,const char *key,void *value,co
 	}
 	pthread_mutex_unlock(&db->dbLock);
 	return len;
+}
+
+int ZTLF_DB_PutCert(
+	struct ZTLF_DB *db,
+	const char *serial,
+	const char *subjectSerial,
+	const uint64_t recordDoff,
+	const void *cert,
+	const unsigned int certLen)
+{
+	pthread_mutex_lock(&db->dbLock);
+	sqlite3_reset(db->sPutCert);
+	sqlite3_bind_text(db->sPutCert,1,subjectSerial,-1,SQLITE_STATIC);
+	sqlite3_bind_text(db->sPutCert,2,serial,-1,SQLITE_STATIC);
+	sqlite3_bind_int64(db->sPutCert,3,(sqlite_int64)recordDoff);
+	sqlite3_bind_blob(db->sPutCert,4,cert,(int)certLen,SQLITE_STATIC);
+	const int ok = sqlite3_step(db->sPutCert);
+	pthread_mutex_unlock(&db->dbLock);
+	return (ok == SQLITE_DONE) ? 0 : ZTLF_POS(ok);
+}
+
+int ZTLF_DB_PutCertRevocation(
+	struct ZTLF_DB *db,
+	const char *revokedSerialNumber,
+	const uint64_t recordDoff,
+	const unsigned int recordDlen)
+{
+	pthread_mutex_lock(&db->dbLock);
+	sqlite3_reset(db->sPutCertRevocation);
+	sqlite3_bind_text(db->sPutCertRevocation,1,revokedSerialNumber,-1,SQLITE_STATIC);
+	sqlite3_bind_int64(db->sPutCertRevocation,2,(sqlite_int64)recordDoff);
+	sqlite3_bind_int(db->sPutCertRevocation,3,(int)recordDlen);
+	const int ok = sqlite3_step(db->sPutCertRevocation);
+	pthread_mutex_unlock(&db->dbLock);
+	return (ok == SQLITE_DONE) ? 0 : ZTLF_POS(ok);
+}
+
+struct ZTLF_CertificateResults *ZTLF_DB_GetCertInfo(struct ZTLF_DB *db,const char *subjectSerial)
+{
+	struct ZTLF_CertificateResults *cr = (struct ZTLF_CertificateResults *)malloc(sizeof(struct ZTLF_CertificateResults));
+	if (!cr) {
+		return cr;
+	}
+
+	cr->certificates = NULL;
+	cr->crls = NULL;
+	cr->certificatesLength = 0;
+	cr->crlCount = 0;
+	unsigned long certCap = 0,crlCap = 0;
+
+	pthread_mutex_lock(&db->dbLock);
+	sqlite3_reset(db->sGetCertsBySubject);
+	sqlite3_bind_text(db->sGetCertsBySubject,1,subjectSerial,-1,SQLITE_STATIC);
+	sqlite3_bind_text(db->sGetCertsBySubject,2,subjectSerial,-1,SQLITE_STATIC);
+	while (sqlite3_step(db->sGetCertsBySubject) == SQLITE_ROW) {
+		const char *const serial = (const char *)sqlite3_column_text(db->sGetCertsBySubject,0);
+		if (serial) {
+			const void *cert = sqlite3_column_blob(db->sGetCertsBySubject,1);
+			const unsigned long certLen = (unsigned long)sqlite3_column_bytes(db->sGetCertsBySubject,1);
+			if (cert) {
+				const unsigned long newCertLen = cr->certificatesLength + certLen;
+				if (newCertLen > certCap) {
+					void *const old = cr->certificates;
+					cr->certificates = realloc(cr->certificates,newCertLen + 16384);
+					if (!cr->certificates) {
+						cr->certificates = old;
+						break;
+					}
+					if (old)
+						free(old);
+					certCap = newCertLen + 16384;
+				}
+				memcpy((void *)(((char *)cr->certificates) + cr->certificatesLength),cert,certLen);
+				cr->certificatesLength = newCertLen;
+
+				sqlite3_reset(db->sGetCertRevocationsByRevokedSerial);
+				sqlite3_bind_text(db->sGetCertRevocationsByRevokedSerial,1,serial,-1,SQLITE_STATIC);
+				while (sqlite3_step(db->sGetCertRevocationsByRevokedSerial) == SQLITE_ROW) {
+					if (cr->crlCount <= crlCap) {
+						void *const old = (void *)cr->crls;
+						cr->crls = (struct ZTLF_RecordIndex *)realloc((void *)cr->crls,sizeof(struct ZTLF_RecordIndex) * (crlCap + 16));
+						if (!cr->crls) {
+							cr->crls = (struct ZTLF_RecordIndex *)old;
+							break;
+						}
+						if (old)
+							free(old);
+						crlCap += 16;
+					}
+					cr->crls[cr->crlCount].doff = (uint64_t)sqlite3_column_int64(db->sGetCertRevocationsByRevokedSerial,0);
+					cr->crls[cr->crlCount].dlen = (uint64_t)sqlite3_column_int64(db->sGetCertRevocationsByRevokedSerial,1);
+					cr->crls[cr->crlCount].localReputation = 0; /* not used in this case */
+					++cr->crlCount;
+				}
+			}
+		}
+	}
+	pthread_mutex_unlock(&db->dbLock);
+
+	return cr;
+}
+
+int ZTLF_DB_MarkInLimbo(struct ZTLF_DB *db,const void *hash,const void *owner,const unsigned int ownerSize,const uint64_t localReceiveTime,const uint64_t ts)
+{
+	pthread_mutex_lock(&db->dbLock);
+	sqlite3_reset(db->sMarkInLimbo);
+	sqlite3_bind_blob(db->sMarkInLimbo,1,hash,32,SQLITE_STATIC);
+	sqlite3_bind_blob(db->sMarkInLimbo,2,owner,(int)ownerSize,SQLITE_STATIC);
+	sqlite3_bind_int64(db->sMarkInLimbo,3,(sqlite_int64)ts);
+	sqlite3_bind_int64(db->sMarkInLimbo,4,(sqlite_int64)localReceiveTime);
+	const int ok = sqlite3_step(db->sMarkInLimbo);
+	pthread_mutex_unlock(&db->dbLock);
+	return (ok == SQLITE_DONE) ? 0 : ZTLF_POS(ok);
+}
+
+int ZTLF_DB_HaveRecordIncludeLimbo(struct ZTLF_DB *db,const void *hash)
+{
+	int have = 0;
+	pthread_mutex_lock(&db->dbLock);
+	sqlite3_reset(db->sGetRecordByHash);
+	sqlite3_bind_blob(db->sGetRecordByHash,1,hash,32,SQLITE_STATIC);
+	if (sqlite3_step(db->sGetRecordByHash) == SQLITE_ROW) {
+		have = 1;
+	} else {
+		sqlite3_reset(db->sHaveRecordInLimbo);
+		sqlite3_bind_blob(db->sHaveRecordInLimbo,1,hash,32,SQLITE_STATIC);
+		if (sqlite3_step(db->sHaveRecordInLimbo) == SQLITE_ROW) {
+			have = 2;
+		}
+	}
+	pthread_mutex_unlock(&db->dbLock);
+	return have;
 }

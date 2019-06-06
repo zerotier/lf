@@ -38,6 +38,9 @@ package lf
 import "C"
 
 import (
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"errors"
 	"fmt"
 	"log"
 	"strconv"
@@ -350,9 +353,10 @@ func (db *db) query(tsMin, tsMax int64, selectorRanges [][2][]byte, f func(uint6
 	cresults := C.ZTLF_DB_Query_fromGo(db.cdb, C.int64_t(tsMin), C.int64_t(tsMax), C.uintptr_t(uintptr(unsafe.Pointer(&sel[0]))), &selSizes[0], C.uint(len(selectorRanges)))
 	db.cdbLock.Unlock()
 	if uintptr(unsafe.Pointer(cresults)) != 0 {
+		defer C.free(unsafe.Pointer(cresults))
 		var owner [dbMaxOwnerSize]byte
 		for i := C.long(0); i < cresults.count; i++ {
-			cr := (*C.struct_ZTLF_QueryResult)(unsafe.Pointer(uintptr(unsafe.Pointer(&cresults.results[0])) + (uintptr(i) * unsafe.Sizeof(cresults.results[0]))))
+			cr := (*C.struct_ZTLF_QueryResult)(unsafe.Pointer(uintptr(unsafe.Pointer(&cresults.results[0])) + (uintptr(i) * uintptr(C.sizeof_struct_ZTLF_QueryResult))))
 			ownerSize := uint(cr.ownerSize)
 			if ownerSize > 0 && ownerSize <= dbMaxOwnerSize && cr.dlen > 0 {
 				for j := uint(0); j < ownerSize; j++ {
@@ -363,7 +367,6 @@ func (db *db) query(tsMin, tsMax int64, selectorRanges [][2][]byte, f func(uint6
 				}
 			}
 		}
-		C.free(unsafe.Pointer(cresults))
 	}
 
 	return nil
@@ -380,7 +383,7 @@ func (db *db) getAllByOwner(owner []byte, f func(uint64, uint64, int) bool) erro
 	db.cdbLock.Unlock()
 	if uintptr(unsafe.Pointer(results)) != 0 {
 		for i := C.long(0); i < results.count; i++ {
-			rec := (*C.struct_ZTLF_RecordIndex)(unsafe.Pointer(uintptr(unsafe.Pointer(&results.records[0])) + (uintptr(i) * unsafe.Sizeof(results.records[0]))))
+			rec := (*C.struct_ZTLF_RecordIndex)(unsafe.Pointer(uintptr(unsafe.Pointer(&results.records[0])) + (uintptr(i) * uintptr(C.sizeof_struct_ZTLF_RecordIndex))))
 			if !f(uint64(rec.doff), uint64(rec.dlen), int(rec.localReputation)) {
 				break
 			}
@@ -404,7 +407,7 @@ func (db *db) getAllByIDNotOwner(id []byte, owner []byte, f func(uint64, uint64,
 	db.cdbLock.Unlock()
 	if uintptr(unsafe.Pointer(results)) != 0 {
 		for i := C.long(0); i < results.count; i++ {
-			rec := (*C.struct_ZTLF_RecordIndex)(unsafe.Pointer(uintptr(unsafe.Pointer(&results.records[0])) + (uintptr(i) * unsafe.Sizeof(results.records[0]))))
+			rec := (*C.struct_ZTLF_RecordIndex)(unsafe.Pointer(uintptr(unsafe.Pointer(&results.records[0])) + (uintptr(i) * uintptr(C.sizeof_struct_ZTLF_RecordIndex))))
 			if !f(uint64(rec.doff), uint64(rec.dlen), int(rec.localReputation)) {
 				break
 			}
@@ -470,4 +473,92 @@ func (db *db) setConfig(key string, value []byte) error {
 		return fmt.Errorf("database error %d", int(e))
 	}
 	return nil
+}
+
+/*
+struct ZTLF_CertificateResults *ZTLF_DB_GetCertInfo(struct ZTLF_DB *db,const char *subjectSerial);
+*/
+
+func (db *db) putCert(cert *x509.Certificate, recordDoff uint64) error {
+	if cert == nil || len(cert.Raw) == 0 {
+		return errors.New("invalid certificate")
+	}
+	db.cdbLock.Lock()
+	defer db.cdbLock.Unlock()
+	e := C.ZTLF_DB_PutCert(db.cdb, C.CString(Base62Encode(cert.SerialNumber.Bytes())), C.CString(cert.Subject.SerialNumber), C.uint64_t(recordDoff), unsafe.Pointer(&cert.Raw[0]), C.uint(len(cert.Raw)))
+	if e != 0 {
+		return fmt.Errorf("database error %d", int(e))
+	}
+	return nil
+}
+
+func (db *db) putCertRevocation(revokedSerialNumber string, recordDoff uint64, recordDlen uint) error {
+	db.cdbLock.Lock()
+	defer db.cdbLock.Unlock()
+	e := C.ZTLF_DB_PutCertRevocation(db.cdb, C.CString(revokedSerialNumber), C.uint64_t(recordDoff), C.uint(recordDlen))
+	if e != 0 {
+		return fmt.Errorf("database error %d", int(e))
+	}
+	return nil
+}
+
+// getCertInfo returns the certificates and CRLs for all relevant end chain and intermediate certs for a subject serial.
+func (db *db) getCertInfo(subjectSerial string) (map[string]*x509.Certificate, map[string][]*pkix.CertificateList) {
+	cBySerialNo := make(map[string]*x509.Certificate)
+	crlByRevokedSerialNo := make(map[string][]*pkix.CertificateList)
+
+	db.cdbLock.Lock()
+	cr := C.ZTLF_DB_GetCertInfo(db.cdb, C.CString(subjectSerial))
+	db.cdbLock.Unlock()
+	if cr == nil {
+		return cBySerialNo, crlByRevokedSerialNo
+	}
+	defer C.ZTLF_DB_FreeCertificateResults(cr)
+
+	for crli, crlCount := uint(0), uint(cr.crlCount); crli < crlCount; crli++ {
+		ri := (*C.struct_ZTLF_RecordIndex)(unsafe.Pointer(uintptr(unsafe.Pointer(cr.crls)) + (uintptr(crli) * uintptr(C.sizeof_struct_ZTLF_RecordIndex))))
+		rdata, _ := db.getDataByOffset(uint64(ri.doff), uint(ri.dlen), nil)
+		if len(rdata) > 0 {
+			rec, _ := NewRecordFromBytes(rdata)
+			if rec != nil {
+				crlBytes, _ := rec.GetValue([]byte(RecordCertificateMaskingKey))
+				if len(crlBytes) > 0 {
+					crl, _ := x509.ParseCRL(crlBytes)
+					for _, revoked := range crl.TBSCertList.RevokedCertificates {
+						sn := Base62Encode(revoked.SerialNumber.Bytes())
+						crlByRevokedSerialNo[sn] = append(crlByRevokedSerialNo[sn], crl)
+					}
+				}
+			}
+		}
+	}
+
+	certs, _ := x509.ParseCertificates(C.GoBytes(cr.certificates, C.int(cr.certificatesLength)))
+	for _, cert := range certs {
+		cBySerialNo[Base62Encode(cert.SerialNumber.Bytes())] = cert
+	}
+
+	return cBySerialNo, crlByRevokedSerialNo
+}
+
+func (db *db) markInLimbo(hash, owner []byte, localReceiveTime, ts uint64) error {
+	if len(hash) != 32 || len(owner) == 0 {
+		return ErrInvalidParameter
+	}
+	db.cdbLock.Lock()
+	defer db.cdbLock.Unlock()
+	e := C.ZTLF_DB_MarkInLimbo(db.cdb, unsafe.Pointer(&hash[0]), unsafe.Pointer(&owner[0]), C.uint(len(owner)), C.uint64_t(localReceiveTime), C.uint64_t(ts))
+	if e != 0 {
+		return fmt.Errorf("database error %d", int(e))
+	}
+	return nil
+}
+
+func (db *db) haveRecordIncludeLimbo(hash []byte) bool {
+	if len(hash) != 32 {
+		return false
+	}
+	db.cdbLock.Lock()
+	defer db.cdbLock.Unlock()
+	return C.ZTLF_DB_HaveRecordIncludeLimbo(db.cdb, unsafe.Pointer(&hash[0])) > 0
 }

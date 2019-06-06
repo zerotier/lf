@@ -101,6 +101,14 @@ struct ZTLF_RecordList
 	struct ZTLF_RecordIndex records[1]; /* this is actually variable size, but Go doesn't support [] */
 };
 
+struct ZTLF_CertificateResults
+{
+	void *certificates;
+	struct ZTLF_RecordIndex *crls;
+	unsigned long certificatesLength;
+	unsigned long crlCount;
+};
+
 #define ZTLF_DB_MAX_GRAPH_NODE_SIZE (sizeof(struct ZTLF_DB_GraphNode) + (256 * sizeof(int64_t)))
 
 /**
@@ -164,6 +172,13 @@ struct ZTLF_DB
 	sqlite3_stmt *sQueryOrSelectorRange;
 	sqlite3_stmt *sQueryAndSelectorRange;
 	sqlite3_stmt *sQueryGetResults;
+	sqlite3_stmt *sPutCert;
+	sqlite3_stmt *sPutCertRevocation;
+	sqlite3_stmt *sGetCertsBySubject;
+	sqlite3_stmt *sGetCertRevocationsByRevokedSerial;
+	sqlite3_stmt *sMarkInLimbo;
+	sqlite3_stmt *sTakeFromLimbo;
+	sqlite3_stmt *sHaveRecordInLimbo;
 
 	pthread_mutex_t dbLock;
 	pthread_mutex_t graphNodeLocks[ZTLF_DB_GRAPH_NODE_LOCK_ARRAY_SIZE]; /* used to lock graph nodes by locking node lock goff % NODE_LOCK_ARRAY_SIZE */
@@ -251,6 +266,37 @@ static inline int ZTLF_DB_GetRecordData(struct ZTLF_DB *db,uint64_t doff,void *d
 	}
 	return 0;
 }
+
+int ZTLF_DB_PutCert(
+	struct ZTLF_DB *db,
+	const char *serial,
+	const char *subjectSerial,
+	const uint64_t recordDoff,
+	const void *cert,
+	const unsigned int certLen);
+
+int ZTLF_DB_PutCertRevocation(
+	struct ZTLF_DB *db,
+	const char *revokedSerialNumber,
+	const uint64_t recordDoff,
+	const unsigned int recordDlen);
+
+struct ZTLF_CertificateResults *ZTLF_DB_GetCertInfo(struct ZTLF_DB *db,const char *subjectSerial);
+
+static inline void ZTLF_DB_FreeCertificateResults(struct ZTLF_CertificateResults *cr)
+{
+	if (cr) {
+		if (cr->certificates)
+			free((void *)cr->certificates);
+		if (cr->crls)
+			free((void *)cr->crls);
+		free((void *)cr);
+	}
+}
+
+int ZTLF_DB_MarkInLimbo(struct ZTLF_DB *db,const void *hash,const void *owner,const unsigned int ownerSize,const uint64_t localReceiveTime,const uint64_t ts);
+
+int ZTLF_DB_HaveRecordIncludeLimbo(struct ZTLF_DB *db,const void *hash);
 
 /* Golang-specific shims to get around some inconvenient aspects of cgo */
 

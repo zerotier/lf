@@ -211,7 +211,8 @@ func (m *Query) Execute(n *Node) (qr QueryResults, err error) {
 				return nil, err
 			}
 
-			if len(rec.Selectors) != len(selectorRanges) && (m.Open == nil || !*m.Open) {
+			currentlyApproved, _ := n.RecordApprovalStatus(rec)
+			if (len(rec.Selectors) != len(selectorRanges) && (m.Open == nil || !*m.Open)) || !currentlyApproved {
 				continue
 			}
 

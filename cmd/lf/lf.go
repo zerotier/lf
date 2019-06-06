@@ -34,7 +34,6 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"encoding/asn1"
 	"encoding/json"
 	"encoding/pem"
 	"flag"
@@ -1025,29 +1024,12 @@ func doMakeGenesis(cfg *lf.ClientConfig, basePath string, args []string) {
 			name.SerialNumber = serialNoStr
 			name.CommonName = prompt("  Common name []: ", false, "")
 
-			pseudoWork := prompt("  Pseudo-work value of signature (hex 0-ffffffff) [0]: ", false, "0")
-			pseudoWorkInt, err := strconv.ParseInt(pseudoWork, 16, 64)
-			if err != nil || pseudoWorkInt > 0xffffffff || pseudoWorkInt < 0 {
-				fmt.Println("ERROR: invalid value: must be hex 0-ffffffff")
-				return
-			}
-			pseudoWorkASN1V, err := asn1.Marshal(pseudoWorkInt)
-			if err != nil {
-				fmt.Printf("ERROR: ASN.1 marshal failed: %s\n", err.Error())
-				return
-			}
-
 			now := time.Now()
 			cert := &x509.Certificate{
-				SerialNumber: new(big.Int).SetBytes(serialNo),
-				Subject:      name,
-				NotBefore:    now,
-				NotAfter:     now.Add(time.Hour * time.Duration(24*ttl)),
-				ExtraExtensions: []pkix.Extension{pkix.Extension{
-					Id:       lf.AuthCertificateASN1PseudoWorkValue,
-					Critical: false,
-					Value:    pseudoWorkASN1V,
-				}},
+				SerialNumber:          new(big.Int).SetBytes(serialNo),
+				Subject:               name,
+				NotBefore:             now,
+				NotAfter:              now.Add(time.Hour * time.Duration(24*ttl)),
 				ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageTimeStamping},
 				KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
 				BasicConstraintsValid: true,
@@ -1062,10 +1044,6 @@ func doMakeGenesis(cfg *lf.ClientConfig, basePath string, args []string) {
 			cert2, err := x509.ParseCertificate(certBytes)
 			if err != nil {
 				logger.Printf("ERROR: unable to create CA certificate (parsing test): %s", err.Error())
-				return
-			}
-			if lf.GetAuthCertificatePseudoWork(cert2) != uint32(pseudoWorkInt) {
-				logger.Printf("ERROR: unable to create CA certificate (parsing test): pseudo-work ints do not match")
 				return
 			}
 			if cert.Subject.String() != cert2.Subject.String() {
@@ -1092,8 +1070,7 @@ func doMakeGenesis(cfg *lf.ClientConfig, basePath string, args []string) {
 		q = prompt("Create another record authorization certificate? [y/N]: ", false, "n")
 	}
 	if len(g.AuthCertificates) > 0 {
-		certs := g.GetAuthCertificates()
-		fmt.Printf("  (%d authorization certificates, %d bytes)\n", len(certs.Subjects()), len(g.AuthCertificates))
+		fmt.Printf("  (%d authorization certificates, %d bytes)\n", len(g.GetAuthCertificates()), len(g.AuthCertificates))
 		q = prompt("Authorization certificates required? [y/N]: ", false, "n")
 		g.AuthRequired = q == "Y" || q == "y" || q == "1"
 	}

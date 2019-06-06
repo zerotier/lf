@@ -29,7 +29,6 @@ package lf
 import (
 	"bytes"
 	"crypto/x509"
-	"encoding/asn1"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -38,37 +37,8 @@ import (
 	"unsafe"
 )
 
-const asn1PrivateOIDBase = 1426727994
-
-// AuthCertificateASN1PseudoWorkValue is the ASN1 OID for auth certificate pseudo-work value (value is a 32-bit unsigned integer).
-var AuthCertificateASN1PseudoWorkValue = asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, asn1PrivateOIDBase, 1}
-
-// GetAuthCertificatePseudoWork is a shortcut to parse out the pseudo work amount value from ExtraExtensions.
-// This will return 0 if the field is not present or invalid.
-func GetAuthCertificatePseudoWork(c *x509.Certificate) uint32 {
-	for _, ext := range c.Extensions {
-		if ext.Id.Equal(AuthCertificateASN1PseudoWorkValue) {
-			var v int64
-			_, err := asn1.Unmarshal(ext.Value, &v)
-			if err == nil && v < 0xffffffff && v >= 0 {
-				return uint32(v)
-			}
-		}
-	}
-	for _, ext := range c.ExtraExtensions {
-		if ext.Id.Equal(AuthCertificateASN1PseudoWorkValue) {
-			var v int64
-			_, err := asn1.Unmarshal(ext.Value, &v)
-			if err == nil && v < 0xffffffff && v >= 0 {
-				return uint32(v)
-			}
-		}
-	}
-	return 0
-}
-
 type genesisParametersState struct {
-	certs   *x509.CertPool
+	certs   map[string]*x509.Certificate
 	history []GenesisParameters
 	lock    sync.Mutex
 }
@@ -80,8 +50,8 @@ type GenesisParameters struct {
 	Name               string   `json:",omitempty"` // Name of this LF network / data store
 	Contact            string   `json:",omitempty"` // Contact info for this network (may be empty)
 	Comment            string   `json:",omitempty"` // Optional comment
-	AuthCertificates   Blob     `json:",omitempty"` // X.509 certificate(s) that can sign records to bypass work requirement
-	AuthRequired       bool     ``                  // If true a CA signature is required and simple proof of work is not accepted
+	AuthCertificates   Blob     `json:",omitempty"` // X.509 root certificates for avoiding PoW and potentially elevated trust (if elected)
+	AuthRequired       bool     ``                  // If true a cert is required and simple PoW is not accepted
 	RecordMinLinks     uint     ``                  // Minimum number of links required for non-genesis records
 	RecordMaxValueSize uint     ``                  // Maximum size of record values
 	RecordMaxTimeDrift uint     ``                  // Maximum number of seconds of time drift permitted for records
@@ -203,26 +173,26 @@ func (gp *GenesisParameters) SetAmendableFields(fields []string) error {
 }
 
 // GetAuthCertificates returns the fully deserialized auth CAs in this parameter set.
-func (gp *GenesisParameters) GetAuthCertificates() *x509.CertPool {
+func (gp *GenesisParameters) GetAuthCertificates() map[string]*x509.Certificate {
 	if len(gp.AuthCertificates) == 0 {
-		return new(x509.CertPool)
+		return nil
 	}
 	gps := (*genesisParametersState)(atomic.LoadPointer(&gp.state))
 	if gps == nil {
-		return new(x509.CertPool)
+		return nil
 	}
 	gps.lock.Lock()
 	defer gps.lock.Unlock()
-	if gps.certs != nil {
+	if len(gps.certs) > 0 {
 		return gps.certs
 	}
 	certs, err := x509.ParseCertificates(gp.AuthCertificates)
 	if err != nil {
-		return new(x509.CertPool)
+		return nil
 	}
-	gps.certs = new(x509.CertPool)
+	gps.certs = make(map[string]*x509.Certificate)
 	for _, cert := range certs {
-		gps.certs.AddCert(cert)
+		gps.certs[Base62Encode(cert.SerialNumber.Bytes())] = cert
 	}
 	return gps.certs
 }

@@ -103,6 +103,10 @@ const (
 	// RecordTypeDelete is a record that hides all other records by the same owner.
 	// This is a protocol constant and can't be changed.
 	RecordTypeDelete = 15 // reserved, not implemented yet
+
+	// RecordCertificateMaskingKey is the masking key for certs and CRLs (used as byte array).
+	// This is a protocol constant and can't be changed.
+	RecordCertificateMaskingKey = "lfCertificate"
 )
 
 // recordWharrgarblCost computes the cost in Wharrgarbl difficulty for a record of a given number of "billable" bytes.
@@ -534,12 +538,10 @@ func (r *Record) HashString() string {
 // Score returns this record's work score scaled to be work algorithm independent.
 func (r *Record) Score() uint32 {
 	switch r.WorkAlgorithm {
-	case RecordWorkAlgorithmNone:
-		return 1
 	case RecordWorkAlgorithmWharrgarbl:
 		return recordWharrgarblScore(WharrgarblGetDifficulty(r.Work))
 	}
-	return 0
+	return 1
 }
 
 // SelectorKey returns the selector key for a given selector at a given index in []Selectors.

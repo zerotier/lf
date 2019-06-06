@@ -88,6 +88,7 @@ const (
 	ErrRecordInvalid                   ErrRecord = "record invalid"
 	ErrRecordOwnerSignatureCheckFailed ErrRecord = "owner signature check failed"
 	ErrRecordInsufficientWork          ErrRecord = "insufficient work to pay for this record"
+	ErrRecordNotApproved               ErrRecord = "record not currently approved (via proof of work and/or certificates)"
 	ErrRecordInsufficientLinks         ErrRecord = "insufficient links"
 	ErrRecordTooManyLinks              ErrRecord = "too many links"
 	ErrRecordInvalidLinks              ErrRecord = "links must be sorted and unique"

@@ -35,6 +35,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/binary"
 	"encoding/json"
 	"encoding/pem"
@@ -49,6 +50,7 @@ import (
 	"os"
 	"path"
 	"runtime"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -65,7 +67,7 @@ const (
 	p2pProtoMessageTypeNop                  byte = 0 // no operation
 	p2pProtoMessageTypeHello                byte = 1 // peerHelloMsg (JSON)
 	p2pProtoMessageTypeRecord               byte = 2 // binary marshaled Record
-	p2pProtoMesaggeTypeRequestRecordsByHash byte = 3 // one or more 32-byte hashes we want
+	p2pProtoMessageTypeRequestRecordsByHash byte = 3 // one or more 32-byte hashes we want
 	p2pProtoMessageTypeHaveRecords          byte = 4 // one or more 32-byte hashes we have
 	p2pProtoMessageTypePeer                 byte = 5 // Peer (JSON)
 
@@ -139,6 +141,7 @@ type Node struct {
 	mountPoints      map[string]*FS
 	mountPointsLock  sync.Mutex
 	db               db
+	limboLock        sync.Mutex
 
 	owner        *Owner // Owner for commentary, key also currently used for ECDH on link
 	identity     []byte // Compressed public key from owner
@@ -158,6 +161,9 @@ type Node struct {
 
 	recordsRequested     map[[32]byte]uintptr // When records were last requested
 	recordsRequestedLock sync.Mutex           //
+
+	ownerCertificates     map[string][2][]*x509.Certificate // Owner certificate cache
+	ownerCertificatesLock sync.Mutex                        //
 
 	comments     *list.List // Accumulates commentary if commentary is enabled
 	commentsLock sync.Mutex //
@@ -185,6 +191,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 	n.knownPeers = make(map[string]*knownPeer)
 	n.connectionsInStartup = make(map[*net.TCPConn]bool)
 	n.recordsRequested = make(map[[32]byte]uintptr)
+	n.ownerCertificates = make(map[string][2][]*x509.Certificate)
 	n.comments = list.New()
 	n.startTime = time.Now()
 
@@ -698,14 +705,17 @@ func (n *Node) AddRecord(r *Record) error {
 		return err
 	}
 
-	// Validate work and if insufficient check for a certificate for this record.
-	// If the record lacks a cert, cache it and ask other nodes. We hold records for
-	// a short period to see if other nodes have certs for them.
-	if !n.localTest && !r.ValidateWork() {
-		return ErrRecordInsufficientWork
+	// Check this record's approval status via either PoW or certificates. Note
+	// that we accept records into the DAG even if they were approved by later
+	// revoked (via CRLs) certificates. This maintains DAG linkage integrity.
+	// If we didn't do it this way a CRL could break the DAG. Revoked records do
+	// get hidden in query results so they effectively disappear for users.
+	_, recordEverApproved := n.RecordApprovalStatus(r)
+	if !recordEverApproved {
+		return ErrRecordNotApproved
 	}
 
-	// Add record to database, aborting if this generates some kind of error.
+	// Add record to database if it passes all checks
 	err = n.db.putRecord(r)
 	if err != nil {
 		return err
@@ -731,6 +741,129 @@ func (n *Node) SetCommentaryEnabled(j bool) {
 		n.commentsLock.Unlock()
 	}
 }
+
+// GetOwnerCertificates returns all valid non-revoked top-level certificates for a record owner.
+func (n *Node) GetOwnerCertificates(owner OwnerPublic) (certs []*x509.Certificate, revokedCerts []*x509.Certificate) {
+	if len(owner) == 0 {
+		return
+	}
+
+	defer func() {
+		e := recover()
+		if e != nil {
+			n.log[LogLevelWarning].Printf("WARNING: panic in GetOwnerCertificate(): %v (bug, but also probably indicates bad cert in data store)", e)
+		}
+	}()
+
+	ownerSubjectSerialNo := Base62Encode(owner)
+
+	n.ownerCertificatesLock.Lock()
+	cachedCerts := n.ownerCertificates[ownerSubjectSerialNo]
+	n.ownerCertificatesLock.Unlock()
+	if len(cachedCerts) > 0 {
+		certs = cachedCerts[0]
+		revokedCerts = cachedCerts[1]
+		return
+	}
+
+	certsBySerialNo, crlsByRevokedSerialNo := n.db.getCertInfo(ownerSubjectSerialNo)
+	rootsBySerialNo := n.genesisParameters.GetAuthCertificates()
+
+	// The LF CA model currently supports one level of intermediate certificates. These
+	// must be issued by a root CA and can in turn issue owner certificates. Root CAs
+	// can also directly issue owner certificates. CRLs can be issued by the same cert
+	// that issued the certificate being revoked provided it has the CRL key usage flag.
+
+	for _, ownerCert := range certsBySerialNo {
+		if ownerCert.Subject.SerialNumber == ownerSubjectSerialNo {
+			ownerCertIssuer := rootsBySerialNo[ownerCert.Issuer.SerialNumber]
+			ownerCertIssuerRevoked := false
+
+			if ownerCertIssuer == nil {
+				intermediate := certsBySerialNo[ownerCert.Issuer.SerialNumber]
+				if intermediate != nil {
+					intermediateIssuer := rootsBySerialNo[intermediate.Issuer.SerialNumber]
+					if intermediateIssuer != nil && (intermediateIssuer.KeyUsage&x509.KeyUsageCertSign) != 0 && intermediate.NotBefore.After(intermediateIssuer.NotBefore) && intermediate.CheckSignatureFrom(intermediateIssuer) == nil {
+						intCrls := crlsByRevokedSerialNo[ownerCert.Issuer.SerialNumber]
+						if (intermediateIssuer.KeyUsage & x509.KeyUsageCRLSign) != 0 {
+							for _, crl := range intCrls {
+								if intermediateIssuer.CheckCRLSignature(crl) == nil {
+									ownerCertIssuerRevoked = true
+									break
+								}
+							}
+						}
+						ownerCertIssuer = intermediate
+					}
+				}
+			}
+
+			if ownerCertIssuer != nil && (ownerCertIssuer.KeyUsage&x509.KeyUsageCertSign) == 0 && ownerCert.NotBefore.After(ownerCertIssuer.NotBefore) && ownerCert.CheckSignatureFrom(ownerCertIssuer) == nil {
+				ownerCertCrls := crlsByRevokedSerialNo[Base62Encode(ownerCert.SerialNumber.Bytes())]
+				ownerCertRevoked := ownerCertIssuerRevoked
+				if !ownerCertRevoked && (ownerCertIssuer.KeyUsage&x509.KeyUsageCRLSign) != 0 {
+					for _, crl := range ownerCertCrls {
+						if ownerCertIssuer.CheckCRLSignature(crl) == nil {
+							ownerCertRevoked = true
+							break
+						}
+					}
+				}
+				if ownerCertRevoked {
+					certs = append(certs, ownerCert)
+				} else {
+					revokedCerts = append(revokedCerts, ownerCert)
+				}
+			}
+		}
+	}
+
+	sort.Slice(certs, func(a, b int) bool { return certs[a].NotBefore.Before(certs[b].NotBefore) })
+	sort.Slice(revokedCerts, func(a, b int) bool { return revokedCerts[a].NotBefore.Before(revokedCerts[b].NotBefore) })
+
+	n.ownerCertificatesLock.Lock()
+	n.ownerCertificates[ownerSubjectSerialNo] = [2][]*x509.Certificate{certs, revokedCerts}
+	n.ownerCertificatesLock.Unlock()
+
+	return
+}
+
+// RecordIsSigned returns the certificate that signed this record (if any) and whether or not it was revoked by a CRL.
+func (n *Node) RecordIsSigned(rec *Record) (*x509.Certificate, bool) {
+	if rec == nil {
+		return nil, false
+	}
+	certs, revokedCerts := n.GetOwnerCertificates(rec.Owner)
+	for _, cert := range certs {
+		if rec.Timestamp >= uint64(cert.NotBefore.Unix()) && rec.Timestamp <= uint64(cert.NotAfter.Unix()) {
+			return cert, false
+		}
+	}
+	for _, revokedCert := range revokedCerts {
+		if rec.Timestamp >= uint64(revokedCert.NotBefore.Unix()) && rec.Timestamp <= uint64(revokedCert.NotAfter.Unix()) {
+			return revokedCert, true
+		}
+	}
+	return nil, false
+}
+
+// RecordApprovalStatus checks this record's current approval status.
+// The first result is whether the record is currently approved. The second shows whether
+// the record was ever approved. Both are always true for PoW-approved records. Certificate
+// approved records can return (false, true) if they were approved by a certificate that
+// was later revoked via a CRL.
+func (n *Node) RecordApprovalStatus(rec *Record) (bool, bool) {
+	if rec == nil {
+		return false, false
+	}
+	if !n.genesisParameters.AuthRequired && rec.ValidateWork() {
+		return true, true
+	}
+	cert, revoked := n.RecordIsSigned(rec)
+	return (cert != nil && !revoked), (cert != nil && revoked)
+}
+
+//////////////////////////////////////////////////////////////////////////////
 
 func (n *Node) getWorkFunction() *Wharrgarblr {
 	var wf *Wharrgarblr
@@ -826,11 +959,13 @@ func (n *Node) handleSynchronizedRecord(doff uint64, dlen uint, reputation int, 
 
 				// Certain record types get special handling when they're synchronized.
 				switch r.Type {
+
 				case RecordTypeGenesis:
 					n.handleGenesisRecord(r)
+
 				case RecordTypeCommentary:
-					cdata, err := r.GetValue(nil)
-					if err == nil && len(cdata) > 0 {
+					cdata, _ := r.GetValue(nil)
+					if len(cdata) > 0 {
 						var c comment
 						for len(cdata) > 0 {
 							cdata, err = c.readFrom(cdata)
@@ -840,6 +975,44 @@ func (n *Node) handleSynchronizedRecord(doff uint64, dlen uint, reputation int, 
 							} else {
 								break
 							}
+						}
+					}
+
+				case RecordTypeCertificate:
+					cdata, _ := r.GetValue([]byte(RecordCertificateMaskingKey))
+					if len(cdata) > 0 {
+						certs, _ := x509.ParseCertificates(cdata)
+						if len(certs) > 0 {
+							for _, cert := range certs {
+								err := n.db.putCert(cert, doff)
+								if err != nil {
+									n.log[LogLevelWarning].Printf("WARNING: error adding certificate to database: %s", err.Error())
+								}
+								n.log[LogLevelVerbose].Printf("certificate: new certificate %s issued by %s for subject %s", Base62Encode(cert.SerialNumber.Bytes()), cert.Issuer.SerialNumber, cert.Subject.SerialNumber)
+							}
+
+							// TODO: right now this just nukes the cert cache. This could be made more fine grained.
+							n.ownerCertificatesLock.Lock()
+							n.ownerCertificates = make(map[string][2][]*x509.Certificate)
+							n.ownerCertificatesLock.Unlock()
+						}
+					}
+
+				case RecordTypeCRL:
+					cdata, _ := r.GetValue([]byte(RecordCertificateMaskingKey))
+					if len(cdata) > 0 {
+						crl, _ := x509.ParseCRL(cdata)
+						if crl != nil {
+							for _, revoked := range crl.TBSCertList.RevokedCertificates {
+								revokedSerial := Base62Encode(revoked.SerialNumber.Bytes())
+								n.db.putCertRevocation(revokedSerial, doff, dlen)
+								n.log[LogLevelVerbose].Printf("certificate: new CRL from \"%s\" revokes %s", crl.TBSCertList.Issuer.String(), revokedSerial)
+							}
+
+							// TODO: right now this just nukes the cert cache. This could be made more fine grained.
+							n.ownerCertificatesLock.Lock()
+							n.ownerCertificates = make(map[string][2][]*x509.Certificate)
+							n.ownerCertificatesLock.Unlock()
 						}
 					}
 				}
@@ -976,6 +1149,44 @@ func (n *Node) backgroundWorkerMain() {
 					n.knownPeersLock.Unlock()
 				}
 			}
+
+			// Periodically check to see if any records in limbo can now be admitted or should be forgotten.
+			if (ticker % 15) == 2 {
+				limboBasePath := path.Join(n.basePath, "limbo")
+				limboFiles, _ := ioutil.ReadDir(limboBasePath)
+				limboFilePaths := make([]string, 0, len(limboFiles))
+				for _, f := range limboFiles {
+					fn := f.Name()
+					if len(fn) > 0 && fn[0] == '@' && f.Mode().IsRegular() {
+						owner, _ := NewOwnerPublicFromString(fn)
+						if len(owner) > 0 {
+							certs, revokedCerts := n.GetOwnerCertificates(owner)
+							if len(certs) > 0 || len(revokedCerts) > 0 {
+								n.log[LogLevelNormal].Printf("sync: certificate for owner %s appears to be available, processing records in limbo (%d bytes)", fn, f.Size())
+								limboFilePaths = append(limboFilePaths, path.Join(limboBasePath, fn))
+							}
+						}
+					}
+				}
+
+				if len(limboFilePaths) > 0 {
+					n.limboLock.Lock()
+					for _, fp := range limboFilePaths {
+						f, _ := os.Open(fp)
+						if f != nil {
+							bf := bufio.NewReader(f)
+							var rec Record
+							for rec.UnmarshalFrom(bf) == nil {
+								if n.AddRecord(&rec) != nil {
+									break
+								}
+							}
+							f.Close()
+						}
+					}
+					n.limboLock.Unlock()
+				}
+			}
 		}
 
 		// Periodically check and update database full sync state.
@@ -1095,7 +1306,7 @@ func (n *Node) requestWantedRecords(minRetries, maxRetries int) {
 					n.backgroundThreadWG.Done()
 				}()
 				req := make([]byte, 1, len(hashes)+1)
-				req[0] = p2pProtoMesaggeTypeRequestRecordsByHash
+				req[0] = p2pProtoMessageTypeRequestRecordsByHash
 				req = append(req, hashes...)
 				p.send(req)
 			}()
@@ -1528,14 +1739,35 @@ mainReaderLoop:
 			if len(msg) > 0 {
 				rec, err := NewRecordFromBytes(msg)
 				if err == nil {
+					rh := rec.Hash()
 					p.hasRecordsLock.Lock()
-					p.hasRecords[rec.Hash()] = atomic.LoadUintptr(&n.timeTicker)
+					p.hasRecords[rh] = atomic.LoadUintptr(&n.timeTicker)
 					p.hasRecordsLock.Unlock()
-					n.AddRecord(rec)
+
+					if n.AddRecord(rec) == ErrRecordNotApproved && !n.db.haveRecordIncludeLimbo(rh[:]) {
+						// If a record is not approved we save it temporarily and mark it "in limbo" in
+						// the database. Records marked in limbo might get added later if certificates
+						// authorizing them arrive or there is a network config change.
+						n.db.markInLimbo(rh[:], rec.Owner, TimeSec(), rec.Timestamp)
+
+						limboBasePath := path.Join(n.basePath, "limbo")
+						limboPath := path.Join(limboBasePath, rec.Owner.String())
+						n.limboLock.Lock()
+						limboFile, _ := os.OpenFile(limboPath, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0644)
+						if limboFile == nil {
+							os.MkdirAll(limboBasePath, 0755)
+							limboFile, _ = os.OpenFile(limboPath, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0644)
+						}
+						if limboFile != nil {
+							limboFile.Write(msg)
+							limboFile.Close()
+						}
+						n.limboLock.Unlock()
+					}
 				}
 			}
 
-		case p2pProtoMesaggeTypeRequestRecordsByHash:
+		case p2pProtoMessageTypeRequestRecordsByHash:
 			for len(msg) >= 32 {
 				rdata := make([]byte, 1, 4096)
 				rdata[0] = p2pProtoMessageTypeRecord
@@ -1549,24 +1781,24 @@ mainReaderLoop:
 		case p2pProtoMessageTypeHaveRecords:
 			for len(msg) >= 32 {
 				req := make([]byte, 1, 1+len(msg))
-				req[0] = p2pProtoMesaggeTypeRequestRecordsByHash
+				req[0] = p2pProtoMessageTypeRequestRecordsByHash
 				var h [32]byte
 				copy(h[:], msg[0:32])
 				msg = msg[32:]
-				if !n.db.hasRecord(h[:]) {
-					ticker := atomic.LoadUintptr(&n.timeTicker)
 
+				ticker := atomic.LoadUintptr(&n.timeTicker)
+				p.hasRecordsLock.Lock()
+				p.hasRecords[h] = ticker
+				p.hasRecordsLock.Unlock()
+
+				if !n.db.haveRecordIncludeLimbo(h[:]) {
 					n.recordsRequestedLock.Lock()
-					if (ticker - n.recordsRequested[h]) <= 1 {
+					if (ticker - n.recordsRequested[h]) <= 2 {
 						n.recordsRequestedLock.Unlock()
 						continue
 					}
 					n.recordsRequested[h] = ticker
 					n.recordsRequestedLock.Unlock()
-
-					p.hasRecordsLock.Lock()
-					p.hasRecords[h] = ticker
-					p.hasRecordsLock.Unlock()
 
 					req = append(req, h[:]...)
 					if len(req) >= (p2pProtoMaxMessageSize - 64) {
@@ -1598,5 +1830,8 @@ mainReaderLoop:
 			}
 
 		} // switch incomingMessageType
+
+		// Note: continue is used in a few places above, so anything placed here may not
+		// execute on every loop unless that logic is changed.
 	}
 }
