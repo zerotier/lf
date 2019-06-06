@@ -141,7 +141,6 @@ type Node struct {
 	mountPoints      map[string]*FS
 	mountPointsLock  sync.Mutex
 	db               db
-	limboLock        sync.Mutex
 
 	owner        *Owner // Owner for commentary, key also currently used for ECDH on link
 	identity     []byte // Compressed public key from owner
@@ -168,6 +167,7 @@ type Node struct {
 	comments     *list.List // Accumulates commentary if commentary is enabled
 	commentsLock sync.Mutex //
 
+	limboLock          sync.Mutex     // I/O lock for files in limbo/ subfolder
 	backgroundThreadWG sync.WaitGroup // used to wait for all goroutines
 	startTime          time.Time      // time node started
 	timeTicker         uintptr        // ticks approximately every second
@@ -1172,16 +1172,33 @@ func (n *Node) backgroundWorkerMain() {
 				if len(limboFilePaths) > 0 {
 					n.limboLock.Lock()
 					for _, fp := range limboFilePaths {
+						var remainingFile *os.File
 						f, _ := os.Open(fp)
 						if f != nil {
 							bf := bufio.NewReader(f)
 							var rec Record
 							for rec.UnmarshalFrom(bf) == nil {
-								if n.AddRecord(&rec) != nil {
-									break
+								err := n.AddRecord(&rec)
+								if err != nil {
+									if err == ErrRecordNotApproved {
+										if remainingFile == nil {
+											remainingFile, _ = os.OpenFile(fp+".rem", os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+											if remainingFile == nil {
+												break
+											}
+										}
+										rec.MarshalTo(remainingFile, false)
+									} else {
+										break
+									}
 								}
 							}
 							f.Close()
+							os.Remove(fp)
+							if remainingFile != nil {
+								remainingFile.Close()
+								os.Rename(fp+".rem", fp)
+							}
 						}
 					}
 					n.limboLock.Unlock()
