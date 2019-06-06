@@ -986,12 +986,12 @@ func doOwner(cfg *lf.ClientConfig, basePath string, args []string) {
 			return
 		}
 
-		//var workingURL string
+		var workingURL string
 		var links [][32]byte
 		for _, u := range cfg.URLs {
 			links, _, _ = lf.APIGetLinks(u, 0)
 			if len(links) > 0 {
-				//workingURL = u
+				workingURL = u
 				break
 			}
 		}
@@ -1006,7 +1006,19 @@ func doOwner(cfg *lf.ClientConfig, basePath string, args []string) {
 			return
 		}
 
-		fmt.Printf("%s\n", lf.PrettyJSON(rec))
+		for tries := 0; tries < 3; tries++ {
+			err = lf.APIPostRecord(workingURL, rec.Bytes())
+			if err == nil {
+				break
+			}
+		}
+
+		if err != nil {
+			fmt.Printf("ERROR: unable to post record to node: %s", err.Error())
+			return
+		}
+
+		fmt.Println(rec.HashString())
 
 	default:
 		printHelp("")
