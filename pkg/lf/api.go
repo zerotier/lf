@@ -185,7 +185,7 @@ func APIPostConnect(url string, ip net.IP, port int, identity string) error {
 // Passing 0 or a negative count causes the node to be asked for the default link count.
 // This returns links, the server time reported in the X-LF-Time header field (or -1
 // if none), and an error (if any).
-func APIGetLinks(url string, count int) ([]HashBlob, int64, error) {
+func APIGetLinks(url string, count int) ([][32]byte, int64, error) {
 	if strings.HasSuffix(url, "/") {
 		url = url + "links"
 	} else {
@@ -204,7 +204,7 @@ func APIGetLinks(url string, count int) ([]HashBlob, int64, error) {
 		if err != nil {
 			return nil, -1, err
 		}
-		var l []HashBlob
+		var l [][32]byte
 		for i := 0; (i + 32) <= len(body); i += 32 {
 			var h [32]byte
 			copy(h[:], body[i:i+32])

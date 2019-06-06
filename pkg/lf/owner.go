@@ -199,6 +199,24 @@ func internalNewOwner(ownerType byte, prng io.Reader) (*Owner, error) {
 	return &Owner{Private: priv, Public: OwnerPublic(oh)}, nil
 }
 
+// NewOwnerFromECDSAPrivateKey creates an owner from an ECDSA private key with either the P224 or the P384 curve.
+func NewOwnerFromECDSAPrivateKey(key *ecdsa.PrivateKey) (*Owner, error) {
+	var ownerType byte
+	switch key.Curve.Params().Name {
+	case "P-224":
+		ownerType = OwnerTypeNistP224
+	case "P-384":
+		ownerType = OwnerTypeNistP384
+	default:
+		return nil, ErrUnsupportedCurve
+	}
+	oh, err := internalOwnerHashECDSA(ownerType, &key.PublicKey)
+	if err != nil {
+		return nil, err
+	}
+	return &Owner{Private: key, Public: OwnerPublic(oh)}, nil
+}
+
 // NewOwnerFromSeed creates a new owner whose key pair is generated using deterministic randomness from the given seed.
 func NewOwnerFromSeed(ownerType byte, seed []byte) (*Owner, error) {
 	var prng seededPrng
@@ -361,9 +379,8 @@ func (o *Owner) CreateCSR(subject *pkix.Name) ([]byte, error) {
 
 // CreateOwnerCertificate generates a certificate for an owner from an owner CSR.
 // The CSR is validated and the auth certificate is checked to ensure that it has
-// the proper key usage flags. The returned certificate data should be placed in
-// the value field of a record of type RecordTypeCertificate.
-func CreateOwnerCertificate(ownerCertificateRequest *x509.CertificateRequest, ttl time.Duration, authCertificate *x509.Certificate, authPrivateKey interface{}) ([]byte, error) {
+// the proper key usage flags.
+func CreateOwnerCertificate(recordLinks [][32]byte, recordWorkFunction *Wharrgarblr, recordOwner *Owner, ownerCertificateRequest *x509.CertificateRequest, ttl time.Duration, authCertificate *x509.Certificate, authPrivateKey interface{}) (*Record, error) {
 	err := ownerCertificateRequest.CheckSignature()
 	if err != nil {
 		return nil, err
@@ -376,7 +393,7 @@ func CreateOwnerCertificate(ownerCertificateRequest *x509.CertificateRequest, tt
 	var randomSerial [32]byte
 	secureRandom.Read(randomSerial[:])
 	now := time.Now().UTC()
-	return x509.CreateCertificate(secureRandom, &x509.Certificate{
+	cert, err := x509.CreateCertificate(secureRandom, &x509.Certificate{
 		SerialNumber:          new(big.Int).SetBytes(randomSerial[:]),
 		Subject:               ownerCertificateRequest.Subject,
 		NotBefore:             now,
@@ -385,4 +402,12 @@ func CreateOwnerCertificate(ownerCertificateRequest *x509.CertificateRequest, tt
 		BasicConstraintsValid: true,
 		IsCA:                  false,
 	}, authCertificate, authCertificate.PublicKey, authPrivateKey)
+	if err != nil {
+		return nil, err
+	}
+
+	// Owner certificate records are given a potentially useful selector name and ordinal
+	// of ~lf/cert/owner/@base62 even though this isn't currently used.
+	nowSec := uint64(now.Unix())
+	return NewRecord(RecordTypeCertificate, cert, recordLinks, []byte(RecordCertificateMaskingKey), [][]byte{[]byte("~lf/cert/owner/@" + ownerCertificateRequest.Subject.SerialNumber)}, []uint64{nowSec}, nowSec, recordWorkFunction, recordOwner)
 }

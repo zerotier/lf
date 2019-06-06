@@ -201,7 +201,9 @@ Commands:
     default <name>                        Set default owner
     delete <name>                         Delete an owner (PERMANENT)
     rename <old name> <new name>          Rename an owner
-    csr <name>                            Generate a CSR for an owner
+    makecsr <name>                        Generate a CSR for an owner
+    showcsr <csr>                         Dump CSR information
+    authcsr <auth cert> <csr>             Authorize an owner from a CSR
   url <operation> [...]
     list                                  Show client URLs
     add <url>                             Add a URL
@@ -678,7 +680,7 @@ func doSet(cfg *lf.ClientConfig, basePath string, args []string) {
 		}
 	}
 
-	var links []lf.HashBlob
+	var links [][32]byte
 	var rec *lf.Record
 	ts := lf.TimeSec()
 
@@ -691,17 +693,19 @@ func doSet(cfg *lf.ClientConfig, basePath string, args []string) {
 		return
 	}
 
+	var workingURL string
 	for _, u := range urls {
 		var serverTimestamp int64
 		links, serverTimestamp, err = lf.APIGetLinks(u, 0)
-		if err == nil {
-			break
-		}
 		if serverTimestamp > 0 {
 			myClock := time.Now().Unix()
 			if ((serverTimestamp > myClock) && (serverTimestamp-myClock) > 10) || ((myClock > serverTimestamp) && (myClock-serverTimestamp) > 10) {
 				logger.Printf("ERROR: server clock %d is more than 10 seconds off from our clock %d, can cause record rejection or reduced reputation", serverTimestamp, myClock)
 			}
+		}
+		if err == nil {
+			workingURL = u
+			break
 		}
 	}
 	if err != nil {
@@ -712,20 +716,11 @@ func doSet(cfg *lf.ClientConfig, basePath string, args []string) {
 	var o *lf.Owner
 	o, err = owner.GetOwner()
 	if err == nil {
-		lnks := make([][32]byte, 0, len(links))
-		for _, l := range links {
-			lnks = append(lnks, l)
-		}
-		rec, err = lf.NewRecord(lf.RecordTypeDatum, value, lnks, mk, plainTextSelectorNames, plainTextSelectorOrdinals, ts, lf.NewWharrgarblr(lf.RecordDefaultWharrgarblMemory, 0), o)
+		rec, err = lf.NewRecord(lf.RecordTypeDatum, value, links, mk, plainTextSelectorNames, plainTextSelectorOrdinals, ts, lf.NewWharrgarblr(lf.RecordDefaultWharrgarblMemory, 0), o)
 		if err == nil {
 			rb := rec.Bytes()
-			for _, u := range urls {
-				for trials := 0; trials < 2; trials++ {
-					err = lf.APIPostRecord(u, rb)
-					if err == nil {
-						break
-					}
-				}
+			for trials := 0; trials < 2; trials++ {
+				err = lf.APIPostRecord(workingURL, rb)
 				if err == nil {
 					break
 				}
@@ -853,7 +848,7 @@ func doOwner(cfg *lf.ClientConfig, basePath string, args []string) {
 			return
 		}
 
-	case "csr":
+	case "makecsr":
 		if len(args) < 2 {
 			printHelp("")
 			return
@@ -890,6 +885,128 @@ func doOwner(cfg *lf.ClientConfig, basePath string, args []string) {
 		pem := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csr})
 		ioutil.WriteFile(owner.Public.String()+".csr", pem, 0644)
 		fmt.Printf("%s\nWritten to %s.csr\n", string(pem), owner.Public.String())
+
+	case "showcsr":
+		if len(args) < 2 {
+			printHelp("")
+			return
+		}
+
+		pemBytes, _ := ioutil.ReadFile(args[1])
+		if len(pemBytes) == 0 {
+			fmt.Printf("ERROR: unable to read CSR PEM data from %s\n", args[1])
+			return
+		}
+		pemBlock, _ := pem.Decode(pemBytes)
+		if pemBlock == nil {
+			fmt.Printf("ERROR: unable to read CSR PEM data from %s (PEM decode failed)\n", args[1])
+			return
+		}
+		if pemBlock.Type != "CERTIFICATE REQUEST" {
+			fmt.Printf("ERROR: unable to read CSR PEM data from %s (PEM does not contain a CSR)\n", args[1])
+			return
+		}
+
+		csr, err := x509.ParseCertificateRequest(pemBlock.Bytes)
+		if err != nil {
+			fmt.Printf("ERROR: unable to read CSR PEM data from %s (X509 decode failed: %s)\n", args[1], err.Error())
+			return
+		}
+		fmt.Print(lf.PrettyJSON(&csr.Subject))
+
+	case "authcsr":
+		if len(args) < 3 {
+			printHelp("")
+			return
+		}
+
+		certPemBytes, _ := ioutil.ReadFile(args[1])
+		if len(certPemBytes) == 0 {
+			fmt.Printf("ERROR: unable to read certificate and key from PEM data in %s\n", args[1])
+			return
+		}
+		var cert *x509.Certificate
+		var key *ecdsa.PrivateKey
+		var err error
+		for len(certPemBytes) > 0 {
+			pemBlock, nextBytes := pem.Decode(certPemBytes)
+			if pemBlock == nil {
+				fmt.Printf("ERROR: unable to read certificate and key from PEM data in %s (PEM decode failed)\n", args[1])
+				return
+			}
+			if pemBlock.Type == "CERTIFICATE" {
+				cert, err = x509.ParseCertificate(pemBlock.Bytes)
+				if err != nil {
+					fmt.Printf("ERROR: unable to read certificate and key from PEM data in %s (X509 decode failed: %s)\n", args[1], err.Error())
+					return
+				}
+			} else if pemBlock.Type == "ECDSA PRIVATE KEY" {
+				key, err = x509.ParseECPrivateKey(pemBlock.Bytes)
+				if err != nil {
+					fmt.Printf("ERROR: unable to read certificate and key from PEM data in %s (ECDSA private key decode failed: %s)\n", args[1], err.Error())
+					return
+				}
+			} else {
+				fmt.Printf("ERROR: unable to read certificate and key from PEM data in %s (PEM type not recognized: %s)\n", args[1], pemBlock.Type)
+				return
+			}
+			certPemBytes = nextBytes
+		}
+		if cert == nil || key == nil {
+			if err != nil {
+				fmt.Printf("ERROR: unable to read certificate and key from PEM data in %s (PEM must contain both certificate and private key)\n", args[1])
+				return
+			}
+		}
+
+		csrPemBytes, _ := ioutil.ReadFile(args[2])
+		if len(csrPemBytes) == 0 {
+			fmt.Printf("ERROR: unable to read CSR PEM data from %s\n", args[2])
+			return
+		}
+		csrPemBlock, _ := pem.Decode(csrPemBytes)
+		if csrPemBlock == nil {
+			fmt.Printf("ERROR: unable to read CSR PEM data from %s (PEM decode failed)\n", args[2])
+			return
+		}
+		if csrPemBlock.Type != "CERTIFICATE REQUEST" {
+			fmt.Printf("ERROR: unable to read CSR PEM data from %s (PEM does not contain a CSR)\n", args[2])
+			return
+		}
+
+		csr, err := x509.ParseCertificateRequest(csrPemBlock.Bytes)
+		if err != nil {
+			fmt.Printf("ERROR: unable to read CSR PEM data from %s (X509 decode failed: %s)\n", args[2], err.Error())
+			return
+		}
+
+		owner, err := lf.NewOwnerFromECDSAPrivateKey(key)
+		if err != nil {
+			fmt.Printf("ERROR: unable to derive owner from ECDSA private key: %s", err.Error())
+			return
+		}
+
+		//var workingURL string
+		var links [][32]byte
+		for _, u := range cfg.URLs {
+			links, _, _ = lf.APIGetLinks(u, 0)
+			if len(links) > 0 {
+				//workingURL = u
+				break
+			}
+		}
+		if len(links) == 0 {
+			fmt.Println("ERROR: unable to get links for new record from any full node")
+			return
+		}
+
+		rec, err := lf.CreateOwnerCertificate(links, lf.NewWharrgarblr(lf.RecordDefaultWharrgarblMemory, 0), owner, csr, time.Hour*time.Duration(24*36500), cert, key)
+		if err != nil {
+			fmt.Printf("ERROR: unable to create certificate or record: %s", err.Error())
+			return
+		}
+
+		fmt.Printf("%s\n", lf.PrettyJSON(rec))
 
 	default:
 		printHelp("")
