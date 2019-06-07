@@ -50,8 +50,8 @@ const (
 	//   4-8   - link count (0...15)
 	//   8-12  - record type (0...15)
 	//  12-63  - reserved for future use
-	recordBodyFlagHasValue    uint64 = 0x0000000000000001
-	recordBodyFlagValueIsHash uint64 = 0x0000000000000004
+	recordBodyFlagHasValue    uint64 = 0x1
+	recordBodyFlagValueIsHash uint64 = 0x4
 
 	// Record value compression types are protocol constants. Range must be 0-3.
 	recordValueCompressionNone   = 0

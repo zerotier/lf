@@ -77,6 +77,11 @@ var (
 	logger = log.New(os.Stderr, "", 0)
 )
 
+func atoUI(s string) uint {
+	i, _ := strconv.ParseUint(s, 10, 64)
+	return uint(i)
+}
+
 func parseCLITime(t string) uint64 {
 	if len(t) > 0 {
 		looksLikeNumber := true
@@ -239,11 +244,13 @@ support will be added.
 
 //////////////////////////////////////////////////////////////////////////////
 
-func doNodeStart(cfg *lf.ClientConfig, basePath string, args []string) {
+func doNodeStart(cfg *lf.ClientConfig, basePath string, args []string) (exitCode int) {
 	var logFile *os.File
+
 	defer func() {
 		e := recover()
 		if e != nil {
+			exitCode = 1
 			logger.Printf("FATAL: caught unexpected panic in doNodeStart(): %s", e)
 		}
 		if logFile != nil {
@@ -263,11 +270,13 @@ func doNodeStart(cfg *lf.ClientConfig, basePath string, args []string) {
 	err := nodeOpts.Parse(args)
 	if err != nil {
 		printHelp("")
+		exitCode = 1
 		return
 	}
 	args = nodeOpts.Args()
 	if len(args) != 0 {
 		printHelp("")
+		exitCode = 1
 		return
 	}
 
@@ -281,6 +290,7 @@ func doNodeStart(cfg *lf.ClientConfig, basePath string, args []string) {
 		ll = lf.LogLevelTrace
 	default:
 		printHelp("")
+		exitCode = 1
 		return
 	}
 
@@ -290,6 +300,7 @@ func doNodeStart(cfg *lf.ClientConfig, basePath string, args []string) {
 		logFile, err = os.OpenFile(path.Join(basePath, "node.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 		if err != nil {
 			logger.Printf("FATAL: cannot open node.log: %s\n", err.Error())
+			exitCode = 1
 			return
 		}
 		logger = log.New(logFile, "", log.LstdFlags)
@@ -338,44 +349,55 @@ func doNodeStart(cfg *lf.ClientConfig, basePath string, args []string) {
 	node, err := lf.NewNode(basePath, *p2pPort, *httpPort, logger, ll, *localTest)
 	if err != nil {
 		logger.Printf("FATAL: unable to start node: %s\n", err.Error())
+		exitCode = 1
 		return
 	}
 	node.SetCommentaryEnabled(*oracle)
+
+	go func() {
+		sig := <-osSignalChannel
+		if sig == syscall.SIGBUS {
+			// SIGBUS can happen if mmap'd I/O fails, such as if we are running over a network
+			// drive (not recommended for this reason) or a path is forcibly unmounted. The mmap
+			// code is in C but this should in theory get caught here.
+			logger.Println("FATAL: received SIGBUS, shutting down (likely I/O problem, database may be corrupt!)")
+			exitCode = 1
+		}
+		node.Stop()
+	}()
 
 	if letsEncryptServer != nil {
 		letsEncryptServer.Handler = node.GetHTTPHandler()
 	}
 
-	sig := <-osSignalChannel
-	if sig == syscall.SIGBUS {
-		// SIGBUS can happen if mmap'd I/O fails, such as if we are running over a network
-		// drive (not recommended for this reason) or a path is forcibly unmounted. The mmap
-		// code is in C but this should in theory get caught here.
-		logger.Println("FATAL: received SIGBUS, shutting down (likely I/O problem, database may be corrupt!)")
-	}
-	node.Stop()
+	node.WaitForStop()
 
 	if letsEncryptServer != nil {
 		atomic.StoreUint32(&letsEncryptShuttingDown, 1)
 		letsEncryptServer.Close()
 	}
+
+	return
 }
 
 //////////////////////////////////////////////////////////////////////////////
 
-func doNodeConnect(cfg *lf.ClientConfig, basePath string, args []string) {
+func doNodeConnect(cfg *lf.ClientConfig, basePath string, args []string) (exitCode int) {
 	if len(args) != 3 {
 		printHelp("")
+		exitCode = 1
 		return
 	}
 	ip := net.ParseIP(args[0])
 	if !ip.IsGlobalUnicast() && !ip.IsLoopback() {
 		printHelp("")
+		exitCode = 1
 		return
 	}
 	port, err := strconv.ParseUint(args[1], 10, 64)
 	if port == 0 || port > 65535 || err != nil {
 		printHelp("")
+		exitCode = 1
 		return
 	}
 	urls := cfg.URLs
@@ -387,13 +409,16 @@ func doNodeConnect(cfg *lf.ClientConfig, basePath string, args []string) {
 	}
 	if err != nil {
 		logger.Printf("ERROR: cannot send connect command to node: %s\n", err.Error())
+		exitCode = 1
 		return
 	}
+	return
 }
 
-func doStatus(cfg *lf.ClientConfig, basePath string, args []string) {
+func doStatus(cfg *lf.ClientConfig, basePath string, args []string) (exitCode int) {
 	if len(args) != 0 {
 		printHelp("")
+		exitCode = 1
 		return
 	}
 	var stat *lf.APIStatusResult
@@ -407,16 +432,16 @@ func doStatus(cfg *lf.ClientConfig, basePath string, args []string) {
 	}
 	if err != nil {
 		logger.Printf("ERROR: status query failed: %s\n", err.Error())
+		exitCode = 1
 		return
 	}
 	fmt.Println(lf.PrettyJSON(stat))
+	return
 }
-
-//////////////////////////////////////////////////////////////////////////////
 
 var one = 1
 
-func doGet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool) {
+func doGet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool) (exitCode int) {
 	getOpts := flag.NewFlagSet("get", flag.ContinueOnError)
 	maskKey := getOpts.String("mask", "", "")
 	tStart := getOpts.String("tstart", "", "")
@@ -428,11 +453,13 @@ func doGet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool
 	err := getOpts.Parse(args)
 	if err != nil {
 		printHelp("")
+		exitCode = 1
 		return
 	}
 	args = getOpts.Args()
 	if len(args) < 1 {
 		printHelp("")
+		exitCode = 1
 		return
 	}
 	jsonOutput = *json2
@@ -448,6 +475,7 @@ func doGet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool
 	}
 	if len(urls) == 0 {
 		logger.Println("ERROR: get query failed: no URLs configured!")
+		exitCode = 1
 		return
 	}
 
@@ -486,7 +514,8 @@ func doGet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool
 					lf.MakeSelectorKey([]byte(tord[0]), ord1),
 				}})
 			} else {
-				fmt.Printf("ERROR: get query failed: selector or selector ordinal range invalid")
+				logger.Printf("ERROR: get query failed: selector or selector ordinal range invalid")
+				exitCode = 1
 				return
 			}
 			selectorNames = append(selectorNames, tord[0])
@@ -514,6 +543,7 @@ func doGet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool
 
 	if err != nil {
 		logger.Printf("ERROR: get query failed: %s\n", err.Error())
+		exitCode = 1
 		return
 	}
 
@@ -599,11 +629,11 @@ func doGet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool
 			}
 		}
 	}
+
+	return
 }
 
-//////////////////////////////////////////////////////////////////////////////
-
-func doSet(cfg *lf.ClientConfig, basePath string, args []string) {
+func doSet(cfg *lf.ClientConfig, basePath string, args []string) (exitCode int) {
 	go lf.WharrgarblInitTable(path.Join(basePath, "wharrgarbl-table.bin"))
 
 	setOpts := flag.NewFlagSet("set", flag.ContinueOnError)
@@ -616,11 +646,13 @@ func doSet(cfg *lf.ClientConfig, basePath string, args []string) {
 	err := setOpts.Parse(args)
 	if err != nil {
 		printHelp("")
+		exitCode = 1
 		return
 	}
 	args = setOpts.Args()
 	if len(args) < 2 { // must have at least one selector and a value
 		printHelp("")
+		exitCode = 1
 		return
 	}
 
@@ -629,6 +661,7 @@ func doSet(cfg *lf.ClientConfig, basePath string, args []string) {
 		owner = cfg.Owners[*ownerName]
 		if owner == nil {
 			logger.Printf("ERROR: set failed: owner '%s' not found\n", *ownerName)
+			exitCode = 1
 			return
 		}
 	}
@@ -642,6 +675,7 @@ func doSet(cfg *lf.ClientConfig, basePath string, args []string) {
 	}
 	if owner == nil {
 		logger.Println("ERROR: set failed: owner not found and no default specified")
+		exitCode = 1
 		return
 	}
 
@@ -660,6 +694,8 @@ func doSet(cfg *lf.ClientConfig, basePath string, args []string) {
 			if len(selOrd) > 0 {
 				if len(selOrd) > 2 {
 					logger.Println("ERROR: set failed: invalid selector#ordinal: \"" + args[i] + "\"")
+					exitCode = 1
+					return
 				}
 				sel := []byte(selOrd[0])
 				var ord uint64
@@ -679,12 +715,14 @@ func doSet(cfg *lf.ClientConfig, basePath string, args []string) {
 			value, err = ioutil.ReadAll(os.Stdin)
 			if err != nil {
 				logger.Println("ERROR: set failed: error reading data from stdin (\"-\" specified as input file)")
+				exitCode = 1
 				return
 			}
 		} else {
 			value, err = ioutil.ReadFile(vstr)
 			if err != nil {
 				logger.Println("ERROR: set failed: file '" + vstr + "' not found or not readable (" + err.Error() + ")")
+				exitCode = 1
 				return
 			}
 		}
@@ -698,6 +736,7 @@ func doSet(cfg *lf.ClientConfig, basePath string, args []string) {
 	}
 	if len(urls) == 0 {
 		logger.Println("ERROR: set failed: no URLs configured!")
+		exitCode = 1
 		return
 	}
 
@@ -712,6 +751,7 @@ func doSet(cfg *lf.ClientConfig, basePath string, args []string) {
 	}
 	if err != nil {
 		fmt.Printf("ERROR: set failed: unable to get links for new record: %s\n", err.Error())
+		exitCode = 1
 		return
 	}
 
@@ -721,7 +761,8 @@ func doSet(cfg *lf.ClientConfig, basePath string, args []string) {
 		var wf *lf.Wharrgarblr
 		if len(ownerInfo.Certificates) == 0 {
 			if *noWork {
-				fmt.Printf("ERROR: no auth certificate found for owner %s and -nowork was specified.\n", o.String())
+				logger.Printf("ERROR: no auth certificate found for owner %s and -nowork was specified.\n", o.String())
+				exitCode = 1
 				return
 			}
 			wf = lf.NewWharrgarblr(lf.RecordDefaultWharrgarblMemory, 0)
@@ -739,17 +780,18 @@ func doSet(cfg *lf.ClientConfig, basePath string, args []string) {
 	}
 
 	if err != nil {
-		fmt.Printf("ERROR: %s\n", err.Error())
+		logger.Printf("ERROR: %s\n", err.Error())
+		exitCode = 1
 		return
 	}
 
 	rh := rec.Hash()
 	fmt.Printf("%s =%s\n", o.String(), lf.Base62Encode(rh[:]))
+
+	return
 }
 
-//////////////////////////////////////////////////////////////////////////////
-
-func doOwner(cfg *lf.ClientConfig, basePath string, args []string) {
+func doOwner(cfg *lf.ClientConfig, basePath string, args []string) (exitCode int) {
 	cmd := "list"
 	if len(args) > 0 {
 		cmd = args[0]
@@ -774,17 +816,20 @@ func doOwner(cfg *lf.ClientConfig, basePath string, args []string) {
 	case "new":
 		if len(args) < 2 {
 			printHelp("")
+			exitCode = 1
 			return
 		}
 		name := strings.TrimSpace(args[1])
 		if _, have := cfg.Owners[name]; have {
-			fmt.Printf("ERROR: an owner named '%s' already exists.\n", name)
+			logger.Printf("ERROR: an owner named '%s' already exists.\n", name)
+			exitCode = 1
 			return
 		}
 		ownerType := lf.OwnerTypeFromString(args[2])
 		owner, err := lf.NewOwner(ownerType)
 		if err != nil {
-			fmt.Printf("ERROR: unable to create owner: %s\n", err.Error())
+			logger.Printf("ERROR: unable to create owner: %s\n", err.Error())
+			exitCode = 1
 			return
 		}
 		isDfl := len(cfg.Owners) == 0
@@ -809,14 +854,16 @@ func doOwner(cfg *lf.ClientConfig, basePath string, args []string) {
 
 		name := strings.TrimSpace(args[1])
 		if _, have := cfg.Owners[name]; have {
-			fmt.Printf("ERROR: an owner named '%s' already exists.\n", name)
+			logger.Printf("ERROR: an owner named '%s' already exists.\n", name)
+			exitCode = 1
 			return
 		}
 		seed := strings.TrimSpace(args[2])
 		ownerType := lf.OwnerTypeFromString(args[3])
 		owner, err := lf.NewOwnerFromSeed(ownerType, []byte(seed))
 		if err != nil {
-			fmt.Printf("ERROR: unable to create owner from seed: %s\n", err.Error())
+			logger.Printf("ERROR: unable to create owner from seed: %s\n", err.Error())
+			exitCode = 1
 			return
 		}
 		isDfl := len(cfg.Owners) == 0
@@ -836,11 +883,13 @@ func doOwner(cfg *lf.ClientConfig, basePath string, args []string) {
 	case "default":
 		if len(args) < 2 {
 			printHelp("")
+			exitCode = 1
 			return
 		}
 		name := strings.TrimSpace(args[1])
 		if _, have := cfg.Owners[name]; !have {
-			fmt.Println("ERROR: an owner named '" + args[1] + "' does not exist.")
+			logger.Println("ERROR: an owner named '" + args[1] + "' does not exist.")
+			exitCode = 1
 			return
 		}
 		for n, o := range cfg.Owners {
@@ -857,7 +906,8 @@ func doOwner(cfg *lf.ClientConfig, basePath string, args []string) {
 		name := strings.TrimSpace(args[1])
 		old := cfg.Owners[name]
 		if old == nil {
-			fmt.Println("ERROR: an owner named '" + args[1] + "' does not exist.")
+			logger.Println("ERROR: an owner named '" + args[1] + "' does not exist.")
+			exitCode = 1
 			return
 		}
 		delete(cfg.Owners, name)
@@ -887,12 +937,15 @@ func doOwner(cfg *lf.ClientConfig, basePath string, args []string) {
 
 		old := cfg.Owners[oldName]
 		if old == nil {
-			fmt.Printf("ERROR: an owner named '%s' does not exist.\n", oldName)
+			logger.Printf("ERROR: an owner named '%s' does not exist.\n", oldName)
+			exitCode = 1
 			return
 		}
 		_, haveNew := cfg.Owners[newName]
 		if haveNew {
-			fmt.Printf("ERROR: an owner named '%s' already exists.\n", newName)
+			logger.Printf("ERROR: an owner named '%s' already exists.\n", newName)
+			exitCode = 1
+			return
 		}
 		delete(cfg.Owners, oldName)
 		cfg.Owners[newName] = old
@@ -902,30 +955,35 @@ func doOwner(cfg *lf.ClientConfig, basePath string, args []string) {
 	case "export":
 		if len(args) < 2 {
 			printHelp("")
+			exitCode = 1
 			return
 		}
 
 		cfgOwner := cfg.Owners[strings.TrimSpace(args[1])]
 		if cfgOwner == nil {
-			fmt.Printf("ERROR: an owner named '%s' does not exist.\n", args[1])
+			logger.Printf("ERROR: an owner named '%s' does not exist.\n", args[1])
+			exitCode = 1
 			return
 		}
 
 		owner, err := cfgOwner.GetOwner()
 		if err != nil {
-			fmt.Printf("ERROR: invalid owner in config: %s", err.Error())
+			logger.Printf("ERROR: invalid owner in config: %s", err.Error())
+			exitCode = 1
 			return
 		}
 		ownerPem, err := owner.PrivatePEM()
 		if err != nil {
-			fmt.Printf("ERROR: error exporting owner as PEM: %s", err.Error())
+			logger.Printf("ERROR: error exporting owner as PEM: %s", err.Error())
+			exitCode = 1
 			return
 		}
 		if len(args) == 3 {
 			fn := strings.TrimSpace(args[2])
 			err := ioutil.WriteFile(fn, ownerPem, 0600)
 			if err != nil {
-				fmt.Printf("ERROR: unable to write to '%s': %s\n", fn, err.Error())
+				logger.Printf("ERROR: unable to write to '%s': %s\n", fn, err.Error())
+				exitCode = 1
 				return
 			}
 			fmt.Printf("%s exported to %s\n", owner.Public.String(), fn)
@@ -936,29 +994,34 @@ func doOwner(cfg *lf.ClientConfig, basePath string, args []string) {
 	case "import":
 		if len(args) < 3 {
 			printHelp("")
+			exitCode = 1
 			return
 		}
 
 		name := strings.TrimSpace(args[1])
 		if _, have := cfg.Owners[name]; have {
-			fmt.Printf("ERROR: an owner named '%s' already exists.\n", name)
+			logger.Printf("ERROR: an owner named '%s' already exists.\n", name)
+			exitCode = 1
 			return
 		}
 
 		fn := strings.TrimSpace(args[2])
 		ownerPem, err := ioutil.ReadFile(fn)
 		if err != nil {
-			fmt.Printf("ERROR: unable to read from '%s': %s", fn, err.Error())
+			logger.Printf("ERROR: unable to read from '%s': %s", fn, err.Error())
+			exitCode = 1
 			return
 		}
 		pemBlock, _ := pem.Decode(ownerPem)
 		if pemBlock == nil || pemBlock.Type != lf.OwnerPrivatePEMType {
-			fmt.Printf("ERROR: file '%s' does not contain PEM data for an owner private key.\n", fn)
+			logger.Printf("ERROR: file '%s' does not contain PEM data for an owner private key.\n", fn)
+			exitCode = 1
 			return
 		}
 		owner, err := lf.NewOwnerFromPrivateBytes(pemBlock.Bytes)
 		if err != nil {
-			fmt.Printf("ERROR: owner in '%s' is invalid: %s\n", fn, err.Error())
+			logger.Printf("ERROR: owner in '%s' is invalid: %s\n", fn, err.Error())
+			exitCode = 1
 			return
 		}
 
@@ -979,17 +1042,20 @@ func doOwner(cfg *lf.ClientConfig, basePath string, args []string) {
 	case "makecsr":
 		if len(args) < 2 {
 			printHelp("")
+			exitCode = 1
 			return
 		}
 
 		cfgOwner := cfg.Owners[strings.TrimSpace(args[1])]
 		if cfgOwner == nil {
-			fmt.Println("ERROR: an owner named '" + args[1] + "' does not exist.")
+			logger.Println("ERROR: an owner named '" + args[1] + "' does not exist.")
+			exitCode = 1
 			return
 		}
 		owner, _ := cfgOwner.GetOwner()
 		if owner == nil {
-			fmt.Println("ERROR: an owner named '" + args[1] + "' does not exist.")
+			logger.Println("ERROR: an owner named '" + args[1] + "' does not exist.")
+			exitCode = 1
 			return
 		}
 
@@ -1007,7 +1073,8 @@ func doOwner(cfg *lf.ClientConfig, basePath string, args []string) {
 
 		csr, err := owner.CreateCSR(&name)
 		if err != nil {
-			fmt.Printf("ERROR: unable to create CSR: %s\n", err.Error())
+			logger.Printf("ERROR: unable to create CSR: %s\n", err.Error())
+			exitCode = 1
 			return
 		}
 		pem := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csr})
@@ -1017,27 +1084,32 @@ func doOwner(cfg *lf.ClientConfig, basePath string, args []string) {
 	case "showcsr":
 		if len(args) < 2 {
 			printHelp("")
+			exitCode = 1
 			return
 		}
 
 		pemBytes, _ := ioutil.ReadFile(args[1])
 		if len(pemBytes) == 0 {
-			fmt.Printf("ERROR: unable to read CSR PEM data from %s\n", args[1])
+			logger.Printf("ERROR: unable to read CSR PEM data from %s\n", args[1])
+			exitCode = 1
 			return
 		}
 		pemBlock, _ := pem.Decode(pemBytes)
 		if pemBlock == nil {
-			fmt.Printf("ERROR: unable to read CSR PEM data from %s (PEM decode failed)\n", args[1])
+			logger.Printf("ERROR: unable to read CSR PEM data from %s (PEM decode failed)\n", args[1])
+			exitCode = 1
 			return
 		}
 		if pemBlock.Type != "CERTIFICATE REQUEST" {
-			fmt.Printf("ERROR: unable to read CSR PEM data from %s (PEM does not contain a CSR)\n", args[1])
+			logger.Printf("ERROR: unable to read CSR PEM data from %s (PEM does not contain a CSR)\n", args[1])
+			exitCode = 1
 			return
 		}
 
 		csr, err := x509.ParseCertificateRequest(pemBlock.Bytes)
 		if err != nil {
-			fmt.Printf("ERROR: unable to read CSR PEM data from %s (X509 decode failed: %s)\n", args[1], err.Error())
+			logger.Printf("ERROR: unable to read CSR PEM data from %s (X509 decode failed: %s)\n", args[1], err.Error())
+			exitCode = 1
 			return
 		}
 		fmt.Print(lf.PrettyJSON(&csr.Subject))
@@ -1045,6 +1117,7 @@ func doOwner(cfg *lf.ClientConfig, basePath string, args []string) {
 	case "authorize":
 		if len(args) < 4 {
 			printHelp("")
+			exitCode = 1
 			return
 		}
 
@@ -1053,13 +1126,15 @@ func doOwner(cfg *lf.ClientConfig, basePath string, args []string) {
 			ttlDays = 36500
 		}
 		if ttlDays <= 0 || ttlDays > 36500 {
-			fmt.Println("ERROR: ttl days must be in range 0..36500 or -1 for max")
+			logger.Println("ERROR: ttl days must be in range 0..36500 or -1 for max")
+			exitCode = 1
 			return
 		}
 
 		certPemBytes, _ := ioutil.ReadFile(args[1])
 		if len(certPemBytes) == 0 {
-			fmt.Printf("ERROR: unable to read certificate and key from PEM data in %s\n", args[1])
+			logger.Printf("ERROR: unable to read certificate and key from PEM data in %s\n", args[1])
+			exitCode = 1
 			return
 		}
 		var cert *x509.Certificate
@@ -1068,58 +1143,68 @@ func doOwner(cfg *lf.ClientConfig, basePath string, args []string) {
 		for len(certPemBytes) > 0 {
 			pemBlock, nextBytes := pem.Decode(certPemBytes)
 			if pemBlock == nil {
-				fmt.Printf("ERROR: unable to read certificate and key from PEM data in %s (PEM decode failed)\n", args[1])
+				logger.Printf("ERROR: unable to read certificate and key from PEM data in %s (PEM decode failed)\n", args[1])
+				exitCode = 1
 				return
 			}
 			if pemBlock.Type == "CERTIFICATE" {
 				cert, err = x509.ParseCertificate(pemBlock.Bytes)
 				if err != nil {
-					fmt.Printf("ERROR: unable to read certificate and key from PEM data in %s (X509 decode failed: %s)\n", args[1], err.Error())
+					logger.Printf("ERROR: unable to read certificate and key from PEM data in %s (X509 decode failed: %s)\n", args[1], err.Error())
+					exitCode = 1
 					return
 				}
 			} else if pemBlock.Type == "ECDSA PRIVATE KEY" {
 				key, err = x509.ParseECPrivateKey(pemBlock.Bytes)
 				if err != nil {
-					fmt.Printf("ERROR: unable to read certificate and key from PEM data in %s (ECDSA private key decode failed: %s)\n", args[1], err.Error())
+					logger.Printf("ERROR: unable to read certificate and key from PEM data in %s (ECDSA private key decode failed: %s)\n", args[1], err.Error())
+					exitCode = 1
 					return
 				}
 			} else {
-				fmt.Printf("ERROR: unable to read certificate and key from PEM data in %s (PEM type not recognized: %s)\n", args[1], pemBlock.Type)
+				logger.Printf("ERROR: unable to read certificate and key from PEM data in %s (PEM type not recognized: %s)\n", args[1], pemBlock.Type)
+				exitCode = 1
 				return
 			}
 			certPemBytes = nextBytes
 		}
 		if cert == nil || key == nil {
 			if err != nil {
-				fmt.Printf("ERROR: unable to read certificate and key from PEM data in %s (PEM must contain both certificate and private key)\n", args[1])
+				logger.Printf("ERROR: unable to read certificate and key from PEM data in %s (PEM must contain both certificate and private key)\n", args[1])
+				exitCode = 1
 				return
 			}
 		}
 
 		csrPemBytes, _ := ioutil.ReadFile(args[2])
 		if len(csrPemBytes) == 0 {
-			fmt.Printf("ERROR: unable to read CSR PEM data from %s\n", args[2])
+			logger.Printf("ERROR: unable to read CSR PEM data from %s\n", args[2])
+			exitCode = 1
 			return
 		}
 		csrPemBlock, _ := pem.Decode(csrPemBytes)
 		if csrPemBlock == nil {
-			fmt.Printf("ERROR: unable to read CSR PEM data from %s (PEM decode failed)\n", args[2])
+			logger.Printf("ERROR: unable to read CSR PEM data from %s (PEM decode failed)\n", args[2])
+			exitCode = 1
 			return
 		}
 		if csrPemBlock.Type != "CERTIFICATE REQUEST" {
-			fmt.Printf("ERROR: unable to read CSR PEM data from %s (PEM does not contain a CSR)\n", args[2])
+			logger.Printf("ERROR: unable to read CSR PEM data from %s (PEM does not contain a CSR)\n", args[2])
+			exitCode = 1
 			return
 		}
 
 		csr, err := x509.ParseCertificateRequest(csrPemBlock.Bytes)
 		if err != nil {
-			fmt.Printf("ERROR: unable to read CSR PEM data from %s (X509 decode failed: %s)\n", args[2], err.Error())
+			logger.Printf("ERROR: unable to read CSR PEM data from %s (X509 decode failed: %s)\n", args[2], err.Error())
+			exitCode = 1
 			return
 		}
 
 		owner, err := lf.NewOwnerFromECDSAPrivateKey(key)
 		if err != nil {
-			fmt.Printf("ERROR: unable to derive owner from ECDSA private key: %s", err.Error())
+			logger.Printf("ERROR: unable to derive owner from ECDSA private key: %s", err.Error())
+			exitCode = 1
 			return
 		}
 
@@ -1133,13 +1218,15 @@ func doOwner(cfg *lf.ClientConfig, basePath string, args []string) {
 			}
 		}
 		if len(links) == 0 {
-			fmt.Println("ERROR: unable to get links for new record from any full node")
+			logger.Println("ERROR: unable to get links for new record from any full node")
+			exitCode = 1
 			return
 		}
 
 		rec, err := lf.CreateOwnerCertificate(links, lf.NewWharrgarblr(lf.RecordDefaultWharrgarblMemory, 0), owner, csr, time.Hour*time.Duration(24*ttlDays), cert, key)
 		if err != nil {
-			fmt.Printf("ERROR: unable to create certificate or record: %s", err.Error())
+			logger.Printf("ERROR: unable to create certificate or record: %s", err.Error())
+			exitCode = 1
 			return
 		}
 
@@ -1151,7 +1238,8 @@ func doOwner(cfg *lf.ClientConfig, basePath string, args []string) {
 		}
 
 		if err != nil {
-			fmt.Printf("ERROR: unable to post record to node: %s", err.Error())
+			logger.Printf("ERROR: unable to post record to node: %s", err.Error())
+			exitCode = 1
 			return
 		}
 
@@ -1159,24 +1247,28 @@ func doOwner(cfg *lf.ClientConfig, basePath string, args []string) {
 
 	default:
 		printHelp("")
+		exitCode = 1
 	}
+
+	return
 }
 
-//////////////////////////////////////////////////////////////////////////////
-
-func doURL(cfg *lf.ClientConfig, basePath string, args []string) {
+func doURL(cfg *lf.ClientConfig, basePath string, args []string) (exitCode int) {
 	cmd := "list"
 	if len(args) > 0 {
 		cmd = args[0]
 	}
 	switch cmd {
+
 	case "list":
 		for _, u := range cfg.URLs {
 			fmt.Println(u)
 		}
+
 	case "add":
 		if len(args) < 2 {
 			printHelp("")
+			exitCode = 1
 			return
 		}
 		url := strings.TrimSpace(args[1])
@@ -1193,10 +1285,12 @@ func doURL(cfg *lf.ClientConfig, basePath string, args []string) {
 		for _, u := range cfg.URLs {
 			fmt.Println(u)
 		}
+
 	case "delete":
 		var u2 []string
 		if len(args) < 2 {
 			printHelp("")
+			exitCode = 1
 			return
 		}
 		url := strings.TrimSpace(args[1])
@@ -1210,10 +1304,12 @@ func doURL(cfg *lf.ClientConfig, basePath string, args []string) {
 		for _, u := range cfg.URLs {
 			fmt.Println(u)
 		}
+
 	case "default":
 		var u2 []string
 		if len(args) < 2 {
 			printHelp("")
+			exitCode = 1
 			return
 		}
 		url := strings.TrimSpace(args[1])
@@ -1228,20 +1324,17 @@ func doURL(cfg *lf.ClientConfig, basePath string, args []string) {
 		for _, u := range cfg.URLs {
 			fmt.Println(u)
 		}
+
 	default:
 		printHelp("")
+		exitCode = 1
 	}
-}
 
-//////////////////////////////////////////////////////////////////////////////
-
-func atoUI(s string) uint {
-	i, _ := strconv.ParseUint(s, 10, 64)
-	return uint(i)
+	return
 }
 
 // doMakeGenesis is currently code for making the default genesis records and isn't very useful to anyone else.
-func doMakeGenesis(cfg *lf.ClientConfig, basePath string, args []string) {
+func doMakeGenesis(cfg *lf.ClientConfig, basePath string, args []string) (exitCode int) {
 	var g lf.GenesisParameters
 	g.Name = prompt("Network name: ", true, "")
 	if g.Name == "~~~Sol" { // magic value used internally to make Sol, useless to others
@@ -1275,17 +1368,19 @@ func doMakeGenesis(cfg *lf.ClientConfig, basePath string, args []string) {
 		g.Comment = prompt("Network comment or description []: ", false, "")
 		g.RecordMinLinks = atoUI(prompt("Record minimum links [2]: ", false, "2"))
 		if g.RecordMinLinks < 2 {
-			fmt.Println("ERROR: min links must be at least 2 or things won't work!")
+			logger.Println("ERROR: min links must be at least 2 or things won't work!")
+			exitCode = 1
 			return
 		}
 		g.RecordMaxValueSize = atoUI(prompt("Record maximum value size [1024]: ", false, "1024"))
 		if g.RecordMaxValueSize > lf.RecordMaxSize {
-			fmt.Println("ERROR: record value sizee too large!")
+			logger.Println("ERROR: record value sizee too large!")
+			exitCode = 1
 			return
 		}
 		g.RecordMaxTimeDrift = atoUI(prompt("Record maximum time drift (seconds) [60]: ", false, "60"))
 		for {
-			af := prompt("Amendable fields (comma separated) []: ", false, "")
+			af := prompt("Amendable fields (comma separated) [seedpeers]: ", false, "seedpeers")
 			if len(af) > 0 {
 				err := g.SetAmendableFields(strings.Split(af, ","))
 				if err == nil {
@@ -1302,7 +1397,8 @@ func doMakeGenesis(cfg *lf.ClientConfig, basePath string, args []string) {
 		if q == "Y" || q == "y" || q == "1" {
 			key, err := ecdsa.GenerateKey(elliptic.P384(), secrand.Reader)
 			if err != nil {
-				fmt.Printf("ERROR: unable to generate ECDSA key pair: %s\n", err.Error())
+				logger.Printf("ERROR: unable to generate ECDSA key pair: %s\n", err.Error())
+				exitCode = 1
 				return
 			}
 
@@ -1314,7 +1410,8 @@ func doMakeGenesis(cfg *lf.ClientConfig, basePath string, args []string) {
 
 			ttl := atoUI(prompt("  Time to live in days [36500]: ", false, "36500"))
 			if ttl <= 0 {
-				fmt.Println("ERROR: invalid value: must be >0")
+				logger.Println("ERROR: invalid value: must be >0")
+				exitCode = 1
 				return
 			}
 
@@ -1344,21 +1441,25 @@ func doMakeGenesis(cfg *lf.ClientConfig, basePath string, args []string) {
 			certBytes, err := x509.CreateCertificate(secrand.Reader, cert, cert, &key.PublicKey, key)
 			if err != nil {
 				logger.Printf("ERROR: unable to create CA certificate: %s", err.Error())
+				exitCode = 1
 				return
 			}
 			cert2, err := x509.ParseCertificate(certBytes)
 			if err != nil {
 				logger.Printf("ERROR: unable to create CA certificate (parsing test): %s", err.Error())
+				exitCode = 1
 				return
 			}
 			if cert.Subject.String() != cert2.Subject.String() {
 				logger.Printf("ERROR: unable to create CA certificate (parsing test): subjects do not match")
+				exitCode = 1
 				return
 			}
 
 			keyBytes, err := x509.MarshalECPrivateKey(key)
 			if err != nil {
 				logger.Printf("ERROR: unable to x509 encode ECDSA private key: %s", err.Error())
+				exitCode = 1
 				return
 			}
 
@@ -1367,6 +1468,7 @@ func doMakeGenesis(cfg *lf.ClientConfig, basePath string, args []string) {
 			err = ioutil.WriteFile("genesis-auth-"+serialNoStr+".pem", certPem, 0600)
 			if err != nil {
 				logger.Printf("ERROR: unable to write cert key PEM: %s", err.Error())
+				exitCode = 1
 				return
 			}
 
@@ -1386,8 +1488,8 @@ func doMakeGenesis(cfg *lf.ClientConfig, basePath string, args []string) {
 
 	genesisRecords, genesisOwner, err := lf.CreateGenesisRecords(lf.OwnerTypeNistP384, &g)
 	if err != nil {
-		fmt.Printf("ERROR: %s\n", err.Error())
-		os.Exit(-1)
+		logger.Printf("ERROR: %s\n", err.Error())
+		exitCode = 1
 		return
 	}
 
@@ -1397,7 +1499,7 @@ func doMakeGenesis(cfg *lf.ClientConfig, basePath string, args []string) {
 		err = genesisRecords[i].MarshalTo(&grData, false)
 		if err != nil {
 			logger.Printf("ERROR: %s", err.Error())
-			os.Exit(-1)
+			exitCode = 1
 			return
 		}
 	}
@@ -1405,7 +1507,7 @@ func doMakeGenesis(cfg *lf.ClientConfig, basePath string, args []string) {
 	err = ioutil.WriteFile("genesis.lf", grData.Bytes(), 0644)
 	if err != nil {
 		fmt.Printf("ERROR: %s\n", err.Error())
-		os.Exit(-1)
+		exitCode = 1
 		return
 	}
 	ioutil.WriteFile("genesis.go", []byte(fmt.Sprintf("%#v\n", grData.Bytes())), 0644)
@@ -1415,14 +1517,19 @@ func doMakeGenesis(cfg *lf.ClientConfig, basePath string, args []string) {
 	}
 
 	fmt.Printf("\nWrote genesis.* files to current directory.\n")
+
+	return
 }
 
 //////////////////////////////////////////////////////////////////////////////
 
 func main() {
+	exitCode := 0
+
 	globalOpts := flag.NewFlagSet("global", flag.ContinueOnError)
 	basePath := globalOpts.String("path", lfDefaultPath, "")
 	jsonOutput := globalOpts.Bool("json", false, "")
+	hflag := globalOpts.Bool("h", false, "") // support -h to be canonical with other Unix utilities
 	globalOpts.SetOutput(ioutil.Discard)
 	err := globalOpts.Parse(os.Args[1:])
 	if err != nil {
@@ -1439,6 +1546,11 @@ func main() {
 	var cmdArgs []string
 	if len(args) > 1 {
 		cmdArgs = args[1:]
+	}
+
+	if *hflag {
+		printHelp("")
+		os.Exit(0)
 	}
 
 	os.MkdirAll(*basePath, 0755)
@@ -1494,33 +1606,33 @@ func main() {
 		return
 
 	case "node-start":
-		doNodeStart(&cfg, *basePath, cmdArgs)
+		exitCode = doNodeStart(&cfg, *basePath, cmdArgs)
 
 	case "node-connect":
-		doNodeConnect(&cfg, *basePath, cmdArgs)
+		exitCode = doNodeConnect(&cfg, *basePath, cmdArgs)
 
 	case "status":
-		doStatus(&cfg, *basePath, cmdArgs)
+		exitCode = doStatus(&cfg, *basePath, cmdArgs)
 
 	case "set":
-		doSet(&cfg, *basePath, cmdArgs)
+		exitCode = doSet(&cfg, *basePath, cmdArgs)
 
 	case "get":
-		doGet(&cfg, *basePath, cmdArgs, *jsonOutput)
+		exitCode = doGet(&cfg, *basePath, cmdArgs, *jsonOutput)
 
 	case "owner":
-		doOwner(&cfg, *basePath, cmdArgs)
+		exitCode = doOwner(&cfg, *basePath, cmdArgs)
 
 	case "url":
-		doURL(&cfg, *basePath, cmdArgs)
+		exitCode = doURL(&cfg, *basePath, cmdArgs)
 
 	case "makegenesis":
-		doMakeGenesis(&cfg, *basePath, cmdArgs)
-		os.Exit(0)
-		return
+		exitCode = doMakeGenesis(&cfg, *basePath, cmdArgs)
 
 	default:
 		printHelp("")
+		os.Exit(1)
+		return
 
 	}
 
@@ -1533,5 +1645,5 @@ func main() {
 		}
 	}
 
-	os.Exit(0)
+	os.Exit(exitCode)
 }

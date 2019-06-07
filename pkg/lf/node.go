@@ -85,6 +85,9 @@ const (
 
 	// DefaultP2PPort is the default LF P2P port
 	DefaultP2PPort = 9908
+
+	// MinFreeDiskSpace is the minimum free space on the device holding LF's data files before which the node will gracefully stop.
+	MinFreeDiskSpace = 67108864
 )
 
 var p2pProtoMessageNames = []string{"Nop", "Hello", "Record", "RequestRecordsByHash", "HaveRecords", "Peer"}
@@ -170,6 +173,7 @@ type Node struct {
 	limboLock          sync.Mutex     // I/O lock for files in limbo/ subfolder
 	backgroundThreadWG sync.WaitGroup // used to wait for all goroutines
 	startTime          time.Time      // time node started
+	runningLock        sync.Mutex     // Locked after start, can be waited on to wait for Stop()
 	timeTicker         uintptr        // ticks approximately every second
 	synchronized       uint32         // set to non-zero when database is synchronized
 	shutdown           uint32         // set to non-zero to cause many routines to exit
@@ -182,7 +186,16 @@ type Node struct {
 
 // NewNode creates and starts a node.
 func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, logLevel int, localTest bool) (*Node, error) {
+	os.MkdirAll(basePath, 0755)
+
+	freeDiskSpace, _ := getFreeSpaceOnDevice(basePath)
+	if freeDiskSpace < MinFreeDiskSpace {
+		return nil, fmt.Errorf("insufficient free space on device containing '%s' (%d < %d)", basePath, freeDiskSpace, MinFreeDiskSpace)
+	}
+
 	n := new(Node)
+
+	n.runningLock.Lock()
 
 	n.basePath = basePath
 	n.peersFilePath = path.Join(basePath, "peers.json")
@@ -559,7 +572,15 @@ func (n *Node) Stop() {
 		n.db.close()
 
 		n.writeKnownPeers()
+
+		n.runningLock.Unlock()
 	}
+}
+
+// WaitForStop stops the calling gorountine until the node stops or is stopped.
+func (n *Node) WaitForStop() {
+	n.runningLock.Lock()
+	n.runningLock.Unlock()
 }
 
 // Mount mounts the data store under a given root selector name into the host filesystem using FUSE.
@@ -878,7 +899,7 @@ func (n *Node) handleSynchronizedRecord(doff uint64, dlen uint, reputation int, 
 						ok, linkTS := n.db.getRecordTimestampByHash(r.Links[li][:])
 						if ok {
 							if linkTS > r.Timestamp && (linkTS-r.Timestamp) > uint64(n.genesisParameters.RecordMaxTimeDrift) {
-								n.log[LogLevelVerbose].Printf("record %s reputation adjusted from %d to %d since it links to records newer than itself", r.HashString(), reputation, dbReputationTemporalViolation)
+								n.log[LogLevelVerbose].Printf("record %s reputation adjusted from %d to %d since it links to records newer than itself (different is beyond max time drift of %d seconds)", r.HashString(), reputation, dbReputationTemporalViolation, n.genesisParameters.RecordMaxTimeDrift)
 								reputation = dbReputationTemporalViolation
 								n.db.updateRecordReputationByHash(hash[:], reputation)
 								break
@@ -1032,6 +1053,14 @@ func (n *Node) backgroundThreadMaintenance() {
 		}
 		ticker := atomic.AddUintptr(&n.timeTicker, 1)
 
+		// Check free disk space to avoid corruption if the target device fills up
+		freeDiskSpace, _ := getFreeSpaceOnDevice(n.basePath)
+		if freeDiskSpace < MinFreeDiskSpace {
+			n.log[LogLevelFatal].Printf("FATAL: insufficient free space detected on device containing '%s' (%d < %d)", n.basePath, freeDiskSpace, MinFreeDiskSpace)
+			go n.Stop()
+			break
+		}
+
 		if !n.localTest {
 			// Clean record tracking entries of items older than 5 minutes.
 			if (ticker % 120) == 0 {
@@ -1056,7 +1085,7 @@ func (n *Node) backgroundThreadMaintenance() {
 				n.recordsRequestedLock.Unlock()
 			}
 
-			// Periodically announce that we have a few recent records to prompt syncing
+			// Announce some recent records to help keep nodes in sync during periods of low activity
 			if (ticker % 10) == 0 {
 				_, links, err := n.db.getLinks(2)
 				if err == nil && len(links) >= 32 {

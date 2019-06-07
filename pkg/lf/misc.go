@@ -37,6 +37,7 @@ import (
 	"io/ioutil"
 	"os"
 	"reflect"
+	"syscall"
 	"time"
 	"unsafe"
 
@@ -140,6 +141,15 @@ func crc16(bs []byte) (crc uint16) {
 		crc = (crc << 8) ^ crc16tab[(crc>>8)^uint16(b)]
 	}
 	return
+}
+
+func getFreeSpaceOnDevice(path string) (uint64, error) {
+	var stat syscall.Statfs_t
+	err := syscall.Statfs(path, &stat)
+	if err != nil {
+		return 0, err
+	}
+	return stat.Bavail * uint64(stat.Bsize), nil
 }
 
 var jsonPrettyOptions = pretty.Options{
