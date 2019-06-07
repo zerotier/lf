@@ -33,9 +33,11 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"io"
 	"math/big"
+	"strings"
 	"time"
 
 	"golang.org/x/crypto/ed25519"
@@ -64,6 +66,19 @@ const (
 	ownerLenP384    = 24
 	ownerLenEd25519 = 32
 )
+
+// OwnerTypeFromString converts a canonical string name to an owner type, returning OwnerTypeNistP224 if not recognized.
+func OwnerTypeFromString(typeString string) byte {
+	switch strings.TrimSpace(strings.ToLower(typeString)) {
+	case "p224", "p-224":
+		return OwnerTypeNistP224
+	case "p384", "p-384":
+		return OwnerTypeNistP384
+	case "ed25519":
+		return OwnerTypeEd25519
+	}
+	return OwnerTypeNistP224
+}
 
 // OwnerPublic is a byte array that serializes to an @owner base62-encoded string.
 type OwnerPublic []byte
@@ -291,6 +306,15 @@ func (o *Owner) PrivateBytes() ([]byte, error) {
 	default:
 		return nil, ErrInvalidObject
 	}
+}
+
+// PrivatePEM is a shortcut to PEM encode PrivateBytes().
+func (o *Owner) PrivatePEM() ([]byte, error) {
+	pb, err := o.PrivateBytes()
+	if err != nil {
+		return nil, err
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: OwnerPrivatePEMType, Bytes: pb}), nil
 }
 
 // String returns @base62 encoded Public.

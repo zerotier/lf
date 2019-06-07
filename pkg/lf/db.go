@@ -392,6 +392,23 @@ func (db *db) getAllByOwner(owner []byte, f func(uint64, uint64, int) bool) erro
 	return nil
 }
 
+func (db *db) getOwnerStats(owner []byte) (recordCount uint64, recordBytes uint64) {
+	if len(owner) == 0 {
+		return
+	}
+	db.cdbLock.Lock()
+	results := C.ZTLF_DB_GetAllByOwner(db.cdb, unsafe.Pointer(&owner[0]), C.uint(len(owner)))
+	db.cdbLock.Unlock()
+	if uintptr(unsafe.Pointer(results)) != 0 {
+		for i := C.long(0); i < results.count; i++ {
+			rec := (*C.struct_ZTLF_RecordIndex)(unsafe.Pointer(uintptr(unsafe.Pointer(&results.records[0])) + (uintptr(i) * uintptr(C.sizeof_struct_ZTLF_RecordIndex))))
+			recordCount++
+			recordBytes += uint64(rec.dlen)
+		}
+	}
+	return
+}
+
 // getAllByOwner gets all (complete) records owned by a given ID that do not have the specified owner.
 // Results are returned in ascending order of timestamp as: doff, dlen, reputation.
 func (db *db) getAllByIDNotOwner(id []byte, owner []byte, f func(uint64, uint64, int) bool) error {

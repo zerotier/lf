@@ -96,6 +96,15 @@ type APIStatusResult struct {
 	Peers             []Peer            `json:",omitempty"` // Currently connected peers
 }
 
+// APIOwnerInfoResult is returned from queries for owner info from /owner/@base62 URLs.
+type APIOwnerInfoResult struct {
+	Owner               OwnerPublic ``                  // Public portion of owner (from query)
+	Certificates        []Blob      `json:",omitempty"` // Certificates in DER format
+	RevokedCertificates []Blob      `json:",omitempty"` // Revoked certificated in DER format
+	RecordCount         uint64      ``                  // Number of records in data store by this owner
+	RecordBytes         uint64      ``                  // Number of bytes of records by this owner
+}
+
 // MountPoint describes a FUSE lffs mount point
 type MountPoint struct {
 	Path             string      `json:",omitempty"`
@@ -470,9 +479,50 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 		}
 	})
 
+	smux.HandleFunc("/owner/", func(out http.ResponseWriter, req *http.Request) {
+		apiSetStandardHeaders(out)
+		if req.Method == http.MethodGet || req.Method == http.MethodHead {
+			path := req.URL.Path
+			if strings.HasPrefix(path, "/owner/") { // sanity check
+				path = path[7:]
+				if len(path) > 0 && path[0] == '@' {
+					ownerPublic, _ := NewOwnerPublicFromString(path)
+					if len(ownerPublic) > 0 {
+						recordCount, recordBytes := n.db.getOwnerStats(ownerPublic)
+						certs, revokedCerts := n.GetOwnerCertificates(ownerPublic)
+						certsBin, revokedCertsBin := make([]Blob, 0, len(certs)), make([]Blob, 0, len(revokedCerts))
+						for _, cert := range certs {
+							certsBin = append(certsBin, cert.Raw)
+						}
+						for _, revokedCert := range revokedCerts {
+							revokedCertsBin = append(revokedCertsBin, revokedCert.Raw)
+						}
+						apiSendObj(out, req, http.StatusOK, &APIOwnerInfoResult{
+							Owner:               ownerPublic,
+							Certificates:        certsBin,
+							RevokedCertificates: revokedCertsBin,
+							RecordCount:         recordCount,
+							RecordBytes:         recordBytes,
+						})
+						return
+					}
+				}
+			}
+			apiSendObj(out, req, http.StatusNotFound, &APIError{Code: http.StatusNotFound, Message: req.URL.Path + " not found"})
+		} else {
+			out.Header().Set("Allow", "GET, HEAD")
+			apiSendObj(out, req, http.StatusMethodNotAllowed, &APIError{Code: http.StatusMethodNotAllowed, Message: req.Method + " not supported for this path"})
+		}
+	})
+
 	smux.HandleFunc("/", func(out http.ResponseWriter, req *http.Request) {
 		apiSetStandardHeaders(out)
-		apiSendObj(out, req, http.StatusNotFound, &APIError{Code: http.StatusNotFound, Message: req.URL.Path + " is not a valid path"})
+		if req.Method == http.MethodGet || req.Method == http.MethodHead {
+			apiSendObj(out, req, http.StatusNotFound, &APIError{Code: http.StatusNotFound, Message: req.URL.Path + " not found"})
+		} else {
+			out.Header().Set("Allow", "GET, HEAD")
+			apiSendObj(out, req, http.StatusMethodNotAllowed, &APIError{Code: http.StatusMethodNotAllowed, Message: req.Method + " not supported for this path"})
+		}
 	})
 
 	return smux

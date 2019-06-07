@@ -62,7 +62,7 @@ ZTLF_PACKED_STRUCT(struct ZTLF_DB_GraphNode
 {
 	uint64_t weightsFileOffset;          /* offset of weight in weights "file" */
 	uint8_t linkCount;                   /* size of linkedRecordGoff[] */
-	volatile int64_t linkedRecordGoff[]; /* graph node offsets of linked records or -1 for holes (will be filled later) */
+	int64_t linkedRecordGoff[];          /* graph node offsets of linked records or -1 for holes (will be filled later) */
 });
 
 /* Big enough for the largest NIST ECC curve, can be increased if needed. */
@@ -189,8 +189,8 @@ struct ZTLF_DB
 	struct ZTLF_SUInt96 wf;
 
 	pthread_t graphThread;
-	volatile bool graphThreadStarted;
-	volatile bool running;
+	int graphThreadStarted;
+	int running;
 };
 
 int ZTLF_DB_Open(

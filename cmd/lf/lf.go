@@ -197,13 +197,16 @@ Commands:
     -url <url[,url,...]>                  Override configured node/proxy URLs
   owner <operation> [...]
     list                                  List owners
-    new <name> [p224|p384|ed25519]        Create a new owner
+    new <name> [p224|p384|ed25519]        Create owner (default type: p224)
+    newfromseed <name> <seed> <key type>  Create owner from seed
     default <name>                        Set default owner
     delete <name>                         Delete an owner (PERMANENT)
     rename <old name> <new name>          Rename an owner
+    export <name> [pem file]              Export owner as PEM
+    import <name> <pem file>              Import owner from PEM export
     makecsr <name>                        Generate a CSR for an owner
     showcsr <csr>                         Dump CSR information
-    authcsr <auth cert> <csr>             Authorize an owner from a CSR
+    authorize <auth cert> <csr>           Authorize an owner from a CSR
   url <operation> [...]
     list                                  Show client URLs
     add <url>                             Add a URL
@@ -224,6 +227,11 @@ RFC1123 format looks like "` + time.Now().Format(time.RFC1123) + `" while
 Unix time is a decimal number indicating seconds since the Unix epoch.
 
 Default home path is ` + lfDefaultPath + ` unless overriden with -path.
+
+Owner certificate note: CSRs can thus certificate authorizations currently
+can't be created for ed25519 owners due to lack of support in upstream Go
+x509 libraries for EDDSA. Once this support exists then ed25519 certificate
+support will be added.
 
 `)
 }
@@ -768,23 +776,47 @@ func doOwner(cfg *lf.ClientConfig, basePath string, args []string) {
 		}
 		name := strings.TrimSpace(args[1])
 		if _, have := cfg.Owners[name]; have {
-			fmt.Println("ERROR: an owner named '" + args[1] + "' already exists.")
+			fmt.Printf("ERROR: an owner named '%s' already exists.\n", name)
 			return
 		}
-		ownerType := lf.OwnerTypeNistP224
-		if len(args) > 2 {
-			if args[2] == "p244" {
-				ownerType = lf.OwnerTypeNistP224
-			} else if args[2] == "p384" {
-				ownerType = lf.OwnerTypeNistP384
-			} else if args[2] == "ed25519" {
-				ownerType = lf.OwnerTypeEd25519
-			} else {
-				fmt.Println("ERROR: unrecognized owner type")
-				return
-			}
+		ownerType := lf.OwnerTypeFromString(args[2])
+		owner, err := lf.NewOwner(ownerType)
+		if err != nil {
+			fmt.Printf("ERROR: unable to create owner: %s\n", err.Error())
+			return
 		}
-		owner, _ := lf.NewOwner(ownerType)
+		isDfl := len(cfg.Owners) == 0
+		priv, _ := owner.PrivateBytes()
+		cfg.Owners[name] = &lf.ClientConfigOwner{
+			Public:  owner.Public,
+			Private: priv,
+			Default: isDfl,
+		}
+		cfg.Dirty = true
+		dfl := " "
+		if isDfl {
+			dfl = "*"
+		}
+		fmt.Printf("%-24s %s %-7s %s\n", name, dfl, owner.TypeString(), owner.String())
+
+	case "newfromseed":
+		if len(args) < 4 {
+			printHelp("")
+			return
+		}
+
+		name := strings.TrimSpace(args[1])
+		if _, have := cfg.Owners[name]; have {
+			fmt.Printf("ERROR: an owner named '%s' already exists.\n", name)
+			return
+		}
+		seed := strings.TrimSpace(args[2])
+		ownerType := lf.OwnerTypeFromString(args[3])
+		owner, err := lf.NewOwnerFromSeed(ownerType, []byte(seed))
+		if err != nil {
+			fmt.Printf("ERROR: unable to create owner from seed: %s\n", err.Error())
+			return
+		}
 		isDfl := len(cfg.Owners) == 0
 		priv, _ := owner.PrivateBytes()
 		cfg.Owners[name] = &lf.ClientConfigOwner{
@@ -821,7 +853,8 @@ func doOwner(cfg *lf.ClientConfig, basePath string, args []string) {
 			return
 		}
 		name := strings.TrimSpace(args[1])
-		if _, have := cfg.Owners[name]; !have {
+		old := cfg.Owners[name]
+		if old == nil {
 			fmt.Println("ERROR: an owner named '" + args[1] + "' does not exist.")
 			return
 		}
@@ -840,13 +873,106 @@ func doOwner(cfg *lf.ClientConfig, basePath string, args []string) {
 			}
 		}
 		cfg.Dirty = true
-		fmt.Printf("%-24s deleted\n", name)
+		fmt.Printf("%-24s   %-7s %s DELETED\n", name, old.Public.TypeString(), old.Public.String())
 
 	case "rename":
 		if len(args) < 3 {
 			printHelp("")
 			return
 		}
+		oldName := strings.TrimSpace(args[1])
+		newName := strings.TrimSpace(args[2])
+
+		old := cfg.Owners[oldName]
+		if old == nil {
+			fmt.Printf("ERROR: an owner named '%s' does not exist.\n", oldName)
+			return
+		}
+		_, haveNew := cfg.Owners[newName]
+		if haveNew {
+			fmt.Printf("ERROR: an owner named '%s' already exists.\n", newName)
+		}
+		delete(cfg.Owners, oldName)
+		cfg.Owners[newName] = old
+		cfg.Dirty = true
+		fmt.Printf("%s renamed from %s to %s\n", old.Public.String(), oldName, newName)
+
+	case "export":
+		if len(args) < 2 {
+			printHelp("")
+			return
+		}
+
+		cfgOwner := cfg.Owners[strings.TrimSpace(args[1])]
+		if cfgOwner == nil {
+			fmt.Printf("ERROR: an owner named '%s' does not exist.\n", args[1])
+			return
+		}
+
+		owner, err := cfgOwner.GetOwner()
+		if err != nil {
+			fmt.Printf("ERROR: invalid owner in config: %s", err.Error())
+			return
+		}
+		ownerPem, err := owner.PrivatePEM()
+		if err != nil {
+			fmt.Printf("ERROR: error exporting owner as PEM: %s", err.Error())
+			return
+		}
+		if len(args) == 3 {
+			fn := strings.TrimSpace(args[2])
+			err := ioutil.WriteFile(fn, ownerPem, 0600)
+			if err != nil {
+				fmt.Printf("ERROR: unable to write to '%s': %s\n", fn, err.Error())
+				return
+			}
+			fmt.Printf("%s exported to %s\n", owner.Public.String(), fn)
+		} else {
+			fmt.Print(string(ownerPem))
+		}
+
+	case "import":
+		if len(args) < 3 {
+			printHelp("")
+			return
+		}
+
+		name := strings.TrimSpace(args[1])
+		if _, have := cfg.Owners[name]; have {
+			fmt.Printf("ERROR: an owner named '%s' already exists.\n", name)
+			return
+		}
+
+		fn := strings.TrimSpace(args[2])
+		ownerPem, err := ioutil.ReadFile(fn)
+		if err != nil {
+			fmt.Printf("ERROR: unable to read from '%s': %s", fn, err.Error())
+			return
+		}
+		pemBlock, _ := pem.Decode(ownerPem)
+		if pemBlock == nil || pemBlock.Type != lf.OwnerPrivatePEMType {
+			fmt.Printf("ERROR: file '%s' does not contain PEM data for an owner private key.\n", fn)
+			return
+		}
+		owner, err := lf.NewOwnerFromPrivateBytes(pemBlock.Bytes)
+		if err != nil {
+			fmt.Printf("ERROR: owner in '%s' is invalid: %s\n", fn, err.Error())
+			return
+		}
+
+		isDfl := len(cfg.Owners) == 0
+		priv, _ := owner.PrivateBytes()
+		cfg.Owners[name] = &lf.ClientConfigOwner{
+			Public:  owner.Public,
+			Private: priv,
+			Default: isDfl,
+		}
+		cfg.Dirty = true
+		dfl := " "
+		if isDfl {
+			dfl = "*"
+		}
+		fmt.Printf("%-24s %s %-7s %s\n", name, dfl, owner.TypeString(), owner.String())
 
 	case "makecsr":
 		if len(args) < 2 {
@@ -914,7 +1040,7 @@ func doOwner(cfg *lf.ClientConfig, basePath string, args []string) {
 		}
 		fmt.Print(lf.PrettyJSON(&csr.Subject))
 
-	case "authcsr":
+	case "authorize":
 		if len(args) < 3 {
 			printHelp("")
 			return

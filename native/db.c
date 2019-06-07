@@ -271,7 +271,7 @@ int ZTLF_DB_Open(
 
 	ZTLF_L_trace("opening database at %s",path);
 
-	db->graphThreadStarted = false;
+	db->graphThreadStarted = 0;
 	pthread_mutex_init(&db->dbLock,NULL);
 	for(int i=0;i<ZTLF_DB_GRAPH_NODE_LOCK_ARRAY_SIZE;++i)
 		pthread_mutex_init(&db->graphNodeLocks[i],NULL);
@@ -477,12 +477,12 @@ int ZTLF_DB_Open(
 		goto exit_with_error;
 	}
 
-	db->running = true;
+	db->running = 1;
 	if (pthread_create(&db->graphThread,NULL,_ZTLF_DB_graphThreadMain,db) != 0) {
 		ZTLF_L_fatal("pthread_create() failed");
 		abort();
 	}
-	db->graphThreadStarted = true;
+	db->graphThreadStarted = 1;
 
 	return 0;
 
@@ -548,11 +548,10 @@ static void *_ZTLF_DB_graphThreadMain(void *arg)
 	LogOutputCallback logger = db->logger;
 	void *loggerArg = (void *)db->loggerArg;
 
-	while (db->running) {
-		/* Sleep briefly between each pending record query as these are somewhat expensive. */
+	while (__sync_or_and_fetch(&db->running,0)) {
 		for(int i=0;i<3;++i) {
 			usleep(100000);
-			if (!db->running) goto end_graph_thread;
+			if (!__sync_or_and_fetch(&db->running,0)) goto end_graph_thread;
 		}
 
 		/* Get new pending records or pending records with now-filled holes. */
@@ -568,7 +567,7 @@ static void *_ZTLF_DB_graphThreadMain(void *arg)
 			ZTLF_L_trace("graph: found %lu records to process",recordQueue.size);
 		} else continue;
 
-		while ((recordQueue.size > 0)&&(db->running)) {
+		while ((recordQueue.size > 0)&&(__sync_or_and_fetch(&db->running,0))) {
 			const int64_t waitingGoff = recordQueue.v[--recordQueue.size];
 			ZTLF_L_trace("graph: adjusting weights for records below graph node %lld",(long long)waitingGoff);
 
@@ -805,8 +804,8 @@ void ZTLF_DB_Close(struct ZTLF_DB *db)
 
 	ZTLF_L_trace("internal C database shutting down");
 
-	db->running = false;
-	if (db->graphThreadStarted)
+	__sync_and_and_fetch(&db->running,0);
+	if (__sync_or_and_fetch(&db->graphThreadStarted,0))
 		pthread_join(db->graphThread,NULL);
 
 	ZTLF_L_trace("graph thread has stopped");
