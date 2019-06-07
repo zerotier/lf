@@ -31,7 +31,7 @@ import "fmt"
 // LF version and software implementation name
 const (
 	VersionMajor    = 0
-	VersionMinor    = 5
+	VersionMinor    = 9
 	VersionRevision = 0
 	VersionBuild    = 0
 

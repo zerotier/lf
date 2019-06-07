@@ -759,7 +759,7 @@ func doSet(cfg *lf.ClientConfig, basePath string, args []string) (exitCode int) 
 	o, err = owner.GetOwner()
 	if err == nil {
 		var wf *lf.Wharrgarblr
-		if len(ownerInfo.Certificates) == 0 {
+		if ownerInfo.CertificatesCurrent {
 			if *noWork {
 				logger.Printf("ERROR: no auth certificate found for owner %s and -nowork was specified.\n", o.String())
 				exitCode = 1

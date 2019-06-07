@@ -49,7 +49,7 @@ import (
 func TimeMs() uint64 { return uint64(time.Now().UnixNano()) / uint64(1000000) }
 
 // TimeSec returns the time in seconds since epoch.
-func TimeSec() uint64 { return uint64(time.Now().UnixNano()) / uint64(1000000000) }
+func TimeSec() uint64 { return uint64(time.Now().Unix()) }
 
 // TimeMsToTime converts a time in milliseconds since epoch to a Go native time.Time structure.
 func TimeMsToTime(ms uint64) time.Time { return time.Unix(int64(ms/1000), int64((ms%1000)*1000000)) }

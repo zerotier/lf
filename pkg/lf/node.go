@@ -892,6 +892,7 @@ func (n *Node) handleSynchronizedRecord(doff uint64, dlen uint, reputation int, 
 		if len(rdata) > 0 && err == nil {
 			r, err := NewRecordFromBytes(rdata)
 			if err == nil {
+				fmt.Printf("REPUTATION: %d\n", reputation)
 				// Check to make sure this record only links to records that are older than it to within
 				// permitted fuzziness for network. (Only bother if reputation is above this threshold.)
 				if reputation > dbReputationTemporalViolation {
@@ -911,6 +912,7 @@ func (n *Node) handleSynchronizedRecord(doff uint64, dlen uint, reputation int, 
 						}
 					}
 				}
+				fmt.Printf("REPUTATION 2: %d\n", reputation)
 
 				// If record looks like a collision and if we have other records that have a positive reputation,
 				// generate a commentary record indicating that this record is suspect.
@@ -1025,9 +1027,9 @@ func (n *Node) handleSynchronizedRecord(doff uint64, dlen uint, reputation int, 
 					}
 					n.peersLock.RUnlock()
 
-					n.log[LogLevelNormal].Printf("sync: %s with local reputation %d (announced to %d peers)", r.HashString(), reputation, announcementCount)
+					n.log[LogLevelVerbose].Printf("sync: %s with local reputation %d (announced to %d peers)", r.HashString(), reputation, announcementCount)
 				} else {
-					n.log[LogLevelNormal].Printf("sync: %s with local reputation %d (not announced due to below normal reputation)", r.HashString(), reputation)
+					n.log[LogLevelVerbose].Printf("sync: %s with local reputation %d (not announced due to below normal reputation)", r.HashString(), reputation)
 				}
 			} else {
 				n.log[LogLevelWarning].Printf("WARNING: could your node be really old? record =%s reputation adjusted from %d to %d since an error occured deserializing it (%s)", Base62Encode(hash[:]), reputation, dbReputationRecordDeserializationFailed, err.Error())
@@ -1202,7 +1204,7 @@ func (n *Node) backgroundThreadOracle() {
 				var rb RecordBuilder
 				var rec *Record
 				startTime := time.Now()
-				err = rb.Start(RecordTypeCommentary, commentary, links, nil, nil, nil, n.owner.Public, TimeSec())
+				err = rb.Start(RecordTypeCommentary, commentary, links, nil, nil, nil, n.owner.Public, uint64(startTime.Unix()))
 				if err == nil {
 					err = rb.AddWork(wf, uint32(minWorkDifficultyThisIteration))
 					if err == nil {

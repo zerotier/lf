@@ -101,6 +101,7 @@ type APIOwnerInfoResult struct {
 	Owner               OwnerPublic ``                  // Public portion of owner (from query)
 	Certificates        []Blob      `json:",omitempty"` // Certificates in DER format
 	RevokedCertificates []Blob      `json:",omitempty"` // Revoked certificated in DER format
+	CertificatesCurrent bool        ``                  // True if at least one certificate's time range contains the current time
 	RecordCount         uint64      ``                  // Number of records in data store by this owner
 	RecordBytes         uint64      ``                  // Number of bytes of records by this owner
 	Links               []HashBlob  `json:",omitempty"` // Links for a new record (for convenience)
@@ -515,8 +516,13 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 						recordCount, recordBytes := n.db.getOwnerStats(ownerPublic)
 						certs, revokedCerts := n.GetOwnerCertificates(ownerPublic)
 						certsBin, revokedCertsBin := make([]Blob, 0, len(certs)), make([]Blob, 0, len(revokedCerts))
+						certsCurrent := false
+						now := time.Now().UTC()
 						for _, cert := range certs {
 							certsBin = append(certsBin, cert.Raw)
+							if now.After(cert.NotBefore) && now.Before(cert.NotAfter) {
+								certsCurrent = true
+							}
 						}
 						for _, revokedCert := range revokedCerts {
 							revokedCertsBin = append(revokedCertsBin, revokedCert.Raw)
@@ -530,10 +536,11 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 							Owner:               ownerPublic,
 							Certificates:        certsBin,
 							RevokedCertificates: revokedCertsBin,
+							CertificatesCurrent: certsCurrent,
 							RecordCount:         recordCount,
 							RecordBytes:         recordBytes,
 							Links:               links2,
-							ServerTime:          TimeSec(),
+							ServerTime:          uint64(now.Unix()),
 						})
 						return
 					}
