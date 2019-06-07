@@ -27,11 +27,11 @@
 package lf
 
 // Note: we include prebuilt sqlite3 for some platforms due to needing to
-// build on ancient versions that lack up-to-date sqlite versions.
+// build on ancient versions that have ancient SQLite3 like CentOS 7.
 
 //#cgo CFLAGS: -O3
 //#cgo darwin LDFLAGS: ${SRCDIR}/../../native/db_darwin.o -lsqlite3
-//#cgo linux,amd64 LDFLAGS: ${SRCDIR}/../../native/db_linux.o ${SRCDIR}/../../native/precompiled/libsqlite3_linux_amd64.a -ldl -lm
+//#cgo linux,amd64 LDFLAGS: ${SRCDIR}/../../native/db_linux.o ${SRCDIR}/../../native/precompiled/libsqlite3_linux_amd64.a -lm -ldl
 //#cgo linux,!amd64 LDFLAGS: ${SRCDIR}/../../native/db_linux.o -lsqlite3
 //#cgo freebsd LDFLAGS: ${SRCDIR}/../../native/db_freebsd.o -lsqlite3
 //#cgo openbsd LDFLAGS: ${SRCDIR}/../../native/db_openbsd.o -lsqlite3

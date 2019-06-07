@@ -32,8 +32,8 @@
 #include "mappedfile.h"
 #include "suint96.h"
 
-#ifdef ZTLF_SQLITE_INCLUDE
-#include ZTLF_SQLITE_INCLUDE
+#if (defined(__linux__) || defined(__linux) || defined(__LINUX__)) && (defined(__amd64) || defined(__amd64__) || defined(__x86_64) || defined(__x86_64__) || defined(__AMD64) || defined(__AMD64__) || defined(_M_X64) || defined(_M_AMD64))
+#include "precompiled/sqlite3.h"
 #else
 #include <sqlite3.h>
 #endif
