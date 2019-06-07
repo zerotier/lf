@@ -206,7 +206,7 @@ Commands:
     import <name> <pem file>              Import owner from PEM export
     makecsr <name>                        Generate a CSR for an owner
     showcsr <csr>                         Dump CSR information
-    authorize <auth cert> <csr>           Authorize an owner from a CSR
+    authorize <ca key> <csr> <ttl days>   Generate and store auth certificate
   url <operation> [...]
     list                                  Show client URLs
     add <url>                             Add a URL
@@ -1041,8 +1041,17 @@ func doOwner(cfg *lf.ClientConfig, basePath string, args []string) {
 		fmt.Print(lf.PrettyJSON(&csr.Subject))
 
 	case "authorize":
-		if len(args) < 3 {
+		if len(args) < 4 {
 			printHelp("")
+			return
+		}
+
+		ttlDays, _ := strconv.ParseInt(strings.TrimSpace(args[3]), 10, 64)
+		if ttlDays == -1 {
+			ttlDays = 36500
+		}
+		if ttlDays <= 0 || ttlDays > 36500 {
+			fmt.Println("ERROR: ttl days must be in range 0..36500 or -1 for max")
 			return
 		}
 
@@ -1126,7 +1135,7 @@ func doOwner(cfg *lf.ClientConfig, basePath string, args []string) {
 			return
 		}
 
-		rec, err := lf.CreateOwnerCertificate(links, lf.NewWharrgarblr(lf.RecordDefaultWharrgarblMemory, 0), owner, csr, time.Hour*time.Duration(24*36500), cert, key)
+		rec, err := lf.CreateOwnerCertificate(links, lf.NewWharrgarblr(lf.RecordDefaultWharrgarblMemory, 0), owner, csr, time.Hour*time.Duration(24*ttlDays), cert, key)
 		if err != nil {
 			fmt.Printf("ERROR: unable to create certificate or record: %s", err.Error())
 			return

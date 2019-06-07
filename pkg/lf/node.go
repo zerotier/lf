@@ -423,10 +423,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 
 	// Start background thread to add work to DAG and render commentary (if enabled)
 	n.backgroundThreadWG.Add(1)
-	go func() {
-		defer n.backgroundThreadWG.Done()
-		n.commentaryGeneratorMain()
-	}()
+	go n.backgroundThreadOracle()
 
 	// Add server's local URL to client config if it's not there already.
 	if n.httpTCPListener != nil {
@@ -988,13 +985,19 @@ func (n *Node) handleSynchronizedRecord(doff uint64, dlen uint, reputation int, 
 								if err != nil {
 									n.log[LogLevelWarning].Printf("WARNING: error adding certificate to database: %s", err.Error())
 								}
-								n.log[LogLevelVerbose].Printf("certificate: new certificate %s issued by %s for subject %s", Base62Encode(cert.SerialNumber.Bytes()), cert.Issuer.SerialNumber, cert.Subject.SerialNumber)
-							}
 
-							// TODO: right now this just nukes the cert cache. This could be made more fine grained.
-							n.ownerCertificatesLock.Lock()
-							n.ownerCertificates = make(map[string][2][]*x509.Certificate)
-							n.ownerCertificatesLock.Unlock()
+								n.ownerCertificatesLock.Lock()
+								delete(n.ownerCertificates, cert.Subject.SerialNumber)
+								n.ownerCertificatesLock.Unlock()
+
+								n.log[LogLevelNormal].Printf("certificate: new certificate %s issued by %s for subject %s", Base62Encode(cert.SerialNumber.Bytes()), cert.Issuer.SerialNumber, cert.Subject.SerialNumber)
+
+								ownerPublic, _ := NewOwnerPublicFromString("@" + cert.Subject.SerialNumber)
+								if len(ownerPublic) > 0 {
+									n.backgroundThreadWG.Add(1)
+									go n.backgroundTaskProcessRecordsInLimbo(ownerPublic)
+								}
+							}
 						}
 					}
 
@@ -1006,7 +1009,7 @@ func (n *Node) handleSynchronizedRecord(doff uint64, dlen uint, reputation int, 
 							for _, revoked := range crl.TBSCertList.RevokedCertificates {
 								revokedSerial := Base62Encode(revoked.SerialNumber.Bytes())
 								n.db.putCertRevocation(revokedSerial, doff, dlen)
-								n.log[LogLevelVerbose].Printf("certificate: new CRL from \"%s\" revokes %s", crl.TBSCertList.Issuer.String(), revokedSerial)
+								n.log[LogLevelNormal].Printf("certificate: new CRL from \"%s\" revokes %s", crl.TBSCertList.Issuer.String(), revokedSerial)
 							}
 
 							// TODO: right now this just nukes the cert cache. This could be made more fine grained.
@@ -1149,61 +1152,6 @@ func (n *Node) backgroundWorkerMain() {
 					n.knownPeersLock.Unlock()
 				}
 			}
-
-			// Periodically check to see if any records in limbo can now be admitted or should be forgotten.
-			if (ticker % 15) == 2 {
-				limboBasePath := path.Join(n.basePath, "limbo")
-				limboFiles, _ := ioutil.ReadDir(limboBasePath)
-				limboFilePaths := make([]string, 0, len(limboFiles))
-				for _, f := range limboFiles {
-					fn := f.Name()
-					if len(fn) > 0 && fn[0] == '@' && f.Mode().IsRegular() {
-						owner, _ := NewOwnerPublicFromString(fn)
-						if len(owner) > 0 {
-							certs, revokedCerts := n.GetOwnerCertificates(owner)
-							if len(certs) > 0 || len(revokedCerts) > 0 {
-								n.log[LogLevelNormal].Printf("sync: certificate for owner %s appears to be available, processing records in limbo (%d bytes)", fn, f.Size())
-								limboFilePaths = append(limboFilePaths, path.Join(limboBasePath, fn))
-							}
-						}
-					}
-				}
-
-				if len(limboFilePaths) > 0 {
-					n.limboLock.Lock()
-					for _, fp := range limboFilePaths {
-						var remainingFile *os.File
-						f, _ := os.Open(fp)
-						if f != nil {
-							bf := bufio.NewReader(f)
-							var rec Record
-							for rec.UnmarshalFrom(bf) == nil {
-								err := n.AddRecord(&rec)
-								if err != nil {
-									if err == ErrRecordNotApproved {
-										if remainingFile == nil {
-											remainingFile, _ = os.OpenFile(fp+".rem", os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
-											if remainingFile == nil {
-												break
-											}
-										}
-										rec.MarshalTo(remainingFile, false)
-									} else {
-										break
-									}
-								}
-							}
-							f.Close()
-							os.Remove(fp)
-							if remainingFile != nil {
-								remainingFile.Close()
-								os.Rename(fp+".rem", fp)
-							}
-						}
-					}
-					n.limboLock.Unlock()
-				}
-			}
 		}
 
 		// Periodically check and update database full sync state.
@@ -1221,8 +1169,10 @@ func (n *Node) backgroundWorkerMain() {
 	}
 }
 
-// commentaryGeneratorMain is run to generate commentary and add work to the DAG (if enabled).
-func (n *Node) commentaryGeneratorMain() {
+// backgroundThreadOracle is run to generate commentary and add work to the DAG (if enabled).
+func (n *Node) backgroundThreadOracle() {
+	defer n.backgroundThreadWG.Done()
+
 	minWorkDifficulty := uint64(0x000f0000)
 	for atomic.LoadUint32(&n.shutdown) == 0 {
 		time.Sleep(time.Second) // 1s pause between each new record
@@ -1283,7 +1233,11 @@ func (n *Node) commentaryGeneratorMain() {
 							}
 						}
 
-						n.log[LogLevelVerbose].Printf("oracle: %s submitted with %d comments (minimum difficulty %.8x created in %f seconds)", rec.HashString(), commentCount, minWorkDifficulty, duration)
+						ll := LogLevelVerbose
+						if commentCount > 0 {
+							ll = LogLevelNormal
+						}
+						n.log[ll].Printf("oracle: %s submitted with %d comments (minimum difficulty %.8x, created in %f seconds)", rec.HashString(), commentCount, minWorkDifficulty, duration)
 					} else {
 						n.log[LogLevelWarning].Printf("WARNING: error adding commentary record: %s", err.Error())
 					}
@@ -1297,6 +1251,52 @@ func (n *Node) commentaryGeneratorMain() {
 			n.workFunction = nil
 			n.workFunctionLock.Unlock()
 		}
+	}
+}
+
+// processRecordsInLimbo attempts to add any records in limbo for an owner.
+func (n *Node) backgroundTaskProcessRecordsInLimbo(ownerPublic OwnerPublic) {
+	defer n.backgroundThreadWG.Done()
+
+	ownerStr := ownerPublic.String()
+	fp := path.Join(n.basePath, "limbo", ownerStr)
+
+	n.limboLock.Lock()
+	defer n.limboLock.Unlock()
+
+	finfo, _ := os.Stat(fp)
+	if finfo == nil {
+		return
+	}
+	f, err := os.Open(fp)
+	if err != nil {
+		n.log[LogLevelWarning].Printf("WARNING: sync: records in limbo in %s cannot be read for processing: %s", fp, err.Error())
+		return
+	}
+	if f == nil {
+		return
+	}
+
+	n.log[LogLevelNormal].Printf("sync: processing records in limbo for owner %s", ownerStr)
+
+	bf := bufio.NewReader(f)
+	var rec Record
+	var numFound, numNotYetApproved int
+	for rec.UnmarshalFrom(bf) == nil {
+		numFound++
+		err := n.AddRecord(&rec)
+		if err != nil && err == ErrRecordNotApproved {
+			numNotYetApproved++
+		}
+	}
+	f.Close()
+
+	if numNotYetApproved == 0 {
+		n.log[LogLevelNormal].Printf("sync: all %d records in limbo for owner %s added", numFound, ownerStr)
+		os.Remove(fp)
+	} else {
+		n.log[LogLevelNormal].Printf("sync: %d records remain in limbo for owner %s", numNotYetApproved, ownerStr)
+		// TODO: eventually forget records in limbo?
 	}
 }
 
