@@ -98,14 +98,14 @@ type APIStatusResult struct {
 
 // APIOwnerInfoResult is returned from queries for owner info from /owner/@base62 URLs.
 type APIOwnerInfoResult struct {
-	Owner               OwnerPublic ``                  // Public portion of owner (from query)
-	Certificates        []Blob      `json:",omitempty"` // Certificates in DER format
-	RevokedCertificates []Blob      `json:",omitempty"` // Revoked certificated in DER format
-	CertificatesCurrent bool        ``                  // True if at least one certificate's time range contains the current time
-	RecordCount         uint64      ``                  // Number of records in data store by this owner
-	RecordBytes         uint64      ``                  // Number of bytes of records by this owner
-	Links               []HashBlob  `json:",omitempty"` // Links for a new record (for convenience)
-	ServerTime          uint64      ``                  // Server time in seconds since epoch (for convenience)
+	Owner                 OwnerPublic ``                  // Public portion of owner (from query)
+	Certificates          []Blob      `json:",omitempty"` // Certificates in DER format
+	RevokedCertificates   []Blob      `json:",omitempty"` // Revoked certificated in DER format
+	HasCurrentCertificate bool        ``                  // True if at least one certificate's time range contains the current time
+	RecordCount           uint64      ``                  // Number of records in data store by this owner
+	RecordBytes           uint64      ``                  // Number of bytes of records by this owner
+	Links                 []HashBlob  `json:",omitempty"` // Links for a new record (for convenience)
+	ServerTime            uint64      ``                  // Server time in seconds since epoch (for convenience)
 }
 
 // MountPoint describes a FUSE lffs mount point
@@ -533,14 +533,14 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 							links2 = append(links2, l)
 						}
 						apiSendObj(out, req, http.StatusOK, &APIOwnerInfoResult{
-							Owner:               ownerPublic,
-							Certificates:        certsBin,
-							RevokedCertificates: revokedCertsBin,
-							CertificatesCurrent: certsCurrent,
-							RecordCount:         recordCount,
-							RecordBytes:         recordBytes,
-							Links:               links2,
-							ServerTime:          uint64(now.Unix()),
+							Owner:                 ownerPublic,
+							Certificates:          certsBin,
+							RevokedCertificates:   revokedCertsBin,
+							HasCurrentCertificate: certsCurrent,
+							RecordCount:           recordCount,
+							RecordBytes:           recordBytes,
+							Links:                 links2,
+							ServerTime:            uint64(now.Unix()),
 						})
 						return
 					}

@@ -797,7 +797,7 @@ func (n *Node) GetOwnerCertificates(owner OwnerPublic) (certs []*x509.Certificat
 	// that issued the certificate being revoked provided it has the CRL key usage flag.
 
 	for _, ownerCert := range certsBySerialNo {
-		if ownerCert.Subject.SerialNumber == ownerSubjectSerialNo {
+		if ownerCert.Subject.SerialNumber == ownerSubjectSerialNo && (ownerCert.KeyUsage|x509.KeyUsageDigitalSignature) != 0 {
 			ownerCertIssuer := rootsBySerialNo[ownerCert.Issuer.SerialNumber]
 			ownerCertIssuerRevoked := false
 
@@ -858,6 +858,18 @@ func (n *Node) GetOwnerCertificates(owner OwnerPublic) (certs []*x509.Certificat
 	n.ownerCertificatesLock.Unlock()
 
 	return
+}
+
+// OwnerHasCurrentCertificate returns true if this owner has a certificate valid at the current time and not revoked.
+func (n *Node) OwnerHasCurrentCertificate(ownerPublic OwnerPublic) bool {
+	certs, _ := n.GetOwnerCertificates(ownerPublic)
+	now := time.Now().UTC()
+	for _, cert := range certs {
+		if now.After(cert.NotBefore) && now.Before(cert.NotAfter) {
+			return true
+		}
+	}
+	return false
 }
 
 // GetGenesisParameters gets the parameters for this network that were specified in genesis record(s).

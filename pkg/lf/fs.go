@@ -119,6 +119,7 @@ type FS struct {
 	commitQueue      chan fsFuseNode
 	runningLock      sync.Mutex
 	workFunc         *Wharrgarblr
+	workFuncLock     sync.Mutex
 }
 
 // fsImpl just hides FUSE methods from everyone outside the LF package.
@@ -132,6 +133,16 @@ func (impl *fsImpl) GenerateInode(parentInode uint64, name string) uint64 {
 		i += 1024
 	}
 	return i
+}
+
+func (impl *fsImpl) getWorkFunction() *Wharrgarblr {
+	impl.workFuncLock.Lock()
+	if impl.workFunc == nil {
+		impl.workFunc = NewWharrgarblr(RecordDefaultWharrgarblMemory, runtime.NumCPU())
+	}
+	wf := impl.workFunc
+	impl.workFuncLock.Unlock()
+	return wf
 }
 
 func (impl *fsImpl) Statfs(ctx context.Context, req *fuse.StatfsRequest, resp *fuse.StatfsResponse) error {
@@ -239,10 +250,6 @@ func NewFS(n *Node, mountPoint string, rootSelectorName []byte, owner *Owner, ma
 	}}
 	fs.root.fs = fs
 	fs.passwd[ownerName] = fsPasswdEntry{uid: ownerUID, public: owner.Public.String()}
-
-	if !n.localTest { // TODO: periodically check to see if owner has a cert
-		fs.workFunc = NewWharrgarblr(RecordDefaultWharrgarblMemory, runtime.NumCPU())
-	}
 
 	// Include only ASCII printable characters in volume name so as not to cause UI issues (Mac Finder only AFIAK).
 	nameEscaped := make([]byte, 0, len(rootSelectorName))
@@ -964,7 +971,12 @@ func (fsn *fsDir) commit() error {
 	}
 	fsn.fs.cacheLock.Unlock()
 
-	rec, err := NewRecord(RecordTypeDatum, rdata, links, fsn.fs.maskingKey, [][]byte{fsn.parent.selectorName}, []uint64{fsn.inode}, ts, fsn.fs.workFunc, fsn.fs.owner)
+	var wf *Wharrgarblr
+	if !fsn.fs.node.OwnerHasCurrentCertificate(fsn.fs.owner.Public) {
+		wf = fsn.fs.getWorkFunction()
+	}
+
+	rec, err := NewRecord(RecordTypeDatum, rdata, links, fsn.fs.maskingKey, [][]byte{fsn.parent.selectorName}, []uint64{fsn.inode}, ts, wf, fsn.fs.owner)
 	if err != nil {
 		return err
 	}
@@ -1167,6 +1179,11 @@ func (fsn *fsFile) commit() error {
 		return ErrInvalidObject
 	}
 
+	var wf *Wharrgarblr
+	if !fsn.parent.fs.node.OwnerHasCurrentCertificate(fsn.parent.fs.owner.Public) {
+		wf = fsn.parent.fs.getWorkFunction()
+	}
+
 	ts := TimeSec()
 
 	fsn.parent.fs.cacheLock.Lock()
@@ -1216,7 +1233,7 @@ func (fsn *fsFile) commit() error {
 			if err != nil {
 				return nil, err
 			}
-			rec, err := NewRecord(RecordTypeDatum, chunk, links, chunkHash[0:16], [][]byte{chunkHash}, []uint64{0}, ts, fsn.parent.fs.workFunc, fsn.parent.fs.owner)
+			rec, err := NewRecord(RecordTypeDatum, chunk, links, chunkHash[0:16], [][]byte{chunkHash}, []uint64{0}, ts, wf, fsn.parent.fs.owner)
 			if err != nil {
 				return nil, err
 			}
@@ -1279,7 +1296,7 @@ func (fsn *fsFile) commit() error {
 	if err != nil {
 		return err
 	}
-	rec, err := NewRecord(RecordTypeDatum, rdata, links, fsn.parent.fs.maskingKey, [][]byte{fsn.parent.selectorName}, []uint64{fsn.inode}, ts, fsn.parent.fs.workFunc, fsn.parent.fs.owner)
+	rec, err := NewRecord(RecordTypeDatum, rdata, links, fsn.parent.fs.maskingKey, [][]byte{fsn.parent.selectorName}, []uint64{fsn.inode}, ts, wf, fsn.parent.fs.owner)
 	if err != nil {
 		return err
 	}
