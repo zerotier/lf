@@ -347,7 +347,7 @@ int ZTLF_DB_Open(
 		"AND r.owner = ? "
 		"AND NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) "
 		"AND NOT EXISTS (SELECT gp.record_goff FROM graph_pending AS gp WHERE gp.record_goff = r.goff) "
-		"ORDER BY r.reputation ASC LIMIT 1"); /* get minimum reputation for ID/owner combo */
+		"ORDER BY r.reputation DESC LIMIT 1"); /* get maximum reputation for ID/owner combo */
 	S(db->sHaveRecordsWithIDNotOwner,
 		"SELECT doff FROM record WHERE id = ? AND owner != ? LIMIT 1");
 	S(db->sDemoteCollisions,
@@ -1032,7 +1032,7 @@ int ZTLF_DB_PutRecord(
 	sqlite3_bind_blob(db->sGetIDOwnerReputation,1,id,32,SQLITE_STATIC);
 	sqlite3_bind_blob(db->sGetIDOwnerReputation,2,owner,ownerSize,SQLITE_STATIC);
 	if (sqlite3_step(db->sGetIDOwnerReputation) == SQLITE_ROW) {
-		reputation = sqlite3_column_int(db->sGetIDOwnerReputation,0);
+		reputation = sqlite3_column_int(db->sGetIDOwnerReputation,0); /* maximum reputation for ID/owner combo */
 	} else {
 		sqlite3_reset(db->sHaveRecordsWithIDNotOwner);
 		sqlite3_bind_blob(db->sHaveRecordsWithIDNotOwner,1,id,32,SQLITE_STATIC);

@@ -892,7 +892,6 @@ func (n *Node) handleSynchronizedRecord(doff uint64, dlen uint, reputation int, 
 		if len(rdata) > 0 && err == nil {
 			r, err := NewRecordFromBytes(rdata)
 			if err == nil {
-				fmt.Printf("REPUTATION: %d\n", reputation)
 				// Check to make sure this record only links to records that are older than it to within
 				// permitted fuzziness for network. (Only bother if reputation is above this threshold.)
 				if reputation > dbReputationTemporalViolation {
@@ -912,7 +911,6 @@ func (n *Node) handleSynchronizedRecord(doff uint64, dlen uint, reputation int, 
 						}
 					}
 				}
-				fmt.Printf("REPUTATION 2: %d\n", reputation)
 
 				// If record looks like a collision and if we have other records that have a positive reputation,
 				// generate a commentary record indicating that this record is suspect.
