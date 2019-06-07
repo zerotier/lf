@@ -178,12 +178,12 @@ func makeMaskingCipher(maskingKey, ownerPublic []byte, selectorNames [][]byte, t
 // recordBody represents the main body of a record including its value, owner public keys, etc.
 // It's included as part of Record but separated since in record construction we want to treat it as a separate element.
 type recordBody struct {
-	Value       Blob        `json:",omitempty"` // Record value (possibly masked and/or compressed, use GetValue() to get)
-	Owner       OwnerPublic `json:",omitempty"` // Owner of this record
-	Links       []HashBlob  `json:",omitempty"` // Links to previous records' hashes
-	Timestamp   uint64      ``                  // Timestamp (and revision ID) in SECONDS since Unix epoch
-	Type        int         ``                  // Record type ID
-	ValueIsHash *bool       `json:",omitempty"` // True if value is actually the hash of an original elided value
+	Value     Blob        `json:",omitempty"` // Record value (possibly masked and/or compressed, use GetValue() to get)
+	ValueHash Blob        `json:",omitempty"` // Normally empty, but contains SHA384(Value) if this is an abbreviated record
+	Owner     OwnerPublic `json:",omitempty"` // Owner of this record
+	Links     []HashBlob  `json:",omitempty"` // Links to previous records' hashes
+	Timestamp uint64      ``                  // Timestamp (and revision ID) in SECONDS since Unix epoch
+	Type      int         ``                  // Record type ID
 
 	sigHash *[48]byte
 }
@@ -203,9 +203,8 @@ func (rb *recordBody) unmarshalFrom(r io.Reader) error {
 			if err != nil {
 				return err
 			}
-			rb.Value = vh[:]
-			troo := true
-			rb.ValueIsHash = &troo
+			rb.Value = nil
+			rb.ValueHash = vh[:]
 		} else {
 			l, err := binary.ReadUvarint(&rr)
 			if err != nil {
@@ -223,8 +222,11 @@ func (rb *recordBody) unmarshalFrom(r io.Reader) error {
 			} else {
 				rb.Value = nil
 			}
-			rb.ValueIsHash = nil
+			rb.ValueHash = nil
 		}
+	} else {
+		rb.Value = nil
+		rb.ValueHash = nil
 	}
 
 	l, err := binary.ReadUvarint(&rr)
@@ -278,7 +280,8 @@ func (rb *recordBody) marshalTo(w io.Writer, hashAsProxyForValue bool) error {
 	if len(rb.Value) > 0 {
 		flags |= recordBodyFlagHasValue
 	}
-	if rb.ValueIsHash != nil && *rb.ValueIsHash {
+	if len(rb.ValueHash) == 48 {
+		flags |= recordBodyFlagHasValue
 		hashAsProxyForValue = true
 	}
 	if hashAsProxyForValue {
@@ -290,8 +293,8 @@ func (rb *recordBody) marshalTo(w io.Writer, hashAsProxyForValue bool) error {
 
 	if len(rb.Value) > 0 {
 		if hashAsProxyForValue {
-			if rb.ValueIsHash != nil && *rb.ValueIsHash {
-				if _, err := w.Write(rb.Value); err != nil {
+			if len(rb.ValueHash) == 48 {
+				if _, err := w.Write(rb.ValueHash); err != nil {
 					return err
 				}
 			} else {
