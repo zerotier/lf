@@ -27,7 +27,15 @@
 package lf
 
 //#cgo CFLAGS: -O3
-//#cgo LDFLAGS: ${SRCDIR}/../../native/db.o -lsqlite3
+//#cgo darwin LDFLAGS: ${SRCDIR}/../../native/db_darwin.o -lsqlite3
+//#cgo linux LDFLAGS: ${SRCDIR}/../../native/db_linux.o -lsqlite3
+//#cgo freebsd LDFLAGS: ${SRCDIR}/../../native/db_freebsd.o -lsqlite3
+//#cgo openbsd LDFLAGS: ${SRCDIR}/../../native/db_openbsd.o -lsqlite3
+//#cgo netbsd LDFLAGS: ${SRCDIR}/../../native/db_netbsd.o -lsqlite3
+//#cgo windows LDFLAGS : ${SRCDIR}/../../native/db_windows.o -lsqlite3
+//#cgo android LDFLAGS : ${SRCDIR}/../../native/db_android.o -lsqlite3
+//#cgo solaris LDFLAGS : ${SRCDIR}/../../native/db_solaris.o -lsqlite3
+//#cgo dragonfly LDFLAGS : ${SRCDIR}/../../native/db_dragonfly.o -lsqlite3
 //#include <stdint.h>
 //#define ZTLF_GOLANG 1
 //struct ZTLF_DB;
@@ -405,6 +413,7 @@ func (db *db) getOwnerStats(owner []byte) (recordCount uint64, recordBytes uint6
 			recordCount++
 			recordBytes += uint64(rec.dlen)
 		}
+		C.free(unsafe.Pointer(results))
 	}
 	return
 }

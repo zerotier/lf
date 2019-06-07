@@ -177,6 +177,8 @@ type Node struct {
 }
 
 //////////////////////////////////////////////////////////////////////////////
+// Public functions and methods
+//////////////////////////////////////////////////////////////////////////////
 
 // NewNode creates and starts a node.
 func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, logLevel int, localTest bool) (*Node, error) {
@@ -215,7 +217,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 		}
 	}()
 
-	n.log[LogLevelNormal].Printf("--- node starting up at %s", n.startTime.String())
+	n.log[LogLevelNormal].Printf("--- node starting up at %s ---", n.startTime.String())
 
 	err := n.db.open(basePath, n.log, n.handleSynchronizedRecord)
 	if err != nil {
@@ -295,14 +297,16 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 	}
 
 	if n.localTest {
-		n.log[LogLevelNormal].Print("--- running in local test mode, p2p disabled, proof of work optional")
+		n.log[LogLevelNormal].Print("NOTICE: running in local test mode: p2p disabled, proof of work optional")
 	}
+
 	if n.p2pTCPListener != nil {
 		n.log[LogLevelNormal].Printf("P2P port: %d identity: %s", p2pPort, n.identityStr)
 	}
 	if n.httpTCPListener != nil {
 		n.log[LogLevelNormal].Printf("HTTP API port: %d", httpPort)
 	}
+
 	n.log[LogLevelNormal].Printf("oracle commentary owner: %s (if generated)", n.owner.String())
 
 	// Load genesis.lf or use compiled-in defaults for global LF network
@@ -416,10 +420,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 
 	// Start background housekeeping thread
 	n.backgroundThreadWG.Add(1)
-	go func() {
-		defer n.backgroundThreadWG.Done()
-		n.backgroundWorkerMain()
-	}()
+	go n.backgroundThreadMaintenance()
 
 	// Start background thread to add work to DAG and render commentary (if enabled)
 	n.backgroundThreadWG.Add(1)
@@ -446,9 +447,10 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 
 	initOk = true
 
-	n.log[LogLevelNormal].Print("--- node startup successful")
-
+	// Read and apply mounts.json after node is running
 	go func() {
+		time.Sleep(time.Second)
+
 		var mounts []MountPoint
 		mj, _ := ioutil.ReadFile(path.Join(basePath, "mounts.json"))
 		if len(mj) > 0 {
@@ -492,13 +494,15 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 		}
 	}()
 
+	n.log[LogLevelNormal].Print("--- node startup successful ---")
+
 	return n, nil
 }
 
 // Stop terminates the running node, blocking until all gorountines are done.
 // No methods should be called after this and the Node should be discarded.
 func (n *Node) Stop() {
-	n.log[LogLevelNormal].Printf("shutting down")
+	n.log[LogLevelNormal].Printf("--- shutting down ---")
 	if atomic.SwapUint32(&n.shutdown, 1) == 0 {
 		n.mountPointsLock.Lock()
 		for mpp, mp := range n.mountPoints {
@@ -707,7 +711,7 @@ func (n *Node) AddRecord(r *Record) error {
 	// revoked (via CRLs) certificates. This maintains DAG linkage integrity.
 	// If we didn't do it this way a CRL could break the DAG. Revoked records do
 	// get hidden in query results so they effectively disappear for users.
-	_, recordEverApproved := n.RecordApprovalStatus(r)
+	_, recordEverApproved := n.recordApprovalStatus(r)
 	if !recordEverApproved {
 		return ErrRecordNotApproved
 	}
@@ -825,84 +829,22 @@ func (n *Node) GetOwnerCertificates(owner OwnerPublic) (certs []*x509.Certificat
 	return
 }
 
-// RecordIsSigned returns the certificate that signed this record (if any) and whether or not it was revoked by a CRL.
-func (n *Node) RecordIsSigned(rec *Record) (*x509.Certificate, bool) {
-	if rec == nil {
-		return nil, false
-	}
-	certs, revokedCerts := n.GetOwnerCertificates(rec.Owner)
-	for _, cert := range certs {
-		if rec.Timestamp >= uint64(cert.NotBefore.Unix()) && rec.Timestamp <= uint64(cert.NotAfter.Unix()) {
-			return cert, false
-		}
-	}
-	for _, revokedCert := range revokedCerts {
-		if rec.Timestamp >= uint64(revokedCert.NotBefore.Unix()) && rec.Timestamp <= uint64(revokedCert.NotAfter.Unix()) {
-			return revokedCert, true
-		}
-	}
-	return nil, false
-}
-
-// RecordApprovalStatus checks this record's current approval status.
-// The first result is whether the record is currently approved. The second shows whether
-// the record was ever approved. Both are always true for PoW-approved records. Certificate
-// approved records can return (false, true) if they were approved by a certificate that
-// was later revoked via a CRL.
-func (n *Node) RecordApprovalStatus(rec *Record) (bool, bool) {
-	if rec == nil {
-		return false, false
-	}
-	if !n.genesisParameters.AuthRequired && rec.ValidateWork() {
-		return true, true
-	}
-	cert, revoked := n.RecordIsSigned(rec)
-	return (cert != nil && !revoked), (cert != nil && revoked)
+// GetGenesisParameters gets the parameters for this network that were specified in genesis record(s).
+func (n *Node) GetGenesisParameters() GenesisParameters {
+	return n.genesisParameters
 }
 
 //////////////////////////////////////////////////////////////////////////////
-
-func (n *Node) getWorkFunction() *Wharrgarblr {
-	var wf *Wharrgarblr
-	n.workFunctionLock.Lock()
-	if n.workFunction != nil {
-		wf = n.workFunction
-	} else {
-		n.workFunction = NewWharrgarblr(RecordDefaultWharrgarblMemory, runtime.NumCPU()-1)
-		wf = n.workFunction
-	}
-	n.workFunctionLock.Unlock()
-	return wf
-}
-
-// handleGenesisRecord handles new genesis records when starting up or if they arrive over the net.
-func (n *Node) handleGenesisRecord(gr *Record) bool {
-	grHash := gr.Hash()
-	grHashStr := Base62Encode(grHash[:])
-	rv, err := gr.GetValue(nil)
-	if err != nil {
-		n.log[LogLevelWarning].Printf("WARNING: genesis record =%s contains an invalid value, ignoring!", grHashStr)
-	} else if len(rv) > 0 {
-		if atomic.LoadUint64(&n.lastGenesisRecordTimestamp) < gr.Timestamp {
-			n.log[LogLevelNormal].Printf("applying genesis configuration update from record =%s", grHashStr)
-			n.genesisParameters.Update(rv)
-			atomic.StoreUint64(&n.lastGenesisRecordTimestamp, gr.Timestamp)
-			return true
-		}
-	}
-	return false
-}
+// Background tasks that are registered with backgroundThreadWG
+//////////////////////////////////////////////////////////////////////////////
 
 // handleSynchronizedRecord is called by db when records' dependencies are fully satisfied all through the DAG.
+// This is the handler passed to 'db' to be called when records are fully synchronized, meaning they have all
+// their dependencies met and are ready to be replicated. It backgrounds itself immediately to avoid blocking
+// the database.
 func (n *Node) handleSynchronizedRecord(doff uint64, dlen uint, reputation int, hash *[32]byte) {
-	// This is the handler passed to 'db' to be called when records are fully synchronized, meaning
-	// they have all their dependencies met and are ready to be replicated.
 	n.backgroundThreadWG.Add(1)
 	go func() {
-		if atomic.LoadUint32(&n.shutdown) != 0 {
-			return
-		}
-
 		defer func() {
 			e := recover()
 			if e != nil && atomic.LoadUint32(&n.shutdown) != 0 {
@@ -910,6 +852,10 @@ func (n *Node) handleSynchronizedRecord(doff uint64, dlen uint, reputation int, 
 			}
 			n.backgroundThreadWG.Done()
 		}()
+
+		if atomic.LoadUint32(&n.shutdown) != 0 {
+			return
+		}
 
 		rdata, err := n.db.getDataByOffset(doff, dlen, nil)
 		if len(rdata) > 0 && err == nil {
@@ -1063,8 +1009,9 @@ func (n *Node) handleSynchronizedRecord(doff uint64, dlen uint, reputation int, 
 	}()
 }
 
-// backgroundWorkerMain is run in a background gorountine to do various housekeeping tasks.
-func (n *Node) backgroundWorkerMain() {
+func (n *Node) backgroundThreadMaintenance() {
+	defer n.backgroundThreadWG.Done()
+
 	// Init this in background if it isn't already to speed up node readiness
 	WharrgarblInitTable(path.Join(n.basePath, "wharrgarbl-table.bin"))
 
@@ -1203,12 +1150,22 @@ func (n *Node) backgroundThreadOracle() {
 			links, err := n.db.getLinks2(RecordMaxLinks)
 
 			if err == nil && len(links) > 0 {
+				var wf *Wharrgarblr
+				n.workFunctionLock.Lock()
+				if n.workFunction != nil {
+					wf = n.workFunction
+				} else {
+					n.workFunction = NewWharrgarblr(RecordDefaultWharrgarblMemory, runtime.NumCPU()-1) // leave one spare thread on multi-thread CPUs
+					wf = n.workFunction
+				}
+				n.workFunctionLock.Unlock()
+
 				var rb RecordBuilder
 				var rec *Record
 				startTime := time.Now()
 				err = rb.Start(RecordTypeCommentary, commentary, links, nil, nil, nil, n.owner.Public, TimeSec())
 				if err == nil {
-					err = rb.AddWork(n.getWorkFunction(), uint32(minWorkDifficultyThisIteration))
+					err = rb.AddWork(wf, uint32(minWorkDifficultyThisIteration))
 					if err == nil {
 						rec, err = rb.Complete(n.owner)
 					}
@@ -1246,7 +1203,7 @@ func (n *Node) backgroundThreadOracle() {
 				}
 			}
 		} else {
-			// If commentary is disabled, go ahead and let go of work function RAM.
+			// If commentary is disabled, let go of work function RAM
 			n.workFunctionLock.Lock()
 			n.workFunction = nil
 			n.workFunctionLock.Unlock()
@@ -1256,13 +1213,18 @@ func (n *Node) backgroundThreadOracle() {
 
 // processRecordsInLimbo attempts to add any records in limbo for an owner.
 func (n *Node) backgroundTaskProcessRecordsInLimbo(ownerPublic OwnerPublic) {
-	defer n.backgroundThreadWG.Done()
-
 	ownerStr := ownerPublic.String()
 	fp := path.Join(n.basePath, "limbo", ownerStr)
-
 	n.limboLock.Lock()
-	defer n.limboLock.Unlock()
+
+	defer func() {
+		e := recover()
+		if e != nil {
+			n.log[LogLevelWarning].Printf("WARNING: BUG: caught panic in background records in limbo processing task for owner %s: %v", ownerStr, e)
+		}
+		n.limboLock.Unlock()
+		n.backgroundThreadWG.Done()
+	}()
 
 	finfo, _ := os.Stat(fp)
 	if finfo == nil {
@@ -1300,6 +1262,63 @@ func (n *Node) backgroundTaskProcessRecordsInLimbo(ownerPublic OwnerPublic) {
 	}
 }
 
+//////////////////////////////////////////////////////////////////////////////
+// Miscellaneous internal methods
+//////////////////////////////////////////////////////////////////////////////
+
+// recordIsSigned returns the certificate that signed this record (if any) and whether or not it was revoked by a CRL.
+func (n *Node) recordIsSigned(rec *Record) (*x509.Certificate, bool) {
+	if rec == nil {
+		return nil, false
+	}
+	certs, revokedCerts := n.GetOwnerCertificates(rec.Owner)
+	for _, cert := range certs {
+		if rec.Timestamp >= uint64(cert.NotBefore.Unix()) && rec.Timestamp <= uint64(cert.NotAfter.Unix()) {
+			return cert, false
+		}
+	}
+	for _, revokedCert := range revokedCerts {
+		if rec.Timestamp >= uint64(revokedCert.NotBefore.Unix()) && rec.Timestamp <= uint64(revokedCert.NotAfter.Unix()) {
+			return revokedCert, true
+		}
+	}
+	return nil, false
+}
+
+// recordApprovalStatus checks this record's current approval status.
+// The first result is whether the record is currently approved. The second shows whether
+// the record was ever approved. Both are always true for PoW-approved records. Certificate
+// approved records can return (false, true) if they were approved by a certificate that
+// was later revoked via a CRL.
+func (n *Node) recordApprovalStatus(rec *Record) (bool, bool) {
+	if rec == nil {
+		return false, false
+	}
+	if !n.genesisParameters.AuthRequired && rec.ValidateWork() {
+		return true, true
+	}
+	cert, revoked := n.recordIsSigned(rec)
+	return (cert != nil && !revoked), (cert != nil && revoked)
+}
+
+// handleGenesisRecord handles new genesis records when starting up or if they arrive over the net.
+func (n *Node) handleGenesisRecord(gr *Record) bool {
+	grHash := gr.Hash()
+	grHashStr := Base62Encode(grHash[:])
+	rv, err := gr.GetValue(nil)
+	if err != nil {
+		n.log[LogLevelWarning].Printf("WARNING: genesis record =%s contains an invalid value, ignoring!", grHashStr)
+	} else if len(rv) > 0 {
+		if atomic.LoadUint64(&n.lastGenesisRecordTimestamp) < gr.Timestamp {
+			n.log[LogLevelNormal].Printf("applying genesis configuration update from record =%s", grHashStr)
+			n.genesisParameters.Update(rv)
+			atomic.StoreUint64(&n.lastGenesisRecordTimestamp, gr.Timestamp)
+			return true
+		}
+	}
+	return false
+}
+
 // requestWantedRecords requests wanted records within the given inclusive retry bound.
 func (n *Node) requestWantedRecords(minRetries, maxRetries int) {
 	n.peersLock.RLock()
@@ -1330,6 +1349,10 @@ func (n *Node) requestWantedRecords(minRetries, maxRetries int) {
 		}
 	}
 }
+
+//////////////////////////////////////////////////////////////////////////////
+// P2P protocol implementation
+//////////////////////////////////////////////////////////////////////////////
 
 // updateKnownPeersWithConnectResult is called from p2pConnectionHandler to update n.knownPeers
 func (n *Node) updateKnownPeersWithConnectResult(ip net.IP, port int, identity []byte) {
