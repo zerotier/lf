@@ -761,7 +761,7 @@ func (n *Node) GetOwnerCertificates(owner OwnerPublic) (certs []*x509.Certificat
 	n.ownerCertificatesLock.Lock()
 	cachedCerts := n.ownerCertificates[ownerSubjectSerialNo]
 	n.ownerCertificatesLock.Unlock()
-	if len(cachedCerts) > 0 {
+	if len(cachedCerts[0]) > 0 || len(cachedCerts[1]) > 0 {
 		certs = cachedCerts[0]
 		revokedCerts = cachedCerts[1]
 		return
@@ -784,7 +784,12 @@ func (n *Node) GetOwnerCertificates(owner OwnerPublic) (certs []*x509.Certificat
 				intermediate := certsBySerialNo[ownerCert.Issuer.SerialNumber]
 				if intermediate != nil {
 					intermediateIssuer := rootsBySerialNo[intermediate.Issuer.SerialNumber]
-					if intermediateIssuer != nil && intermediateIssuer.IsCA && (intermediateIssuer.KeyUsage&x509.KeyUsageCertSign) != 0 && intermediate.NotBefore.After(intermediateIssuer.NotBefore) && intermediate.CheckSignatureFrom(intermediateIssuer) == nil {
+					if intermediateIssuer != nil &&
+						intermediateIssuer.IsCA &&
+						(intermediateIssuer.KeyUsage&x509.KeyUsageCertSign) != 0 &&
+						intermediate.NotBefore.After(intermediateIssuer.NotBefore) &&
+						intermediateIssuer.NotAfter.After(intermediate.NotBefore) &&
+						intermediate.CheckSignatureFrom(intermediateIssuer) == nil {
 						intCrls := crlsByRevokedSerialNo[ownerCert.Issuer.SerialNumber]
 						if (intermediateIssuer.KeyUsage & x509.KeyUsageCRLSign) != 0 {
 							for _, crl := range intCrls {
@@ -799,7 +804,12 @@ func (n *Node) GetOwnerCertificates(owner OwnerPublic) (certs []*x509.Certificat
 				}
 			}
 
-			if ownerCertIssuer != nil && ownerCertIssuer.IsCA && (ownerCertIssuer.KeyUsage&x509.KeyUsageCertSign) == 0 && ownerCert.NotBefore.After(ownerCertIssuer.NotBefore) && ownerCert.CheckSignatureFrom(ownerCertIssuer) == nil {
+			if ownerCertIssuer != nil &&
+				ownerCertIssuer.IsCA &&
+				(ownerCertIssuer.KeyUsage&x509.KeyUsageCertSign) != 0 &&
+				ownerCert.NotBefore.After(ownerCertIssuer.NotBefore) &&
+				ownerCertIssuer.NotAfter.After(ownerCert.NotBefore) &&
+				ownerCert.CheckSignatureFrom(ownerCertIssuer) == nil {
 				ownerCertCrls := crlsByRevokedSerialNo[Base62Encode(ownerCert.SerialNumber.Bytes())]
 				ownerCertRevoked := ownerCertIssuerRevoked
 				if !ownerCertRevoked && (ownerCertIssuer.KeyUsage&x509.KeyUsageCRLSign) != 0 {
@@ -811,9 +821,9 @@ func (n *Node) GetOwnerCertificates(owner OwnerPublic) (certs []*x509.Certificat
 					}
 				}
 				if ownerCertRevoked {
-					certs = append(certs, ownerCert)
-				} else {
 					revokedCerts = append(revokedCerts, ownerCert)
+				} else {
+					certs = append(certs, ownerCert)
 				}
 			}
 		}
@@ -1298,7 +1308,7 @@ func (n *Node) recordApprovalStatus(rec *Record) (bool, bool) {
 		return true, true
 	}
 	cert, revoked := n.recordIsSigned(rec)
-	return (cert != nil && !revoked), (cert != nil && revoked)
+	return (cert != nil && !revoked), (cert != nil)
 }
 
 // handleGenesisRecord handles new genesis records when starting up or if they arrive over the net.

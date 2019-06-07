@@ -103,6 +103,8 @@ type APIOwnerInfoResult struct {
 	RevokedCertificates []Blob      `json:",omitempty"` // Revoked certificated in DER format
 	RecordCount         uint64      ``                  // Number of records in data store by this owner
 	RecordBytes         uint64      ``                  // Number of bytes of records by this owner
+	Links               []HashBlob  `json:",omitempty"` // Links for a new record (for convenience)
+	ServerTime          uint64      ``                  // Server time in seconds since epoch (for convenience)
 }
 
 // MountPoint describes a FUSE lffs mount point
@@ -227,6 +229,28 @@ func APIGetLinks(url string, count int) ([][32]byte, int64, error) {
 		return l, -1, nil
 	}
 	return nil, -1, APIError{Code: resp.StatusCode}
+}
+
+// APIGetOwnerInfo gets information about an owner and its related certs, etc.
+func APIGetOwnerInfo(url string, ownerPublic OwnerPublic) (*APIOwnerInfoResult, error) {
+	if strings.HasSuffix(url, "/") {
+		url = url + "owner/" + ownerPublic.String()
+	} else {
+		url = url + "/owner/" + ownerPublic.String()
+	}
+	resp, err := httpClient.Get(url)
+	if err != nil {
+		return nil, err
+	}
+	body, err := ioutil.ReadAll(&io.LimitedReader{R: resp.Body, N: 65536})
+	if err != nil {
+		return nil, err
+	}
+	var sr APIOwnerInfoResult
+	if err := json.Unmarshal(body, &sr); err != nil {
+		return nil, err
+	}
+	return &sr, nil
 }
 
 // APIStatusGet gets a status result from a URL.
@@ -497,12 +521,19 @@ func apiCreateHTTPServeMux(n *Node) *http.ServeMux {
 						for _, revokedCert := range revokedCerts {
 							revokedCertsBin = append(revokedCertsBin, revokedCert.Raw)
 						}
+						links, _ := n.db.getLinks2(n.genesisParameters.RecordMinLinks)
+						links2 := make([]HashBlob, 0, len(links))
+						for _, l := range links {
+							links2 = append(links2, l)
+						}
 						apiSendObj(out, req, http.StatusOK, &APIOwnerInfoResult{
 							Owner:               ownerPublic,
 							Certificates:        certsBin,
 							RevokedCertificates: revokedCertsBin,
 							RecordCount:         recordCount,
 							RecordBytes:         recordBytes,
+							Links:               links2,
+							ServerTime:          TimeSec(),
 						})
 						return
 					}

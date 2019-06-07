@@ -36,6 +36,7 @@ import (
 	"io"
 	"io/ioutil"
 	"os"
+	"reflect"
 	"time"
 	"unsafe"
 
@@ -114,7 +115,7 @@ func (r *paranoidSecureRandom) Read(buf []byte) (int, error) {
 	for i := range buf {
 		ii := i & 15
 		if ii == 0 {
-			r.c.Encrypt(r.b[:],r.b[:])
+			r.c.Encrypt(r.b[:], r.b[:])
 		}
 		buf[i] ^= r.b[ii]
 	}
@@ -174,4 +175,16 @@ func BrotliCompress(in []byte, out []byte) ([]byte, error) {
 // The readLimit parameter limits the maximum size of the decompressed object to prevent "compression bomb" attacks.
 func BrotliDecompress(in []byte, readLimit int) ([]byte, error) {
 	return ioutil.ReadAll(io.LimitReader(brotli.NewReader(bytes.NewReader(in)), int64(readLimit)))
+}
+
+// CastHashBlobsToArrays converts []HashBlob to [][32]byte
+func CastHashBlobsToArrays(s []HashBlob) [][32]byte {
+	header := *(*reflect.SliceHeader)(unsafe.Pointer(&s))
+	return *(*[][32]byte)(unsafe.Pointer(&header))
+}
+
+// CastArraysToHashBlobs converts [][32]byte to []HashBlob
+func CastArraysToHashBlobs(s [][32]byte) []HashBlob {
+	header := *(*reflect.SliceHeader)(unsafe.Pointer(&s))
+	return *(*[]HashBlob)(unsafe.Pointer(&header))
 }

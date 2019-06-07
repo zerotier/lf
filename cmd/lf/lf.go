@@ -189,6 +189,7 @@ Commands:
     -mask <key>                           Override default masking key
     -owner <owner>                        Use this owner instead of default
     -url <url[,url,...]>                  Override configured node/proxy URLs
+    -nowork                               Abort if an auth cert doesn't exist
   get [-...] <name[#start[#end]]> [...]   Find by selector (optional range)
     -mask <key>                           Override default masking key
     -tstart <time>                        Constrain to after this time
@@ -610,6 +611,7 @@ func doSet(cfg *lf.ClientConfig, basePath string, args []string) {
 	maskKey := setOpts.String("mask", "", "")
 	valueIsFile := setOpts.Bool("file", false, "")
 	urlOverride := setOpts.String("url", "", "")
+	noWork := setOpts.Bool("nowork", false, "")
 	setOpts.SetOutput(ioutil.Discard)
 	err := setOpts.Parse(args)
 	if err != nil {
@@ -688,9 +690,7 @@ func doSet(cfg *lf.ClientConfig, basePath string, args []string) {
 		}
 	}
 
-	var links [][32]byte
 	var rec *lf.Record
-	ts := lf.TimeSec()
 
 	urls := cfg.URLs
 	if len(*urlOverride) > 0 {
@@ -702,15 +702,9 @@ func doSet(cfg *lf.ClientConfig, basePath string, args []string) {
 	}
 
 	var workingURL string
+	var ownerInfo *lf.APIOwnerInfoResult
 	for _, u := range urls {
-		var serverTimestamp int64
-		links, serverTimestamp, err = lf.APIGetLinks(u, 0)
-		if serverTimestamp > 0 {
-			myClock := time.Now().Unix()
-			if ((serverTimestamp > myClock) && (serverTimestamp-myClock) > 10) || ((myClock > serverTimestamp) && (myClock-serverTimestamp) > 10) {
-				logger.Printf("ERROR: server clock %d is more than 10 seconds off from our clock %d, can cause record rejection or reduced reputation", serverTimestamp, myClock)
-			}
-		}
+		ownerInfo, err = lf.APIGetOwnerInfo(u, owner.Public)
 		if err == nil {
 			workingURL = u
 			break
@@ -724,7 +718,15 @@ func doSet(cfg *lf.ClientConfig, basePath string, args []string) {
 	var o *lf.Owner
 	o, err = owner.GetOwner()
 	if err == nil {
-		rec, err = lf.NewRecord(lf.RecordTypeDatum, value, links, mk, plainTextSelectorNames, plainTextSelectorOrdinals, ts, lf.NewWharrgarblr(lf.RecordDefaultWharrgarblMemory, 0), o)
+		var wf *lf.Wharrgarblr
+		if len(ownerInfo.Certificates) == 0 {
+			if *noWork {
+				fmt.Printf("ERROR: no auth certificate found for owner %s and -nowork was specified.\n", o.String())
+				return
+			}
+			wf = lf.NewWharrgarblr(lf.RecordDefaultWharrgarblMemory, 0)
+		}
+		rec, err = lf.NewRecord(lf.RecordTypeDatum, value, lf.CastHashBlobsToArrays(ownerInfo.Links), mk, plainTextSelectorNames, plainTextSelectorOrdinals, ownerInfo.ServerTime, wf, o)
 		if err == nil {
 			rb := rec.Bytes()
 			for trials := 0; trials < 2; trials++ {
