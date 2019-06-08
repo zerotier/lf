@@ -1401,9 +1401,8 @@ func (n *Node) requestWantedRecords(minRetries, maxRetries int) {
 	count, hashes := n.db.getWanted(256, minRetries, maxRetries, true)
 	if len(hashes) >= 32 {
 		var p *connectedPeer
-		for _, pp := range n.peers { // exploits the random map iteration order in Go
-			p = pp
-			break
+		if len(n.peers) > 0 {
+			p = n.peers[rand.Int()%len(n.peers)]
 		}
 		if p != nil {
 			n.log[LogLevelNormal].Printf("sync: requesting %d wanted records from %s (retry count range %d-%d)", count, p.address, minRetries, maxRetries)
