@@ -294,7 +294,7 @@ func (m *Query) Execute(n *Node) (qr QueryResults, err error) {
 		if len(m.Oracles) > 0 {
 			for qrSetResultIdx := range qrSet {
 				oracleTrust := math.Max(1.0-slanderByIDOwner[qrIDOwnerCRC64s[qrSetIdx][qrSetResultIdx]], 0.0)
-				qrSet[qrSetResultIdx].Trust = (qrSet[qrSetResultIdx].LocalTrust + oracleTrust) / 2.0
+				qrSet[qrSetResultIdx].Trust = (qrSet[qrSetResultIdx].LocalTrust + (oracleTrust * totalOracles)) / (totalOracles + 1.0)
 				qrSet[qrSetResultIdx].OracleTrust = oracleTrust
 			}
 		}
