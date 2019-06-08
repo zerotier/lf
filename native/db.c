@@ -1312,9 +1312,9 @@ struct ZTLF_QueryResults *ZTLF_DB_Query(
 			uint32_t w96l,w96m,w96h;
 			ZTLF_SUint96_Get(&db->wf,(uintptr_t)gn->weightsFileOffset,&w96l,&w96m,&w96h);
 			uint64_t oldwl = qr->weightL;
-			qr->weightH += (uint64_t)((qr->weightL += w96l) < oldwl); /* add least significant 32 to least significant 64 with carry */
+			qr->weightH += (uint64_t)((qr->weightL += ((uint64_t)w96l)) < oldwl); /* add least significant 32 to least significant 64 with carry */
 			oldwl = qr->weightL;
-			qr->weightH += (uint64_t)((qr->weightL += ((uint64_t)w96m) << 32) < oldwl) + (uint64_t)w96h; /* add middle 32 to least significant 64 with carry, then add most significant 32 to most significant 64 */
+			qr->weightH += (uint64_t)((qr->weightL += (((uint64_t)w96m) << 32)) < oldwl) + (uint64_t)w96h; /* add middle 32 to least significant 64 with carry, then add most significant 32 to most significant 64 */
 
 			qr->doff = (uint64_t)sqlite3_column_int64(db->sQueryGetResults,0);
 			qr->dlen = (unsigned int)sqlite3_column_int(db->sQueryGetResults,1);

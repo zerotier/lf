@@ -257,9 +257,9 @@ func (m *Query) Execute(n *Node) (qr QueryResults, err error) {
 			}
 
 			var weight [4]uint32
-			weight[0] = uint32(result.weightH << 32)
+			weight[0] = uint32(result.weightH >> 32)
 			weight[1] = uint32(result.weightH)
-			weight[2] = uint32(result.weightL << 32)
+			weight[2] = uint32(result.weightL >> 32)
 			weight[3] = uint32(result.weightL)
 
 			v, _ := rec.GetValue(maskingKey)
@@ -292,11 +292,9 @@ func (m *Query) Execute(n *Node) (qr QueryResults, err error) {
 	// Compute final trust and sort within each result.
 	for qrSetIdx, qrSet := range qr {
 		if len(m.Oracles) > 0 {
-			for qrSetResultIdx, qrSetResult := range qrSet {
+			for qrSetResultIdx := range qrSet {
 				oracleTrust := math.Max(1.0-slanderByIDOwner[qrIDOwnerCRC64s[qrSetIdx][qrSetResultIdx]], 0.0)
-				if oracleTrust < qrSetResult.Trust {
-					qrSet[qrSetResultIdx].Trust = oracleTrust
-				}
+				qrSet[qrSetResultIdx].Trust = (qrSet[qrSetResultIdx].LocalTrust + oracleTrust) / 2.0
 				qrSet[qrSetResultIdx].OracleTrust = oracleTrust
 			}
 		}
