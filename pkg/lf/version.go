@@ -32,7 +32,7 @@ import "fmt"
 const (
 	VersionMajor    = 0
 	VersionMinor    = 9
-	VersionRevision = 1
+	VersionRevision = 2
 	VersionBuild    = 0
 
 	ProtocolVersion    = 1

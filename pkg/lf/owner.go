@@ -430,8 +430,6 @@ func CreateOwnerCertificate(recordLinks [][32]byte, recordWorkFunction *Wharrgar
 		return nil, err
 	}
 
-	// Owner certificate records are given a potentially useful selector name and ordinal
-	// of ~lf/cert/owner/@base62 even though this isn't currently used.
 	nowSec := uint64(now.Unix())
-	return NewRecord(RecordTypeCertificate, cert, recordLinks, []byte(RecordCertificateMaskingKey), [][]byte{[]byte("~lf/cert/owner/@" + ownerCertificateRequest.Subject.SerialNumber)}, []uint64{nowSec}, nowSec, recordWorkFunction, recordOwner)
+	return NewRecord(RecordTypeCertificate, cert, recordLinks, []byte(RecordCertificateMaskingKey), nil, nil, nowSec, recordWorkFunction, recordOwner)
 }

@@ -218,6 +218,10 @@ Commands:
     add <url>                             Add a URL
     delete <url>                          Delete a URL
     default <url>                         Move URL to front (first to try)
+  oracle
+    list                                  List trusted oracles
+    add <@oracle>                         Add trusted oracle
+    delete <@oracle>                      Delete trusted oracle
 
 Global options must precede commands, while command options must come after
 the command name.
@@ -525,6 +529,7 @@ func doGet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool
 	req := &lf.Query{
 		Ranges:    ranges,
 		TimeRange: tr,
+		Oracles:   cfg.Oracles,
 	}
 	if *rawOutput {
 		jsonOutput = false
@@ -1333,6 +1338,70 @@ func doURL(cfg *lf.ClientConfig, basePath string, args []string) (exitCode int) 
 	return
 }
 
+func doOracle(cfg *lf.ClientConfig, basePath string, args []string) (exitCode int) {
+	cmd := "list"
+	if len(args) > 0 {
+		cmd = args[0]
+	}
+	switch cmd {
+
+	case "list":
+		for _, o := range cfg.Oracles {
+			fmt.Println(o.String())
+		}
+
+	case "add":
+		if len(args) < 2 {
+			printHelp("")
+			exitCode = 1
+			return
+		}
+		oracleOwner, _ := lf.NewOwnerPublicFromString(strings.TrimSpace(args[1]))
+		if len(oracleOwner) == 0 {
+			logger.Println("ERROR: invalid oracle owner " + args[1])
+			exitCode = 1
+			return
+		}
+		for _, o := range cfg.Oracles {
+			if bytes.Equal(o, oracleOwner) {
+				fmt.Printf("%s alredy exists in trusted oracle list, nothing done\n", oracleOwner.String())
+				return
+			}
+		}
+		cfg.Oracles = append(cfg.Oracles, oracleOwner)
+		cfg.Dirty = true
+		fmt.Printf("%s added as trusted oracle\n", oracleOwner.String())
+
+	case "delete":
+		if len(args) < 2 {
+			printHelp("")
+			exitCode = 1
+			return
+		}
+		oracleOwner, _ := lf.NewOwnerPublicFromString(strings.TrimSpace(args[1]))
+		if len(oracleOwner) == 0 {
+			logger.Println("ERROR: invalid oracle owner " + args[1])
+			exitCode = 1
+			return
+		}
+		for i, o := range cfg.Oracles {
+			if bytes.Equal(o, oracleOwner) {
+				cfg.Oracles = append(cfg.Oracles[0:i], cfg.Oracles[i+1:]...)
+				cfg.Dirty = true
+				fmt.Printf("%s removed from trusted oracle list\n", oracleOwner.String())
+				return
+			}
+		}
+		logger.Printf("ERROR: %s not found in trusted oracle list", oracleOwner.String())
+		exitCode = 1
+
+	default:
+		printHelp("")
+		exitCode = 1
+	}
+	return
+}
+
 // doMakeGenesis is currently code for making the default genesis records and isn't very useful to anyone else.
 func doMakeGenesis(cfg *lf.ClientConfig, basePath string, args []string) (exitCode int) {
 	var g lf.GenesisParameters
@@ -1601,6 +1670,9 @@ func main() {
 
 	case "url":
 		exitCode = doURL(&cfg, *basePath, cmdArgs)
+
+	case "oracle":
+		exitCode = doOracle(&cfg, *basePath, cmdArgs)
 
 	case "makegenesis":
 		exitCode = doMakeGenesis(&cfg, *basePath, cmdArgs)
