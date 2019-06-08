@@ -1454,7 +1454,8 @@ func doMakeGenesis(cfg *lf.ClientConfig, basePath string, args []string) (exitCo
 		q = prompt("Create another record authorization certificate? [y/N]: ", false, "n")
 	}
 	if len(g.AuthCertificates) > 0 {
-		fmt.Printf("  (%d authorization certificates, %d bytes)\n", len(g.GetAuthCertificates()), len(g.AuthCertificates))
+		authCerts, _ := g.GetAuthCertificates()
+		fmt.Printf("  (%d authorization certificates, %d bytes)\n", len(authCerts), len(g.AuthCertificates))
 		q = prompt("Authorization certificates required? [y/N]: ", false, "n")
 		g.AuthRequired = q == "Y" || q == "y" || q == "1"
 	}
