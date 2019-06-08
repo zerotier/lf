@@ -38,24 +38,25 @@ import (
 )
 
 type genesisParametersState struct {
-	certs   map[string]*x509.Certificate
-	history []GenesisParameters
-	lock    sync.Mutex
+	certs        map[string]*x509.Certificate
+	revokedCerts map[string]*x509.Certificate
+	history      []GenesisParameters
+	lock         sync.Mutex
 }
 
 // GenesisParameters is the payload (JSON encoded) of the first RecordMinLinks records in a global data store.
 type GenesisParameters struct {
-	ID                 [32]byte ``                  // Unique arbitrary 32-byte ID of this network (always immutable)
-	AmendableFields    []string `json:",omitempty"` // List of json field names that the genesis owner can change (always immutable)
-	Name               string   `json:",omitempty"` // Name of this LF network / data store
-	Contact            string   `json:",omitempty"` // Contact info for this network (may be empty)
-	Comment            string   `json:",omitempty"` // Optional comment
-	AuthCertificates   Blob     `json:",omitempty"` // X.509 root certificates for avoiding PoW and potentially elevated trust (if elected)
-	AuthRequired       bool     ``                  // If true a cert is required and simple PoW is not accepted
-	RecordMinLinks     uint     ``                  // Minimum number of links required for non-genesis records
-	RecordMaxValueSize uint     ``                  // Maximum size of record values
-	RecordMaxTimeDrift uint     ``                  // Maximum number of seconds of time drift permitted for records
-	SeedPeers          []Peer   `json:",omitempty"` // Some peer nodes with static IPs to help bootstrap
+	ID                      [32]byte ``                  // Unique arbitrary 32-byte ID of this network (always immutable)
+	AmendableFields         []string `json:",omitempty"` // List of json field names that the genesis owner can change (always immutable)
+	Name                    string   `json:",omitempty"` // Name of this LF network / data store
+	Contact                 string   `json:",omitempty"` // Contact info for this network (may be empty)
+	Comment                 string   `json:",omitempty"` // Optional comment
+	AuthCertificates        Blob     `json:",omitempty"` // X.509 root certificates for avoiding PoW and potentially elevated trust (if elected)
+	RevokedAuthCertificates Blob     `json:",omitempty"` // Revoked root certificates (this is just done by placing them here instead of CRLs)
+	AuthRequired            bool     ``                  // If true a cert is required and simple PoW is not accepted
+	RecordMinLinks          uint     ``                  // Minimum number of links required for non-genesis records
+	RecordMaxValueSize      uint     ``                  // Maximum size of record values
+	RecordMaxTimeDrift      uint     ``                  // Maximum number of seconds of time drift permitted for records
 
 	state  unsafe.Pointer
 	stateP *genesisParametersState
@@ -102,9 +103,13 @@ func (gp *GenesisParameters) Update(jsonValue []byte) (bool, error) {
 				gp.Comment = ngp.Comment
 				changed = true
 			}
-		case "authcertificates":
+		case "authcertificates", "revokedauthcertificates": // these are effectively the same field
 			if !bytes.Equal(gp.AuthCertificates, ngp.AuthCertificates) {
 				gp.AuthCertificates = ngp.AuthCertificates
+				changed = true
+			}
+			if !bytes.Equal(gp.RevokedAuthCertificates, ngp.RevokedAuthCertificates) {
+				gp.RevokedAuthCertificates = ngp.RevokedAuthCertificates
 				changed = true
 			}
 		case "authrequired":
@@ -127,24 +132,12 @@ func (gp *GenesisParameters) Update(jsonValue []byte) (bool, error) {
 				gp.RecordMaxTimeDrift = ngp.RecordMaxTimeDrift
 				changed = true
 			}
-		case "seedpeers":
-			if len(gp.SeedPeers) != len(ngp.SeedPeers) {
-				gp.SeedPeers = ngp.SeedPeers
-				changed = true
-			} else {
-				for i := range gp.SeedPeers {
-					if !gp.SeedPeers[i].IP.Equal(ngp.SeedPeers[i].IP) || gp.SeedPeers[i].Port != ngp.SeedPeers[i].Port || !bytes.Equal(gp.SeedPeers[i].Identity, ngp.SeedPeers[i].Identity) {
-						gp.SeedPeers = ngp.SeedPeers
-						changed = true
-						break
-					}
-				}
-			}
 		}
 	}
 
 	if changed {
 		gps.certs = nil
+		gps.revokedCerts = nil
 		old.state = unsafe.Pointer(nil)
 		old.stateP = nil
 		gps.history = append(gps.history, old)
@@ -172,29 +165,38 @@ func (gp *GenesisParameters) SetAmendableFields(fields []string) error {
 	return nil
 }
 
+var emptyCertMap = make(map[string]*x509.Certificate)
+
 // GetAuthCertificates returns the fully deserialized auth CAs in this parameter set.
-func (gp *GenesisParameters) GetAuthCertificates() map[string]*x509.Certificate {
+// The maps returned by this function should not be modified.
+func (gp *GenesisParameters) GetAuthCertificates() (map[string]*x509.Certificate, map[string]*x509.Certificate) {
 	if len(gp.AuthCertificates) == 0 {
-		return nil
+		return emptyCertMap, emptyCertMap
 	}
 	gps := (*genesisParametersState)(atomic.LoadPointer(&gp.state))
 	if gps == nil {
-		return nil
+		return emptyCertMap, emptyCertMap
 	}
+
 	gps.lock.Lock()
 	defer gps.lock.Unlock()
-	if len(gps.certs) > 0 {
-		return gps.certs
+	if len(gps.certs) > 0 || len(gps.revokedCerts) > 0 {
+		return gps.certs, gps.revokedCerts
 	}
-	certs, err := x509.ParseCertificates(gp.AuthCertificates)
-	if err != nil {
-		return nil
-	}
+
+	certs, _ := x509.ParseCertificates(gp.AuthCertificates)
+	revokedCerts, _ := x509.ParseCertificates(gp.RevokedAuthCertificates)
+
 	gps.certs = make(map[string]*x509.Certificate)
+	gps.revokedCerts = make(map[string]*x509.Certificate)
 	for _, cert := range certs {
 		gps.certs[Base62Encode(cert.SerialNumber.Bytes())] = cert
 	}
-	return gps.certs
+	for _, revokedCert := range revokedCerts {
+		gps.revokedCerts[Base62Encode(revokedCert.SerialNumber.Bytes())] = revokedCert
+	}
+
+	return gps.certs, gps.revokedCerts
 }
 
 // CreateGenesisRecords creates a set of genesis records for a new LF data store.

@@ -60,8 +60,8 @@ import (
 )
 
 const (
-	dbMaxOwnerSize       uint = C.ZTLF_DB_QUERY_MAX_OWNER_SIZE
-	dbMaxConfigValueSize int  = 1048576
+	dbMaxOwnerSize       int = C.ZTLF_DB_QUERY_MAX_OWNER_SIZE
+	dbMaxConfigValueSize int = 1048576
 
 	// Reputations are in descending order in a circles of hell sense -- 0 is the worst possible thing.
 	// Note that 0 and 63 must match native/db.h defines.
@@ -340,8 +340,8 @@ func (db *db) haveDanglingLinks(ignoreAfterNRetries int) bool {
 // query executes a query against a number of selector ranges. The function is executed for each result, with
 // results not sorted. The loop is broken if the function returns false. The owner is passed as a pointer to
 // an array that is reused, so a copy must be made if you want to keep it. The arguments to the function are:
-// timestamp, weight (low), weight (high), data offset, data length, local reputation, id, owner.
-func (db *db) query(tsMin, tsMax int64, selectorRanges [][2][]byte, f func(uint64, uint64, uint64, uint64, uint64, int, uint64, []byte) bool) error {
+// timestamp, weight (low), weight (high), data offset, data length, local reputation, cumulative selector key, owner, negative comments.
+func (db *db) query(tsMin, tsMax int64, selectorRanges [][2][]byte, oracles []OwnerPublic, f func(uint64, uint64, uint64, uint64, uint64, int, uint64, []byte, uint) bool) error {
 	if len(selectorRanges) == 0 {
 		return nil
 	}
@@ -360,20 +360,51 @@ func (db *db) query(tsMin, tsMax int64, selectorRanges [][2][]byte, f func(uint6
 		selSizes[ii] = C.uint(len(selectorRanges[i][1]))
 	}
 
-	db.cdbLock.Lock()
-	cresults := C.ZTLF_DB_Query_fromGo(db.cdb, C.int64_t(tsMin), C.int64_t(tsMax), C.uintptr_t(uintptr(unsafe.Pointer(&sel[0]))), &selSizes[0], C.uint(len(selectorRanges)))
-	db.cdbLock.Unlock()
+	var cresults *C.struct_ZTLF_QueryResults
+	if len(oracles) > 0 {
+		ora := make([]uintptr, len(oracles))
+		oraSizes := make([]C.uint, len(oracles))
+		for i := 0; i < len(oracles); i++ {
+			if len(oracles[i]) == 0 {
+				return ErrInvalidParameter
+			}
+			ora[i] = uintptr(unsafe.Pointer(&oracles[i][0]))
+			oraSizes[i] = C.uint(len(oracles[i]))
+		}
+
+		db.cdbLock.Lock()
+		cresults = C.ZTLF_DB_Query_fromGo(
+			db.cdb,
+			C.int64_t(tsMin),
+			C.int64_t(tsMax),
+			C.uintptr_t(uintptr(unsafe.Pointer(&sel[0]))),
+			&selSizes[0],
+			C.uint(len(selectorRanges)),
+			C.uintptr_t(uintptr(unsafe.Pointer(&ora[0]))),
+			&oraSizes[0],
+			C.uint(len(oracles)))
+		db.cdbLock.Unlock()
+	} else {
+		db.cdbLock.Lock()
+		cresults = C.ZTLF_DB_Query_fromGo(
+			db.cdb,
+			C.int64_t(tsMin),
+			C.int64_t(tsMax),
+			C.uintptr_t(uintptr(unsafe.Pointer(&sel[0]))),
+			&selSizes[0],
+			C.uint(len(selectorRanges)),
+			C.uintptr_t(0),
+			nil,
+			C.uint(0))
+		db.cdbLock.Unlock()
+	}
+
 	if uintptr(unsafe.Pointer(cresults)) != 0 {
 		defer C.free(unsafe.Pointer(cresults))
-		var owner [dbMaxOwnerSize]byte
 		for i := C.long(0); i < cresults.count; i++ {
 			cr := (*C.struct_ZTLF_QueryResult)(unsafe.Pointer(uintptr(unsafe.Pointer(&cresults.results[0])) + (uintptr(i) * uintptr(C.sizeof_struct_ZTLF_QueryResult))))
-			ownerSize := uint(cr.ownerSize)
-			if ownerSize > 0 && ownerSize <= dbMaxOwnerSize && cr.dlen > 0 {
-				for j := uint(0); j < ownerSize; j++ {
-					owner[j] = byte(cr.owner[j])
-				}
-				if !f(uint64(cr.ts), uint64(cr.weightL), uint64(cr.weightH), uint64(cr.doff), uint64(cr.dlen), int(cr.localReputation), uint64(cr.key), owner[0:ownerSize]) {
+			if cr.ownerSize > 0 && cr.dlen > 0 {
+				if !f(uint64(cr.ts), uint64(cr.weightL), uint64(cr.weightH), uint64(cr.doff), uint64(cr.dlen), int(cr.localReputation), uint64(cr.ckey), C.GoBytes(unsafe.Pointer(&cr.owner[0]), C.int(cr.ownerSize)), uint(cr.negativeComments)) {
 					break
 				}
 			}

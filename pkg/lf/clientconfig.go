@@ -56,9 +56,10 @@ func (co *ClientConfigOwner) GetOwner() (o *Owner, err error) {
 
 // ClientConfig is the JSON format for the client configuration file.
 type ClientConfig struct {
-	URLs   []string                      ``         // URLs of full nodes and/or proxies
-	Owners map[string]*ClientConfigOwner ``         // Owners by name
-	Dirty  bool                          `json:"-"` // Non-persisted flag that can be used to indicate the config should be saved on client exit
+	URLs    []string                      ``         // URLs of full nodes and/or proxies
+	Oracles []OwnerPublic                 ``         // Oracles to trust during queries
+	Owners  map[string]*ClientConfigOwner ``         // Owners by name
+	Dirty   bool                          `json:"-"` // Non-persisted flag that can be used to indicate the config should be saved on client exit
 }
 
 // Load loads this client config from disk or initializes it with defaults if load fails.

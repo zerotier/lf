@@ -49,6 +49,9 @@
 /* Reputation for records that appear to be collisions with other record composite keys */
 #define ZTLF_DB_REPUTATION_COLLISION 0
 
+/* commentAssertionRecordCollidesWithClaimedID from Go */
+#define ZTLF_DB_COMMENT_ASSERTION_RECORD_COLLIDES_WITH_CLAIMED_ID 1
+
 /**
  * Structure making up graph.bin
  * 
@@ -77,8 +80,9 @@ struct ZTLF_QueryResult
 	uint64_t doff;
 	unsigned int dlen;
 	unsigned int ownerSize;
+	unsigned int negativeComments;
 	int localReputation;
-	uint64_t key;
+	uint64_t ckey;
 	uint8_t owner[ZTLF_DB_QUERY_MAX_OWNER_SIZE];
 };
 
@@ -168,6 +172,7 @@ struct ZTLF_DB
 	sqlite3_stmt *sGetWanted;
 	sqlite3_stmt *sIncWantedRetries;
 	sqlite3_stmt *sLogComment;
+	sqlite3_stmt *sGetCommentsBySubjectAndCommentOracle;
 	sqlite3_stmt *sQueryClearRecordSet;
 	sqlite3_stmt *sQueryOrSelectorRange;
 	sqlite3_stmt *sQueryAndSelectorRange;
@@ -221,7 +226,16 @@ int ZTLF_DB_PutRecord(
 	const void *links,
 	const unsigned int linkCount);
 
-struct ZTLF_QueryResults *ZTLF_DB_Query(struct ZTLF_DB *db,const int64_t tsMin,const int64_t tsMax,const void **sel,const unsigned int *selSize,const unsigned int selCount);
+struct ZTLF_QueryResults *ZTLF_DB_Query(
+	struct ZTLF_DB *db,
+	const int64_t tsMin,
+	const int64_t tsMax,
+	const void **sel,
+	const unsigned int *selSize,
+	const unsigned int selCount,
+	const void **oracles,
+	const unsigned int *oracleSize,
+	const unsigned int oracleCount);
 
 struct ZTLF_RecordList *ZTLF_DB_GetAllByOwner(struct ZTLF_DB *db,const void *owner,const unsigned int ownerLen);
 struct ZTLF_RecordList *ZTLF_DB_GetAllByIDNotOwner(struct ZTLF_DB *db,const void *id,const void *owner,const unsigned int ownerLen);
@@ -323,9 +337,18 @@ static inline int ZTLF_DB_PutRecord_fromGo(
 {
 	return ZTLF_DB_PutRecord(db,rec,rsize,rtype,owner,ownerSize,hash,id,ts,score,(const void **)selKey,selCount,links,linkCount);
 }
-static inline struct ZTLF_QueryResults *ZTLF_DB_Query_fromGo(struct ZTLF_DB *db,const int64_t tsMin,const int64_t tsMax,const uintptr_t sel,const unsigned int *selSize,const unsigned int selCount)
+static inline struct ZTLF_QueryResults *ZTLF_DB_Query_fromGo(
+	struct ZTLF_DB *db,
+	const int64_t tsMin,
+	const int64_t tsMax,
+	const uintptr_t sel,
+	const unsigned int *selSize,
+	const unsigned int selCount,
+	const uintptr_t oracles,
+	const unsigned int *oracleSize,
+	const unsigned int oracleCount)
 {
-	return ZTLF_DB_Query(db,tsMin,tsMax,(const void **)sel,selSize,selCount);
+	return ZTLF_DB_Query(db,tsMin,tsMax,(const void **)sel,selSize,selCount,(const void **)oracles,oracleSize,oracleCount);
 }
 #endif
 

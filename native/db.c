@@ -63,8 +63,8 @@ static void *_ZTLF_DB_graphThreadMain(void *arg);
  *   reputation               records will only be linked TO if greater than 0
  *   linked_count             number of records linking to this one
  *   hash                     shandwich256(record data) (unique key)
- *   id                       hash of selector IDs
- *   ckey                     CRC64 of all selector keys
+ *   id                       hash of selector IDs (a.k.a. all selector names)
+ *   ckey                     CRC64 of all selector keys (a.k.a. all selector names+ordinals)
  *   owner                    owner of this record or NULL if same as previous
  *
  * cert
@@ -85,11 +85,10 @@ static void *_ZTLF_DB_graphThreadMain(void *arg);
  *   receive_time             local record receive time in seconds since epoch
  *
  * comment
+ *   subject                  subject of assertion
  *   by_record_doff           doff (key) of record containing comment
  *   assertion                assertion (see comment.go)
  *   reason                   reason (see comment.go)
- *   subject                  subject of assertion
- *   object                   object of assertion
  *
  * selector
  *   sel                      selector key (masked sortable ID)
@@ -423,6 +422,8 @@ int ZTLF_DB_Open(
 		"UPDATE wanted SET retries = (retries + 1) WHERE hash = ?");
 	S(db->sLogComment,
 		"INSERT OR IGNORE INTO comment (subject,by_record_doff,assertion,reason) VALUES (?,?,?,?)");
+	S(db->sGetCommentsBySubjectAndCommentOracle,
+		"SELECT c.assertion,c.reason FROM comment AS c,record AS r WHERE c.subject = ? AND r.doff = c.by_record_doff AND r.owner = ?");
 	S(db->sQueryClearRecordSet,
 		"DELETE FROM tmp.rs");
 	S(db->sQueryOrSelectorRange,
@@ -434,7 +435,7 @@ int ZTLF_DB_Open(
 	S(db->sQueryAndSelectorRange,
 		"DELETE FROM tmp.rs WHERE \"i\" NOT IN (SELECT record_doff FROM selector WHERE sel BETWEEN ? AND ? AND selidx = ? AND record_ts BETWEEN ? AND ?)");
 	S(db->sQueryGetResults,
-		"SELECT r.doff,r.dlen,r.goff,r.ts,r.reputation,r.ckey,r.owner FROM record AS r,tmp.rs AS rs WHERE "
+		"SELECT r.doff,r.dlen,r.goff,r.ts,r.reputation,r.hash,r.ckey,r.owner FROM record AS r,tmp.rs AS rs WHERE "
 		"r.doff = rs.i "
 		"AND r.reputation >= 0 "
 		"AND NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) "
@@ -816,55 +817,56 @@ void ZTLF_DB_Close(struct ZTLF_DB *db)
 	pthread_mutex_lock(&db->dbLock);
 
 	if (db->dbc) {
-		if (db->sSetConfig)                           sqlite3_finalize(db->sSetConfig);
-		if (db->sGetConfig)                           sqlite3_finalize(db->sGetConfig);
-		if (db->sAddRejected)                         sqlite3_finalize(db->sAddRejected);
-		if (db->sAddRecord)                           sqlite3_finalize(db->sAddRecord);
-		if (db->sIncRecordLinkedCountByGoff)          sqlite3_finalize(db->sIncRecordLinkedCountByGoff);
-		if (db->sAddSelector)                         sqlite3_finalize(db->sAddSelector);
-		if (db->sGetRecordCount)                      sqlite3_finalize(db->sGetRecordCount);
-		if (db->sGetDataSize)                         sqlite3_finalize(db->sGetDataSize);
-		if (db->sGetAllRecords)                       sqlite3_finalize(db->sGetAllRecords);
-		if (db->sGetAllByOwner)                       sqlite3_finalize(db->sGetAllByOwner);
-		if (db->sGetAllByIDNotOwner)                  sqlite3_finalize(db->sGetAllByIDNotOwner);
-		if (db->sGetIDOwnerReputation)                sqlite3_finalize(db->sGetIDOwnerReputation);
-		if (db->sHaveRecordsWithIDNotOwner)           sqlite3_finalize(db->sHaveRecordsWithIDNotOwner);
-		if (db->sDemoteCollisions)                    sqlite3_finalize(db->sDemoteCollisions);
-		if (db->sUpdateRecordReputationByHash)        sqlite3_finalize(db->sUpdateRecordReputationByHash);
-		if (db->sGetLinkCandidates)                   sqlite3_finalize(db->sGetLinkCandidates);
-		if (db->sGetRecordByHash)                     sqlite3_finalize(db->sGetRecordByHash);
-		if (db->sGetMaxRecordDoff)                    sqlite3_finalize(db->sGetMaxRecordDoff);
-		if (db->sGetMaxRecordGoff)                    sqlite3_finalize(db->sGetMaxRecordGoff);
-		if (db->sGetRecordGoffByHash)                 sqlite3_finalize(db->sGetRecordGoffByHash);
-		if (db->sGetRecordInfoByGoff)                 sqlite3_finalize(db->sGetRecordInfoByGoff);
-		if (db->sGetDanglingLinks)                    sqlite3_finalize(db->sGetDanglingLinks);
-		if (db->sDeleteDanglingLinks)                 sqlite3_finalize(db->sDeleteDanglingLinks);
-		if (db->sDeleteWantedHash)                    sqlite3_finalize(db->sDeleteWantedHash);
-		if (db->sAddDanglingLink)                     sqlite3_finalize(db->sAddDanglingLink);
-		if (db->sAddWantedHash)                       sqlite3_finalize(db->sAddWantedHash);
-		if (db->sAddHole)                             sqlite3_finalize(db->sAddHole);
-		if (db->sFlagRecordWeightApplicationPending)  sqlite3_finalize(db->sFlagRecordWeightApplicationPending);
-		if (db->sGetRecordsForWeightApplication)      sqlite3_finalize(db->sGetRecordsForWeightApplication);
-		if (db->sGetHoles)                            sqlite3_finalize(db->sGetHoles);
-		if (db->sDeleteHole)                          sqlite3_finalize(db->sDeleteHole);
-		if (db->sUpdatePendingHoleCount)              sqlite3_finalize(db->sUpdatePendingHoleCount);
-		if (db->sDeleteCompletedPending)              sqlite3_finalize(db->sDeleteCompletedPending);
-		if (db->sGetPendingCount)                     sqlite3_finalize(db->sGetPendingCount);
-		if (db->sHaveDanglingLinks)                   sqlite3_finalize(db->sHaveDanglingLinks);
-		if (db->sGetWanted)                           sqlite3_finalize(db->sGetWanted);
-		if (db->sIncWantedRetries)                    sqlite3_finalize(db->sIncWantedRetries);
-		if (db->sLogComment)                          sqlite3_finalize(db->sLogComment);
-		if (db->sQueryClearRecordSet)                 sqlite3_finalize(db->sQueryClearRecordSet);
-		if (db->sQueryOrSelectorRange)                sqlite3_finalize(db->sQueryOrSelectorRange);
-		if (db->sQueryAndSelectorRange)               sqlite3_finalize(db->sQueryAndSelectorRange);
-		if (db->sQueryGetResults)                     sqlite3_finalize(db->sQueryGetResults);
-		if (db->sPutCert)                             sqlite3_finalize(db->sPutCert);
-		if (db->sPutCertRevocation)                   sqlite3_finalize(db->sPutCertRevocation);
-		if (db->sGetCertsBySubject)                   sqlite3_finalize(db->sGetCertsBySubject);
-		if (db->sGetCertRevocationsByRevokedSerial)   sqlite3_finalize(db->sGetCertRevocationsByRevokedSerial);
-		if (db->sMarkInLimbo)                         sqlite3_finalize(db->sMarkInLimbo);
-		if (db->sTakeFromLimbo)                       sqlite3_finalize(db->sTakeFromLimbo);
-		if (db->sHaveRecordInLimbo)                   sqlite3_finalize(db->sHaveRecordInLimbo);
+		if (db->sSetConfig)                            sqlite3_finalize(db->sSetConfig);
+		if (db->sGetConfig)                            sqlite3_finalize(db->sGetConfig);
+		if (db->sAddRejected)                          sqlite3_finalize(db->sAddRejected);
+		if (db->sAddRecord)                            sqlite3_finalize(db->sAddRecord);
+		if (db->sIncRecordLinkedCountByGoff)           sqlite3_finalize(db->sIncRecordLinkedCountByGoff);
+		if (db->sAddSelector)                          sqlite3_finalize(db->sAddSelector);
+		if (db->sGetRecordCount)                       sqlite3_finalize(db->sGetRecordCount);
+		if (db->sGetDataSize)                          sqlite3_finalize(db->sGetDataSize);
+		if (db->sGetAllRecords)                        sqlite3_finalize(db->sGetAllRecords);
+		if (db->sGetAllByOwner)                        sqlite3_finalize(db->sGetAllByOwner);
+		if (db->sGetAllByIDNotOwner)                   sqlite3_finalize(db->sGetAllByIDNotOwner);
+		if (db->sGetIDOwnerReputation)                 sqlite3_finalize(db->sGetIDOwnerReputation);
+		if (db->sHaveRecordsWithIDNotOwner)            sqlite3_finalize(db->sHaveRecordsWithIDNotOwner);
+		if (db->sDemoteCollisions)                     sqlite3_finalize(db->sDemoteCollisions);
+		if (db->sUpdateRecordReputationByHash)         sqlite3_finalize(db->sUpdateRecordReputationByHash);
+		if (db->sGetLinkCandidates)                    sqlite3_finalize(db->sGetLinkCandidates);
+		if (db->sGetRecordByHash)                      sqlite3_finalize(db->sGetRecordByHash);
+		if (db->sGetMaxRecordDoff)                     sqlite3_finalize(db->sGetMaxRecordDoff);
+		if (db->sGetMaxRecordGoff)                     sqlite3_finalize(db->sGetMaxRecordGoff);
+		if (db->sGetRecordGoffByHash)                  sqlite3_finalize(db->sGetRecordGoffByHash);
+		if (db->sGetRecordInfoByGoff)                  sqlite3_finalize(db->sGetRecordInfoByGoff);
+		if (db->sGetDanglingLinks)                     sqlite3_finalize(db->sGetDanglingLinks);
+		if (db->sDeleteDanglingLinks)                  sqlite3_finalize(db->sDeleteDanglingLinks);
+		if (db->sDeleteWantedHash)                     sqlite3_finalize(db->sDeleteWantedHash);
+		if (db->sAddDanglingLink)                      sqlite3_finalize(db->sAddDanglingLink);
+		if (db->sAddWantedHash)                        sqlite3_finalize(db->sAddWantedHash);
+		if (db->sAddHole)                              sqlite3_finalize(db->sAddHole);
+		if (db->sFlagRecordWeightApplicationPending)   sqlite3_finalize(db->sFlagRecordWeightApplicationPending);
+		if (db->sGetRecordsForWeightApplication)       sqlite3_finalize(db->sGetRecordsForWeightApplication);
+		if (db->sGetHoles)                             sqlite3_finalize(db->sGetHoles);
+		if (db->sDeleteHole)                           sqlite3_finalize(db->sDeleteHole);
+		if (db->sUpdatePendingHoleCount)               sqlite3_finalize(db->sUpdatePendingHoleCount);
+		if (db->sDeleteCompletedPending)               sqlite3_finalize(db->sDeleteCompletedPending);
+		if (db->sGetPendingCount)                      sqlite3_finalize(db->sGetPendingCount);
+		if (db->sHaveDanglingLinks)                    sqlite3_finalize(db->sHaveDanglingLinks);
+		if (db->sGetWanted)                            sqlite3_finalize(db->sGetWanted);
+		if (db->sIncWantedRetries)                     sqlite3_finalize(db->sIncWantedRetries);
+		if (db->sLogComment)                           sqlite3_finalize(db->sLogComment);
+		if (db->sGetCommentsBySubjectAndCommentOracle) sqlite3_finalize(db->sGetCommentsBySubjectAndCommentOracle);
+		if (db->sQueryClearRecordSet)                  sqlite3_finalize(db->sQueryClearRecordSet);
+		if (db->sQueryOrSelectorRange)                 sqlite3_finalize(db->sQueryOrSelectorRange);
+		if (db->sQueryAndSelectorRange)                sqlite3_finalize(db->sQueryAndSelectorRange);
+		if (db->sQueryGetResults)                      sqlite3_finalize(db->sQueryGetResults);
+		if (db->sPutCert)                              sqlite3_finalize(db->sPutCert);
+		if (db->sPutCertRevocation)                    sqlite3_finalize(db->sPutCertRevocation);
+		if (db->sGetCertsBySubject)                    sqlite3_finalize(db->sGetCertsBySubject);
+		if (db->sGetCertRevocationsByRevokedSerial)    sqlite3_finalize(db->sGetCertRevocationsByRevokedSerial);
+		if (db->sMarkInLimbo)                          sqlite3_finalize(db->sMarkInLimbo);
+		if (db->sTakeFromLimbo)                        sqlite3_finalize(db->sTakeFromLimbo);
+		if (db->sHaveRecordInLimbo)                    sqlite3_finalize(db->sHaveRecordInLimbo);
 		sqlite3_close_v2(db->dbc);
 	}
 
@@ -1198,7 +1200,16 @@ exit_putRecord:
 	return result;
 }
 
-struct ZTLF_QueryResults *ZTLF_DB_Query(struct ZTLF_DB *db,const int64_t tsMin,const int64_t tsMax,const void **sel,const unsigned int *selSize,const unsigned int selCount)
+struct ZTLF_QueryResults *ZTLF_DB_Query(
+	struct ZTLF_DB *db,
+	const int64_t tsMin,
+	const int64_t tsMax,
+	const void **sel,
+	const unsigned int *selSize,
+	const unsigned int selCount,
+	const void **oracles,
+	const unsigned int *oracleSize,
+	const unsigned int oracleCount)
 {
 	LogOutputCallback logger = db->logger;
 	void *loggerArg = (void *)db->loggerArg;
@@ -1252,20 +1263,20 @@ struct ZTLF_QueryResults *ZTLF_DB_Query(struct ZTLF_DB *db,const int64_t tsMin,c
 	/* Get final results */
 	r->count = -1; /* gets incremented on very first iteration */
 	uint8_t lastOwner[ZTLF_DB_QUERY_MAX_OWNER_SIZE];
-	sqlite_int64 lastKey = 0;
+	sqlite_int64 lastCKey = 0;
 	memset(lastOwner,0,sizeof(lastOwner));
 	int lastOwnerSize = -1;
 	sqlite3_reset(db->sQueryGetResults);
-	while (sqlite3_step(db->sQueryGetResults) == SQLITE_ROW) { /* columns: doff,dlen,goff,ts,reputation,key,owner */
-		const void *owner = sqlite3_column_blob(db->sQueryGetResults,6);
-		const int ownerSize = sqlite3_column_bytes(db->sQueryGetResults,6);
+	while (sqlite3_step(db->sQueryGetResults) == SQLITE_ROW) { /* columns: doff,dlen,goff,ts,reputation,hash,ckey,owner */
+		const void *owner = sqlite3_column_blob(db->sQueryGetResults,7);
+		const int ownerSize = sqlite3_column_bytes(db->sQueryGetResults,7);
 		if ((!owner)||(ownerSize <= 0)||(ownerSize > ZTLF_DB_QUERY_MAX_OWNER_SIZE))
 			continue;
 
 		struct ZTLF_QueryResult *qr;
-		const sqlite_int64 key = sqlite3_column_int64(db->sQueryGetResults,5);
-		if ((lastKey != key)||(lastOwnerSize != ownerSize)||(memcmp(lastOwner,owner,ownerSize) != 0)) {
-			lastKey = key;
+		const sqlite_int64 ckey = sqlite3_column_int64(db->sQueryGetResults,6);
+		if ((lastCKey != ckey)||(lastOwnerSize != ownerSize)||(memcmp(lastOwner,owner,ownerSize) != 0)) {
+			lastCKey = ckey;
 			memcpy(lastOwner,owner,ownerSize);
 			lastOwnerSize = ownerSize;
 
@@ -1285,8 +1296,9 @@ struct ZTLF_QueryResults *ZTLF_DB_Query(struct ZTLF_DB *db,const int64_t tsMin,c
 			qr->weightL = 0;
 			qr->weightH = 0;
 			qr->ownerSize = (unsigned int)ownerSize;
+			qr->negativeComments = 0;
 			qr->localReputation = ZTLF_DB_REPUTATION_DEFAULT; /* this gets set to minimum of all records in a group */
-			qr->key = (uint64_t)key;
+			qr->ckey = (uint64_t)ckey;
 			memcpy(qr->owner,owner,ownerSize);
 		} else {
 			qr = &(r->results[r->count]);
@@ -1306,9 +1318,24 @@ struct ZTLF_QueryResults *ZTLF_DB_Query(struct ZTLF_DB *db,const int64_t tsMin,c
 
 			qr->doff = (uint64_t)sqlite3_column_int64(db->sQueryGetResults,0);
 			qr->dlen = (unsigned int)sqlite3_column_int(db->sQueryGetResults,1);
+
 			const int rep = sqlite3_column_int(db->sQueryGetResults,4);
 			if (rep < qr->localReputation)
 				qr->localReputation = rep;
+
+			if (oracleCount) {
+				const void *const hash = sqlite3_column_blob(db->sQueryGetResults,5);
+				for(unsigned int i=0;i<oracleCount;i++) {
+					sqlite3_reset(db->sGetCommentsBySubjectAndCommentOracle);
+					sqlite3_bind_blob(db->sGetCommentsBySubjectAndCommentOracle,1,hash,32,SQLITE_STATIC);
+					sqlite3_bind_blob(db->sGetCommentsBySubjectAndCommentOracle,2,oracles[i],(int)oracleSize[i],SQLITE_STATIC);
+					while (sqlite3_step(db->sGetCommentsBySubjectAndCommentOracle) == SQLITE_ROW) {
+						if (sqlite3_column_int(db->sGetCommentsBySubjectAndCommentOracle,0) == ZTLF_DB_COMMENT_ASSERTION_RECORD_COLLIDES_WITH_CLAIMED_ID) {
+							++qr->negativeComments;
+						}
+					}
+				}
+			}
 		}
 	}
 	++r->count;

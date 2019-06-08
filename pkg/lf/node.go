@@ -188,6 +188,11 @@ type Node struct {
 func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, logLevel int, localTest bool) (*Node, error) {
 	os.MkdirAll(basePath, 0755)
 
+	if localTest {
+		basePath = path.Join(basePath, "localtest")
+		os.MkdirAll(basePath, 0755)
+	}
+
 	freeDiskSpace, _ := getFreeSpaceOnDevice(basePath)
 	if freeDiskSpace < MinFreeDiskSpace {
 		return nil, fmt.Errorf("insufficient free space on device containing '%s' (%d < %d)", basePath, freeDiskSpace, MinFreeDiskSpace)
@@ -789,7 +794,7 @@ func (n *Node) GetOwnerCertificates(owner OwnerPublic) (certs []*x509.Certificat
 	}
 
 	certsBySerialNo, crlsByRevokedSerialNo := n.db.getCertInfo(ownerSubjectSerialNo)
-	rootsBySerialNo := n.genesisParameters.GetAuthCertificates()
+	rootsBySerialNo, revokedRootsBySerialNo := n.genesisParameters.GetAuthCertificates()
 
 	// The LF CA model currently supports one level of intermediate certificates. These
 	// must be issued by a root CA and can in turn issue owner certificates. Root CAs
@@ -802,21 +807,34 @@ func (n *Node) GetOwnerCertificates(owner OwnerPublic) (certs []*x509.Certificat
 			ownerCertIssuerRevoked := false
 
 			if ownerCertIssuer == nil {
+				ownerCertIssuer = revokedRootsBySerialNo[ownerCert.Issuer.SerialNumber]
+				ownerCertIssuerRevoked = true
+			}
+
+			if ownerCertIssuer == nil {
 				intermediate := certsBySerialNo[ownerCert.Issuer.SerialNumber]
 				if intermediate != nil {
 					intermediateIssuer := rootsBySerialNo[intermediate.Issuer.SerialNumber]
+
+					if intermediateIssuer == nil {
+						intermediateIssuer = revokedRootsBySerialNo[intermediate.Issuer.SerialNumber]
+						ownerCertIssuerRevoked = true
+					}
+
 					if intermediateIssuer != nil &&
 						intermediateIssuer.IsCA &&
 						(intermediateIssuer.KeyUsage&x509.KeyUsageCertSign) != 0 &&
 						intermediate.NotBefore.After(intermediateIssuer.NotBefore) &&
 						intermediateIssuer.NotAfter.After(intermediate.NotBefore) &&
 						intermediate.CheckSignatureFrom(intermediateIssuer) == nil {
-						intCrls := crlsByRevokedSerialNo[ownerCert.Issuer.SerialNumber]
-						if (intermediateIssuer.KeyUsage & x509.KeyUsageCRLSign) != 0 {
-							for _, crl := range intCrls {
-								if intermediateIssuer.CheckCRLSignature(crl) == nil {
-									ownerCertIssuerRevoked = true
-									break
+						if !ownerCertIssuerRevoked {
+							intCrls := crlsByRevokedSerialNo[ownerCert.Issuer.SerialNumber]
+							if (intermediateIssuer.KeyUsage & x509.KeyUsageCRLSign) != 0 {
+								for _, crl := range intCrls {
+									if intermediateIssuer.CheckCRLSignature(crl) == nil {
+										ownerCertIssuerRevoked = true
+										break
+									}
 								}
 							}
 						}
@@ -1141,7 +1159,10 @@ func (n *Node) backgroundThreadMaintenance() {
 						}
 						n.Connect(kp.IP, kp.Port, kp.Identity)
 					} else {
-						sp := n.genesisParameters.SeedPeers
+						var sp []Peer
+						if bytes.Equal(SolNetworkID[:], n.genesisParameters.ID[:]) {
+							sp = SolSeedPeers
+						}
 						if len(sp) > 0 {
 							spp := &sp[rand.Int()%len(sp)]
 							n.Connect(spp.IP, spp.Port, spp.Identity)

@@ -1336,59 +1336,34 @@ func doURL(cfg *lf.ClientConfig, basePath string, args []string) (exitCode int) 
 // doMakeGenesis is currently code for making the default genesis records and isn't very useful to anyone else.
 func doMakeGenesis(cfg *lf.ClientConfig, basePath string, args []string) (exitCode int) {
 	var g lf.GenesisParameters
+
 	g.Name = prompt("Network name: ", true, "")
-	if g.Name == "~~~Sol" { // magic value used internally to make Sol, useless to others
-		g = lf.GenesisParameters{
-			ID:                 [32]byte{0x17, 0x55, 0x22, 0x2e, 0x7c, 0x33, 0xa8, 0x5f, 0xc9, 0x70, 0x59, 0x5b, 0xfa, 0x5b, 0x46, 0x3b, 0x2a, 0xa9, 0x35, 0xee, 0x3e, 0x46, 0xbe, 0xd3, 0x3b, 0x14, 0x14, 0x8d, 0xe3, 0xd8, 0x8d, 0x23},
-			AmendableFields:    []string{"authcertificates", "seedpeers"},
-			Name:               "Sol",
-			Contact:            "https://www.zerotier.com/lf",
-			Comment:            "Global Public LF Data Store",
-			RecordMinLinks:     2,
-			RecordMaxValueSize: 1024,
-			RecordMaxTimeDrift: 60,
-			SeedPeers: []lf.Peer{
-				lf.Peer{ // ZeroTier LF node in Helsinki, Finland
-					IP:       net.ParseIP("95.216.29.85"),
-					Port:     9908,
-					Identity: lf.Base62Decode("JrKNrBrauJsmnbeGRPYN6NmyM81yp32MjmLhNb2EQENd0NwilsR4Cxsdd4CdgkPMS"),
-				},
-				lf.Peer{ // ZeroTier LF node at our HQ in Los Angeles, California, USA
-					IP:       net.ParseIP("174.136.102.98"),
-					Port:     9908,
-					Identity: lf.Base62Decode("Hcsqi4GP24UhaJL9poDM35k7KwvgvYzt1fMrYDr5EEAhTJ1ZnHu61xpDctypw66fh"),
-				},
-			},
-		}
-		fmt.Println("Using Sol network defaults...")
-	} else {
-		secrand.Read(g.ID[:])
-		fmt.Printf("Network ID will be %x\n", g.ID)
-		g.Contact = prompt("Network contact []: ", false, "")
-		g.Comment = prompt("Network comment or description []: ", false, "")
-		g.RecordMinLinks = atoUI(prompt("Record minimum links [2]: ", false, "2"))
-		if g.RecordMinLinks < 2 {
-			logger.Println("ERROR: min links must be at least 2 or things won't work!")
-			exitCode = 1
-			return
-		}
-		g.RecordMaxValueSize = atoUI(prompt("Record maximum value size [1024]: ", false, "1024"))
-		if g.RecordMaxValueSize > lf.RecordMaxSize {
-			logger.Println("ERROR: record value sizee too large!")
-			exitCode = 1
-			return
-		}
-		g.RecordMaxTimeDrift = atoUI(prompt("Record maximum time drift (seconds) [60]: ", false, "60"))
-		for {
-			af := prompt("Amendable fields (comma separated) [seedpeers]: ", false, "seedpeers")
-			if len(af) > 0 {
-				err := g.SetAmendableFields(strings.Split(af, ","))
-				if err == nil {
-					break
-				}
-			} else {
+	secrand.Read(g.ID[:])
+	fmt.Printf("Network ID will be %x\n", g.ID)
+	g.Contact = prompt("Network contact []: ", false, "")
+	g.Comment = prompt("Network comment or description []: ", false, "")
+	g.RecordMinLinks = atoUI(prompt("Record minimum links [2]: ", false, "2"))
+	if g.RecordMinLinks < 2 {
+		logger.Println("ERROR: min links must be at least 2 or things won't work!")
+		exitCode = 1
+		return
+	}
+	g.RecordMaxValueSize = atoUI(prompt("Record maximum value size [1024]: ", false, "1024"))
+	if g.RecordMaxValueSize > lf.RecordMaxSize {
+		logger.Println("ERROR: record value sizee too large!")
+		exitCode = 1
+		return
+	}
+	g.RecordMaxTimeDrift = atoUI(prompt("Record maximum time drift (seconds) [60]: ", false, "60"))
+	for {
+		af := prompt("Amendable fields (comma separated) [seedpeers]: ", false, "seedpeers")
+		if len(af) > 0 {
+			err := g.SetAmendableFields(strings.Split(af, ","))
+			if err == nil {
 				break
 			}
+		} else {
+			break
 		}
 	}
 

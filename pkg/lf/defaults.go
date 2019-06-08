@@ -26,11 +26,15 @@
 
 package lf
 
+import "net"
+
 // This contains the defaults for the Sol LF network, the global shared LF
 // database for Earth and its neighbors in the Sol system. It should be good
 // up to Kardashev type II civilization scale. Latency across interstellar
 // links might be too high so a galactic civilization may require one data
 // store per ~4 cubic light hours.
+
+// Note that the SeedPeers field is deprecated but was there originally.
 
 /*
 {
@@ -58,6 +62,23 @@ package lf
   ]
 }
 */
+
+// SolNetworkID is the value of the ID field in the Sol network's genesis paramters.
+var SolNetworkID = [32]byte{0x17, 0x55, 0x22, 0x2e, 0x7c, 0x33, 0xa8, 0x5f, 0xc9, 0x70, 0x59, 0x5b, 0xfa, 0x5b, 0x46, 0x3b, 0x2a, 0xa9, 0x35, 0xee, 0x3e, 0x46, 0xbe, 0xd3, 0x3b, 0x14, 0x14, 0x8d, 0xe3, 0xd8, 0x8d, 0x23}
+
+// SolSeedPeers is an array of peers that can be contacted to start synchronizing nodes on Sol.
+var SolSeedPeers = []Peer{
+	Peer{
+		IP:       net.ParseIP("95.216.29.85"),
+		Port:     9908,
+		Identity: Base62Decode("JrKNrBrauJsmnbeGRPYN6NmyM81yp32MjmLhNb2EQENd0NwilsR4Cxsdd4CdgkPMS"),
+	},
+	Peer{
+		IP:       net.ParseIP("174.136.102.98"),
+		Port:     9908,
+		Identity: Base62Decode("Hcsqi4GP24UhaJL9poDM35k7KwvgvYzt1fMrYDr5EEAhTJ1ZnHu61xpDctypw66fh"),
+	},
+}
 
 // SolDefaultNodeURLs is the default URL for clients to access Sol (servers operated by ZeroTier, Inc.)
 var SolDefaultNodeURLs = []string{"https://lf.zerotier.com/"}

@@ -625,7 +625,7 @@ func TestDatabase(testBasePath string, out io.Writer) bool {
 			defer wg.Done()
 			rb := make([]byte, 0, 4096)
 			for ri := 0; ri < testDatabaseRecords; ri++ {
-				err = dbs[dbi].query(0, 9223372036854775807, [][2][]byte{{selectorKeys[ri], selectorKeys[ri]}}, func(ts, weightL, weightH, doff, dlen uint64, localReputation int, key uint64, owner []byte) bool {
+				err = dbs[dbi].query(0, 9223372036854775807, [][2][]byte{{selectorKeys[ri], selectorKeys[ri]}}, nil, func(ts, weightL, weightH, doff, dlen uint64, localReputation int, key uint64, owner []byte, negativeComments uint) bool {
 					rdata, err := dbs[dbi].getDataByOffset(doff, uint(dlen), rb[:0])
 					if err != nil {
 						fmt.Fprintf(out, "  FAILED to retrieve (selector key: %x) (%s)\n", selectorKeys[ri], err.Error())
@@ -671,7 +671,7 @@ func TestDatabase(testBasePath string, out io.Writer) bool {
 				ptk := []byte(fmt.Sprintf("%.16x%s", oi, selRandom))
 				sk0 := MakeSelectorKey(ptk, 0)
 				sk1 := MakeSelectorKey(ptk, 0xffffffffffffffff)
-				err = dbs[dbi].query(0, 9223372036854775807, [][2][]byte{{sk0, sk1}}, func(ts, weightL, weightH, doff, dlen uint64, localReputation int, key uint64, owner []byte) bool {
+				err = dbs[dbi].query(0, 9223372036854775807, [][2][]byte{{sk0, sk1}}, nil, func(ts, weightL, weightH, doff, dlen uint64, localReputation int, key uint64, owner []byte, negativeComments uint) bool {
 					_, err := dbs[dbi].getDataByOffset(doff, uint(dlen), rb[:0])
 					if err != nil {
 						fmt.Fprintf(out, "  FAILED to retrieve (selector key range %x-%x) (%s)\n", sk0, sk1, err.Error())

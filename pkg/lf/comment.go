@@ -31,6 +31,7 @@ import (
 )
 
 // These are protocol and database constants and can't be changed.
+// They must also match the defines in db.h where relevant.
 const (
 	commentAssertionNil                         byte = 0
 	commentAssertionRecordCollidesWithClaimedID byte = 1
