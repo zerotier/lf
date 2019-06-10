@@ -105,7 +105,7 @@ The grade that you receive'll be your last, we swear | bad#0 horse#10
 
 When you ask for `bad horse#` (in the very first example) the trailing hash is expanded to `#0#18446744073709551615`. That huge number is the maximum value of a 64-bit unsigned integer. Leaving off the trailing hash is equivalent to `#0` and gets only ordinal zero. Using `#2#10` asks for ordinals two through ten inclusive.
 
-### First Come, First Serve!
+#### First Come, First Serve!
 
 If LF is open and decentralized, what happens if someone does this?
 
@@ -166,6 +166,32 @@ A few caveats for running nodes:
 * We recommend a 64-bit system with a bare minimum of 1gb RAM for full nodes. Full nodes usually use between 384mb and 1gb of RAM and may also use upwards of 1gb of virtual address space for memory mapped files. 32-bit systems may have issues with address space exhaustion.
 * Don't locate the node's files on a network share (NFS, CIFS, VM-host mount, etc.) as LF makes heavy use of memory mapping and this does not always play well with network drives. It could be slow, unreliable, or might not work at all. Needless to say a cluster of LF nodes must all have their own storage. Pooling storage isn't possible and defeats the purpose anyway.
 * Hard-stopping a node with `kill -9` or a hard system shutdown may corrupt the database. We plan to improve this in the future but right now the code is not very tolerant of this.
+
+### Oracles and Elective Trust
+
+LF's intrinsic conflict resolution mechanism relies upon proof of work as a hard to forge proxy for time, much like many cryptocurrencies. Proof of work is not foolproof, especially in LF where there is no intrinsic economic mechanism to incentivize the runaway growth of PoW "mining" investment. As a result a well financed or determined attacker willing to throw a lot of compute power at the problem could overcome the PoW "weight" of the records beneath a target record in the LF DAG and replace it.
+
+This is why PoW is only one of LF's built in conflict resolution mechanisms. It's the easy one in that it requires no configuration but it also offers weaker security in the presence of an attacker who knows your selector names (remember that they're encrypted!) and wants to co-opt your records.
+
+For stronger security it is possible to electively trust select LF nodes.
+
+LF nodes maintain an internal *reputation* value for each record. A node computes reputation based on a few heuristics with by far the most important being which record arrives first. If a record appears to collide with another record that is fully synchronized (meaning all its dependencies are met) it gets a zero reputation rating.
+
+When a node is run with the `-oracle` flag it will use spare CPU cycles on the system to constantly create its own *commentary* records. These records are overloaded with work to add work to the DAG (like a miner in the cryptocurrency world) but they can also contain information about records a particular node thinks are suspect.
+
+Oracle nodes document low reputation records in commentary records. When a node sees a commentary record it extracts this information and caches it internally in an indexed table.
+
+To use commentary information a client includes owners representing oracle nodes in the *Oracles* field of its queries. In the command line client these can be managed with the `oracle` command. When oracles are included the query takes commentary from these oracles into consideration when computing apparent trust for a record. If two records have the same trust then proof of work weight is used as a tie breaker.
+
+If used with care the oracle system can provide very hard security guarantees that simply are not possible with a purely automatic zero interaction system like proof of work. An organization can run its own pool of oracle nodes and trust them for all its queries, ensuring that its nodes act as the final arbiter of truth if there is a record value conflict.
+
+Casual users can choose to trust nodes that are generally trusted. Applications could ship with trust lists similar to how they ship with SSL CA lists.
+
+*Note that you shouldn't run nodes in `-oracle` mode on variable or burstable CPU cloud instances as this could result in a large bill or a surprise failure when the instance uses up its CPU quota. Use reserved CPU or bare metal systems for oracle nodes.*
+
+### Authorization Certificates
+
+Records on open networks must be "paid" using proof of work. It's possible to skip this step if the network is configured with one or more authorization certificate authorities. It's also possible to create private authorization-required networks where proof of work isn't used and authorization certificates are required.
 
 ### LFFS
 

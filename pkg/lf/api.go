@@ -104,8 +104,8 @@ type APIOwnerInfoResult struct {
 	HasCurrentCertificate bool        ``                  // True if at least one certificate's time range contains the current time
 	RecordCount           uint64      ``                  // Number of records in data store by this owner
 	RecordBytes           uint64      ``                  // Number of bytes of records by this owner
-	Links                 []HashBlob  `json:",omitempty"` // Links for a new record (for convenience)
-	ServerTime            uint64      ``                  // Server time in seconds since epoch (for convenience)
+	Links                 []HashBlob  `json:",omitempty"` // Suggested links for a new record (for convenience to avoid two API calls)
+	ServerTime            uint64      ``                  // Server time in seconds since epoch
 }
 
 // MountPoint describes a FUSE lffs mount point

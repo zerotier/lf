@@ -57,6 +57,10 @@ const (
 	recordValueCompressionNone   = 0
 	recordValueCompressionBrotli = 1
 
+	// recordNoWorkScore is the score of records that don't have work (certificate authorized).
+	// This is a protocol constant and can't be changed.
+	recordNoWorkScore = 0x000fffff
+
 	// RecordDefaultWharrgarblMemory is the default amount of memory to use for Wharrgarbl momentum-type PoW.
 	RecordDefaultWharrgarblMemory = 1024 * 1024 * 512
 
@@ -544,7 +548,7 @@ func (r *Record) Score() uint32 {
 	case RecordWorkAlgorithmWharrgarbl:
 		return recordWharrgarblScore(WharrgarblGetDifficulty(r.Work))
 	}
-	return 1
+	return recordNoWorkScore
 }
 
 // SelectorKey returns the selector key for a given selector at a given index in []Selectors.
