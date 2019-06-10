@@ -1161,7 +1161,7 @@ func (n *Node) backgroundThreadMaintenance() {
 					if len(n.knownPeers) > 0 {
 						now := TimeSec()
 						for _, kp := range n.knownPeers { // exploits Go's random map iteration order
-							if (now - kp.LastReconnectionAttempt) < p2pPeerAttemptInterval {
+							if (now-kp.LastReconnectionAttempt) < p2pPeerAttemptInterval || (now-kp.LastReconnectionAttempt) > (p2pPeerAttemptInterval*uint64(len(n.knownPeers))) {
 								kp.LastReconnectionAttempt = now
 								kp.TotalReconnectionAttempts++
 								n.Connect(kp.IP, kp.Port, kp.Identity)
