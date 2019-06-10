@@ -1154,14 +1154,18 @@ func (n *Node) backgroundThreadMaintenance() {
 			// If we don't have enough connections, try to make more to peers we've learned about.
 			if (ticker % 5) == 1 {
 				n.peersLock.RLock()
-				connectedCount := len(n.peers)
-				n.peersLock.RUnlock()
-				if connectedCount < p2pDesiredConnectionCount {
+				if len(n.peers) < p2pDesiredConnectionCount {
 					n.knownPeersLock.Lock()
 					if len(n.knownPeers) > 0 {
 						now := TimeSec()
+					tryKnownPeers:
 						for _, kp := range n.knownPeers { // exploits Go's random map iteration order
 							if (now-kp.LastReconnectionAttempt) < p2pPeerAttemptInterval || (now-kp.LastReconnectionAttempt) > (p2pPeerAttemptInterval*uint64(len(n.knownPeers))) {
+								for _, cp := range n.peers {
+									if bytes.Equal(cp.identity, kp.Identity) {
+										continue tryKnownPeers
+									}
+								}
 								kp.LastReconnectionAttempt = now
 								kp.TotalReconnectionAttempts++
 								n.Connect(kp.IP, kp.Port, kp.Identity)
@@ -1180,6 +1184,7 @@ func (n *Node) backgroundThreadMaintenance() {
 					}
 					n.knownPeersLock.Unlock()
 				}
+				n.peersLock.RUnlock()
 			}
 		}
 
