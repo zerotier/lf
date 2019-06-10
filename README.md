@@ -193,6 +193,10 @@ Casual users can choose to trust nodes that are generally trusted. Applications 
 
 Records on open networks must be "paid" using proof of work. It's possible to skip this step if the network is configured with one or more authorization certificate authorities. It's also possible to create private authorization-required networks where proof of work isn't used and authorization certificates are required.
 
+Certificate authorities configured when a network is created can issue certificates to record owners or to intermediate certificates that can in turn issue certificates to owners. (Intermediates are supported but not implemented yet.) Issued certificates are themselves stored in the DAG as records of type *certificate*. These are automatically caught by nodes and indexed and checked when an owner arrives without proof of work.
+
+The `owner` command group in the CLI includes commands to create and sign certificate signing requests (CSRs) for owners.
+
 ### LFFS
 
 Full nodes have the capability to mount sections of the data store on the host as a filesystem using FUSE. This works on Linux and Macintosh systems as long as FUSE is installed (see [OSXFUSE](https://osxfuse.github.io) for Mac). This offers a very easy and fast way for other software to use LF as a shared state cache.
