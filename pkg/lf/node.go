@@ -77,8 +77,14 @@ const (
 	// p2pDesiredConnectionCount is how many P2P TCP connections we want to have open
 	p2pDesiredConnectionCount = 32
 
-	// Delete peers that haven't been used in this long.
-	p2pPeerExpiration = 1000 * 60 * 60 * 24 * 3 // 3 days
+	// Minimum interval between peer connection attempts
+	p2pPeerAttemptInterval = 60
+
+	// P2P connection attempt timeout in seconds
+	p2pPeerConnectTimeout = 10
+
+	// Maximum unsuccessful reconnection attempts before a peer is forgotten
+	p2pPeerMaxAttempts = 30
 
 	// DefaultHTTPPort is the default LF HTTP API port
 	DefaultHTTPPort = 9980
@@ -100,7 +106,6 @@ type peerHelloMsg struct {
 	Version               [4]int
 	SoftwareName          string
 	P2PPort               int
-	HTTPPort              int
 	SubscribeToNewRecords bool // If true, peer wants new records
 }
 
@@ -123,9 +128,11 @@ type connectedPeer struct {
 // knownPeer contains info about a peer we know about via another peer or the API
 type knownPeer struct {
 	Peer
-	FirstConnect               uint64
-	LastSuccessfulConnection   uint64
-	TotalSuccessfulConnections int64
+
+	FirstConnect              uint64 // Time (seconds) of first connection to this peer at this endpoint
+	LastSuccessfulConnection  uint64 // Time (seconds) of most recent successful connection
+	LastReconnectionAttempt   uint64 // Time (seconds) of most recent connection attempt (zeroed on success)
+	TotalReconnectionAttempts int    // Total connection attempts (zeroed on success)
 }
 
 // Node is an instance of a full LF node supporting both P2P and HTTP access.
@@ -676,13 +683,13 @@ func (n *Node) Connect(ip net.IP, port int, identity []byte) {
 		n.log[LogLevelVerbose].Printf("P2P attempting to connect to %s %d %s", ip.String(), port, Base62Encode(identity))
 
 		ta := net.TCPAddr{IP: ip, Port: port}
-		conn, err := net.DialTimeout("tcp", ta.String(), time.Second*10)
+		conn, err := net.DialTimeout("tcp", ta.String(), time.Second*p2pPeerConnectTimeout)
 		if atomic.LoadUint32(&n.shutdown) == 0 {
 			if err == nil {
 				n.backgroundThreadWG.Add(1)
 				go n.p2pConnectionHandler(conn.(*net.TCPConn), identity, false)
 			} else {
-				n.log[LogLevelNormal].Printf("P2P connection to %s failed: %s", ta.String(), err.Error())
+				n.log[LogLevelVerbose].Printf("P2P connection to %s failed: %s", ta.String(), err.Error())
 			}
 		} else if conn != nil {
 			conn.Close()
@@ -1152,12 +1159,15 @@ func (n *Node) backgroundThreadMaintenance() {
 				if connectedCount < p2pDesiredConnectionCount {
 					n.knownPeersLock.Lock()
 					if len(n.knownPeers) > 0 {
-						var kp *knownPeer
-						for _, kp2 := range n.knownPeers { // exploits Go's random map iteration order
-							kp = kp2
-							break
+						now := TimeSec()
+						for _, kp := range n.knownPeers { // exploits Go's random map iteration order
+							if (now - kp.LastReconnectionAttempt) < p2pPeerAttemptInterval {
+								kp.LastReconnectionAttempt = now
+								kp.TotalReconnectionAttempts++
+								n.Connect(kp.IP, kp.Port, kp.Identity)
+								break
+							}
 						}
-						n.Connect(kp.IP, kp.Port, kp.Identity)
 					} else {
 						var sp []Peer
 						if bytes.Equal(SolNetworkID[:], n.genesisParameters.ID[:]) {
@@ -1425,8 +1435,8 @@ func (n *Node) requestWantedRecords(minRetries, maxRetries int) {
 // P2P protocol implementation
 //////////////////////////////////////////////////////////////////////////////
 
-// updateKnownPeersWithConnectResult is called from p2pConnectionHandler to update n.knownPeers
-func (n *Node) updateKnownPeersWithConnectResult(ip net.IP, port int, identity []byte) {
+// updateKnownPeersOnConnectSuccess is called from p2pConnectionHandler to update n.knownPeers.
+func (n *Node) updateKnownPeersOnConnectSuccess(ip net.IP, port int, identity []byte) {
 	if len(identity) == 0 {
 		return
 	}
@@ -1437,37 +1447,35 @@ func (n *Node) updateKnownPeersWithConnectResult(ip net.IP, port int, identity [
 	n.knownPeersLock.Lock()
 	defer n.knownPeersLock.Unlock()
 
-	now := TimeMs()
-
+	now := TimeSec()
 	idStr := Base62Encode(identity)
 	kp := n.knownPeers[idStr]
 	if kp == nil {
-		kp = &knownPeer{
+		n.knownPeers[idStr] = &knownPeer{
 			Peer: Peer{
 				IP:       ip,
 				Port:     port,
 				Identity: identity,
 			},
-			FirstConnect:               now,
-			LastSuccessfulConnection:   now,
-			TotalSuccessfulConnections: 1,
+			FirstConnect:              now,
+			LastSuccessfulConnection:  now,
+			LastReconnectionAttempt:   0,
+			TotalReconnectionAttempts: 0,
 		}
-		n.knownPeers[idStr] = kp
 	} else {
-		if kp.IP.Equal(ip) {
-			kp.Port = port
+		if kp.IP.Equal(ip) && kp.Port == port {
 			if kp.FirstConnect == 0 {
 				kp.FirstConnect = now
 			}
 			kp.LastSuccessfulConnection = now
-			kp.TotalSuccessfulConnections++
 		} else {
 			kp.IP = ip
 			kp.Port = port
 			kp.FirstConnect = now
 			kp.LastSuccessfulConnection = now
-			kp.TotalSuccessfulConnections = 1
 		}
+		kp.LastReconnectionAttempt = 0
+		kp.TotalReconnectionAttempts = 0
 	}
 }
 
@@ -1476,9 +1484,8 @@ func (n *Node) writeKnownPeers() {
 	n.knownPeersLock.Lock()
 	defer n.knownPeersLock.Unlock()
 
-	now := TimeMs()
 	for kpid, kp := range n.knownPeers {
-		if (now - kp.LastSuccessfulConnection) > p2pPeerExpiration {
+		if kp.TotalReconnectionAttempts > p2pPeerMaxAttempts {
 			delete(n.knownPeers, kpid)
 		}
 	}
@@ -1707,7 +1714,6 @@ func (n *Node) p2pConnectionHandler(c *net.TCPConn, identity []byte, inbound boo
 		Version:               Version,
 		SoftwareName:          SoftwareName,
 		P2PPort:               n.p2pPort,
-		HTTPPort:              n.httpPort,
 		SubscribeToNewRecords: true,
 	})
 	if err != nil {
@@ -1738,7 +1744,7 @@ func (n *Node) p2pConnectionHandler(c *net.TCPConn, identity []byte, inbound boo
 	n.connectionsInStartupLock.Unlock()
 
 	if !inbound {
-		n.updateKnownPeersWithConnectResult(tcpAddr.IP, tcpAddr.Port, remoteIdentity)
+		n.updateKnownPeersOnConnectSuccess(tcpAddr.IP, tcpAddr.Port, remoteIdentity)
 	}
 
 	n.log[LogLevelNormal].Printf("P2P connection established to %s %d %s", tcpAddr.IP.String(), tcpAddr.Port, Base62Encode(remoteIdentity))
@@ -1827,7 +1833,7 @@ mainReaderLoop:
 						testConn, err := net.DialTimeout("tcp", testAddr.String(), time.Second*5)
 						if testConn != nil && err == nil {
 							n.log[LogLevelVerbose].Printf("reverse reachability test to port %d successful for inbound connection from %s", p.peerHelloMsg.P2PPort, tcpAddr.IP.String())
-							n.updateKnownPeersWithConnectResult(tcpAddr.IP, p.peerHelloMsg.P2PPort, remoteIdentity)
+							n.updateKnownPeersOnConnectSuccess(tcpAddr.IP, p.peerHelloMsg.P2PPort, remoteIdentity)
 							if atomic.LoadUint32(&n.shutdown) == 0 {
 								n.peersLock.RLock()
 								for _, otherPeer := range n.peers {
