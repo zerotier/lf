@@ -1112,16 +1112,18 @@ func (n *Node) backgroundThreadMaintenance() {
 		ticker := atomic.AddUintptr(&n.timeTicker, 1)
 
 		// Check free disk space to avoid corruption if the target device fills up
-		freeDiskSpace, _ := getFreeSpaceOnDevice(n.basePath)
-		if freeDiskSpace < MinFreeDiskSpace {
-			n.log[LogLevelFatal].Printf("FATAL: insufficient free space detected on device containing '%s' (%d < %d)", n.basePath, freeDiskSpace, MinFreeDiskSpace)
-			go n.Stop()
-			break
+		if (ticker % 30) == 3 {
+			freeDiskSpace, _ := getFreeSpaceOnDevice(n.basePath)
+			if freeDiskSpace < MinFreeDiskSpace {
+				n.log[LogLevelFatal].Printf("FATAL: insufficient free space detected on device containing '%s' (%d < %d)", n.basePath, freeDiskSpace, MinFreeDiskSpace)
+				go n.Stop()
+				break
+			}
 		}
 
 		if !n.localTest {
 			// Clean record tracking entries of items older than 5 minutes.
-			if (ticker % 120) == 0 {
+			if (ticker % 120) == 5 {
 				n.peersLock.RLock()
 				for _, p := range n.peers {
 					p.hasRecordsLock.Lock()
@@ -1144,7 +1146,7 @@ func (n *Node) backgroundThreadMaintenance() {
 			}
 
 			// Announce some recent records to help keep nodes in sync during periods of low activity
-			if (ticker % 10) == 0 {
+			if (ticker % 10) == 7 {
 				_, links, err := n.db.getLinks(2)
 				if err == nil && len(links) >= 32 {
 					hr := make([]byte, 1, 1+len(links))
@@ -1159,21 +1161,21 @@ func (n *Node) backgroundThreadMaintenance() {
 			}
 
 			// Peroidically clean and write peers.json
-			if (ticker % 120) == 0 {
+			if (ticker % 120) == 11 {
 				n.writeKnownPeers()
 			}
 
 			// Request wanted records (if connected), requesting newly wanted records with
 			// zero retries immediately and then requesting records with higher numbers of
 			// retries less often.
-			if (ticker % 30) == 0 {
+			if (ticker % 30) == 17 {
 				n.requestWantedRecords(1, p2pProtoMaxRetries)
 			} else {
 				n.requestWantedRecords(0, 0)
 			}
 
 			// If we don't have enough connections, try to make more to peers we've learned about.
-			if (ticker % 5) == 1 {
+			if (ticker % 10) == 1 {
 				n.peersLock.RLock()
 				if len(n.peers) < p2pDesiredConnectionCount {
 					n.knownPeersLock.Lock()
