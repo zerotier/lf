@@ -803,6 +803,27 @@ func (n *Node) GetOwnerCertificates(owner OwnerPublic) (certs []*x509.Certificat
 	certsBySerialNo, crlsByRevokedSerialNo := n.db.getCertInfo(ownerSubjectSerialNo)
 	rootsBySerialNo, revokedRootsBySerialNo := n.genesisParameters.GetAuthCertificates()
 
+	// First we check to see if the owner is in fact the root CA. This is special cased
+	// since roots are not themselves stored directly in the DAG as Certificate records.
+	for _, rootCert := range rootsBySerialNo {
+		if (rootCert.KeyUsage & x509.KeyUsageDigitalSignature) != 0 {
+			pub, _ := rootCert.PublicKey.(*ecdsa.PublicKey)
+			ownerPub, _ := NewOwnerPublicFromECDSAPublicKey(pub)
+			if bytes.Equal(ownerPub, owner) {
+				certs = append(certs, rootCert)
+			}
+		}
+	}
+	for _, rootCert := range revokedRootsBySerialNo {
+		if (rootCert.KeyUsage & x509.KeyUsageDigitalSignature) != 0 {
+			pub, _ := rootCert.PublicKey.(*ecdsa.PublicKey)
+			ownerPub, _ := NewOwnerPublicFromECDSAPublicKey(pub)
+			if bytes.Equal(ownerPub, owner) {
+				revokedCerts = append(certs, rootCert)
+			}
+		}
+	}
+
 	// The LF CA model currently supports one level of intermediate certificates. These
 	// must be issued by a root CA and can in turn issue owner certificates. Root CAs
 	// can also directly issue owner certificates. CRLs can be issued by the same cert

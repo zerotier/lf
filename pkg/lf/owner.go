@@ -94,6 +94,27 @@ func NewOwnerPublicFromString(b62 string) (OwnerPublic, error) {
 	return nil, ErrInvalidParameter
 }
 
+// NewOwnerPublicFromECDSAPublicKey creates an OwnerPublic derived from an ECDSA public key.
+func NewOwnerPublicFromECDSAPublicKey(pub *ecdsa.PublicKey) (OwnerPublic, error) {
+	if pub == nil || pub.Curve == nil {
+		return nil, ErrInvalidParameter
+	}
+	var oh []byte
+	var err error
+	switch pub.Curve.Params().Name {
+	case "P-224":
+		oh, err = internalOwnerHashECDSA(OwnerTypeNistP224, pub)
+	case "P-384":
+		oh, err = internalOwnerHashECDSA(OwnerTypeNistP384, pub)
+	default:
+		return nil, ErrUnsupportedCurve
+	}
+	if err != nil {
+		return nil, err
+	}
+	return OwnerPublic(oh), nil
+}
+
 // String returns @base62 owner
 func (o OwnerPublic) String() string { return "@" + Base62Encode(o) }
 
