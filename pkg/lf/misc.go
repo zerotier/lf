@@ -45,9 +45,6 @@ import (
 	"github.com/tidwall/pretty"
 )
 
-// TimeMs returns the time in milliseconds since epoch.
-func TimeMs() uint64 { return uint64(time.Now().UnixNano()) / uint64(1000000) }
-
 // TimeSec returns the time in seconds since epoch.
 func TimeSec() uint64 { return uint64(time.Now().Unix()) }
 

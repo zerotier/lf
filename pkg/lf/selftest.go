@@ -37,6 +37,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"math/rand"
 	"os"
 	"path"
@@ -435,7 +436,6 @@ func TestCore(out io.Writer) bool {
 
 // TestWharrgarbl tests and runs benchmarks on the Wharrgarbl proof of work.
 func TestWharrgarbl(out io.Writer) bool {
-	var startTime, iterations, runTime uint64
 	testWharrgarblSamples := 16
 	var junk [32]byte
 	var wout [WharrgarblOutputSize]byte
@@ -451,20 +451,20 @@ func TestWharrgarbl(out io.Writer) bool {
 	fmt.Fprintf(out, "Testing and benchmarking Wharrgarbl proof of work algorithm...\n")
 	for rs := uint(256); rs <= 4096; rs += 256 {
 		diff := recordWharrgarblCost(rs)
-		iterations = 0
-		startTime = TimeMs()
+		iterations := uint64(0)
+		startTime := time.Now()
 		for k := 0; k < testWharrgarblSamples; k++ {
 			var ii uint64
 			wout, ii = wg.Compute(junk[:], diff)
 			iterations += ii
 		}
-		runTime = (TimeMs() - startTime) / uint64(testWharrgarblSamples)
+		runTime := time.Now().Sub(startTime).Seconds() / float64(testWharrgarblSamples)
 		iterations /= uint64(testWharrgarblSamples)
 		if WharrgarblVerify(wout[:], junk[:]) == 0 {
 			fmt.Fprintf(out, "  %.8x: FAILED (verify)\n", diff)
 			return false
 		}
-		fmt.Fprintf(out, "  %.8x: %d milliseconds %d iterations (difficulty for %d bytes)\n", diff, runTime, iterations, rs)
+		fmt.Fprintf(out, "  %.8x: %d milliseconds %d iterations (difficulty for %d bytes)\n", diff, int(math.Round(runTime)), iterations, rs)
 	}
 
 	return true
