@@ -44,9 +44,9 @@ DHTs are simply not good enough for our needs. They're vulnerable to multiple ty
 
 ## Building and Running
 
-LF works on Linux, Mac, and probably BSD. It won't work on Windows yet but porting shouldn't be too hard if anyone wants it. It's mostly written in Go (1.11+ required) with some C for performance critical bits. Building it is easy. The only non-Go dependency is a reasonably recent version of [SQLite](https://sqlite.org/) whose libraries and header files will need to be available on the system.
+LF works on Linux, Mac, and probably BSD. It won't work on Windows yet but porting shouldn't be too hard if anyone wants it. It's mostly written in Go (1.11+ required) with some C for performance critical bits. Native code depends on sqlite3 but a recent version is included under `native/sqlite3` and is built automatically alongside the native LF database.
 
-If you have recent Go, a C compiler, and SQLite just type `make` and it should build.
+To build on most platform just type `make`.
 
 Once we get out of beta we'll probably provide some pre-built binaries as is the custom for Go projects.
 
