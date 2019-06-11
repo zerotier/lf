@@ -30,16 +30,15 @@ package lf
 // build on ancient versions that have ancient SQLite3 like CentOS 7.
 
 //#cgo CFLAGS: -O3
-//#cgo darwin LDFLAGS: ${SRCDIR}/../../native/db_darwin.o -lsqlite3
-//#cgo linux,amd64 LDFLAGS: ${SRCDIR}/../../native/db_linux.o ${SRCDIR}/../../native/precompiled/libsqlite3_linux_amd64.a -lm -ldl
-//#cgo linux,!amd64 LDFLAGS: ${SRCDIR}/../../native/db_linux.o -lsqlite3
-//#cgo freebsd LDFLAGS: ${SRCDIR}/../../native/db_freebsd.o -lsqlite3
-//#cgo openbsd LDFLAGS: ${SRCDIR}/../../native/db_openbsd.o -lsqlite3
-//#cgo netbsd LDFLAGS: ${SRCDIR}/../../native/db_netbsd.o -lsqlite3
-//#cgo windows LDFLAGS : ${SRCDIR}/../../native/db_windows.o -lsqlite3
-//#cgo android LDFLAGS : ${SRCDIR}/../../native/db_android.o -lsqlite3
-//#cgo solaris LDFLAGS : ${SRCDIR}/../../native/db_solaris.o -lsqlite3
-//#cgo dragonfly LDFLAGS : ${SRCDIR}/../../native/db_dragonfly.o -lsqlite3
+//#cgo darwin LDFLAGS: ${SRCDIR}/../../native/db_darwin.o ${SRCDIR}/../../native/sqlite3_darwin.o
+//#cgo linux LDFLAGS: ${SRCDIR}/../../native/db_linux.o ${SRCDIR}/../../native/sqlite3_linux.o
+//#cgo freebsd LDFLAGS: ${SRCDIR}/../../native/db_freebsd.o ${SRCDIR}/../../native/sqlite3_freebsd.o
+//#cgo openbsd LDFLAGS: ${SRCDIR}/../../native/db_openbsd.o ${SRCDIR}/../../native/sqlite3_openbsd.o
+//#cgo netbsd LDFLAGS: ${SRCDIR}/../../native/db_netbsd.o ${SRCDIR}/../../native/sqlite3_netbsd.o
+//#cgo windows LDFLAGS : ${SRCDIR}/../../native/db_windows.o ${SRCDIR}/../../native/sqlite3_windows.o
+//#cgo android LDFLAGS : ${SRCDIR}/../../native/db_android.o ${SRCDIR}/../../native/sqlite3_android.o
+//#cgo solaris LDFLAGS : ${SRCDIR}/../../native/db_solaris.o ${SRCDIR}/../../native/sqlite3_solaris.o
+//#cgo dragonfly LDFLAGS : ${SRCDIR}/../../native/db_dragonfly.o ${SRCDIR}/../../native/sqlite3_dragonfly.o
 //#include <stdint.h>
 //#define ZTLF_GOLANG 1
 //struct ZTLF_DB;
