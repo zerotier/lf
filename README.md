@@ -29,7 +29,7 @@ DHTs are simply not good enough for our needs. They're vulnerable to multiple ty
 
 * Easy to use and easy to deploy.
 * Fully decentralized network with no mandatory single points of control or failure.
-* Versatile security model allowing user choice between different conflict resolution mechanisms that can be used alone or in combination with one another. These include local heuristics, proof of work "weight," elective trust of other nodes, and (eventually) certificates.
+* Versatile security model allowing user choice between different conflict resolution mechanisms that can be used alone or in combination with one another. These include local heuristics, proof of work "weight," elective trust of other nodes, and certificates via a standard x509 CA model.
 * Fast sub-second nearline queries against the entire global data set at all times.
 * Flexible record lookup API allowing multiple nested keys and range queries against 64-bit ordinals associated with each key.
 * Encrypted record keys and values for strong security and privacy despite full global data set replication. Order preserving encryption techinques are leveraged to allow range queries without revealing keys or exact ordinal values.

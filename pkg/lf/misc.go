@@ -48,12 +48,6 @@ import (
 // TimeSec returns the time in seconds since epoch.
 func TimeSec() uint64 { return uint64(time.Now().Unix()) }
 
-// TimeMsToTime converts a time in milliseconds since epoch to a Go native time.Time structure.
-func TimeMsToTime(ms uint64) time.Time { return time.Unix(int64(ms/1000), int64((ms%1000)*1000000)) }
-
-// TimeSecToTime converts a time in seconds since epoch to a Go native time.Time structure.
-func TimeSecToTime(s uint64) time.Time { return time.Unix(int64(s), 0) }
-
 // byteAndArrayReader combines Reader and ByteReader capabilities
 type byteAndArrayReader [1]io.Reader
 
