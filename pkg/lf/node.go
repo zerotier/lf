@@ -1238,17 +1238,19 @@ func (n *Node) backgroundThreadOracle() {
 			commentCount := 0
 			n.commentsLock.Lock()
 			for n.comments.Len() > 0 {
+				minWorkDifficultyThisIteration = 0 // push commentary out immediately, then return to adding work
+
 				f := n.comments.Front()
 				c := f.Value.(*comment)
 				s := c.sizeBytes()
 				if len(commentary)+s > int(n.genesisParameters.RecordMaxValueSize) {
-					minWorkDifficultyThisIteration = 0 // if we have a lot of commentary, don't do extra work this time and get it out there!
 					break
 				}
 				var err error
+				prevCommentary := commentary
 				commentary, err = c.appendTo(commentary)
 				if err != nil {
-					commentary = nil
+					commentary = prevCommentary
 					break
 				}
 				commentCount++
