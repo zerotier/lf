@@ -56,7 +56,7 @@ func (co *ClientConfigOwner) GetOwner() (o *Owner, err error) {
 
 // ClientConfig is the JSON format for the client configuration file.
 type ClientConfig struct {
-	URLs    []string                      ``         // URLs of full nodes and/or proxies
+	URLs    []RemoteNode                  ``         // Remote nodes
 	Oracles []OwnerPublic                 ``         // Oracles to trust during queries
 	Owners  map[string]*ClientConfigOwner ``         // Owners by name
 	Dirty   bool                          `json:"-"` // Non-persisted flag that can be used to indicate the config should be saved on client exit
@@ -72,6 +72,15 @@ func (c *ClientConfig) Load(path string) error {
 		c.Owners = make(map[string]*ClientConfigOwner)
 	}
 	c.Dirty = false
+
+	// Make sure remote node URLs don't end with / (fix for older configs)
+	for i := range c.URLs {
+		u := string(c.URLs[i])
+		if strings.HasSuffix(u, "/") && len(u) > 2 {
+			u = u[0 : len(u)-1]
+			c.URLs[i] = RemoteNode(u)
+		}
+	}
 
 	// If the file didn't exist, init config with defaults.
 	if err != nil && os.IsNotExist(err) {

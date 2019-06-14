@@ -2,6 +2,9 @@
 
 UNAME_S := $(shell uname -s | tr '[:upper:]' '[:lower:]')
 
+CC := cc
+CFLAGS := -O3
+
 SQLITE3_FLAGS := \
 	-Inative/sqlite3 \
 	-DVERSION=\"3.28.0\" \
@@ -25,12 +28,12 @@ SQLITE3_FLAGS := \
 
 all: lf
 
-lf: native
+lf:	native
 	go build cmd/lf/lf.go
 
 native:	FORCE
-	cc -O3 -c -o native/db_$(UNAME_S).o native/db.c
-	cc -O3 $(SQLITE3_FLAGS) -c -o native/sqlite3_$(UNAME_S).o native/sqlite3/sqlite3.c
+	$(CC) $(CFLAGS) -c -o native/db_$(UNAME_S).o native/db.c
+	$(CC) $(CFLAGS) $(SQLITE3_FLAGS) -c -o native/sqlite3_$(UNAME_S).o native/sqlite3/sqlite3.c
 
 clean:	FORCE
 	rm -rf lf lf-db-test native/*.o native/*.a

@@ -406,7 +406,7 @@ func doNodeConnect(cfg *lf.ClientConfig, basePath string, args []string) (exitCo
 	}
 	urls := cfg.URLs
 	for _, u := range urls {
-		err = lf.APIPostConnect(u, ip, int(port), args[2])
+		err = u.Connect(ip, int(port), lf.Base62Decode(args[2]))
 		if err == nil {
 			break
 		}
@@ -425,11 +425,11 @@ func doStatus(cfg *lf.ClientConfig, basePath string, args []string) (exitCode in
 		exitCode = 1
 		return
 	}
-	var stat *lf.APIStatusResult
+	var stat *lf.NodeStatus
 	var err error
 	urls := cfg.URLs
 	for _, u := range urls {
-		stat, err = lf.APIStatusGet(u)
+		stat, err = u.NodeStatus()
 		if err == nil {
 			break
 		}
@@ -475,7 +475,17 @@ func doGet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool
 
 	urls := cfg.URLs
 	if len(*urlOverride) > 0 {
-		urls = tokenizeStringWithEsc(*urlOverride, ',', '\\')
+		urls2 := tokenizeStringWithEsc(*urlOverride, ',', '\\')
+		urls = nil
+		for i := 0; i < len(urls2); i++ {
+			u, err := lf.NewRemoteNode(urls2[i])
+			if err != nil {
+				logger.Printf("ERROR: invalid URL: %s (%s)", urls2[i], err.Error())
+				exitCode = 1
+				return
+			}
+			urls = append(urls, u)
+		}
 	}
 	if len(urls) == 0 {
 		logger.Println("ERROR: get query failed: no URLs configured!")
@@ -540,7 +550,7 @@ func doGet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool
 
 	var results lf.QueryResults
 	for _, u := range urls {
-		results, err = req.ExecuteRemote(u)
+		results, err = u.ExecuteQuery(req)
 		if err == nil {
 			break
 		}
@@ -737,7 +747,17 @@ func doSet(cfg *lf.ClientConfig, basePath string, args []string) (exitCode int) 
 
 	urls := cfg.URLs
 	if len(*urlOverride) > 0 {
-		urls = tokenizeStringWithEsc(*urlOverride, ',', '\\')
+		urls2 := tokenizeStringWithEsc(*urlOverride, ',', '\\')
+		urls = nil
+		for i := 0; i < len(urls2); i++ {
+			u, err := lf.NewRemoteNode(urls2[i])
+			if err != nil {
+				logger.Printf("ERROR: invalid URL: %s (%s)", urls2[i], err.Error())
+				exitCode = 1
+				return
+			}
+			urls = append(urls, u)
+		}
 	}
 	if len(urls) == 0 {
 		logger.Println("ERROR: set failed: no URLs configured!")
@@ -745,10 +765,10 @@ func doSet(cfg *lf.ClientConfig, basePath string, args []string) (exitCode int) 
 		return
 	}
 
-	var workingURL string
-	var ownerInfo *lf.APIOwnerInfoResult
+	var workingURL lf.RemoteNode
+	var ownerInfo *lf.OwnerStatus
 	for _, u := range urls {
-		ownerInfo, err = lf.APIGetOwnerInfo(u, owner.Public)
+		ownerInfo, err = u.OwnerStatus(owner.Public)
 		if err == nil {
 			workingURL = u
 			break
@@ -772,11 +792,10 @@ func doSet(cfg *lf.ClientConfig, basePath string, args []string) (exitCode int) 
 			}
 			wf = lf.NewWharrgarblr(lf.RecordDefaultWharrgarblMemory, 0)
 		}
-		rec, err = lf.NewRecord(lf.RecordTypeDatum, value, lf.CastHashBlobsToArrays(ownerInfo.Links), mk, plainTextSelectorNames, plainTextSelectorOrdinals, ownerInfo.ServerTime, wf, o)
+		rec, err = lf.NewRecord(lf.RecordTypeDatum, value, lf.CastHashBlobsToArrays(ownerInfo.NewRecordLinks), mk, plainTextSelectorNames, plainTextSelectorOrdinals, ownerInfo.ServerTime, wf, o)
 		if err == nil {
-			rb := rec.Bytes()
 			for trials := 0; trials < 2; trials++ {
-				err = lf.APIPostRecord(workingURL, rb)
+				err = workingURL.AddRecord(rec)
 				if err == nil {
 					break
 				}
@@ -1213,10 +1232,13 @@ func doOwner(cfg *lf.ClientConfig, basePath string, args []string) (exitCode int
 			return
 		}
 
-		var workingURL string
+		var workingURL lf.RemoteNode
 		var links [][32]byte
 		for _, u := range cfg.URLs {
-			links, _, _ = lf.APIGetLinks(u, 0)
+			ownerStatus, _ := u.OwnerStatus(owner.Public)
+			if ownerStatus != nil {
+				links = lf.CastHashBlobsToArrays(ownerStatus.NewRecordLinks)
+			}
 			if len(links) > 0 {
 				workingURL = u
 				break
@@ -1236,7 +1258,7 @@ func doOwner(cfg *lf.ClientConfig, basePath string, args []string) (exitCode int
 		}
 
 		for tries := 0; tries < 3; tries++ {
-			err = lf.APIPostRecord(workingURL, rec.Bytes())
+			err = workingURL.AddRecord(rec)
 			if err == nil {
 				break
 			}
@@ -1276,7 +1298,10 @@ func doURL(cfg *lf.ClientConfig, basePath string, args []string) (exitCode int) 
 			exitCode = 1
 			return
 		}
-		url := strings.TrimSpace(args[1])
+		url, err := lf.NewRemoteNode(strings.TrimSpace(args[1]))
+		if err != nil {
+			fmt.Printf("ERROR: invalid URL: %s (%s)", args[1], err.Error())
+		}
 		have := false
 		for _, u := range cfg.URLs {
 			if u == url {
@@ -1284,7 +1309,7 @@ func doURL(cfg *lf.ClientConfig, basePath string, args []string) (exitCode int) 
 			}
 		}
 		if !have {
-			cfg.URLs = append([]string{url}, cfg.URLs...)
+			cfg.URLs = append([]lf.RemoteNode{url}, cfg.URLs...)
 			cfg.Dirty = true
 		}
 		for _, u := range cfg.URLs {
@@ -1292,13 +1317,16 @@ func doURL(cfg *lf.ClientConfig, basePath string, args []string) (exitCode int) 
 		}
 
 	case "delete":
-		var u2 []string
+		var u2 []lf.RemoteNode
 		if len(args) < 2 {
 			printHelp("")
 			exitCode = 1
 			return
 		}
-		url := strings.TrimSpace(args[1])
+		url, err := lf.NewRemoteNode(strings.TrimSpace(args[1]))
+		if err != nil {
+			fmt.Printf("ERROR: invalid URL: %s (%s)", args[1], err.Error())
+		}
 		for _, u := range cfg.URLs {
 			if u != url {
 				u2 = append(u2, u)
@@ -1311,13 +1339,16 @@ func doURL(cfg *lf.ClientConfig, basePath string, args []string) (exitCode int) 
 		}
 
 	case "default":
-		var u2 []string
+		var u2 []lf.RemoteNode
 		if len(args) < 2 {
 			printHelp("")
 			exitCode = 1
 			return
 		}
-		url := strings.TrimSpace(args[1])
+		url, err := lf.NewRemoteNode(strings.TrimSpace(args[1]))
+		if err != nil {
+			fmt.Printf("ERROR: invalid URL: %s (%s)", args[1], err.Error())
+		}
 		u2 = append(u2, url)
 		for _, u := range cfg.URLs {
 			if u != url {

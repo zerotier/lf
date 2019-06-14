@@ -44,6 +44,7 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
+	"math"
 	"math/rand"
 	"net"
 	"net/http"
@@ -51,9 +52,22 @@ import (
 	"path"
 	"runtime"
 	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+)
+
+const (
+	// DefaultHTTPPort is the default LF HTTP API port
+	DefaultHTTPPort = 9980
+
+	// DefaultP2PPort is the default LF P2P port
+	DefaultP2PPort = 9908
+
+	// MinFreeDiskSpace is the minimum free space on the device holding LF's data files before which the node will gracefully stop.
+	MinFreeDiskSpace = 67108864
 )
 
 const (
@@ -85,15 +99,6 @@ const (
 
 	// Maximum unsuccessful reconnection attempts before a peer is forgotten
 	p2pPeerMaxAttempts = 30
-
-	// DefaultHTTPPort is the default LF HTTP API port
-	DefaultHTTPPort = 9980
-
-	// DefaultP2PPort is the default LF P2P port
-	DefaultP2PPort = 9908
-
-	// MinFreeDiskSpace is the minimum free space on the device holding LF's data files before which the node will gracefully stop.
-	MinFreeDiskSpace = 67108864
 )
 
 var p2pProtoMessageNames = []string{"Nop", "Hello", "Record", "RequestRecordsByHash", "HaveRecords", "Peer"}
@@ -306,7 +311,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 		n.httpServer = &http.Server{
 			MaxHeaderBytes: 4096,
 			ErrorLog:       n.log[LogLevelWarning],
-			Handler:        httpCompressionHandler(apiCreateHTTPServeMux(n)),
+			Handler:        httpCompressionHandler(n.createHTTPServeMux()),
 			IdleTimeout:    10 * time.Second,
 			ReadTimeout:    10 * time.Second,
 			WriteTimeout:   30 * time.Second,
@@ -458,13 +463,13 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 		myURL := fmt.Sprintf("http://127.0.0.1:%d", httpPort)
 		haveURL := false
 		for _, u := range cc.URLs {
-			if u == myURL {
+			if string(u) == myURL {
 				haveURL = true
 				break
 			}
 		}
 		if !haveURL {
-			cc.URLs = append([]string{myURL}, cc.URLs...)
+			cc.URLs = append([]RemoteNode{RemoteNode(myURL)}, cc.URLs...)
 			cc.Save(clientConfigPath)
 		}
 	}
@@ -661,16 +666,16 @@ func (n *Node) ConnectedPeerCount() int {
 }
 
 // Connect attempts to establish a peer-to-peer connection to a remote node.
-func (n *Node) Connect(ip net.IP, port int, identity []byte) {
+func (n *Node) Connect(ip net.IP, port int, identity []byte) error {
 	if n.localTest || bytes.Equal(identity, n.identity) {
-		return
+		return nil
 	}
 
 	n.peersLock.RLock()
 	for _, p := range n.peers {
 		if bytes.Equal(identity, p.identity) {
 			n.peersLock.RUnlock()
-			return
+			return nil
 		}
 	}
 	n.peersLock.RUnlock()
@@ -694,6 +699,8 @@ func (n *Node) Connect(ip net.IP, port int, identity []byte) {
 			conn.Close()
 		}
 	}()
+
+	return nil
 }
 
 // AddRecord adds a record to the database if it's valid and we do not already have it.
@@ -776,7 +783,7 @@ func (n *Node) SetCommentaryEnabled(j bool) {
 }
 
 // GetOwnerCertificates returns all valid non-revoked top-level certificates for a record owner.
-func (n *Node) GetOwnerCertificates(owner OwnerPublic) (certs []*x509.Certificate, revokedCerts []*x509.Certificate) {
+func (n *Node) GetOwnerCertificates(owner OwnerPublic) (certs []*x509.Certificate, revokedCerts []*x509.Certificate, err error) {
 	if len(owner) == 0 {
 		return
 	}
@@ -785,6 +792,7 @@ func (n *Node) GetOwnerCertificates(owner OwnerPublic) (certs []*x509.Certificat
 		e := recover()
 		if e != nil {
 			n.log[LogLevelWarning].Printf("WARNING: panic in GetOwnerCertificate(): %v (bug, but also probably indicates bad cert in data store)", e)
+			err = fmt.Errorf("panic in GetOwnerCertificates(): %v", e)
 		}
 	}()
 
@@ -906,21 +914,110 @@ func (n *Node) GetOwnerCertificates(owner OwnerPublic) (certs []*x509.Certificat
 }
 
 // OwnerHasCurrentCertificate returns true if this owner has a certificate valid at the current time and not revoked.
-func (n *Node) OwnerHasCurrentCertificate(ownerPublic OwnerPublic) bool {
-	certs, _ := n.GetOwnerCertificates(ownerPublic)
+func (n *Node) OwnerHasCurrentCertificate(ownerPublic OwnerPublic) (bool, error) {
+	certs, _, _ := n.GetOwnerCertificates(ownerPublic)
 	now := time.Now().UTC()
 	for _, cert := range certs {
 		if now.After(cert.NotBefore) && now.Before(cert.NotAfter) {
-			return true
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
 
-// GetGenesisParameters gets the parameters for this network that were specified in genesis record(s).
-func (n *Node) GetGenesisParameters() GenesisParameters {
-	return n.genesisParameters
+// NodeStatus returns a NodeStatus with information about this node.
+func (n *Node) NodeStatus() (*NodeStatus, error) {
+	var peers []Peer
+	n.peersLock.RLock()
+	for _, p := range n.peers {
+		port := p.tcpAddress.Port
+		if p.inbound {
+			port = -1
+		}
+		peers = append(peers, Peer{
+			IP:       p.tcpAddress.IP,
+			Port:     port,
+			Identity: p.identity,
+		})
+	}
+	n.peersLock.RUnlock()
+
+	rc, ds := n.db.stats()
+	now := time.Now()
+
+	var oracle OwnerPublic
+	if atomic.LoadUint32(&n.commentary) != 0 {
+		oracle = n.owner.Public
+	}
+
+	return &NodeStatus{
+		Software:          SoftwareName,
+		Version:           Version,
+		APIVersion:        APIVersion,
+		MinAPIVersion:     APIVersion,
+		MaxAPIVersion:     APIVersion,
+		Uptime:            uint64(math.Round(now.Sub(n.startTime).Seconds())),
+		Clock:             uint64(now.Unix()),
+		RecordCount:       rc,
+		DataSize:          ds,
+		FullySynchronized: (atomic.LoadUint32(&n.synchronized) != 0),
+		GenesisParameters: n.genesisParameters,
+		Oracle:            oracle,
+		P2PPort:           n.p2pPort,
+		LocalTestMode:     n.localTest,
+		Identity:          n.identity,
+		Peers:             peers,
+	}, nil
 }
+
+// OwnerStatus returns an OwnerStatus object for an owner.
+func (n *Node) OwnerStatus(ownerPublic OwnerPublic) (*OwnerStatus, error) {
+	recordCount, recordBytes := n.db.getOwnerStats(ownerPublic)
+	certs, revokedCerts, err := n.GetOwnerCertificates(ownerPublic)
+	if err != nil {
+		return nil, err
+	}
+	certsBin, revokedCertsBin := make([]Blob, 0, len(certs)), make([]Blob, 0, len(revokedCerts))
+	certsCurrent := false
+	now := time.Now().UTC()
+	for _, cert := range certs {
+		certsBin = append(certsBin, cert.Raw)
+		if now.After(cert.NotBefore) && now.Before(cert.NotAfter) {
+			certsCurrent = true
+		}
+	}
+	for _, revokedCert := range revokedCerts {
+		revokedCertsBin = append(revokedCertsBin, revokedCert.Raw)
+	}
+	links, _ := n.db.getLinks2(n.genesisParameters.RecordMinLinks)
+	links2 := make([]HashBlob, 0, len(links))
+	for _, l := range links {
+		links2 = append(links2, l)
+	}
+	return &OwnerStatus{
+		Owner:                 ownerPublic,
+		Certificates:          certsBin,
+		RevokedCertificates:   revokedCertsBin,
+		HasCurrentCertificate: certsCurrent,
+		RecordCount:           recordCount,
+		RecordBytes:           recordBytes,
+		NewRecordLinks:        links2,
+		ServerTime:            uint64(now.Unix()),
+	}, nil
+}
+
+// GenesisParameters gets the parameters for this network that were specified in genesis record(s).
+func (n *Node) GenesisParameters() (*GenesisParameters, error) {
+	gp := new(GenesisParameters)
+	*gp = n.genesisParameters
+	return gp, nil
+}
+
+// ExecuteQuery executes a query against this local node.
+func (n *Node) ExecuteQuery(query *Query) (QueryResults, error) { return query.execute(n) }
+
+// IsLocal implements IsLocal in the LF interface, always returns true for Node.
+func (n *Node) IsLocal() bool { return true }
 
 //////////////////////////////////////////////////////////////////////////////
 // Background tasks that are registered with backgroundThreadWG
@@ -1382,7 +1479,7 @@ func (n *Node) recordIsSigned(rec *Record) (*x509.Certificate, bool) {
 	if rec == nil {
 		return nil, false
 	}
-	certs, revokedCerts := n.GetOwnerCertificates(rec.Owner)
+	certs, revokedCerts, _ := n.GetOwnerCertificates(rec.Owner)
 	for _, cert := range certs {
 		if rec.Timestamp >= uint64(cert.NotBefore.Unix()) && rec.Timestamp <= uint64(cert.NotAfter.Unix()) {
 			return cert, false
@@ -1994,4 +2091,251 @@ mainReaderLoop:
 		// Note: continue is used in a few places above, so anything placed here may not
 		// execute on every loop unless that logic is changed.
 	}
+}
+
+//////////////////////////////////////////////////////////////////////////////
+// HTTP API implementation
+//////////////////////////////////////////////////////////////////////////////
+
+func apiSetStandardHeaders(out http.ResponseWriter) {
+	now := time.Now().UTC()
+	h := out.Header()
+	h.Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	h.Set("Expires", "0")
+	h.Set("Pragma", "no-cache")
+	h.Set("Date", now.Format(time.RFC1123))
+	h.Set("X-LF-Version", VersionStr)
+	h.Set("X-LF-APIVersion", APIVersionStr)
+	h.Set("X-LF-Time", strconv.FormatInt(now.Unix(), 10))
+	h.Set("Server", SoftwareName)
+}
+
+func apiSendObj(out http.ResponseWriter, req *http.Request, httpStatusCode int, obj interface{}) error {
+	h := out.Header()
+	h.Set("Content-Type", "application/json")
+	if req.Method == http.MethodHead {
+		out.WriteHeader(httpStatusCode)
+		return nil
+	}
+	var j []byte
+	var err error
+	if obj != nil {
+		j, err = json.Marshal(obj)
+		if err != nil {
+			return err
+		}
+	}
+	out.WriteHeader(httpStatusCode)
+	_, err = out.Write(j)
+	return err
+}
+
+func apiReadObj(out http.ResponseWriter, req *http.Request, dest interface{}) (err error) {
+	err = json.NewDecoder(req.Body).Decode(&dest)
+	if err != nil {
+		apiSendObj(out, req, http.StatusBadRequest, &ErrAPI{Code: http.StatusBadRequest, Message: "invalid or malformed payload"})
+	}
+	return
+}
+
+func (n *Node) apiIsTrusted(req *http.Request) bool {
+	ip, _, err := net.SplitHostPort(req.RemoteAddr)
+	if err != nil {
+		return false
+	}
+	return net.ParseIP(ip).IsLoopback()
+}
+
+func (n *Node) createHTTPServeMux() *http.ServeMux {
+	smux := http.NewServeMux()
+
+	smux.HandleFunc("/query", func(out http.ResponseWriter, req *http.Request) {
+		apiSetStandardHeaders(out)
+		if req.Method == http.MethodPost || req.Method == http.MethodPut {
+			var m Query
+			if apiReadObj(out, req, &m) == nil {
+				results, err := m.execute(n)
+				if err != nil {
+					apiSendObj(out, req, http.StatusBadRequest, &ErrAPI{Code: http.StatusBadRequest, Message: "query failed: " + err.Error()})
+				} else {
+					apiSendObj(out, req, http.StatusOK, results)
+				}
+			}
+		} else {
+			out.Header().Set("Allow", "POST, PUT")
+			apiSendObj(out, req, http.StatusMethodNotAllowed, &ErrAPI{Code: http.StatusMethodNotAllowed, Message: req.Method + " not supported for this path"})
+		}
+	})
+
+	smux.HandleFunc("/record/raw/", func(out http.ResponseWriter, req *http.Request) {
+		apiSetStandardHeaders(out)
+		if req.Method == http.MethodGet || req.Method == http.MethodHead {
+			path := req.URL.Path
+			if strings.HasPrefix(path, "/record/raw/") { // sanity check
+				path = path[12:]
+				if len(path) > 1 && path[0] == '=' {
+					recordHash := Base62Decode(path[1:])
+					if len(recordHash) == 32 {
+						_, data, _ := n.db.getDataByHash(recordHash, nil)
+						if len(data) > 0 {
+							out.Header().Set("Content-Type", "application/octet-stream")
+							out.WriteHeader(http.StatusOK)
+							if req.Method != http.MethodHead {
+								out.Write(data)
+							}
+							return
+						}
+					}
+				}
+			}
+			apiSendObj(out, req, http.StatusNotFound, &ErrAPI{Code: http.StatusNotFound, Message: req.URL.Path + " not found"})
+		} else {
+			out.Header().Set("Allow", "GET, HEAD")
+			apiSendObj(out, req, http.StatusMethodNotAllowed, &ErrAPI{Code: http.StatusMethodNotAllowed, Message: req.Method + " not supported for this path"})
+		}
+	})
+
+	smux.HandleFunc("/record/", func(out http.ResponseWriter, req *http.Request) {
+		apiSetStandardHeaders(out)
+		if req.Method == http.MethodGet || req.Method == http.MethodHead {
+			path := req.URL.Path
+			if strings.HasPrefix(path, "/record/") { // sanity check
+				path = path[8:]
+				if len(path) > 1 && path[0] == '=' {
+					recordHash := Base62Decode(path[1:])
+					if len(recordHash) == 32 {
+						_, data, _ := n.db.getDataByHash(recordHash, nil)
+						if len(data) > 0 {
+							rec, _ := NewRecordFromBytes(data)
+							if rec != nil {
+								apiSendObj(out, req, http.StatusOK, rec)
+								return
+							}
+						}
+					}
+				}
+			}
+			apiSendObj(out, req, http.StatusNotFound, &ErrAPI{Code: http.StatusNotFound, Message: req.URL.Path + " not found"})
+		} else {
+			out.Header().Set("Allow", "GET, HEAD")
+			apiSendObj(out, req, http.StatusMethodNotAllowed, &ErrAPI{Code: http.StatusMethodNotAllowed, Message: req.Method + " not supported for this path"})
+		}
+	})
+
+	smux.HandleFunc("/post", func(out http.ResponseWriter, req *http.Request) {
+		apiSetStandardHeaders(out)
+		if req.Method == http.MethodPost || req.Method == http.MethodPut {
+			var rec Record
+			err := rec.UnmarshalFrom(req.Body)
+			if err != nil {
+				apiSendObj(out, req, http.StatusBadRequest, &ErrAPI{Code: http.StatusBadRequest, Message: "record deserialization failed: " + err.Error()})
+			} else {
+				err = n.AddRecord(&rec)
+				if err != nil && err != ErrDuplicateRecord {
+					apiSendObj(out, req, http.StatusBadRequest, &ErrAPI{Code: 0, Message: "record rejected or record import failed: " + err.Error(), ErrTypeName: errTypeName(err)})
+				} else {
+					apiSendObj(out, req, http.StatusOK, nil)
+				}
+			}
+		} else {
+			out.Header().Set("Allow", "POST, PUT")
+			apiSendObj(out, req, http.StatusMethodNotAllowed, &ErrAPI{Code: http.StatusMethodNotAllowed, Message: req.Method + " not supported for this path"})
+		}
+	})
+
+	smux.HandleFunc("/links", func(out http.ResponseWriter, req *http.Request) {
+		apiSetStandardHeaders(out)
+		if req.Method == http.MethodGet || req.Method == http.MethodHead {
+			desired := n.genesisParameters.RecordMinLinks // default is min links for this LF DAG
+			desiredStr := req.URL.Query().Get("count")
+			if len(desiredStr) > 0 {
+				tmp, _ := strconv.ParseInt(desiredStr, 10, 64)
+				if tmp <= 0 {
+					tmp = 1
+				}
+				desired = uint(tmp)
+			}
+			if desired > RecordMaxLinks {
+				desired = RecordMaxLinks
+			}
+			out.Header().Set("Content-Type", "application/octet-stream")
+			out.WriteHeader(http.StatusOK)
+			if desired > 0 {
+				_, links, _ := n.db.getLinks(desired)
+				out.Write(links)
+			}
+		} else {
+			out.Header().Set("Allow", "GET, HEAD")
+			apiSendObj(out, req, http.StatusMethodNotAllowed, &ErrAPI{Code: http.StatusMethodNotAllowed, Message: req.Method + " not supported for this path"})
+		}
+	})
+
+	smux.HandleFunc("/status", func(out http.ResponseWriter, req *http.Request) {
+		apiSetStandardHeaders(out)
+		if req.Method == http.MethodGet || req.Method == http.MethodHead {
+			nodeStatus, err := n.NodeStatus()
+			if err != nil {
+				apiSendObj(out, req, http.StatusInternalServerError, &ErrAPI{Code: http.StatusInternalServerError, Message: err.Error(), ErrTypeName: errTypeName(err)})
+			}
+			apiSendObj(out, req, http.StatusOK, nodeStatus)
+		} else {
+			out.Header().Set("Allow", "GET, HEAD")
+			apiSendObj(out, req, http.StatusMethodNotAllowed, &ErrAPI{Code: http.StatusMethodNotAllowed, Message: req.Method + " not supported for this path"})
+		}
+	})
+
+	smux.HandleFunc("/connect", func(out http.ResponseWriter, req *http.Request) {
+		apiSetStandardHeaders(out)
+		if req.Method == http.MethodPost || req.Method == http.MethodPut {
+			if n.apiIsTrusted(req) {
+				var m Peer
+				if apiReadObj(out, req, &m) == nil {
+					n.Connect(m.IP, m.Port, m.Identity)
+					apiSendObj(out, req, http.StatusOK, nil)
+				}
+			} else {
+				apiSendObj(out, req, http.StatusForbidden, &ErrAPI{Code: http.StatusMethodNotAllowed, Message: "only trusted clients can suggest P2P endpoints"})
+			}
+		} else {
+			out.Header().Set("Allow", "POST, PUT")
+			apiSendObj(out, req, http.StatusMethodNotAllowed, &ErrAPI{Code: http.StatusMethodNotAllowed, Message: req.Method + " not supported for this path"})
+		}
+	})
+
+	smux.HandleFunc("/owner/", func(out http.ResponseWriter, req *http.Request) {
+		apiSetStandardHeaders(out)
+		if req.Method == http.MethodGet || req.Method == http.MethodHead {
+			path := req.URL.Path
+			if strings.HasPrefix(path, "/owner/") { // sanity check
+				path = path[7:]
+				if len(path) > 1 && path[0] == '@' {
+					ownerPublic, _ := NewOwnerPublicFromString(path)
+					if len(ownerPublic) > 0 {
+						ownerStatus, err := n.OwnerStatus(ownerPublic)
+						if err != nil {
+							apiSendObj(out, req, http.StatusInternalServerError, &ErrAPI{Code: http.StatusInternalServerError, Message: err.Error(), ErrTypeName: errTypeName(err)})
+						}
+						apiSendObj(out, req, http.StatusOK, ownerStatus)
+						return
+					}
+				}
+			}
+			apiSendObj(out, req, http.StatusNotFound, &ErrAPI{Code: http.StatusNotFound, Message: req.URL.Path + " not found"})
+		} else {
+			out.Header().Set("Allow", "GET, HEAD")
+			apiSendObj(out, req, http.StatusMethodNotAllowed, &ErrAPI{Code: http.StatusMethodNotAllowed, Message: req.Method + " not supported for this path"})
+		}
+	})
+
+	smux.HandleFunc("/", func(out http.ResponseWriter, req *http.Request) {
+		apiSetStandardHeaders(out)
+		if req.Method == http.MethodGet || req.Method == http.MethodHead {
+			apiSendObj(out, req, http.StatusNotFound, &ErrAPI{Code: http.StatusNotFound, Message: req.URL.Path + " not found"})
+		} else {
+			out.Header().Set("Allow", "GET, HEAD")
+			apiSendObj(out, req, http.StatusMethodNotAllowed, &ErrAPI{Code: http.StatusMethodNotAllowed, Message: req.Method + " not supported for this path"})
+		}
+	})
+
+	return smux
 }

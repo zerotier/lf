@@ -28,11 +28,9 @@ package lf
 
 import (
 	"bytes"
-	"encoding/json"
 	"hash/crc64"
 	"math"
 	"sort"
-	"strings"
 )
 
 const (
@@ -117,32 +115,13 @@ type QueryResult struct {
 // zero records, though remote code should check to prevent exceptions.
 type QueryResults [][]QueryResult
 
-// ExecuteRemote executes this query against a remote LF node instance.
-func (m *Query) ExecuteRemote(url string) (QueryResults, error) {
-	if strings.HasSuffix(url, "/") {
-		url = url + "query"
-	} else {
-		url = url + "/query"
-	}
-	body, err := apiRun(url, &m)
-	if err != nil {
-		return nil, err
-	}
-	var qr QueryResults
-	if err := json.Unmarshal(body, &qr); err != nil {
-		return nil, err
-	}
-	return qr, nil
-}
-
 type apiQueryResultTmp struct {
 	weightL, weightH, doff, dlen uint64
 	localReputation              int
 	negativeComments             uint
 }
 
-// Execute executes this query against a local Node instance.
-func (m *Query) Execute(n *Node) (qr QueryResults, err error) {
+func (m *Query) execute(n *Node) (qr QueryResults, err error) {
 	// Set up selector ranges using sender-supplied or computed selector keys.
 	mm := m.Ranges
 	if len(mm) == 0 {

@@ -493,12 +493,11 @@ func (fsn *fsDir) Lookup(ctx context.Context, name string) (fusefs.Node, error) 
 	if len(maskingKey) == 0 {
 		maskingKey = fsn.selectorName
 	}
-	q := Query{
+	qr, _ := fsn.fs.node.ExecuteQuery(&Query{
 		Ranges:     []QueryRange{QueryRange{KeyRange: []Blob{MakeSelectorKey(fsn.selectorName, inode)}}},
 		MaskingKey: maskingKey,
 		Limit:      &eight,
-	}
-	qr, _ := q.Execute(fsn.fs.node)
+	})
 
 	for _, results := range qr {
 		for _, result := range results {
@@ -599,12 +598,11 @@ func (fsn *fsDir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 	if len(maskingKey) == 0 {
 		maskingKey = fsn.selectorName
 	}
-	q := Query{
+	qr, _ := fsn.fs.node.ExecuteQuery(&Query{
 		Ranges:     []QueryRange{QueryRange{KeyRange: []Blob{MakeSelectorKey(fsn.selectorName, 0), MakeSelectorKey(fsn.selectorName, OrdinalMaxValue)}}},
 		MaskingKey: maskingKey,
 		Limit:      &one,
-	}
-	qr, _ := q.Execute(fsn.fs.node)
+	})
 
 	fsn.fs.cacheLock.Lock()
 	defer fsn.fs.cacheLock.Unlock()
@@ -972,7 +970,8 @@ func (fsn *fsDir) commit() error {
 	fsn.fs.cacheLock.Unlock()
 
 	var wf *Wharrgarblr
-	if !fsn.fs.node.OwnerHasCurrentCertificate(fsn.fs.owner.Public) {
+	ownerHasCert, _ := fsn.fs.node.OwnerHasCurrentCertificate(fsn.fs.owner.Public)
+	if !ownerHasCert {
 		wf = fsn.fs.getWorkFunction()
 	}
 
@@ -1180,7 +1179,8 @@ func (fsn *fsFile) commit() error {
 	}
 
 	var wf *Wharrgarblr
-	if !fsn.parent.fs.node.OwnerHasCurrentCertificate(fsn.parent.fs.owner.Public) {
+	ownerHasCert, _ := fsn.parent.fs.node.OwnerHasCurrentCertificate(fsn.parent.fs.owner.Public)
+	if !ownerHasCert {
 		wf = fsn.parent.fs.getWorkFunction()
 	}
 
@@ -1212,12 +1212,11 @@ func (fsn *fsFile) commit() error {
 		fh.oversizeDepth = 0
 
 		storeChunkByIdentityHash := func(chunk, chunkHash []byte) (*Record, error) {
-			q := Query{
+			qr, _ := fsn.parent.fs.node.ExecuteQuery(&Query{
 				Ranges:     []QueryRange{QueryRange{KeyRange: []Blob{MakeSelectorKey(chunkHash, 0)}}},
 				MaskingKey: chunkHash[0:16],
 				Limit:      &one,
-			}
-			qr, _ := q.Execute(fsn.parent.fs.node)
+			})
 			for _, results := range qr {
 				for _, result := range results {
 					if len(result.Value) > 0 {

@@ -28,39 +28,27 @@ package lf
 
 import (
 	"fmt"
+	"reflect"
 )
+
+// errTypeName returns the type name of an error minus any leading * character.
+func errTypeName(err error) string {
+	if err == nil {
+		return ""
+	}
+	et := reflect.TypeOf(err)
+	if et.Kind() == reflect.Ptr {
+		return et.Elem().Name()
+	}
+	return et.Name()
+}
+
+//////////////////////////////////////////////////////////////////////////////
 
 // Err indicates a general LF error such as an invalid parameter or state.
 type Err string
 
 func (e Err) Error() string { return (string)(e) }
-
-// ErrRecord indicates an error related to an invalid record or a record failing a check.
-type ErrRecord string
-
-func (e ErrRecord) Error() string { return (string)(e) }
-
-// ErrTrappedPanic indicates a panic trapped by recover() and returned as an error.
-type ErrTrappedPanic struct {
-	PanicErr interface{}
-}
-
-func (e ErrTrappedPanic) Error() string {
-	return fmt.Sprintf("trapped unexpected panic: %v", e.PanicErr)
-}
-
-// ErrDatabase contains information about a database related problem.
-type ErrDatabase struct {
-	// ErrCode is the error code returned by the C database module.
-	ErrCode int
-
-	// ErrMessage is an error message supplied by the C code or by Go (optional)
-	ErrMessage string
-}
-
-func (e ErrDatabase) Error() string {
-	return fmt.Sprintf("database error: %d (%s)", e.ErrCode, e.ErrMessage)
-}
 
 // General errors
 const (
@@ -83,6 +71,13 @@ const (
 	ErrAlreadyMounted         Err = "mount point already mounted"
 )
 
+//////////////////////////////////////////////////////////////////////////////
+
+// ErrRecord indicates an error related to an invalid record or a record failing a check.
+type ErrRecord string
+
+func (e ErrRecord) Error() string { return (string)(e) }
+
 // Errs indicating that a record is invalid
 const (
 	ErrRecordInvalid                   ErrRecord = "record invalid"
@@ -102,3 +97,37 @@ const (
 	ErrRecordCertificateRequired       ErrRecord = "certificate required"
 	ErrRecordProhibited                ErrRecord = "record administratively prohibited"
 )
+
+//////////////////////////////////////////////////////////////////////////////
+
+// ErrDatabase contains information about a database related problem.
+type ErrDatabase struct {
+	// ErrCode is the error code returned by the C database module.
+	ErrCode int
+
+	// ErrMessage is an error message supplied by the C code or by Go (optional)
+	ErrMessage string
+}
+
+func (e ErrDatabase) Error() string {
+	return fmt.Sprintf("database error: %d (%s)", e.ErrCode, e.ErrMessage)
+}
+
+//////////////////////////////////////////////////////////////////////////////
+
+// ErrAPI (response) indicates an error and is returned with non-200 responses.
+type ErrAPI struct {
+	Code        int    ``                  // HTTP response code
+	Message     string `json:",omitempty"` // Message indicating the reason for the error
+	ErrTypeName string `json:",omitempty"` // Name of LF native error or empty if HTTP or transport error
+}
+
+// Error implements the error interface, making APIError an 'error' in the Go sense.
+func (e ErrAPI) Error() string {
+	if len(e.ErrTypeName) > 0 {
+		return fmt.Sprintf("%d:%s:%s", e.Code, e.ErrTypeName, e.Message)
+	}
+	return fmt.Sprintf("%d:%s", e.Code, e.Message)
+}
+
+//////////////////////////////////////////////////////////////////////////////

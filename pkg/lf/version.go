@@ -26,7 +26,10 @@
 
 package lf
 
-import "fmt"
+import (
+	"fmt"
+	"strconv"
+)
 
 // LF version and software implementation name
 const (
@@ -49,3 +52,6 @@ var Version = [4]int{VersionMajor, VersionMinor, VersionRevision, VersionBuild}
 
 // VersionStr is the version in string form.
 var VersionStr = fmt.Sprintf("%d.%d.%d.%d", VersionMajor, VersionMinor, VersionRevision, VersionBuild)
+
+// APIVersionStr is the API version in string form.
+var APIVersionStr = strconv.FormatUint(uint64(APIVersion), 10)
