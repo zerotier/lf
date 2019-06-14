@@ -609,7 +609,7 @@ func (n *Node) Mount(owner *Owner, maxFileSize int, mountPoint string, rootSelec
 	if owner == nil {
 		owner = n.owner
 	}
-	fs, err := NewFS(n, mountPoint, rootSelectorName, owner, maxFileSize, nil, maskingKey)
+	fs, err := NewFS([]LF{n}, n.log[LogLevelNormal], n.log[LogLevelWarning], mountPoint, rootSelectorName, owner, maxFileSize, nil, maskingKey)
 	if err != nil {
 		return nil, err
 	}
@@ -762,6 +762,18 @@ func (n *Node) AddRecord(r *Record) error {
 	}
 
 	return nil
+}
+
+// GetRecord gets a record from its exact hash.
+func (n *Node) GetRecord(hash []byte) (*Record, error) {
+	if len(hash) != 32 {
+		return nil, ErrInvalidParameter
+	}
+	_, data, err := n.db.getDataByHash(hash, nil)
+	if err != nil {
+		return nil, err
+	}
+	return NewRecordFromBytes(data)
 }
 
 // SetCommentaryEnabled sets whether or not background CPU power is used to render commentary.

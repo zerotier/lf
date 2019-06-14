@@ -145,6 +145,18 @@ func (rn RemoteNode) AddRecord(rec *Record) error {
 	return nil
 }
 
+// GetRecord looks up a record by its exact hash.
+func (rn RemoteNode) GetRecord(hash []byte) (*Record, error) {
+	if len(hash) == 32 {
+		return nil, ErrInvalidParameter
+	}
+	body, err := apiRequest(string(rn)+"/record/raw/="+Base62Encode(hash), nil)
+	if err != nil {
+		return nil, err
+	}
+	return NewRecordFromBytes(body)
+}
+
 // GenesisParameters returns this network's current global parameters.
 func (rn RemoteNode) GenesisParameters() (*GenesisParameters, error) {
 	ns, err := rn.NodeStatus()

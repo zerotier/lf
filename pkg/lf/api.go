@@ -83,6 +83,7 @@ type NodeStatus struct {
 // LF provides a common interface for local (same Go process) or remote (HTTP/HTTPS API) nodes.
 type LF interface {
 	AddRecord(*Record) error
+	GetRecord(hash []byte) (*Record, error)
 	GenesisParameters() (*GenesisParameters, error)
 	NodeStatus() (*NodeStatus, error)
 	OwnerStatus(OwnerPublic) (*OwnerStatus, error)

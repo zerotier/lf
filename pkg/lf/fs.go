@@ -34,6 +34,7 @@ import (
 	"fmt"
 	"hash/crc64"
 	"io/ioutil"
+	"log"
 	"os"
 	"path"
 	"runtime"
@@ -100,7 +101,10 @@ type fsPasswdEntry struct {
 
 // FS allows the LF to be mounted as a FUSE filesystem.
 type FS struct {
-	node             *Node
+	ds               []LF
+	normalLog        *log.Logger
+	warningLog       *log.Logger
+	gp               *GenesisParameters
 	mountPoint       string
 	maxFileSize      int
 	rootSelectorName []byte
@@ -204,9 +208,23 @@ func (h *fsFileHeader) readFrom(b []byte) ([]byte, error) {
 //////////////////////////////////////////////////////////////////////////////
 
 // NewFS creates and mounts a new virtual filesystem.
-func NewFS(n *Node, mountPoint string, rootSelectorName []byte, owner *Owner, maxFileSize int, authSignature []byte, maskingKey []byte) (*FS, error) {
-	if n.genesisParameters.RecordMaxValueSize < fsMinRecordValueSize {
-		return nil, fmt.Errorf("LF data store must allow record values of at least %d bytes to use lffs", fsMinRecordValueSize)
+func NewFS(ds []LF, normalLog *log.Logger, warningLog *log.Logger, mountPoint string, rootSelectorName []byte, owner *Owner, maxFileSize int, authSignature []byte, maskingKey []byte) (*FS, error) {
+	if len(ds) == 0 {
+		return nil, errors.New("at least one data source must be supplied (Node, RemoteNode, etc.)")
+	}
+
+	var gp *GenesisParameters
+	for _, ds2 := range ds {
+		gp, _ := ds2.GenesisParameters()
+		if gp != nil {
+			break
+		}
+	}
+	if gp == nil {
+		return nil, errors.New("unable to retrieve genesis parameters from any data source")
+	}
+	if gp.RecordMaxValueSize < fsMinRecordValueSize {
+		return nil, fmt.Errorf("network must permit record values of at least %d bytes", fsMinRecordValueSize)
 	}
 
 	os.MkdirAll(mountPoint, 0755)
@@ -222,8 +240,13 @@ func NewFS(n *Node, mountPoint string, rootSelectorName []byte, owner *Owner, ma
 		return nil, fmt.Errorf("max file size cannot be larger than %d", fsMaxFileSize)
 	}
 	ownerName, ownerUID := fsLfOwnerToUser(owner.Public)
+	dsCopy := make([]LF, len(ds))
+	copy(dsCopy, ds)
 	fs := &fsImpl{FS: FS{
-		node:             n,
+		ds:               dsCopy,
+		normalLog:        normalLog,
+		warningLog:       warningLog,
+		gp:               gp,
 		mountPoint:       mountPoint,
 		maxFileSize:      maxFileSize,
 		rootSelectorName: rootSelectorName,
@@ -263,7 +286,7 @@ func NewFS(n *Node, mountPoint string, rootSelectorName []byte, owner *Owner, ma
 
 	//fuse.Debug = func(msg interface{}) { fmt.Printf("%v\n", msg) }
 
-	n.log[LogLevelNormal].Printf("lffs: mounting %s at %s with records owned by %s", rootSelectorName, mountPoint, owner.String())
+	normalLog.Printf("lffs: mounting %s at %s with records owned by %s", rootSelectorName, mountPoint, owner.String())
 	fuse.Unmount(mountPoint)
 	time.Sleep(time.Millisecond * 100)
 	fuse.Unmount(mountPoint)
@@ -273,7 +296,7 @@ func NewFS(n *Node, mountPoint string, rootSelectorName []byte, owner *Owner, ma
 		fuse.DaemonTimeout("30"),
 		fuse.FSName("lffs"),
 		fuse.Subtype("lffs"),
-		fuse.VolumeName("lf-"+n.genesisParameters.Name+"-"+string(nameEscaped)),
+		fuse.VolumeName("lf-"+string(nameEscaped)),
 		fuse.LocalVolume(),
 		fuse.NoAppleXattr(),
 		fuse.NoAppleDouble(),
@@ -281,7 +304,7 @@ func NewFS(n *Node, mountPoint string, rootSelectorName []byte, owner *Owner, ma
 		fuse.AllowOther(),
 	)
 	if err != nil {
-		n.log[LogLevelWarning].Printf("lffs: FUSE mount failed: %s", err.Error())
+		warningLog.Printf("lffs: FUSE mount failed: %s", err.Error())
 		return nil, err
 	}
 
@@ -289,7 +312,7 @@ func NewFS(n *Node, mountPoint string, rootSelectorName []byte, owner *Owner, ma
 		defer func() {
 			e := recover()
 			if e != nil {
-				n.log[LogLevelWarning].Printf("WARNING: unexpected panic in fs layer: %v", e)
+				warningLog.Printf("WARNING: unexpected panic in fs layer: %v", e)
 			}
 		}()
 
@@ -300,18 +323,18 @@ func NewFS(n *Node, mountPoint string, rootSelectorName []byte, owner *Owner, ma
 			isClosed := fs.fconn == nil
 			fs.fconnLock.Unlock()
 			if !isClosed {
-				n.log[LogLevelWarning].Printf("WARNING: lffs: FUSE subsystem failed to enter server mode: %s", fs.fconn.MountError.Error())
+				warningLog.Printf("WARNING: lffs: FUSE subsystem failed to enter server mode: %s", fs.fconn.MountError.Error())
 			}
 		} else {
-			n.log[LogLevelNormal].Printf("lffs: serving at %s", mountPoint)
+			normalLog.Printf("lffs: serving at %s", mountPoint)
 			err := fusefs.Serve(fs.fconn, fs)
 			fs.fconnLock.Lock()
 			isClosed := fs.fconn == nil
 			fs.fconnLock.Unlock()
 			if err != nil && !isClosed {
-				n.log[LogLevelWarning].Printf("WARNING: lffs: FUSE subsystem failed to enter server mode: %s", err.Error())
+				warningLog.Printf("WARNING: lffs: FUSE subsystem failed to enter server mode: %s", err.Error())
 			} else {
-				n.log[LogLevelNormal].Printf("lffs: unmounted from %s", mountPoint)
+				normalLog.Printf("lffs: unmounted from %s", mountPoint)
 			}
 			fuse.Unmount(mountPoint)
 		}
@@ -342,7 +365,7 @@ func NewFS(n *Node, mountPoint string, rootSelectorName []byte, owner *Owner, ma
 					defer func() {
 						e := recover()
 						if e != nil {
-							fs.node.log[LogLevelWarning].Printf("WARNING: lffs: panic during FS commit operation: %v", e)
+							fs.warningLog.Printf("WARNING: lffs: panic during FS commit operation: %v", e)
 						}
 						fswg.Done()
 					}()
@@ -493,11 +516,18 @@ func (fsn *fsDir) Lookup(ctx context.Context, name string) (fusefs.Node, error) 
 	if len(maskingKey) == 0 {
 		maskingKey = fsn.selectorName
 	}
-	qr, _ := fsn.fs.node.ExecuteQuery(&Query{
+	q := &Query{
 		Ranges:     []QueryRange{QueryRange{KeyRange: []Blob{MakeSelectorKey(fsn.selectorName, inode)}}},
 		MaskingKey: maskingKey,
 		Limit:      &eight,
-	})
+	}
+	var qr QueryResults
+	for _, ds := range fsn.fs.ds {
+		qr, _ = ds.ExecuteQuery(q)
+		if qr != nil {
+			break
+		}
+	}
 
 	for _, results := range qr {
 		for _, result := range results {
@@ -598,11 +628,18 @@ func (fsn *fsDir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 	if len(maskingKey) == 0 {
 		maskingKey = fsn.selectorName
 	}
-	qr, _ := fsn.fs.node.ExecuteQuery(&Query{
+	q := &Query{
 		Ranges:     []QueryRange{QueryRange{KeyRange: []Blob{MakeSelectorKey(fsn.selectorName, 0), MakeSelectorKey(fsn.selectorName, OrdinalMaxValue)}}},
 		MaskingKey: maskingKey,
 		Limit:      &one,
-	})
+	}
+	var qr QueryResults
+	for _, ds := range fsn.fs.ds {
+		qr, _ = ds.ExecuteQuery(q)
+		if qr != nil {
+			break
+		}
+	}
 
 	fsn.fs.cacheLock.Lock()
 	defer fsn.fs.cacheLock.Unlock()
@@ -954,9 +991,15 @@ func (fsn *fsDir) commit() error {
 	rdata := make([]byte, 0, len(fsn.fsFileHeader.name)+16)
 	rdata = fsn.fsFileHeader.appendTo(rdata)
 
-	links, err := fsn.fs.node.db.getLinks2(fsn.fs.node.genesisParameters.RecordMinLinks)
-	if err != nil {
-		return err
+	var os *OwnerStatus
+	for _, ds := range fsn.fs.ds {
+		os, _ = ds.OwnerStatus(fsn.fs.owner.Public)
+		if os != nil {
+			break
+		}
+	}
+	if os == nil {
+		return fuse.EIO
 	}
 
 	ts := TimeSec()
@@ -970,17 +1013,23 @@ func (fsn *fsDir) commit() error {
 	fsn.fs.cacheLock.Unlock()
 
 	var wf *Wharrgarblr
-	ownerHasCert, _ := fsn.fs.node.OwnerHasCurrentCertificate(fsn.fs.owner.Public)
-	if !ownerHasCert {
+	if !os.HasCurrentCertificate {
 		wf = fsn.fs.getWorkFunction()
 	}
 
-	rec, err := NewRecord(RecordTypeDatum, rdata, links, fsn.fs.maskingKey, [][]byte{fsn.parent.selectorName}, []uint64{fsn.inode}, ts, wf, fsn.fs.owner)
+	rec, err := NewRecord(RecordTypeDatum, rdata, CastHashBlobsToArrays(os.NewRecordLinks), fsn.fs.maskingKey, [][]byte{fsn.parent.selectorName}, []uint64{fsn.inode}, ts, wf, fsn.fs.owner)
 	if err != nil {
 		return err
 	}
 
-	return fsn.fs.node.AddRecord(rec)
+	var addErr error
+	for _, ds := range fsn.fs.ds {
+		addErr = ds.AddRecord(rec)
+		if addErr == nil {
+			break
+		}
+	}
+	return addErr
 }
 
 func (fsn *fsDir) header() *fsFileHeader {
@@ -1025,29 +1074,25 @@ type fsFile struct {
 }
 
 func (fsn *fsFile) dechunk() error {
-	db := &fsn.parent.fs.node.db
-	var buf []byte
-	var err error
+	var rec *Record
 	for fsn.fsFileHeader.oversizeDepth > 0 {
 		fsn.fsFileHeader.oversizeDepth--
 		newData := make([]byte, 0, 1024)
 		for i := 0; (i + 48) <= len(fsn.data); i += 48 {
-			_, buf, err = db.getDataByHash(fsn.data[i:i+32], buf)
+			for _, ds := range fsn.parent.fs.ds {
+				rec, _ = ds.GetRecord(fsn.data[i : i+32])
+				if rec != nil {
+					break
+				}
+			}
+			if rec == nil {
+				return fuse.EIO
+			}
+			rdata, err := rec.GetValue(fsn.data[i+32 : i+48])
 			if err != nil {
 				return err
 			}
-			if len(buf) > 0 {
-				rec, err := NewRecordFromBytes(buf)
-				if err != nil {
-					return err
-				}
-				rdata, err := rec.GetValue(fsn.data[i+32 : i+48])
-				if err != nil {
-					return err
-				}
-				newData = append(newData, rdata...)
-				buf = buf[:0]
-			}
+			newData = append(newData, rdata...)
 		}
 		fsn.data = newData
 	}
@@ -1178,9 +1223,16 @@ func (fsn *fsFile) commit() error {
 		return ErrInvalidObject
 	}
 
+	var os *OwnerStatus
+	for _, ds := range fsn.parent.fs.ds {
+		os, _ = ds.OwnerStatus(fsn.parent.fs.owner.Public)
+	}
+	if os == nil {
+		return fuse.EIO
+	}
+
 	var wf *Wharrgarblr
-	ownerHasCert, _ := fsn.parent.fs.node.OwnerHasCurrentCertificate(fsn.parent.fs.owner.Public)
-	if !ownerHasCert {
+	if !os.HasCurrentCertificate {
 		wf = fsn.parent.fs.getWorkFunction()
 	}
 
@@ -1206,17 +1258,28 @@ func (fsn *fsFile) commit() error {
 	// acts as a global (across the whole LF data store) deduplicating storage
 	// system. This doesn't compromise data privacy since if you don't know the hash
 	// of the content you want you can't look it up or decrypt it.
-	maxValueSize := int(fsn.parent.fs.node.genesisParameters.RecordMaxValueSize)
+	maxValueSize := int(fsn.parent.fs.gp.RecordMaxValueSize)
 	if len(rdata) > maxValueSize {
 		fh := fsn.fsFileHeader
 		fh.oversizeDepth = 0
 
 		storeChunkByIdentityHash := func(chunk, chunkHash []byte) (*Record, error) {
-			qr, _ := fsn.parent.fs.node.ExecuteQuery(&Query{
+			q := &Query{
 				Ranges:     []QueryRange{QueryRange{KeyRange: []Blob{MakeSelectorKey(chunkHash, 0)}}},
 				MaskingKey: chunkHash[0:16],
 				Limit:      &one,
-			})
+			}
+			var qr QueryResults
+			var err error
+			for _, ds := range fsn.parent.fs.ds {
+				qr, err = ds.ExecuteQuery(q)
+				if err == nil {
+					break
+				}
+			}
+			if err != nil {
+				return nil, err
+			}
 			for _, results := range qr {
 				for _, result := range results {
 					if len(result.Value) > 0 {
@@ -1228,19 +1291,17 @@ func (fsn *fsFile) commit() error {
 				}
 			}
 
-			links, err := fsn.parent.fs.node.db.getLinks2(fsn.parent.fs.node.genesisParameters.RecordMinLinks)
+			rec, err := NewRecord(RecordTypeDatum, chunk, CastHashBlobsToArrays(os.NewRecordLinks), chunkHash[0:16], [][]byte{chunkHash}, []uint64{0}, ts, wf, fsn.parent.fs.owner)
 			if err != nil {
 				return nil, err
 			}
-			rec, err := NewRecord(RecordTypeDatum, chunk, links, chunkHash[0:16], [][]byte{chunkHash}, []uint64{0}, ts, wf, fsn.parent.fs.owner)
-			if err != nil {
-				return nil, err
+			for _, ds := range fsn.parent.fs.ds {
+				err = ds.AddRecord(rec)
+				if err == nil {
+					break
+				}
 			}
-			err = fsn.parent.fs.node.AddRecord(rec)
-			if err != nil {
-				return nil, err
-			}
-			return rec, nil
+			return rec, err
 		}
 
 		// Make average chunk size a little more than half the value size. Chunks will be
@@ -1291,16 +1352,18 @@ func (fsn *fsFile) commit() error {
 		}
 	}
 
-	links, err := fsn.parent.fs.node.db.getLinks2(fsn.parent.fs.node.genesisParameters.RecordMinLinks)
-	if err != nil {
-		return err
-	}
-	rec, err := NewRecord(RecordTypeDatum, rdata, links, fsn.parent.fs.maskingKey, [][]byte{fsn.parent.selectorName}, []uint64{fsn.inode}, ts, wf, fsn.parent.fs.owner)
+	rec, err := NewRecord(RecordTypeDatum, rdata, CastHashBlobsToArrays(os.NewRecordLinks), fsn.parent.fs.maskingKey, [][]byte{fsn.parent.selectorName}, []uint64{fsn.inode}, ts, wf, fsn.parent.fs.owner)
 	if err != nil {
 		return err
 	}
 
-	return fsn.parent.fs.node.AddRecord(rec)
+	for _, ds := range fsn.parent.fs.ds {
+		err = ds.AddRecord(rec)
+		if err == nil {
+			break
+		}
+	}
+	return err
 }
 
 func (fsn *fsFile) header() *fsFileHeader {
