@@ -46,7 +46,8 @@ const APIMaxResponseSize = 4194304
 var httpClient = http.Client{Timeout: time.Second * 30}
 
 func apiRequest(url string, m interface{}) ([]byte, error) {
-	var requestBody *bytes.Reader
+	var requestBody io.Reader
+	requestBody = http.NoBody
 	method := "GET"
 	if m != nil {
 		method = "POST"

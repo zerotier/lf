@@ -990,10 +990,6 @@ func (n *Node) OwnerStatus(ownerPublic OwnerPublic) (*OwnerStatus, error) {
 		revokedCertsBin = append(revokedCertsBin, revokedCert.Raw)
 	}
 	links, _ := n.db.getLinks2(n.genesisParameters.RecordMinLinks)
-	links2 := make([]HashBlob, 0, len(links))
-	for _, l := range links {
-		links2 = append(links2, l)
-	}
 	return &OwnerStatus{
 		Owner:                 ownerPublic,
 		Certificates:          certsBin,
@@ -1001,7 +997,7 @@ func (n *Node) OwnerStatus(ownerPublic OwnerPublic) (*OwnerStatus, error) {
 		HasCurrentCertificate: certsCurrent,
 		RecordCount:           recordCount,
 		RecordBytes:           recordBytes,
-		NewRecordLinks:        links2,
+		NewRecordLinks:        CastArraysToHashBlobs(links),
 		ServerTime:            uint64(now.Unix()),
 	}, nil
 }
