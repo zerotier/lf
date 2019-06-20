@@ -32,17 +32,18 @@ import (
 
 // OwnerStatus is describes the status of an owner according to the current node.
 type OwnerStatus struct {
-	Owner                 OwnerPublic ``                  // Public portion of owner (from query)
+	Owner                 OwnerPublic ``                  // Public portion of owner
 	Certificates          []Blob      `json:",omitempty"` // Certificates in DER format
 	RevokedCertificates   []Blob      `json:",omitempty"` // Revoked certificated in DER format
-	HasCurrentCertificate bool        ``                  // True if at least one certificate's time range contains the current time
+	HasCurrentCertificate bool        ``                  // True if there is at least one valid non-revoked certificate (as of current time)
 	RecordCount           uint64      ``                  // Number of records in data store by this owner
 	RecordBytes           uint64      ``                  // Number of bytes of records by this owner
-	NewRecordLinks        []HashBlob  `json:",omitempty"` // Suggested links for a new record (for convenience to avoid two API calls)
-	ServerTime            uint64      ``                  // Server time in seconds since epoch
+	NewRecordLinks        []HashBlob  `json:",omitempty"` // Suggested links for a new record (for convenience to avoid multiple API calls)
+	ServerTime            uint64      ``                  // Server time in seconds since epoch (time used to determine HasCurrentCertificate)
 }
 
-// MountPoint describes a FUSE lffs mount point
+// MountPoint describes a FUSE lffs mount point.
+// This is currently used as the record type in mounts.json for having full nodes mount LFFS locally.
 type MountPoint struct {
 	Path             string      `json:",omitempty"`
 	RootSelectorName Blob        `json:",omitempty"`
@@ -82,15 +83,33 @@ type NodeStatus struct {
 
 // LF provides a common interface for local (same Go process) or remote (HTTP/HTTPS API) nodes.
 type LF interface {
+	// AddRecord attempts to add a record.
+	// A record won't actually show up in queries until all its dependencies are satisfied (fully synchronized).
 	AddRecord(*Record) error
+
+	// GetRecord gets a record by its 32-byte / 256-bit hash.
 	GetRecord(hash []byte) (*Record, error)
+
+	// GenesisParameters gets the parameters of this network / database.
 	GenesisParameters() (*GenesisParameters, error)
+
+	// NodeStatus gets the status of this node.
 	NodeStatus() (*NodeStatus, error)
+
+	// OwnerStatus returns information about an owner and some NewRecordLinks for new record creation.
 	OwnerStatus(OwnerPublic) (*OwnerStatus, error)
+
+	// Links gets up to RecordMaxLinks or the default minimum (according to GenesisParameters) if <=0.
+	// It also returns the current node's clock as the second returned value (on success).
+	Links(int) ([][32]byte, uint64, error)
+
+	// ExecuteQuery runs this query against this node.
 	ExecuteQuery(*Query) (QueryResults, error)
+
+	// Connect instructs this local or remote node to connect to a peer.
+	// Note that remote nodes will only accept connect from localhost or with an auth token.
 	Connect(net.IP, int, []byte) error
+
+	// IsLocal returns true for local same-Go-process nodes and false otherwise.
 	IsLocal() bool
 }
-
-var _ LF = &Node{}
-var _ LF = RemoteNode("")

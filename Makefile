@@ -28,8 +28,12 @@ SQLITE3_FLAGS := \
 
 all: lf
 
-lf:	native
+lf:	native_if
 	go build cmd/lf/lf.go
+
+native_if: FORCE
+	if [ ! -f native/db_$(UNAME_S).o ]; then $(CC) $(CFLAGS) -c -o native/db_$(UNAME_S).o native/db.c; fi
+	if [ ! -f native/sqlite3_$(UNAME_S).o ]; then $(CC) $(CFLAGS) $(SQLITE3_FLAGS) -c -o native/sqlite3_$(UNAME_S).o native/sqlite3/sqlite3.c; fi
 
 native:	FORCE
 	$(CC) $(CFLAGS) -c -o native/db_$(UNAME_S).o native/db.c

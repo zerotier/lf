@@ -56,6 +56,18 @@ var fsUsernamePrefixes = [14]string{"lf0000000000000", "lf000000000000", "lf0000
 var one = 1
 var eight = 8
 
+// PassphraseToOwnerAndMaskingKey generates both an owner and a masking key from a secret string.
+func PassphraseToOwnerAndMaskingKey(passphrase string) (*Owner, []byte) {
+	pp := []byte(passphrase)
+	mkh := sha256.Sum256(pp)
+	mkh = sha256.Sum256(mkh[:]) // double hash to ensure difference from seededprng
+	owner, err := NewOwnerFromSeed(OwnerTypeEd25519, pp)
+	if err != nil {
+		panic(err)
+	}
+	return owner, mkh[:]
+}
+
 // fsLfOwnerToUser generates a Unix username and UID from a hash of an owner's public key.
 // A cryptographic hash is used instead of CRC64 just to make it a little bit harder to
 // intentionally collide these, but uniqueness of these should not be depended upon!
@@ -208,14 +220,14 @@ func (h *fsFileHeader) readFrom(b []byte) ([]byte, error) {
 //////////////////////////////////////////////////////////////////////////////
 
 // NewFS creates and mounts a new virtual filesystem.
-func NewFS(ds []LF, normalLog *log.Logger, warningLog *log.Logger, mountPoint string, rootSelectorName []byte, owner *Owner, maxFileSize int, authSignature []byte, maskingKey []byte) (*FS, error) {
+func NewFS(ds []LF, normalLog *log.Logger, warningLog *log.Logger, mountPoint string, rootSelectorName []byte, owner *Owner, maxFileSize int, maskingKey []byte) (*FS, error) {
 	if len(ds) == 0 {
 		return nil, errors.New("at least one data source must be supplied (Node, RemoteNode, etc.)")
 	}
 
 	var gp *GenesisParameters
 	for _, ds2 := range ds {
-		gp, _ := ds2.GenesisParameters()
+		gp, _ = ds2.GenesisParameters()
 		if gp != nil {
 			break
 		}
@@ -431,6 +443,12 @@ func (fs *FS) Close() error {
 	}
 
 	return nil
+}
+
+// WaitForClose blocks until this FS instance is closed.
+func (fs *FS) WaitForClose() {
+	fs.runningLock.Lock()
+	fs.runningLock.Unlock()
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -1251,6 +1269,8 @@ func (fsn *fsFile) commit() error {
 	rdata = fsn.fsFileHeader.appendTo(rdata)
 	rdata = append(rdata, fdata...)
 
+	links := CastHashBlobsToArrays(os.NewRecordLinks)
+
 	// If record data is too large, break it into chunks at data dependent breakage
 	// points and store these chunks. The file then becomes hashes of chunks. This
 	// is done recursively until it fits. Chunks are stored by their hash with a
@@ -1291,7 +1311,19 @@ func (fsn *fsFile) commit() error {
 				}
 			}
 
-			rec, err := NewRecord(RecordTypeDatum, chunk, CastHashBlobsToArrays(os.NewRecordLinks), chunkHash[0:16], [][]byte{chunkHash}, []uint64{0}, ts, wf, fsn.parent.fs.owner)
+			if links == nil {
+				for _, ds := range fsn.parent.fs.ds {
+					links, ts, err = ds.Links(0)
+					if len(links) > 0 {
+						break
+					}
+				}
+				if err != nil {
+					return nil, err
+				}
+			}
+
+			rec, err := NewRecord(RecordTypeDatum, chunk, links, chunkHash[0:16], [][]byte{chunkHash}, []uint64{0}, ts, wf, fsn.parent.fs.owner)
 			if err != nil {
 				return nil, err
 			}
@@ -1301,6 +1333,9 @@ func (fsn *fsFile) commit() error {
 					break
 				}
 			}
+
+			links = nil
+
 			return rec, err
 		}
 
@@ -1352,7 +1387,20 @@ func (fsn *fsFile) commit() error {
 		}
 	}
 
-	rec, err := NewRecord(RecordTypeDatum, rdata, CastHashBlobsToArrays(os.NewRecordLinks), fsn.parent.fs.maskingKey, [][]byte{fsn.parent.selectorName}, []uint64{fsn.inode}, ts, wf, fsn.parent.fs.owner)
+	if links == nil {
+		var err error
+		for _, ds := range fsn.parent.fs.ds {
+			links, ts, err = ds.Links(0)
+			if len(links) > 0 {
+				break
+			}
+		}
+		if err != nil {
+			return err
+		}
+	}
+
+	rec, err := NewRecord(RecordTypeDatum, rdata, links, fsn.parent.fs.maskingKey, [][]byte{fsn.parent.selectorName}, []uint64{fsn.inode}, ts, wf, fsn.parent.fs.owner)
 	if err != nil {
 		return err
 	}

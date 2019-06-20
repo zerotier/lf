@@ -198,20 +198,20 @@ func (rn RemoteNode) OwnerStatus(ownerPublic OwnerPublic) (*OwnerStatus, error) 
 }
 
 // Links returns up to count links or the network's min links per record if count is <= 0.
-func (rn RemoteNode) Links(count int) ([][32]byte, int64, error) {
+func (rn RemoteNode) Links(count int) ([][32]byte, uint64, error) {
 	u := string(rn) + "/links"
 	if count > 0 {
 		u = u + "?count=" + strconv.FormatUint(uint64(count), 10)
 	}
 	resp, err := httpClient.Get(u)
 	if err != nil {
-		return nil, -1, err
+		return nil, 0, err
 	}
 	if resp.StatusCode == 200 {
 		body, err := ioutil.ReadAll(&io.LimitedReader{R: resp.Body, N: APIMaxResponseSize})
 		resp.Body.Close()
 		if err != nil {
-			return nil, -1, err
+			return nil, 0, err
 		}
 		var l [][32]byte
 		for i := 0; (i + 32) <= len(body); i += 32 {
@@ -220,13 +220,13 @@ func (rn RemoteNode) Links(count int) ([][32]byte, int64, error) {
 			l = append(l, h)
 		}
 		tstr := resp.Header.Get("X-LF-Time")
-		if len(tstr) > 0 {
-			ts, _ := strconv.ParseInt(tstr, 10, 64)
+		if len(tstr) > 0 { // should always be present
+			ts, _ := strconv.ParseUint(tstr, 10, 64)
 			return l, ts, nil
 		}
-		return l, -1, nil
+		return l, TimeSec(), nil
 	}
-	return nil, -1, ErrAPI{Code: resp.StatusCode}
+	return nil, 0, ErrAPI{Code: resp.StatusCode}
 }
 
 // ExecuteQuery executes a query against this remote node.

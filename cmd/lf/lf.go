@@ -222,6 +222,11 @@ Commands:
     list                                  List trusted oracles
     add <@oracle>                         Add trusted oracle
     delete <@oracle>                      Delete trusted oracle
+  mount <mount point> <selector name>     Mount LFFS volume (FUSE required)
+    -mask <key>                           Override default masking key
+    -owner <owner>                        Use this owner instead of default
+    -maxfilesize <size>                   Maximum file size in bytes (writes)
+    -passphrase <string>                  Derive owner and mask from string
 
 Global options must precede commands, while command options must come after
 the command name.
@@ -384,7 +389,117 @@ func doNodeStart(cfg *lf.ClientConfig, basePath string, args []string) (exitCode
 	return
 }
 
-//////////////////////////////////////////////////////////////////////////////
+func doMount(cfg *lf.ClientConfig, basePath string, args []string) (exitCode int) {
+	mountOpts := flag.NewFlagSet("mount", flag.ContinueOnError)
+	ownerName := mountOpts.String("owner", "", "")
+	maskKey := mountOpts.String("mask", "", "")
+	passphrase := mountOpts.String("passphrase", "", "")
+	maxFileSizeStr := mountOpts.String("maxfilesize", "", "")
+	mountOpts.SetOutput(ioutil.Discard)
+	err := mountOpts.Parse(args)
+	if err != nil {
+		printHelp("")
+		exitCode = 1
+		return
+	}
+	args = mountOpts.Args()
+	if len(args) != 2 {
+		printHelp("")
+		exitCode = 1
+		return
+	}
+
+	mountPoint := strings.TrimSpace(args[0])
+	selectorName := strings.TrimSpace(args[1])
+	if len(mountPoint) == 0 || len(selectorName) == 0 {
+		printHelp("")
+		exitCode = 1
+		return
+	}
+
+	maxFileSize := 4096
+	if len(*maxFileSizeStr) > 0 {
+		mfs, _ := strconv.ParseInt(*maxFileSizeStr, 10, 64)
+		if mfs <= 0 {
+			logger.Printf("FATAL: invalid max file size: %d", mfs)
+			exitCode = 1
+			return
+		}
+		maxFileSize = int(mfs)
+	}
+
+	var owner *lf.Owner
+	var mk []byte
+
+	if len(*passphrase) > 0 {
+		if len(*ownerName) > 0 || len(*maskKey) > 0 {
+			logger.Printf("ERROR: you must use either -passphrase or -owner and/or -mask")
+			exitCode = 1
+			return
+		}
+		owner, mk = lf.PassphraseToOwnerAndMaskingKey(*passphrase)
+	} else {
+		var ccOwner *lf.ClientConfigOwner
+		if len(*ownerName) > 0 {
+			ccOwner = cfg.Owners[*ownerName]
+			if owner == nil {
+				logger.Printf("ERROR: set failed: owner '%s' not found\n", *ownerName)
+				exitCode = 1
+				return
+			}
+		}
+		if ccOwner == nil {
+			for _, o := range cfg.Owners {
+				if o.Default {
+					ccOwner = o
+					break
+				}
+			}
+		}
+		if ccOwner == nil {
+			logger.Println("ERROR: set failed: owner not found and no default specified")
+			exitCode = 1
+			return
+		}
+		owner, _ = ccOwner.GetOwner()
+		if owner == nil {
+			logger.Println("ERROR: set failed: owner not found and no default specified")
+			exitCode = 1
+			return
+		}
+	}
+
+	if len(*maskKey) > 0 {
+		mk = []byte(*maskKey)
+	}
+	if len(mk) == 0 {
+		mk = []byte(selectorName)
+	}
+
+	osSignalChannel := make(chan os.Signal, 2)
+	signal.Notify(osSignalChannel, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGINT, syscall.SIGBUS)
+	signal.Ignore(syscall.SIGUSR1, syscall.SIGUSR2)
+
+	ds := make([]lf.LF, 0, len(cfg.URLs))
+	for _, u := range cfg.URLs {
+		ds = append(ds, u)
+	}
+	fs, err := lf.NewFS(ds, logger, logger, mountPoint, []byte(selectorName), owner, maxFileSize, mk)
+	if err != nil {
+		logger.Printf("FATAL: unable to mount LFFS at %s: %s\n", mountPoint, err.Error())
+		exitCode = 1
+		return
+	}
+
+	go func() {
+		<-osSignalChannel
+		fs.Close()
+	}()
+
+	fs.WaitForClose()
+
+	return
+}
 
 func doNodeConnect(cfg *lf.ClientConfig, basePath string, args []string) (exitCode int) {
 	if len(args) != 3 {
@@ -1686,6 +1801,9 @@ func main() {
 
 	case "node-connect":
 		exitCode = doNodeConnect(&cfg, *basePath, cmdArgs)
+
+	case "mount":
+		exitCode = doMount(&cfg, *basePath, cmdArgs)
 
 	case "status":
 		exitCode = doStatus(&cfg, *basePath, cmdArgs)

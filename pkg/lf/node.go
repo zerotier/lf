@@ -494,15 +494,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 				var owner *Owner
 				var maskingKey []byte
 				if len(mp.Passphrase) > 0 {
-					pp := []byte(mp.Passphrase)
-					mkh := sha256.Sum256(pp)
-					mkh = sha256.Sum256(mkh[:]) // double hash to ensure difference from seededprng
-					maskingKey = mkh[:]
-					owner, err = NewOwnerFromSeed(OwnerTypeEd25519, pp)
-					if err != nil {
-						n.log[LogLevelWarning].Printf("WARNING: lffs: cannot mount %s: error generating owner from passphrase: %s", mp.Path, err.Error())
-						continue
-					}
+					owner, maskingKey = PassphraseToOwnerAndMaskingKey(mp.Passphrase)
 				} else {
 					if len(mp.OwnerPrivate) > 0 {
 						owner, err = NewOwnerFromPrivateBytes(mp.OwnerPrivate)
@@ -609,7 +601,7 @@ func (n *Node) Mount(owner *Owner, maxFileSize int, mountPoint string, rootSelec
 	if owner == nil {
 		owner = n.owner
 	}
-	fs, err := NewFS([]LF{n}, n.log[LogLevelNormal], n.log[LogLevelWarning], mountPoint, rootSelectorName, owner, maxFileSize, nil, maskingKey)
+	fs, err := NewFS([]LF{n}, n.log[LogLevelNormal], n.log[LogLevelWarning], mountPoint, rootSelectorName, owner, maxFileSize, maskingKey)
 	if err != nil {
 		return nil, err
 	}
@@ -1012,6 +1004,21 @@ func (n *Node) OwnerStatus(ownerPublic OwnerPublic) (*OwnerStatus, error) {
 		NewRecordLinks:        CastArraysToHashBlobs(links),
 		ServerTime:            uint64(now.Unix()),
 	}, nil
+}
+
+// Links gets up to RecordMaxLinks links.
+func (n *Node) Links(count int) ([][32]byte, uint64, error) {
+	if count <= 0 {
+		count = int(n.genesisParameters.RecordMinLinks)
+	}
+	if count > RecordMaxLinks {
+		count = RecordMaxLinks
+	}
+	l, err := n.db.getLinks2(uint(count))
+	if err != nil {
+		return nil, 0, err
+	}
+	return l, TimeSec(), nil
 }
 
 // GenesisParameters gets the parameters for this network that were specified in genesis record(s).
