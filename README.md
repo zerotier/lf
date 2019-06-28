@@ -17,34 +17,30 @@ The name LF comes from the short story [The Aleph](https://en.wikipedia.org/wiki
 
 ### Why Does This Exist?
 
-The purpose of LF is to provide for decentralized systems what the key/value store aspects of [etcd](https://github.com/etcd-io/etcd) and [consul](https://www.consul.io) provide in centrally managed environments, namely a fast reliable store for small but critical pieces of information.
+The purpose of LF is to provide for open decentralized systems what the key/value store aspects of [etcd](https://github.com/etcd-io/etcd) and [consul](https://www.consul.io) provide in centrally managed environments, namely a fast reliable store for small but critical pieces of information.
 
-Most decentralized systems rely on distributed hash tables (DHTs) like [Kademlia](https://en.wikipedia.org/wiki/Kademlia) to fill this role. This has been the standard approach since [magnet links](https://en.wikipedia.org/wiki/Magnet_URI_scheme) and similar DHT-based schemes were developed for open file sharing applications in the early 2000s.
-
-For several years ZeroTier has researched ways to more completely decentralize our network. This drive is both economic and philosophical. We have multiple enterprise clients that want to minimize hard dependency on third party physical infrastructure and one that wants very reliable operation in very unreliable environments. We don't mind cutting our hosting costs either. Philosophically we began life as a "re-decentralize the Internet" open source effort and that's still very much in our DNA.
-
-DHTs are simply not good enough for our needs. They're vulnerable to multiple types of network level denial of service and ["Sybil"](https://en.wikipedia.org/wiki/Sybil_attack) attacks, are slow, and require a very reliable network to maintain full access to the entire global data set. We built LF to provide an alternative that trades much higher local storage overhead (which is cheap) for continuous availability, high performance, and much stronger security guarantees.
+Most decentralized systems use distributed hash tables (DHTs) for this purpose. DHTs scale well but are slow, require a reliable global network to maintain full access to the data set, and are vulnerable to ["Sybil"](https://en.wikipedia.org/wiki/Sybil_attack) type attacks. We at ZeroTier wanted something very fast, secure, and continuously available. This prompted us to develop a fundamentally new approach inspired by ideas from cryptocurrencies and distributed databases. LF trades high local storage overhead for continuous availablility (even if the network is totally down) and fast nearline queries against the entire global data set.
 
 ### Features and Benefits
 
-* Easy to use and easy to deploy.
-* Fully decentralized network with no mandatory single points of control or failure.
-* Versatile security model allowing user choice between different conflict resolution mechanisms that can be used alone or in combination with one another. These include local heuristics, proof of work "weight," elective trust of other nodes, and certificates via a standard x509 CA model.
+* Easy to use and deploy.
+* Fully decentralized system with open participation and no single points of failure. (Private LF networks can be created that require certificates, but this is optional.)
 * Fast sub-second nearline queries against the entire global data set at all times.
+* Versatile security model allowing user choice between different conflict resolution mechanisms that can be used alone or in combination with one another. These include local heuristics, proof of work "weight," elective trust of other nodes, and certificates.
 * Flexible record lookup API allowing multiple nested keys and range queries against 64-bit ordinals associated with each key.
 * Encrypted record keys and values for strong security and privacy despite full global data set replication. Order preserving encryption techinques are leveraged to allow range queries without revealing keys or exact ordinal values.
 * Novel proof-of-knowledge mechanism makes it impossible to generate valid records identified by a key whose plain text is not known, increasing the difficulty of data set poisoning attacks by naive attackers.
 
 ### Limitations and Disadvantages
 
-* LF is only useful for small bits of information that don't change very often like certificates, keys, IP addresses, names, etc.
+* LF is only good for small bits of information that don't change very often like certificates, keys, IP addresses, names, etc.
 * The [CAP theorem](https://en.wikipedia.org/wiki/CAP_theorem) trade-off is availability and partition-tolerance, meaning eventual consistency and no transactions.
-* High storage and moderately high bandwidth requirements for full nodes make full node operation unsuitable for small resource constrained devices.
+* Full nodes are unsuitable for small resource constrained devices due to high storage and relatively high bandwidth overhead.
 * Storage requirements grow over time in a manner not unlike a block chain. Fortunately [storage is getting cheaper over time too](https://www.backblaze.com/blog/hard-drive-cost-per-gigabyte/). LF is designed to allow partial nodes and discarding of some old data to migitate data set growth but these features are not implemented yet and likely won't be needed for years.
 
 ## Building and Running
 
-LF works on Linux, Mac, and probably BSD. It won't work on Windows yet but porting shouldn't be too hard if anyone wants it. It's mostly written in Go (1.11+ required) with some C for performance critical bits. Native code depends on sqlite3 but a recent version is included under `native/sqlite3` and is built automatically alongside the native LF database.
+LF works on Linux, Mac, and probably BSD. It won't work on Windows yet but porting shouldn't be too hard if anyone wants it. It's mostly written in Go (1.11+ required) with some C for performance critical bits.
 
 To build on most platform just type `make`.
 
@@ -199,9 +195,17 @@ The `owner` command group in the CLI includes commands to create and sign certif
 
 ### LFFS
 
-Full nodes have the capability to mount sections of the data store on the host as a filesystem using FUSE. This works on Linux and Macintosh systems as long as FUSE is installed (see [OSXFUSE](https://osxfuse.github.io) for Mac). This offers a very easy and fast way for other software to use LF as a shared state cache.
+LF contains a FUSE filesystem that allows sections of the global data store to be mounted. It can be mounted by remote clients or directly by full nodes, with the latter offering much higher performance since all data is local to the process. LFFS requires FUSE on Linux or [OSXFUSE](https://osxfuse.github.io) on Mac.
 
-Right now configuring LFFS requires a file called `mounts.json` to be edited in the node's home directory and then the node must be restarted. This file consists of an array of objects representing mount points. Here's an example:
+To test LFFS try this:
+
+```text
+$ ./lf mount -maxfilesize 4096 -passphrase 'The sparrow perches on the steeple in the rain.' /tmp/lffs-public-test com.zerotier.lffs.public-test
+```
+
+If everything works you should be able to access a public test LFFS share at `/tmp/lffs-public-test`. **Be aware** that this is a global public test share, so it could contain anything! If you see anything nasty there feel free to delete it. Since the passphrase (which generates both the owner and the masking key) is public, anyone can read and write.
+
+The above command mounts via the HTTP(S) API, which is slow. To mount directly under a running full node, edit a file called `mounts.json` in the node's home directory and then restart it. Here's an example `mounts.json` to mount the same public test share.
 
 ```json
 [
@@ -214,9 +218,7 @@ Right now configuring LFFS requires a file called `mounts.json` to be edited in 
 ]
 ```
 
-That fill will mount a public LFFS data store. **Be aware** that much like ZeroTier public networks we have no control over what is stored there! Of course since the passphrase is shared everyone has the same owner and users are free to delete anything nasty that gets stored.
-
-The complete schema for mount points is:
+The complete schema for mount points in `mounts.json` is:
 
 * **Path**: Path to mount FUSE filesystem on host (must have read/write access).
 * **RootSelectorName**: LF selector name (without ordinal) of filesystem root.
@@ -227,8 +229,7 @@ The complete schema for mount points is:
 
 Right now LFFS is somewhat limited:
 
-* This virtual filesystem is absolutely **not** suitable for things like databases or other things that do a lot of random writes and use advanced I/O features!
-* Sizes are limited to 1mb, which is quite excessive for LF! Setting a lower limit in `mounts.json` is recommended.
+* This virtual filesystem is absolutely **not** suitable for things like databases or other things that do a lot of random writes and use advanced I/O features! It's intended for small files that are written atomically (or nearly so) and don't change very often.
 * Hard links, special modes like setuid/setgid, named pipes, device nodes, and extended attributes are not supported.
 * Filesystem permission and ownership changes are not supported and chmod/chown are silently ignored.
 * Name length is limited to 511 bytes. This is for names within a directory. There is no limit to how many directories can be nested.

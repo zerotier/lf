@@ -35,7 +35,7 @@ import (
 const (
 	VersionMajor    = 0
 	VersionMinor    = 9
-	VersionRevision = 6
+	VersionRevision = 8
 	VersionBuild    = 0
 
 	ProtocolVersion    = 1
