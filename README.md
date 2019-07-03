@@ -36,7 +36,7 @@ Most decentralized systems use distributed hash tables (DHTs) for this purpose. 
 * LF is only good for small bits of information that don't change very often like certificates, keys, IP addresses, names, etc.
 * The [CAP theorem](https://en.wikipedia.org/wiki/CAP_theorem) trade-off is availability and partition-tolerance, meaning eventual consistency and no transactions.
 * Full nodes are unsuitable for small resource constrained devices due to high storage and relatively high bandwidth overhead.
-* Storage requirements grow over time in a manner not unlike a block chain. Fortunately [storage is getting cheaper over time too](https://www.backblaze.com/blog/hard-drive-cost-per-gigabyte/). LF is designed to allow partial nodes and discarding of some old data to migitate data set growth but these features are not implemented yet and likely won't be needed for years.
+* Storage requirements grow over time in a manner not unlike a block chain. Fortunately [storage is getting cheaper over time too](https://www.backblaze.com/blog/hard-drive-cost-per-gigabyte/). LF is designed to allow partial nodes and discarding of some old data to mitigate data set growth but these features are not implemented yet and likely won't be needed for years.
 
 ## Building and Running
 
