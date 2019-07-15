@@ -964,7 +964,10 @@ func doOwner(cfg *lf.ClientConfig, basePath string, args []string) (exitCode int
 			exitCode = 1
 			return
 		}
-		ownerType := lf.OwnerTypeFromString(args[2])
+		ownerType := lf.OwnerTypeEd25519
+		if len(args) >= 3 {
+			ownerType = lf.OwnerTypeFromString(args[2])
+		}
 		owner, err := lf.NewOwner(ownerType)
 		if err != nil {
 			logger.Printf("ERROR: unable to create owner: %s\n", err.Error())
@@ -998,7 +1001,10 @@ func doOwner(cfg *lf.ClientConfig, basePath string, args []string) (exitCode int
 			return
 		}
 		seed := strings.TrimSpace(args[2])
-		ownerType := lf.OwnerTypeFromString(args[3])
+		ownerType := lf.OwnerTypeEd25519
+		if len(args) >= 4 {
+			ownerType = lf.OwnerTypeFromString(args[3])
+		}
 		owner, err := lf.NewOwnerFromSeed(ownerType, []byte(seed))
 		if err != nil {
 			logger.Printf("ERROR: unable to create owner from seed: %s\n", err.Error())
