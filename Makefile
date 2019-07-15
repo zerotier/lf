@@ -3,7 +3,7 @@
 UNAME_S := $(shell uname -s | tr '[:upper:]' '[:lower:]')
 
 CC := cc
-CFLAGS := -O3
+CFLAGS := -O3 -std=c99
 
 SQLITE3_FLAGS := \
 	-Inative/sqlite3 \
