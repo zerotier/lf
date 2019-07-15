@@ -38,6 +38,18 @@
 #define _LARGEFILE_SOURCE 1
 #endif
 
+#ifndef _BSD_SOURCE
+#define _BSD_SOURCE 1
+#endif
+
+#ifndef __USE_UNIX98
+#define __USE_UNIX98 1
+#endif
+
+#ifndef _POSIX_C_SOURCE
+#define _POSIX_C_SOURCE 200809L
+#endif
+
 #include <stdint.h>
 #include <stdlib.h>
 #include <stdio.h>
