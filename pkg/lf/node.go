@@ -455,23 +455,13 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 	n.backgroundThreadWG.Add(1)
 	go n.backgroundThreadOracle()
 
-	// Add server's local URL to client config if it's not there already.
+	// Set server's client.json URL list to point to itself
 	if n.httpTCPListener != nil {
 		clientConfigPath := path.Join(basePath, ClientConfigName)
 		var cc ClientConfig
 		cc.Load(clientConfigPath)
-		myURL := fmt.Sprintf("http://127.0.0.1:%d", httpPort)
-		haveURL := false
-		for _, u := range cc.URLs {
-			if string(u) == myURL {
-				haveURL = true
-				break
-			}
-		}
-		if !haveURL {
-			cc.URLs = append([]RemoteNode{RemoteNode(myURL)}, cc.URLs...)
-			cc.Save(clientConfigPath)
-		}
+		cc.URLs = []RemoteNode{RemoteNode(fmt.Sprintf("http://127.0.0.1:%d", httpPort))}
+		cc.Save(clientConfigPath)
 	}
 
 	initOk = true
@@ -815,7 +805,7 @@ func (n *Node) GetOwnerCertificates(owner OwnerPublic) (certs []*x509.Certificat
 	rootsBySerialNo, revokedRootsBySerialNo := n.genesisParameters.GetAuthCertificates()
 
 	// First we check to see if the owner is in fact the root CA. This is special cased
-	// since roots are not themselves stored directly in the DAG as Certificate records.
+	// since root CAs are not themselves stored directly in the DAG as Certificate records.
 	for _, rootCert := range rootsBySerialNo {
 		if (rootCert.KeyUsage & x509.KeyUsageDigitalSignature) != 0 {
 			pub, _ := rootCert.PublicKey.(*ecdsa.PublicKey)

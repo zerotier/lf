@@ -1371,7 +1371,7 @@ func doOwner(cfg *lf.ClientConfig, basePath string, args []string) (exitCode int
 			return
 		}
 
-		rec, err := lf.CreateOwnerCertificate(links, lf.NewWharrgarblr(lf.RecordDefaultWharrgarblMemory, 0), owner, csr, time.Hour*time.Duration(24*ttlDays), cert, key)
+		rec, err := lf.CreateOwnerCertificate(links, nil, owner, csr, time.Hour*time.Duration(24*ttlDays), cert, key)
 		if err != nil {
 			logger.Printf("ERROR: unable to create certificate or record: %s", err.Error())
 			exitCode = 1
