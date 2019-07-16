@@ -1577,7 +1577,7 @@ func doMakeGenesis(cfg *lf.ClientConfig, basePath string, args []string) (exitCo
 	}
 	g.RecordMaxTimeDrift = atoUI(prompt("Record maximum time drift (seconds) [60]: ", false, "60"))
 	for {
-		af := prompt("Amendable fields (comma separated) [seedpeers]: ", false, "seedpeers")
+		af := prompt("Amendable fields (comma separated) [authcertificates]: ", false, "authcertificates")
 		if len(af) > 0 {
 			err := g.SetAmendableFields(strings.Split(af, ","))
 			if err == nil {
@@ -1659,7 +1659,7 @@ func doMakeGenesis(cfg *lf.ClientConfig, basePath string, args []string) (exitCo
 				return
 			}
 
-			certPem := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: keyBytes})
+			certPem := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certBytes})
 			certPem = append(certPem, pem.EncodeToMemory(&pem.Block{Type: "ECDSA PRIVATE KEY", Bytes: keyBytes})...)
 			err = ioutil.WriteFile("genesis-auth-"+serialNoStr+".pem", certPem, 0600)
 			if err != nil {
@@ -1675,6 +1675,12 @@ func doMakeGenesis(cfg *lf.ClientConfig, basePath string, args []string) (exitCo
 		q = prompt("Create another record authorization certificate? [y/N]: ", false, "n")
 	}
 	if len(g.AuthCertificates) > 0 {
+		_, err := x509.ParseCertificates(g.AuthCertificates)
+		if err != nil {
+			fmt.Printf("ERROR: %s\n", err.Error())
+			exitCode = 1
+			return
+		}
 		authCerts, _ := g.GetAuthCertificates()
 		fmt.Printf("  (%d authorization certificates, %d bytes)\n", len(authCerts), len(g.AuthCertificates))
 		q = prompt("Authorization certificates required? [y/N]: ", false, "n")

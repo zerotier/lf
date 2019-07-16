@@ -175,7 +175,7 @@ func (gp *GenesisParameters) GetAuthCertificates() (map[string]*x509.Certificate
 	}
 	gps := (*genesisParametersState)(atomic.LoadPointer(&gp.state))
 	if gps == nil {
-		return emptyCertMap, emptyCertMap
+		gps = new(genesisParametersState) // make this work for GenesisParamters not initialized through Update()
 	}
 
 	gps.lock.Lock()
