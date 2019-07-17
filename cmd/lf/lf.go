@@ -204,7 +204,7 @@ Commands:
   owner <operation> [...]
     list                                  List owners
     new <name> [p224|p384|ed25519]        Create owner (default type: p224)
-    newfromseed <name> <seed> <key type>  Create owner from seed
+    newfrompass <name> <passphrase>       Create owner from passphrase (p384)
     default <name>                        Set default owner
     delete <name>                         Delete an owner (PERMANENT)
     rename <old name> <new name>          Rename an owner
@@ -988,8 +988,8 @@ func doOwner(cfg *lf.ClientConfig, basePath string, args []string) (exitCode int
 		}
 		fmt.Printf("%-24s %s %-7s %s\n", name, dfl, owner.TypeString(), owner.String())
 
-	case "newfromseed":
-		if len(args) < 4 {
+	case "newfrompass":
+		if len(args) < 3 {
 			printHelp("")
 			return
 		}
@@ -1000,14 +1000,9 @@ func doOwner(cfg *lf.ClientConfig, basePath string, args []string) (exitCode int
 			exitCode = 1
 			return
 		}
-		seed := strings.TrimSpace(args[2])
-		ownerType := lf.OwnerTypeEd25519
-		if len(args) >= 4 {
-			ownerType = lf.OwnerTypeFromString(args[3])
-		}
-		owner, err := lf.NewOwnerFromSeed(ownerType, []byte(seed))
+		owner, err := lf.NewOwnerFromSeed(lf.OwnerTypeNistP384, []byte(strings.TrimSpace(args[2])))
 		if err != nil {
-			logger.Printf("ERROR: unable to create owner from seed: %s\n", err.Error())
+			logger.Printf("ERROR: unable to create owner from passphrase: %s\n", err.Error())
 			exitCode = 1
 			return
 		}
