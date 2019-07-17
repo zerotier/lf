@@ -61,7 +61,7 @@ func PassphraseToOwnerAndMaskingKey(passphrase string) (*Owner, []byte) {
 	pp := []byte(passphrase)
 	mkh := sha256.Sum256(pp)
 	mkh = sha256.Sum256(mkh[:]) // double hash to ensure difference from seededprng
-	owner, err := NewOwnerFromSeed(OwnerTypeEd25519, pp)
+	owner, err := NewOwnerFromSeed(OwnerTypeNistP384, pp)
 	if err != nil {
 		panic(err)
 	}

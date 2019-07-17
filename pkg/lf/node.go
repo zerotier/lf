@@ -1522,19 +1522,21 @@ func (n *Node) handleGenesisRecord(gr *Record) bool {
 	if err != nil {
 		n.log[LogLevelWarning].Printf("WARNING: genesis record =%s contains an invalid value, ignoring!", grHashStr)
 	} else {
-		n.limboLock.Lock() // bogart this mutex to serialize genesis.lf writes too because no reason not to
-		genesisLF, err := os.OpenFile(path.Join(n.basePath, "genesis.lf"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
-		if err != nil {
-			n.log[LogLevelWarning].Printf("WARNING: unable to write to genesis.lf: %s", err.Error())
-		}
-		if genesisLF != nil {
-			err = gr.MarshalTo(genesisLF, false)
+		/*
+			n.limboLock.Lock() // bogart this mutex to serialize genesis.lf writes too because no reason not to
+			genesisLF, err := os.OpenFile(path.Join(n.basePath, "genesis.lf"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 			if err != nil {
 				n.log[LogLevelWarning].Printf("WARNING: unable to write to genesis.lf: %s", err.Error())
 			}
-			genesisLF.Close()
-		}
-		n.limboLock.Unlock()
+			if genesisLF != nil {
+				err = gr.MarshalTo(genesisLF, false)
+				if err != nil {
+					n.log[LogLevelWarning].Printf("WARNING: unable to write to genesis.lf: %s", err.Error())
+				}
+				genesisLF.Close()
+			}
+			n.limboLock.Unlock()
+		*/
 
 		if len(rv) > 0 && atomic.LoadUint64(&n.lastGenesisRecordTimestamp) < gr.Timestamp {
 			n.log[LogLevelNormal].Printf("applying genesis configuration update from record =%s", grHashStr)
