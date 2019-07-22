@@ -199,6 +199,7 @@ Commands:
     -mask <key>                           Override default masking key
     -tstart <time>                        Constrain to after this time
     -tend <time>                          Constrain to before this time
+    -open                                 Include entries with extra selectors
     -raw                                  Dump raw un-escaped value(s) only
     -url <url[,url,...]>                  Override configured node/proxy URLs
   owner <operation> [...]
@@ -563,6 +564,7 @@ var one = 1
 func doGet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool) (exitCode int) {
 	getOpts := flag.NewFlagSet("get", flag.ContinueOnError)
 	maskKey := getOpts.String("mask", "", "")
+	openQuery := getOpts.Bool("open", false, "")
 	tStart := getOpts.String("tstart", "", "")
 	tEnd := getOpts.String("tend", "", "")
 	rawOutput := getOpts.Bool("raw", false, "")
@@ -655,6 +657,7 @@ func doGet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool
 		Ranges:    ranges,
 		TimeRange: tr,
 		Oracles:   cfg.Oracles,
+		Open:      openQuery,
 	}
 	if *rawOutput {
 		jsonOutput = false
