@@ -210,6 +210,7 @@ Commands:
     delete <name>                         Delete an owner (PERMANENT)
     rename <old name> <new name>          Rename an owner
     export <name> [pem file]              Export owner as PEM
+    exportstring <name> [pem file]        Export owner as PEM for JSON use
     import <name> <pem file>              Import owner from PEM export
     makecsr <name>                        Generate a CSR for an owner
     showcsr <csr>                         Dump CSR information
@@ -1095,7 +1096,7 @@ func doOwner(cfg *lf.ClientConfig, basePath string, args []string) (exitCode int
 		cfg.Dirty = true
 		fmt.Printf("%s renamed from %s to %s\n", old.Public.String(), oldName, newName)
 
-	case "export":
+	case "export", "exportstring":
 		if len(args) < 2 {
 			printHelp("")
 			exitCode = 1
@@ -1131,7 +1132,13 @@ func doOwner(cfg *lf.ClientConfig, basePath string, args []string) (exitCode int
 			}
 			fmt.Printf("%s exported to %s\n", owner.Public.String(), fn)
 		} else {
-			fmt.Print(string(ownerPem))
+			if cmd == "exportstring" {
+				op := string(ownerPem)
+				js, _ := json.Marshal(&op)
+				fmt.Print(string(js))
+			} else {
+				fmt.Print(string(ownerPem))
+			}
 		}
 
 	case "import":

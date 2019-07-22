@@ -344,7 +344,10 @@ func (o *Owner) PrivatePEM() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return pem.EncodeToMemory(&pem.Block{Type: OwnerPrivatePEMType, Bytes: pb}), nil
+	pemHdrs := make(map[string]string)
+	pemHdrs["Type"] = o.TypeString()
+	pemHdrs["Public"] = o.Public.String()
+	return pem.EncodeToMemory(&pem.Block{Type: OwnerPrivatePEMType, Headers: pemHdrs, Bytes: pb}), nil
 }
 
 // String returns @base62 encoded Public.
