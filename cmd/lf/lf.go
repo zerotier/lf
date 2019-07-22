@@ -229,6 +229,7 @@ Commands:
     -owner <owner>                        Use this owner instead of default
     -maxfilesize <size>                   Maximum file size in bytes (writes)
     -passphrase <string>                  Derive owner and mask from string
+  makegenesis                             Make genesis records
 
 Global options must precede commands, while command options must come after
 the command name.
