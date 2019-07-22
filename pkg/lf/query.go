@@ -63,6 +63,7 @@ type Query struct {
 	Ranges     []QueryRange  `json:",omitempty"` // Selectors or selector range(s)
 	TimeRange  []uint64      `json:",omitempty"` // If present, constrain record times to after first value (if [1]) or range (if [2])
 	MaskingKey Blob          `json:",omitempty"` // Masking key to unmask record value(s) server-side (if non-empty)
+	Owners     []OwnerPublic `json:",omitempty"` // Restrict to these owners only
 	SortOrder  string        `json:",omitempty"` // Sort order within each result (default: trust)
 	Limit      *int          `json:",omitempty"` // If non-zero, limit maximum lower trust records per result
 	Open       *bool         `json:",omitempty"` // If true, include records with extra selectors not named in Ranges
@@ -172,13 +173,25 @@ func (m *Query) execute(n *Node) (qr QueryResults, err error) {
 	// Get all results grouped by selector composite key.
 	bySelectorKey := make(map[uint64]*[]apiQueryResultTmp)
 	n.db.query(tsMin, tsMax, selectorRanges, m.Oracles, func(ts, weightL, weightH, doff, dlen uint64, localReputation int, ckey uint64, owner []byte, negativeComments uint) bool {
-		rptr := bySelectorKey[ckey]
-		if rptr == nil {
-			tmp := make([]apiQueryResultTmp, 0, 4)
-			rptr = &tmp
-			bySelectorKey[ckey] = rptr
+		includeOwner := true
+		if len(m.Owners) > 0 {
+			includeOwner = false
+			for _, o := range m.Owners {
+				if bytes.Equal(o, owner) {
+					includeOwner = true
+					break
+				}
+			}
 		}
-		*rptr = append(*rptr, apiQueryResultTmp{weightL, weightH, doff, dlen, localReputation, negativeComments})
+		if includeOwner {
+			rptr := bySelectorKey[ckey]
+			if rptr == nil {
+				tmp := make([]apiQueryResultTmp, 0, 4)
+				rptr = &tmp
+				bySelectorKey[ckey] = rptr
+			}
+			*rptr = append(*rptr, apiQueryResultTmp{weightL, weightH, doff, dlen, localReputation, negativeComments})
+		}
 		return true
 	})
 

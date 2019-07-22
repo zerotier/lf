@@ -263,11 +263,20 @@ func NewOwnerFromSeed(ownerType byte, seed []byte) (*Owner, error) {
 // NewOwner creates a random new owner key pair.
 func NewOwner(ownerType byte) (*Owner, error) { return internalNewOwner(ownerType, secureRandom) }
 
-// NewOwnerFromPrivateBytes deserializes both private and public portions from the result of PrivateBytes().
+// NewOwnerFromPrivateBytes deserializes both private and public portions from the result of PrivateBytes() or PrivatePEM().
+// Whether it's DER or PEM is auto-detected based on the presence of "-----BEGIN LF OWNER PRIVATE KEY-----" in the data.
 func NewOwnerFromPrivateBytes(b []byte) (*Owner, error) {
 	if len(b) == 0 {
 		return nil, ErrInvalidPrivateKey
 	}
+
+	if strings.Contains(string(b), "-----BEGIN LF OWNER PRIVATE KEY-----") {
+		pb, err := pem.Decode(b)
+		if err == nil && pb.Type == OwnerPrivatePEMType {
+			b = pb.Bytes
+		}
+	}
+
 	switch b[0] {
 
 	case OwnerTypeNistP224, OwnerTypeNistP384:

@@ -45,12 +45,11 @@ type OwnerStatus struct {
 // MountPoint describes a FUSE lffs mount point.
 // This is currently used as the record type in mounts.json for having full nodes mount LFFS locally.
 type MountPoint struct {
-	Path             string      `json:",omitempty"`
-	RootSelectorName Blob        `json:",omitempty"`
-	Owner            OwnerPublic `json:",omitempty"`
-	OwnerPrivate     Blob        `json:",omitempty"`
-	MaskingKey       Blob        `json:",omitempty"` // masking key to override default value which is the root selector name
-	Passphrase       string      `json:",omitempty"` // if present is used to deterministically compute OwnerPrivate and MaskingKey
+	Path             string `json:",omitempty"`
+	RootSelectorName Blob   `json:",omitempty"`
+	OwnerPrivate     Blob   `json:",omitempty"`
+	MaskingKey       Blob   `json:",omitempty"` // masking key to override default value which is the root selector name
+	Passphrase       string `json:",omitempty"` // if present is used to deterministically compute OwnerPrivate and MaskingKey
 	MaxFileSize      int
 }
 
@@ -79,6 +78,27 @@ type NodeStatus struct {
 	LocalTestMode     bool              ``                  // If true, this node is in local test mode
 	Identity          Blob              `json:",omitempty"` // This node's peer identity
 	Peers             []Peer            `json:",omitempty"` // Currently connected peers
+}
+
+// MakeSelectorRequest contains a plain text name and ordinal for a new record to be created server-side.
+type MakeSelectorRequest struct {
+	Name    string `json:",omitempty"`
+	Ordinal uint64 ``
+}
+
+// MakeRecordRequest requests that the server make and submit a record.
+// If Passphrase is supplied it overrides OwnerPrivate and MaskingKey and generates them deterministically.
+// Otherwise OwnerPrivate must be an owner's private (and including public) key in DER or PEM format
+// (auto-detected). If MaskingKey is empty it defaults to the first selector name. Note that requesting
+// remote record creation reveals secrets! Nodes will not remotely create records that require proof
+// of work unless the client is authorized to do so as this uses significant local compute resources
+// at the node.
+type MakeRecordRequest struct {
+	Selectors    []MakeSelectorRequest `json:",omitempty"`
+	Value        Blob                  `json:",omitempty"`
+	OwnerPrivate Blob                  `json:",omitempty"`
+	MaskingKey   Blob                  `json:",omitempty"`
+	Passphrase   string                `json:",omitempty"`
 }
 
 // LF provides a common interface for local (same Go process) or remote (HTTP/HTTPS API) nodes.

@@ -624,7 +624,6 @@ func (n *Node) Mounts(includeSecrets bool) (m []MountPoint) {
 		m = append(m, MountPoint{
 			Path:             p,
 			RootSelectorName: fs.rootSelectorName,
-			Owner:            fs.owner.Public,
 			OwnerPrivate:     op,
 			MaskingKey:       mk,
 			MaxFileSize:      fs.maxFileSize,
