@@ -142,20 +142,22 @@ type knownPeer struct {
 
 // Node is an instance of a full LF node supporting both P2P and HTTP access.
 type Node struct {
-	basePath         string
-	peersFilePath    string
-	p2pPort          int
-	httpPort         int
-	localTest        bool
-	log              [logLevelCount]*log.Logger
-	httpTCPListener  *net.TCPListener
-	httpServer       *http.Server
-	p2pTCPListener   *net.TCPListener
-	workFunction     *Wharrgarblr
-	workFunctionLock sync.Mutex
-	mountPoints      map[string]*FS
-	mountPointsLock  sync.Mutex
-	db               db
+	basePath                   string
+	peersFilePath              string
+	p2pPort                    int
+	httpPort                   int
+	localTest                  bool
+	log                        [logLevelCount]*log.Logger
+	httpTCPListener            *net.TCPListener
+	httpServer                 *http.Server
+	p2pTCPListener             *net.TCPListener
+	workFunction               *Wharrgarblr
+	workFunctionLock           sync.Mutex
+	makeRecordWorkFunction     *Wharrgarblr
+	makeRecordWorkFunctionLock sync.Mutex
+	mountPoints                map[string]*FS
+	mountPointsLock            sync.Mutex
+	db                         db
 
 	owner        *Owner // Owner for commentary, key also currently used for ECDH on link
 	identity     []byte // Compressed public key from owner
@@ -552,6 +554,11 @@ func (n *Node) Stop() {
 			n.workFunction.Abort()
 		}
 		n.workFunctionLock.Unlock()
+		n.makeRecordWorkFunctionLock.Lock()
+		if n.makeRecordWorkFunction != nil {
+			n.makeRecordWorkFunction.Abort()
+		}
+		n.makeRecordWorkFunctionLock.Unlock()
 
 		n.backgroundThreadWG.Wait()
 
@@ -1564,6 +1571,16 @@ func (n *Node) requestWantedRecords(minRetries, maxRetries int) {
 	}
 }
 
+func (n *Node) getMakeRecordWorkFunction() *Wharrgarblr {
+	n.makeRecordWorkFunctionLock.Lock()
+	if n.makeRecordWorkFunction == nil {
+		n.makeRecordWorkFunction = NewWharrgarblr(RecordDefaultWharrgarblMemory, 0)
+	}
+	wf := n.makeRecordWorkFunction
+	n.makeRecordWorkFunctionLock.Unlock()
+	return wf
+}
+
 //////////////////////////////////////////////////////////////////////////////
 // P2P protocol implementation
 //////////////////////////////////////////////////////////////////////////////
@@ -2160,6 +2177,67 @@ func (n *Node) createHTTPServeMux() *http.ServeMux {
 		}
 	})
 
+	smux.HandleFunc("/post", func(out http.ResponseWriter, req *http.Request) {
+		apiSetStandardHeaders(out)
+		if req.Method == http.MethodPost || req.Method == http.MethodPut {
+			var rec Record
+			err := rec.UnmarshalFrom(req.Body)
+			if err != nil {
+				apiSendObj(out, req, http.StatusBadRequest, &ErrAPI{Code: http.StatusBadRequest, Message: "record deserialization failed: " + err.Error()})
+			} else {
+				err = n.AddRecord(&rec)
+				if err != nil && err != ErrDuplicateRecord {
+					apiSendObj(out, req, http.StatusBadRequest, &ErrAPI{Code: 0, Message: "record rejected or record import failed: " + err.Error(), ErrTypeName: errTypeName(err)})
+				} else {
+					apiSendObj(out, req, http.StatusOK, nil)
+				}
+			}
+		} else {
+			out.Header().Set("Allow", "POST, PUT")
+			apiSendObj(out, req, http.StatusMethodNotAllowed, &ErrAPI{Code: http.StatusMethodNotAllowed, Message: req.Method + " not supported for this path"})
+		}
+	})
+
+	smux.HandleFunc("/make", func(out http.ResponseWriter, req *http.Request) {
+		apiSetStandardHeaders(out)
+		if req.Method == http.MethodPost || req.Method == http.MethodPut {
+			if n.apiIsTrusted(req) {
+				var m MakeRecordRequest
+				if apiReadObj(out, req, &m) == nil {
+					results, err := m.execute(n)
+					if err != nil {
+						apiSendObj(out, req, http.StatusBadRequest, &ErrAPI{Code: http.StatusBadRequest, Message: "record creation failed: " + err.Error()})
+					} else {
+						apiSendObj(out, req, http.StatusOK, results)
+					}
+				}
+			} else {
+				apiSendObj(out, req, http.StatusForbidden, &ErrAPI{Code: http.StatusMethodNotAllowed, Message: "only trusted clients can delegate record creation"})
+			}
+		} else {
+			out.Header().Set("Allow", "POST, PUT")
+			apiSendObj(out, req, http.StatusMethodNotAllowed, &ErrAPI{Code: http.StatusMethodNotAllowed, Message: req.Method + " not supported for this path"})
+		}
+	})
+
+	smux.HandleFunc("/connect", func(out http.ResponseWriter, req *http.Request) {
+		apiSetStandardHeaders(out)
+		if req.Method == http.MethodPost || req.Method == http.MethodPut {
+			if n.apiIsTrusted(req) {
+				var m Peer
+				if apiReadObj(out, req, &m) == nil {
+					n.Connect(m.IP, m.Port, m.Identity)
+					apiSendObj(out, req, http.StatusOK, nil)
+				}
+			} else {
+				apiSendObj(out, req, http.StatusForbidden, &ErrAPI{Code: http.StatusMethodNotAllowed, Message: "only trusted clients can suggest P2P endpoints"})
+			}
+		} else {
+			out.Header().Set("Allow", "POST, PUT")
+			apiSendObj(out, req, http.StatusMethodNotAllowed, &ErrAPI{Code: http.StatusMethodNotAllowed, Message: req.Method + " not supported for this path"})
+		}
+	})
+
 	smux.HandleFunc("/record/raw/", func(out http.ResponseWriter, req *http.Request) {
 		apiSetStandardHeaders(out)
 		if req.Method == http.MethodGet || req.Method == http.MethodHead {
@@ -2215,27 +2293,6 @@ func (n *Node) createHTTPServeMux() *http.ServeMux {
 		}
 	})
 
-	smux.HandleFunc("/post", func(out http.ResponseWriter, req *http.Request) {
-		apiSetStandardHeaders(out)
-		if req.Method == http.MethodPost || req.Method == http.MethodPut {
-			var rec Record
-			err := rec.UnmarshalFrom(req.Body)
-			if err != nil {
-				apiSendObj(out, req, http.StatusBadRequest, &ErrAPI{Code: http.StatusBadRequest, Message: "record deserialization failed: " + err.Error()})
-			} else {
-				err = n.AddRecord(&rec)
-				if err != nil && err != ErrDuplicateRecord {
-					apiSendObj(out, req, http.StatusBadRequest, &ErrAPI{Code: 0, Message: "record rejected or record import failed: " + err.Error(), ErrTypeName: errTypeName(err)})
-				} else {
-					apiSendObj(out, req, http.StatusOK, nil)
-				}
-			}
-		} else {
-			out.Header().Set("Allow", "POST, PUT")
-			apiSendObj(out, req, http.StatusMethodNotAllowed, &ErrAPI{Code: http.StatusMethodNotAllowed, Message: req.Method + " not supported for this path"})
-		}
-	})
-
 	smux.HandleFunc("/links", func(out http.ResponseWriter, req *http.Request) {
 		apiSetStandardHeaders(out)
 		if req.Method == http.MethodGet || req.Method == http.MethodHead {
@@ -2273,24 +2330,6 @@ func (n *Node) createHTTPServeMux() *http.ServeMux {
 			apiSendObj(out, req, http.StatusOK, nodeStatus)
 		} else {
 			out.Header().Set("Allow", "GET, HEAD")
-			apiSendObj(out, req, http.StatusMethodNotAllowed, &ErrAPI{Code: http.StatusMethodNotAllowed, Message: req.Method + " not supported for this path"})
-		}
-	})
-
-	smux.HandleFunc("/connect", func(out http.ResponseWriter, req *http.Request) {
-		apiSetStandardHeaders(out)
-		if req.Method == http.MethodPost || req.Method == http.MethodPut {
-			if n.apiIsTrusted(req) {
-				var m Peer
-				if apiReadObj(out, req, &m) == nil {
-					n.Connect(m.IP, m.Port, m.Identity)
-					apiSendObj(out, req, http.StatusOK, nil)
-				}
-			} else {
-				apiSendObj(out, req, http.StatusForbidden, &ErrAPI{Code: http.StatusMethodNotAllowed, Message: "only trusted clients can suggest P2P endpoints"})
-			}
-		} else {
-			out.Header().Set("Allow", "POST, PUT")
 			apiSendObj(out, req, http.StatusMethodNotAllowed, &ErrAPI{Code: http.StatusMethodNotAllowed, Message: req.Method + " not supported for this path"})
 		}
 	})
