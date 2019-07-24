@@ -9,50 +9,48 @@
 
 LF (pronounced "aleph") is a fully decentralized fully replicated key/value store.
 
-Fully decentralized means anyone can run a node without obtaining special permission and all nodes are effectively equal. Fully replicated means every node stores all data.
+Fully decentralized means anyone can run a node without obtaining special permission and all nodes are effectively equal. Fully replicated means every node stores the entire data set.
 
-LF is built on a [directed acyclic graph (DAG)](https://en.wikipedia.org/wiki/Directed_acyclic_graph) data model that makes synchronization easy and allows many different security and conflict resolution strategies to be used. Proof of work is used to rate limit writes to the shared data store on public networks and as one thing that can be considered by conflict resolution and trust algorithms. See [DESIGN.md](doc/DESIGN.md) for details. (This document is under construction.)
+LF is built on a [directed acyclic graph (DAG)](https://en.wikipedia.org/wiki/Directed_acyclic_graph) data model that makes synchronization easy and allows many different security and conflict resolution strategies to be used. One way to think of LF's DAG is as a gigantic [conflict-free replicated data type](https://en.wikipedia.org/wiki/Conflict-free_replicated_data_type) (CRDT).
 
-The name LF comes from the short story [The Aleph](https://en.wikipedia.org/wiki/The_Aleph_%28short_story%29) by Jorge Luis Borges and the novel [Mona Lisa Overdrive](https://en.wikipedia.org/wiki/Mona_Lisa_Overdrive) by William Gibson. Borges' story involves a point in space that contains all other points, a fitting metaphor for a data store where every node stores everything. Gibson's novel features a sci-fi take on Borges' concept. At one point a character calls it the "LF" because "aleph" has been mis-heard as an acronym. We used LF because there's already an open source project called Aleph, it gives the command line client `lf` a short name, and because two levels of obscure literary reference recursion is cool.
+Proof of work is used to rate limit writes to the shared data store on public networks and as one thing that can be taken into consideration for conflict resolution. Other things that can be considered (at the querying client's discretion) are local subjective heuristics at the node and certificates issued by a certificate authority.
+
+The name LF comes from the short story [The Aleph](https://en.wikipedia.org/wiki/The_Aleph_%28short_story%29) by Jorge Luis Borges and the novel [Mona Lisa Overdrive](https://en.wikipedia.org/wiki/Mona_Lisa_Overdrive) by William Gibson. Borges' story involves a point in space that contains all other points, a fitting metaphor for a data store where every node stores everything. Gibson's novel features a sci-fi take on Borges' concept. At one point a character calls it the "LF" because "aleph" has been mis-heard as an acronym. We used LF because there's already an open source project called Aleph, it gives the command line client `lf` a short name, and because two levels of nerdy literary recursion are cool.
 
 ### Why Does This Exist?
 
-The purpose of LF is to provide for open decentralized systems what the key/value store aspects of [etcd](https://github.com/etcd-io/etcd) and [consul](https://www.consul.io) provide in centrally managed environments, namely a fast reliable store for small but critical pieces of information.
+The purpose of LF is to provide for fully open decentralized systems what the key/value store aspects of [etcd](https://github.com/etcd-io/etcd) and [consul](https://www.consul.io) provide in centrally managed environments, namely a fast reliable store for small but critical pieces of information. These are things like keys, certificates, identity information, configuration files, IPs, DNS names, URLs, data hashes, and so on.
 
-Most decentralized systems use distributed hash tables (DHTs) for this purpose. DHTs scale well but are slow, require a reliable global network to maintain full access to the data set, and are vulnerable to ["Sybil"](https://en.wikipedia.org/wiki/Sybil_attack) type attacks. We at ZeroTier wanted something very fast, secure, and continuously available. This prompted us to develop a fundamentally new approach inspired by ideas from cryptocurrencies and distributed databases. LF trades high local storage overhead for continuous availablility (even if the network is totally down) and fast nearline queries against the entire global data set.
+Most decentralized systems use distributed hash tables (DHTs) for this purpose. DHTs scale well but are slow, require a reliable global network to maintain full access to the data set, and are vulnerable to ["Sybil"](https://en.wikipedia.org/wiki/Sybil_attack) type attacks. We at ZeroTier wanted something very fast, secure, and continuously available even under unreliable network conditions. This prompted us to develop something fundamentally new. As far as we know nothing quite like LF exists (we looked). The closest analogs are cryptocurrency block chains and CRDT-based distributed databases.
 
 ### Features and Benefits
 
-* Easy to use and deploy.
-* Fully decentralized system with open participation and no single points of failure. (Private LF networks can be created that require certificates, but this is optional.)
+* Easy to use and deploy, ships with useful defaults and credentials to use an open public network.
+* Fully decentralized system with open participation and no single points of failure. (Private LF databses can be created that require certificates, but this is optional.)
 * Fast sub-second nearline queries against the entire global data set at all times.
 * Versatile security model allowing user choice between different conflict resolution mechanisms that can be used alone or in combination with one another. These include local heuristics, proof of work "weight," elective trust of other nodes, and certificates.
 * Flexible record lookup API allowing multiple nested keys and range queries against 64-bit ordinals associated with each key.
-* Encrypted record keys and values for strong security and privacy despite full global data set replication. Order preserving encryption techinques are leveraged to allow range queries without revealing keys or exact ordinal values.
 * Novel proof-of-knowledge mechanism makes it impossible to generate valid records identified by a key whose plain text is not known, increasing the difficulty of data set poisoning attacks by naive attackers.
+* Everything is encrypted including record keys making the system private and secure even though all data is replicated globally. Records whose keys are not known cannot even be enumerated or looked up.
 
 ### Limitations and Disadvantages
 
-* LF is only good for small bits of information that don't change very often like certificates, keys, IP addresses, names, etc.
-* The [CAP theorem](https://en.wikipedia.org/wiki/CAP_theorem) trade-off is availability and partition-tolerance, meaning eventual consistency and no transactions.
+* LF is only good for small bits of information that don't change very often.
+* [CAP theorem](https://en.wikipedia.org/wiki/CAP_theorem) trade-off: AP (availability, partition-tolerance). Global locks and authoritative queries are not supported.
 * Full nodes are unsuitable for small resource constrained devices due to high storage and relatively high bandwidth overhead.
-* Storage requirements grow over time in a manner not unlike a block chain. Fortunately [storage is getting cheaper over time too](https://www.backblaze.com/blog/hard-drive-cost-per-gigabyte/). LF is designed to allow partial nodes and discarding of some old data to mitigate data set growth but these features are not implemented yet and likely won't be needed for years.
+* Storage requirements grow over time in a manner not unlike a block chain. Fortunately [storage is getting cheaper over time too](https://www.backblaze.com/blog/hard-drive-cost-per-gigabyte/). The data model and protocol are designed to permit partial data discarding and fractional nodes but these features are not implemented yet and likely won't be needed for years.
 
 ## Building and Running
 
 LF works on Linux, Mac, and probably BSD. It won't work on Windows yet but porting shouldn't be too hard if anyone wants it. It's mostly written in Go (1.11+ required) with some C for performance critical bits.
 
-To build on most platform just type `make`.
-
-Once we get out of beta we'll probably provide some pre-built binaries as is the custom for Go projects.
+To build on most platforms just type `make`. You will need Go 1.11 or newer (type `go version` to check) and a relatively recent C compiler supporting the C99 standard.
 
 ## Getting Started
 
-LF comes with a full node implementation and a command line client that can be used to create and query records and to some limited extent control nodes. All of these things exist in the same `lf` binary that gets built when you type `make`.
+Both a command line client and a full node implementation are present in the same `lf` binary. Just run it and it will print help.
 
-Once you build the binary just run it for help.
-
-LF ships out of the box with its command line client configured to query `lf.zerotier.com`, a public network node operated by ZeroTier. That means you can try a simple query right away:
+LF ships out of the box with its command line client configured to query `lf.zerotier.com`, a public node using the default public database operated by ZeroTier. That means you can try a simple query right away:
 
 ```text
 $ ./lf get bad horse#
@@ -73,7 +71,7 @@ It's "hi-yo, silver!"                                     | bad#0 horse#13
 Signed: Bad Horse.                                        | bad#0 horse#14
 ```
 
-Don't forget the trailing hash sign on `horse#`. Drop the `./` if you put the binary somewhere in your path.
+Don't forget the trailing hash sign on `horse#` or you will only get the first record (more on this later). Drop the `./` before `lf` if you put the binary somewhere in your path.
 
 These are the lyrics to [Bad Horse](https://www.youtube.com/watch?v=VNhhz1yYk2U) from the musical [Dr. Horrible's Sing-Along Blog](https://drhorrible.com). Yes, we put that in the public data store. We hope it's fair use.
 
@@ -151,7 +149,7 @@ Here are some of the node-specific files you'll see in the node's home directory
 * `records.lf`: Flat data file containing all records in binary serialized format. This file will get quite large over time.
 * `weights.b??`: Record proof of work weights with 96-bit weights striped across three memory mapped files to reduce I/O load during weight updates
 * `graph.bin`: Memory mapped record linkage graph data structure
-* `wharrgarbl-table.bin`: Static table used by proof of work algorithm
+* `wharrgarbl-table.bin`: Static table used by proof of work algorithm, auto-generated on first use
 
 The node will also create or modify `client.json` to add its own local (127.0.0.1) HTTP URL so that client queries on the local system will use it.
 
@@ -197,7 +195,20 @@ The `owner` command group in the CLI includes commands to create and sign certif
 
 LF contains a FUSE filesystem that allows sections of the global data store to be mounted. It can be mounted by remote clients or directly by full nodes, with the latter offering much higher performance since all data is local to the process. LFFS requires FUSE on Linux or [OSXFUSE](https://osxfuse.github.io) on Mac.
 
-To test LFFS try this:
+LFFS is very basic and does not support full POSIX filesystem semantics. It's intended to be used for things like configuration file replication. Don't even try to put a database or something else complex on it. Even a git repository is likely to be too much. Here's a current list of known issues and limitations:
+
+* Hard links, special modes like setuid/setgid, named pipes, device nodes, and extended attributes are not supported.
+* Filesystem permission and ownership changes are not supported and chmod/chown are silently ignored.
+* File locks are not supported.
+* Renaming is a bit clunky and slow and doesn't quite obey POSIX semantics as it's implemented as delete-create.
+* Name length is limited to 511 bytes. This is for names within a directory. There is no limit to how many directories can be nested.
+* If you must perform proof of work, writes will be extremely slow to propagate and CPU-intensive. There is currently no way to cancel a write.
+* A single LF owner is used for all new files under a mount and there's no way to change this without remounting.
+* Once a filename is claimed by an owner there is currently no way to transfer ownership even if the file is subsequently deleted.
+
+Some of these might get fixed or improved in the future, but as we said LFFS is intended for very simple use cases and small data.
+
+To try out LFFS try this:
 
 ```text
 $ ./lf mount -maxfilesize 4096 -passphrase 'The sparrow perches on the steeple in the rain.' /tmp/lffs-public-test com.zerotier.lffs.public-test
@@ -227,31 +238,7 @@ The complete schema for mount points in `mounts.json` is:
 * **Passphrase**: If present this overrides both **OwnerPrivate** and **MaskingKey** and is used to generate both.
 * **MaxFileSize**: This limits the maximum size of locally written files. Files larger than this can appear if someone else wrote them. The hard global maximum is 4mb. Note that large files can take a *very* long time to commit due to proof of work on public networks!
 
-Right now LFFS is somewhat limited:
-
-* This virtual filesystem is absolutely **not** suitable for things like databases or other things that do a lot of random writes and use advanced I/O features! It's intended for small files that are written atomically (or nearly so) and don't change very often.
-* Hard links, special modes like setuid/setgid, named pipes, device nodes, and extended attributes are not supported.
-* Filesystem permission and ownership changes are not supported and chmod/chown are silently ignored.
-* Name length is limited to 511 bytes. This is for names within a directory. There is no limit to how many directories can be nested.
-* Committing writes is slow if you must perform proof of work, and there's currently no way to cancel a commit in progress. Local writes will appear immediately but their propagation across the network might take a while especially if PoW is needed.
-* A single LF owner is used for all new files under a mount and there's no way to change this without remounting.
-* Once a filename is claimed by an owner there is currently no way to transfer ownership.
-
-Some of these limitations might get fixed in the future. Others are intrinsic to the system.
-
-Files in LFFS are stored in LF itself using a simple schema designed for speed.
-
-All entries in a given directory are stored under that directory's selector with ordinals equal to their inodes. A file's inode is the CRC64 of its name plus the inode of its parent directory. There is a very small chance of inode collision but this shouldn't be an issue unless a directory were to accumulate billions of files. Subdirectories exist as entries within their parent directory to allow them to show up in listings, but the files beneath them will be under their selector and not the parent's. A subdirectory's selector name is simply equal to the parent's selector name followed by `/<subdirectory>`.
-
-Nested multiple selectors could have been used but this would have been a bit slower and would have limited depth to 15.
-
-Small files are stored as record values prefixed by a header containing the file's full name and other information. Files larger than the maximum size of a record value are stored by being broken down into chunks and those chunks stored if they don't already exist in the data store. The selector and masking key for each chunk is the SHA256 hash of its content. This content addressing scheme creates global (across the entire data store) deduplicating storage behavior without compromising privacy since the expected hashed content of a chunk must be known to find it. Chunking is done iteratively until the root of this tree of chunks fits in a single record. The chunking algorithm breaks chunks at data-dependent positions in a manner similar to a binary patching algorithm, causing small changes to the file to often require only a few records to be written.
-
-Deletes are accomplished by storing a special record indicating that the file was deleted. Note that right now deleted names are still claimed by their owner. This might change in the future.
-
-All files in the FUSE mount will appear as globally readable on the host system. UIDs are computed from a hash of the corresponding record's owner. File permissions will indicate that a file is writable if this is the same owner as the one used to mount the filesystem. The GID of all files will equal the GID of the running LF node process. A virtual file called `.passwd` is always present in the root of the FUSE mount and contains a simulated Unix password file mapping all the owners that have so far been observed to hash-based usernames.
-
-## Sol: The Public Network
+## Sol: The Default Public Database / Network
 
 LF ships with a default configuration for a public network we call *Sol* after our home solar system. This configuration contains a default node URL and default *genesis records* allowing nodes to automatically bootstrap themselves.
 
@@ -261,11 +248,15 @@ We intend to use LF (via Sol) to decentralize our root server infrastructure. Ou
 
 LF is open source. It's possible to make your own LF networks and configure them however you like. You can even create private LF networks that *require* signatures for anyone to add records. These will be of interest to our enterprise customers with private air-gapped environments.
 
-## Creating Private Networks
+## Local Test Mode
 
-To create a private network you need to create your own *genesis records*. These serve as the first anchor points in the DAG (and are exempt from the normal linkage and other rules) and contain your network's configuration.
+Running `node-start -localtest` runs a full node in local test mode. Local test nodes store their state and data in a `localtest` subfolder of the LF home path (to not conflict with any full node you're running) and do not communicate over the P2P network. They also ignore proof of work and/or certificate requirements for new records. Local test nodes are good for testing software designed to store data in LF without polluting live databases with test records and junk and without having to wait for proof of work computation.
 
-To do this use the undocumented (in the help output) command `makegenesis`. Here's a simple example:
+## Creating a Private Database / Network
+
+To create a private database/network you need to create your own *genesis records*. These serve as the first anchor points in the DAG (and are exempt from the normal linkage and other rules) and contain your network's configuration.
+
+To do this use the command `makegenesis`. Here's a simple example:
 
 ```text
 $ ./lf makegenesis

@@ -44,7 +44,7 @@ type genesisParametersState struct {
 	lock         sync.Mutex
 }
 
-// GenesisParameters is the payload (JSON encoded) of the first RecordMinLinks records in a global data store.
+// GenesisParameters is the payload (JSON encoded) of the first records in the DAG.
 type GenesisParameters struct {
 	ID                      [32]byte ``                  // Unique arbitrary 32-byte ID of this network (always immutable)
 	AmendableFields         []string `json:",omitempty"` // List of json field names that the genesis owner can change (always immutable)

@@ -179,6 +179,7 @@ Commands:
     core                                  Test core systems (default)
     wharrgarbl                            Test proof of work (long!)
     database                              Test DAG and database (long!)
+  makegenesis                             Create a private database (see docs)
   node-start [-...]                       Start a full LF node
     -p2p <port>                           P2P TCP port (default: ` + lfDefaultP2PPortStr + `)
     -http <port>                          HTTP TCP port (default: ` + lfDefaultHTTPPortStr + `)
@@ -229,7 +230,6 @@ Commands:
     -owner <owner>                        Use this owner instead of default
     -maxfilesize <size>                   Maximum file size in bytes (writes)
     -passphrase <string>                  Derive owner and mask from string
-  makegenesis                             Make genesis records for private net
 
 Global options must precede commands, while command options must come after
 the command name.
