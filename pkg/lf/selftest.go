@@ -119,6 +119,17 @@ func TestCore(out io.Writer) bool {
 	}
 	fmt.Fprintf(out, "OK\n")
 
+	fmt.Fprintf(out, "Testing and benchmarking TH64 micro-hash... ")
+	th64out := TH64(0xdeadbeefdeadbeef)
+	if th64out != 0x1411eaec63f6644b || TH64N(0xdeadbeefdeadbeef, 1) != th64out {
+		fmt.Fprintf(out, "FAILED %x\n", th64out)
+		return false
+	}
+	start := time.Now()
+	th64out = TH64N(0xdeadbeefdeadbeef, 10000000)
+	end := time.Now()
+	fmt.Fprintf(out, "OK (%f hashes/sec)\n", 10000000.0/end.Sub(start).Seconds())
+
 	fmt.Fprintf(out, "Testing Ordinal... ")
 	var rk [8]byte
 	var orda, ordb Ordinal
