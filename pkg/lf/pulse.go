@@ -72,7 +72,8 @@ func NewPulse(owner *Owner, selectorNames [][]byte, selectorOrdinals []uint64, r
 	}
 
 	if minutes > RecordMaxPulseSpan {
-		minutes = RecordMaxPulseSpan
+		err = ErrInvalidParameter
+		return
 	}
 
 	var tmp [32]byte
