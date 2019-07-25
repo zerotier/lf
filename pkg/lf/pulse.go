@@ -31,12 +31,15 @@ import (
 	"encoding/binary"
 )
 
+// PulseSize is the size of a pulse in bytes.
+const PulseSize = 11
+
 // Pulse encodes a pulse key and a 24-bit number of minutes that it represents.
 type Pulse []byte
 
 // Key returns the 64-bit pulse key
 func (p Pulse) Key() uint64 {
-	if len(p) != 11 {
+	if len(p) != PulseSize {
 		return 0
 	}
 	return binary.BigEndian.Uint64(p[0:8])
@@ -44,7 +47,7 @@ func (p Pulse) Key() uint64 {
 
 // Minutes returns the number of minutes represented by this pulse
 func (p Pulse) Minutes() uint {
-	if len(p) != 11 {
+	if len(p) != PulseSize {
 		return 0
 	}
 	minutes := uint(p[8]) << 16
@@ -89,7 +92,7 @@ func NewPulse(owner *Owner, selectorNames [][]byte, selectorOrdinals []uint64, r
 	ophash := owner.PrivateHash()
 	pulseTokenHasher.Write(ophash[:])
 
-	var pbuf [11]byte
+	var pbuf [PulseSize]byte
 	p = pbuf[:]
 	binary.BigEndian.PutUint64(p[0:8], TH64N(binary.BigEndian.Uint64(pulseTokenHasher.Sum(tmp[:0])), RecordMaxPulseSpan-minutes))
 	p[8] = byte(minutes >> 16)

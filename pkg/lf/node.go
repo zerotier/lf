@@ -1037,16 +1037,16 @@ func (n *Node) IsLocal() bool { return true }
 // from being used to waste bandwidth on the network. Updates are no-ops if the pulse in question has already been
 // updated to an equal or higher minute count.
 func (n *Node) DoPulse(pulse Pulse, announce bool) bool {
-	if len(pulse) >= 11 {
+	if len(pulse) >= PulseSize {
 		key := pulse.Key()
 		if key != 0 {
 			minutes := pulse.Minutes()
 			startRangeMid := TimeSec() - uint64(minutes*60)
 			if n.db.updatePulse(pulse.Token(), uint64(minutes), startRangeMid-uint64(n.genesisParameters.RecordMaxTimeDrift), startRangeMid+uint64(n.genesisParameters.RecordMaxTimeDrift)) {
 				if announce {
-					var msg [12]byte
+					var msg [PulseSize + 1]byte
 					msg[0] = p2pProtoMessageTypePulse
-					copy(msg[1:12], pulse[0:11])
+					copy(msg[1:], pulse)
 					n.peersLock.RLock()
 					for _, p := range n.peers {
 						p.send(msg[:])
@@ -2239,6 +2239,24 @@ func (n *Node) createHTTPServeMux() *http.ServeMux {
 		}
 	})
 
+	smux.HandleFunc("/pulse", func(out http.ResponseWriter, req *http.Request) {
+		apiSetStandardHeaders(out)
+		if req.Method == http.MethodPost || req.Method == http.MethodPut {
+			var pbuf [PulseSize]byte
+			pulse := Pulse(pbuf[:])
+			_, err := io.ReadFull(req.Body, pulse[:])
+			if err != nil {
+				apiSendObj(out, req, http.StatusBadRequest, &ErrAPI{Code: http.StatusBadRequest, Message: "read error: " + err.Error()})
+			} else {
+				ok := n.DoPulse(pulse, true)
+				apiSendObj(out, req, http.StatusOK, &ok)
+			}
+		} else {
+			out.Header().Set("Allow", "POST, PUT")
+			apiSendObj(out, req, http.StatusMethodNotAllowed, &ErrAPI{Code: http.StatusMethodNotAllowed, Message: req.Method + " not supported for this path"})
+		}
+	})
+
 	smux.HandleFunc("/make", func(out http.ResponseWriter, req *http.Request) {
 		apiSetStandardHeaders(out)
 		if req.Method == http.MethodPost || req.Method == http.MethodPut {
@@ -2266,11 +2284,11 @@ func (n *Node) createHTTPServeMux() *http.ServeMux {
 		if req.Method == http.MethodPost || req.Method == http.MethodPut {
 			var m MakePulseRequest
 			if apiReadObj(out, req, &m) == nil {
-				results, err := m.execute(n)
+				ok, err := m.execute(n)
 				if err != nil {
 					apiSendObj(out, req, http.StatusBadRequest, &ErrAPI{Code: http.StatusBadRequest, Message: "record creation failed: " + err.Error()})
 				} else {
-					apiSendObj(out, req, http.StatusOK, results)
+					apiSendObj(out, req, http.StatusOK, &ok)
 				}
 			}
 		} else {
