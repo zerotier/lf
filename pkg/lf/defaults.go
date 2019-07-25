@@ -34,8 +34,6 @@ import "net"
 // links might be too high so a galactic civilization may require one data
 // store per ~4 cubic light hours.
 
-// Note that the SeedPeers field is deprecated but was there originally.
-
 /*
 {
   "ID": [23, 85, 34, 46, 124, 51, 168, 95, 201, 112, 89, 91, 250, 91, 70, 59, 42, 169, 53, 238, 62, 70, 190, 211, 59, 20, 20, 141, 227, 216, 141, 35],
@@ -47,19 +45,7 @@ import "net"
   "AuthRequired": false,
   "RecordMinLinks": 2,
   "RecordMaxValueSize": 1024,
-  "RecordMaxTimeDrift": 60,
-  "SeedPeers": [
-    {
-      "IP": "95.216.29.85",
-      "Port": 9908,
-      "Identity": "\bJrKNrBrauJsmnbeGRPYN6NmyM81yp32MjmLhNb2EQENd0NwilsR4Cxsdd4CdgkPMS"
-    },
-    {
-      "IP": "174.136.102.98",
-      "Port": 9908,
-      "Identity": "\bHcsqi4GP24UhaJL9poDM35k7KwvgvYzt1fMrYDr5EEAhTJ1ZnHu61xpDctypw66fh"
-    }
-  ]
+  "RecordMaxTimeDrift": 60
 }
 */
 
@@ -69,12 +55,17 @@ var SolNetworkID = [32]byte{0x17, 0x55, 0x22, 0x2e, 0x7c, 0x33, 0xa8, 0x5f, 0xc9
 // SolSeedPeers is an array of peers that can be contacted to start synchronizing nodes on Sol.
 var SolSeedPeers = []Peer{
 	Peer{
-		IP:       net.ParseIP("95.216.29.85"),
+		IP:       net.ParseIP("185.180.13.82"), // Los Angeles
 		Port:     9908,
-		Identity: Base62Decode("JrKNrBrauJsmnbeGRPYN6NmyM81yp32MjmLhNb2EQENd0NwilsR4Cxsdd4CdgkPMS"),
+		Identity: Base62Decode("FHZAb5KAmPKzUySSau9VDiugJaUtIJMW3yKZHcjyFyCEPiBQMk6QxlHiGoBEkHtQf"),
 	},
 	Peer{
-		IP:       net.ParseIP("174.136.102.98"),
+		IP:       net.ParseIP("195.181.173.159"), // Amsterdam
+		Port:     9908,
+		Identity: Base62Decode("JZlvKdV12jt8rM3552LaThpTnsC9FfOZGRvGvbN3GImKnaw4wR1CCBu80k1ohc6H6"),
+	},
+	Peer{
+		IP:       net.ParseIP("174.136.102.98"), // Los Angeles (ZeroTier office)
 		Port:     9908,
 		Identity: Base62Decode("Hcsqi4GP24UhaJL9poDM35k7KwvgvYzt1fMrYDr5EEAhTJ1ZnHu61xpDctypw66fh"),
 	},

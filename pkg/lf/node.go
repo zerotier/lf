@@ -84,6 +84,7 @@ const (
 	p2pProtoMessageTypeRequestRecordsByHash byte = 3 // one or more 32-byte hashes we want
 	p2pProtoMessageTypeHaveRecords          byte = 4 // one or more 32-byte hashes we have
 	p2pProtoMessageTypePeer                 byte = 5 // Peer (JSON)
+	p2pProtoMessageTypePulse                byte = 6 // 11-byte pulse
 
 	// p2pProtoMaxRetries is the maximum number of times we'll try to retry a record
 	p2pProtoMaxRetries = 256
@@ -1030,6 +1031,35 @@ func (n *Node) ExecuteQuery(query *Query) (QueryResults, error) { return query.e
 // IsLocal implements IsLocal in the LF interface, always returns true for Node.
 func (n *Node) IsLocal() bool { return true }
 
+// DoPulse updates pulse times for any tokens matching this message and returns whether any updates actually occurred.
+// Updates are only accepted if they are for records whose timestamps plus the pulse's number of minutes are within
+// RecordMaxTimeDrift seconds of the current clock. This is an anti-flooding mechanism to prevent gratuitous pulses
+// from being used to waste bandwidth on the network. Updates are no-ops if the pulse in question has already been
+// updated to an equal or higher minute count.
+func (n *Node) DoPulse(pulse Pulse, announce bool) bool {
+	if len(pulse) >= 11 {
+		key := pulse.Key()
+		if key != 0 {
+			minutes := pulse.Minutes()
+			startRangeMid := TimeSec() - uint64(minutes*60)
+			if n.db.updatePulse(pulse.Token(), uint64(minutes), startRangeMid-uint64(n.genesisParameters.RecordMaxTimeDrift), startRangeMid+uint64(n.genesisParameters.RecordMaxTimeDrift)) {
+				if announce {
+					var msg [12]byte
+					msg[0] = p2pProtoMessageTypePulse
+					copy(msg[1:12], pulse[0:11])
+					n.peersLock.RLock()
+					for _, p := range n.peers {
+						p.send(msg[:])
+					}
+					n.peersLock.RUnlock()
+				}
+				return true
+			}
+		}
+	}
+	return false
+}
+
 //////////////////////////////////////////////////////////////////////////////
 // Background tasks that are registered with backgroundThreadWG
 //////////////////////////////////////////////////////////////////////////////
@@ -1382,7 +1412,7 @@ func (n *Node) backgroundThreadOracle() {
 				var rb RecordBuilder
 				var rec *Record
 				startTime := time.Now()
-				err = rb.Start(RecordTypeCommentary, commentary, links, nil, nil, nil, n.owner.Public, uint64(startTime.Unix()))
+				err = rb.Start(RecordTypeCommentary, commentary, links, nil, nil, nil, n.owner.Public, 0, uint64(startTime.Unix()))
 				if err == nil {
 					err = rb.AddWork(wf, uint32(minWorkDifficultyThisIteration))
 					if err == nil {
@@ -1485,19 +1515,16 @@ func (n *Node) backgroundTaskProcessRecordsInLimbo(ownerPublic OwnerPublic) {
 // Miscellaneous internal methods
 //////////////////////////////////////////////////////////////////////////////
 
-// recordIsSigned returns the certificate that signed this record (if any) and whether or not it was revoked by a CRL.
-func (n *Node) recordIsSigned(rec *Record) (*x509.Certificate, bool) {
-	if rec == nil {
-		return nil, false
-	}
-	certs, revokedCerts, _ := n.GetOwnerCertificates(rec.Owner)
+// recordIsSigned returns the certificate that signed a record (if any) and whether or not it was revoked by a CRL.
+func (n *Node) recordIsSigned(owner OwnerPublic, recordTimestamp uint64) (*x509.Certificate, bool) {
+	certs, revokedCerts, _ := n.GetOwnerCertificates(owner)
 	for _, cert := range certs {
-		if rec.Timestamp >= uint64(cert.NotBefore.Unix()) && rec.Timestamp <= uint64(cert.NotAfter.Unix()) {
+		if recordTimestamp >= uint64(cert.NotBefore.Unix()) && recordTimestamp <= uint64(cert.NotAfter.Unix()) {
 			return cert, false
 		}
 	}
 	for _, revokedCert := range revokedCerts {
-		if rec.Timestamp >= uint64(revokedCert.NotBefore.Unix()) && rec.Timestamp <= uint64(revokedCert.NotAfter.Unix()) {
+		if recordTimestamp >= uint64(revokedCert.NotBefore.Unix()) && recordTimestamp <= uint64(revokedCert.NotAfter.Unix()) {
 			return revokedCert, true
 		}
 	}
@@ -1519,7 +1546,7 @@ func (n *Node) recordApprovalStatus(rec *Record) (bool, bool) {
 	if !n.genesisParameters.AuthRequired && rec.ValidateWork() {
 		return true, true
 	}
-	cert, revoked := n.recordIsSigned(rec)
+	cert, revoked := n.recordIsSigned(rec.Owner, rec.Timestamp)
 	return (cert != nil && !revoked), (cert != nil)
 }
 
@@ -1956,6 +1983,7 @@ mainReaderLoop:
 			n.log[LogLevelNormal].Printf("P2P connection to %s closed: invalid message size", peerAddressStr)
 			break
 		}
+		fullMsg := msg
 		incomingMessageType := msg[0]
 		msg = msg[1:]
 
@@ -2036,7 +2064,7 @@ mainReaderLoop:
 
 		case p2pProtoMessageTypeRequestRecordsByHash:
 			for len(msg) >= 32 {
-				rdata := make([]byte, 1, 4096)
+				rdata := make([]byte, 1, 2048)
 				rdata[0] = p2pProtoMessageTypeRecord
 				_, rdata, err = n.db.getDataByHash(msg[0:32], rdata)
 				if err == nil && len(rdata) > 1 {
@@ -2093,6 +2121,19 @@ mainReaderLoop:
 							n.Connect(peerMsg.IP, peerMsg.Port, peerMsg.Identity)
 						}
 					}
+				}
+			}
+
+		case p2pProtoMessageTypePulse:
+			if len(msg) == 11 {
+				if n.DoPulse(msg, false) {
+					n.peersLock.RLock()
+					for _, otherPeer := range n.peers {
+						if &otherPeer != &p {
+							otherPeer.send(fullMsg)
+						}
+					}
+					n.peersLock.RUnlock()
 				}
 			}
 
@@ -2213,6 +2254,24 @@ func (n *Node) createHTTPServeMux() *http.ServeMux {
 				}
 			} else {
 				apiSendObj(out, req, http.StatusForbidden, &ErrAPI{Code: http.StatusMethodNotAllowed, Message: "only trusted clients can delegate record creation"})
+			}
+		} else {
+			out.Header().Set("Allow", "POST, PUT")
+			apiSendObj(out, req, http.StatusMethodNotAllowed, &ErrAPI{Code: http.StatusMethodNotAllowed, Message: req.Method + " not supported for this path"})
+		}
+	})
+
+	smux.HandleFunc("/makepulse", func(out http.ResponseWriter, req *http.Request) {
+		apiSetStandardHeaders(out)
+		if req.Method == http.MethodPost || req.Method == http.MethodPut {
+			var m MakePulseRequest
+			if apiReadObj(out, req, &m) == nil {
+				results, err := m.execute(n)
+				if err != nil {
+					apiSendObj(out, req, http.StatusBadRequest, &ErrAPI{Code: http.StatusBadRequest, Message: "record creation failed: " + err.Error()})
+				} else {
+					apiSendObj(out, req, http.StatusOK, results)
+				}
 			}
 		} else {
 			out.Header().Set("Allow", "POST, PUT")

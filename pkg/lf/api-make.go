@@ -26,6 +26,8 @@
 
 package lf
 
+import "bytes"
+
 // MakeSelectorRequest contains a plain text name and ordinal for a new record to be created server-side.
 type MakeSelectorRequest struct {
 	Name    Blob   `json:",omitempty"`
@@ -98,4 +100,53 @@ func (m *MakeRecordRequest) execute(n *Node) (*Record, error) {
 	}
 
 	return rec, n.AddRecord(rec)
+}
+
+// MakePulseRequest requests server-side generation of a pulse.
+type MakePulseRequest struct {
+	Selectors             []MakeSelectorRequest `json:",omitempty"`
+	OwnerPrivate          Blob                  `json:",omitempty"`
+	MaskingKey            Blob                  `json:",omitempty"`
+	Passphrase            string                `json:",omitempty"`
+	MinutesSinceTimestamp uint                  ``
+}
+
+func (m *MakePulseRequest) execute(n *Node) (bool, error) {
+	var owner *Owner
+	if len(m.Passphrase) > 0 {
+		owner, _ = PassphraseToOwnerAndMaskingKey(m.Passphrase)
+	} else {
+		o, err := NewOwnerFromPrivateBytes(m.OwnerPrivate)
+		if err != nil {
+			return false, err
+		}
+		owner = o
+	}
+
+	var selectorRanges [][2][]byte
+	var selectorNames [][]byte
+	var selectorOrdinals []uint64
+	for _, sr := range m.Selectors {
+		skey := MakeSelectorKey(sr.Name, sr.Ordinal)
+		selectorRanges = append(selectorRanges, [2][]byte{skey, skey})
+		selectorNames = append(selectorNames, sr.Name)
+		selectorOrdinals = append(selectorOrdinals, sr.Ordinal)
+	}
+
+	var maxTS uint64
+	n.db.query(0, int64(9223372036854775807), selectorRanges, nil, func(ts, _, _, _, _ uint64, _ int, _ uint64, recOwner []byte, _ uint) bool {
+		if bytes.Equal(recOwner, owner.Public) {
+			if ts > maxTS {
+				maxTS = ts
+			}
+		}
+		return true
+	})
+
+	if maxTS == 0 {
+		return false, nil
+	}
+
+	pulse, _ := NewPulse(owner, selectorNames, selectorOrdinals, maxTS, m.MinutesSinceTimestamp)
+	return n.DoPulse(pulse, true), nil
 }

@@ -46,12 +46,13 @@ var (
 const (
 	// Flags are protocol constants and can't be changed. Bits are reserved as
 	// follows:
-	//   0-4   - boolean flags with bit 3 unused and reserved
+	//   0-4   - boolean flags
 	//   4-8   - link count (0...15)
 	//   8-12  - record type (0...15)
 	//  12-63  - reserved for future use
-	recordBodyFlagHasValue    uint64 = 0x1
-	recordBodyFlagValueIsHash uint64 = 0x4
+	recordBodyFlagHasValue      uint64 = 0x1
+	recordBodyFlagHasPulseToken uint64 = 0x2
+	recordBodyFlagValueIsHash   uint64 = 0x4
 
 	// Record value compression types are protocol constants. Range must be 0-3.
 	recordValueCompressionNone   = 0
@@ -75,6 +76,10 @@ const (
 	// RecordMaxSelectors is a sanity limit on the number of selectors.
 	// This is a protocol constant and can't be changed.
 	RecordMaxSelectors = 15
+
+	// RecordMaxPulseSpan is the maximum number of minutes after a record's timestamp that pulses can be applied.
+	// This is a protocol constant and can't be changed.
+	RecordMaxPulseSpan = 525600
 
 	// RecordWorkAlgorithmNone indicates no work algorithm.
 	// This is a protocol constant and can't be changed.
@@ -182,12 +187,13 @@ func makeMaskingCipher(maskingKey, ownerPublic []byte, selectorNames [][]byte, t
 // recordBody represents the main body of a record including its value, owner public keys, etc.
 // It's included as part of Record but separated since in record construction we want to treat it as a separate element.
 type recordBody struct {
-	Value     Blob        `json:",omitempty"` // Record value (possibly masked and/or compressed, use GetValue() to get)
-	ValueHash Blob        `json:",omitempty"` // Normally empty, but contains SHA384(Value) if this is an abbreviated record
-	Owner     OwnerPublic `json:",omitempty"` // Owner of this record
-	Links     []HashBlob  `json:",omitempty"` // Links to previous records' hashes
-	Timestamp uint64      ``                  // Timestamp (and revision ID) in SECONDS since Unix epoch
-	Type      int         ``                  // Record type ID
+	Value      Blob        `json:",omitempty"` // Record value (possibly masked and/or compressed, use GetValue() to get)
+	ValueHash  Blob        `json:",omitempty"` // Normally empty, but contains SHA384(Value) if this is an abbreviated record
+	Owner      OwnerPublic `json:",omitempty"` // Owner of this record
+	Links      []HashBlob  `json:",omitempty"` // Links to previous records' hashes
+	Timestamp  uint64      ``                  // Timestamp (and revision ID) in SECONDS since Unix epoch
+	PulseToken uint64      ``                  // Pulse token (endpoint of TH64 hash chain)
+	Type       int         ``                  // Record type ID
 
 	sigHash *[48]byte
 }
@@ -268,6 +274,17 @@ func (rb *recordBody) unmarshalFrom(r io.Reader) error {
 		return err
 	}
 
+	if (flags & recordBodyFlagHasPulseToken) != 0 {
+		var pt [8]byte
+		_, err = io.ReadFull(&rr, pt[:])
+		if err != nil {
+			return err
+		}
+		rb.PulseToken = binary.BigEndian.Uint64(pt[:])
+	} else {
+		rb.PulseToken = 0
+	}
+
 	rb.Type = int((flags >> 8) & 0xf)
 
 	rb.sigHash = nil
@@ -287,6 +304,9 @@ func (rb *recordBody) marshalTo(w io.Writer, hashAsProxyForValue bool) error {
 	if len(rb.ValueHash) == 48 {
 		flags |= recordBodyFlagHasValue
 		hashAsProxyForValue = true
+	}
+	if rb.PulseToken != 0 {
+		flags |= recordBodyFlagHasPulseToken
 	}
 	if hashAsProxyForValue {
 		flags |= recordBodyFlagValueIsHash
@@ -331,6 +351,15 @@ func (rb *recordBody) marshalTo(w io.Writer, hashAsProxyForValue bool) error {
 	}
 
 	_, err := writeUVarint(w, rb.Timestamp)
+
+	if rb.PulseToken != 0 {
+		var pt [8]byte
+		binary.BigEndian.PutUint64(pt[:], rb.PulseToken)
+		if _, err := w.Write(pt[:]); err != nil {
+			return err
+		}
+	}
+
 	return err
 }
 
@@ -676,7 +705,7 @@ type RecordBuilder struct {
 }
 
 // Start begins creating a new record, resetting RecordBuilder if it contains any old state.
-func (rb *RecordBuilder) Start(recordType int, value []byte, links [][32]byte, maskingKey []byte, selectorNames [][]byte, selectorOrdinals []uint64, ownerPublic []byte, timestamp uint64) error {
+func (rb *RecordBuilder) Start(recordType int, value []byte, links [][32]byte, maskingKey []byte, selectorNames [][]byte, selectorOrdinals []uint64, ownerPublic []byte, pulseToken, timestamp uint64) error {
 	rb.record = new(Record)
 	rb.workHash = nil
 	rb.workBillableBytes = 0
@@ -717,6 +746,7 @@ func (rb *RecordBuilder) Start(recordType int, value []byte, links [][32]byte, m
 		})
 	}
 	rb.record.recordBody.Timestamp = timestamp
+	rb.record.recordBody.PulseToken = pulseToken
 	rb.record.recordBody.Type = recordType
 
 	// Billable bytes equals the total serialized bytes of the record body plus the record's selectors' serialized sizes.
@@ -782,8 +812,12 @@ func (rb *RecordBuilder) Complete(owner *Owner) (*Record, error) {
 
 // NewRecord is a shortcut to running all incremental record creation functions.
 func NewRecord(recordType int, value []byte, links [][32]byte, maskingKey []byte, selectorNames [][]byte, selectorOrdinals []uint64, timestamp uint64, workFunction *Wharrgarblr, owner *Owner) (*Record, error) {
+	pulseToken, err := NewPulse(owner, selectorNames, selectorOrdinals, timestamp, 0)
+	if err != nil {
+		return nil, err
+	}
 	var rb RecordBuilder
-	err := rb.Start(recordType, value, links, maskingKey, selectorNames, selectorOrdinals, owner.Public, timestamp)
+	err = rb.Start(recordType, value, links, maskingKey, selectorNames, selectorOrdinals, owner.Public, pulseToken.Key(), timestamp)
 	if err != nil {
 		return nil, err
 	}

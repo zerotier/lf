@@ -192,6 +192,7 @@ func (db *db) putRecord(r *Record) error {
 		unsafe.Pointer(&rhash),
 		unsafe.Pointer(&rid),
 		C.uint64_t(r.recordBody.Timestamp),
+		C.uint64_t(r.recordBody.PulseToken),
 		C.uint32_t(r.Score()),
 		selectorsPtr,
 		C.uint(len(selectors)),
@@ -620,4 +621,16 @@ func (db *db) haveRecordIncludeLimbo(hash []byte) bool {
 	db.cdbLock.Lock()
 	defer db.cdbLock.Unlock()
 	return C.ZTLF_DB_HaveRecordIncludeLimbo(db.cdb, unsafe.Pointer(&hash[0])) > 0
+}
+
+func (db *db) updatePulse(token, minutes, startRangeStart, startRangeEnd uint64) bool {
+	db.cdbLock.Lock()
+	defer db.cdbLock.Unlock()
+	return C.ZTLF_DB_UpdatePulse(db.cdb, C.uint64_t(token), C.uint64_t(minutes), C.uint64_t(startRangeStart), C.uint64_t(startRangeEnd)) > 0
+}
+
+func (db *db) getPulse(token uint64) uint64 {
+	db.cdbLock.Lock()
+	defer db.cdbLock.Unlock()
+	return uint64(C.ZTLF_DB_GetPulse(db.cdb, C.uint64_t(token)))
 }

@@ -114,6 +114,10 @@ static void *_ZTLF_DB_graphThreadMain(void *arg);
  *   hash                     hash of wanted record
  *   retries                  number of retries attempted so far
  * 
+ * pulse
+ *   token                    64-bit pulse token (last in hash chain)
+ *   current                  Current depth of hash chain
+ * 
  * Most tables are somewhat self-explanatory.
  * 
  * The hole and dangling_link tables are similar but serve different functions. The dangling_link table
@@ -228,6 +232,13 @@ static void *_ZTLF_DB_graphThreadMain(void *arg);
 "CREATE TABLE IF NOT EXISTS wanted (" \
 "hash BLOB PRIMARY KEY NOT NULL," \
 "retries INTEGER NOT NULL" \
+") WITHOUT ROWID;\n" \
+\
+"CREATE TABLE IF NOT EXISTS pulse (" \
+"token INTEGER NOT NULL," \
+"start INTEGER NOT NULL," \
+"minutes INTEGER NOT NULL," \
+"PRIMARY KEY(token,start)" \
 ") WITHOUT ROWID;\n" \
 \
 "CREATE INDEX IF NOT EXISTS wanted_retries ON wanted(retries);\n" \
@@ -455,8 +466,14 @@ int ZTLF_DB_Open(
 		"DELETE FROM limbo WHERE hash = ?");
 	S(db->sHaveRecordInLimbo,
 		"SELECT hash FROM limbo WHERE hash = ?");
+	S(db->sRegisterPulseToken,
+		"INSERT OR IGNORE INTO pulse (token,start,minutes) VALUES (?,?,0)");
+	S(db->sUpdatePulse,
+		"UPDATE pulse SET minutes = ? WHERE token = ? AND start BETWEEN ? AND ? AND minutes < ?");
+	S(db->sGetPulse,
+		"SELECT minutes FROM pulse WHERE token = ? ORDER BY start DESC LIMIT 1");
 
- /* Open and memory map graph and data files. */
+	/* Open and memory map graph and data files. */
 	snprintf(tmp,sizeof(tmp),"%s" ZTLF_PATH_SEPARATOR "graph.bin",path);
 	e = ZTLF_MappedFile_Open(&db->gf,tmp,ZTLF_GRAPH_FILE_CAPACITY_INCREMENT,ZTLF_GRAPH_FILE_CAPACITY_INCREMENT);
 	if (e) {
@@ -867,6 +884,9 @@ void ZTLF_DB_Close(struct ZTLF_DB *db)
 		if (db->sMarkInLimbo)                          sqlite3_finalize(db->sMarkInLimbo);
 		if (db->sTakeFromLimbo)                        sqlite3_finalize(db->sTakeFromLimbo);
 		if (db->sHaveRecordInLimbo)                    sqlite3_finalize(db->sHaveRecordInLimbo);
+		if (db->sRegisterPulseToken)                   sqlite3_finalize(db->sRegisterPulseToken);
+		if (db->sUpdatePulse)                          sqlite3_finalize(db->sUpdatePulse);
+		if (db->sGetPulse)                             sqlite3_finalize(db->sGetPulse);
 		sqlite3_close_v2(db->dbc);
 	}
 
@@ -951,6 +971,7 @@ int ZTLF_DB_PutRecord(
 	const void *hash,
 	const void *id,
 	const uint64_t ts,
+	const uint64_t pulseToken,
 	const uint32_t score,
 	const void **selKey,
 	const unsigned int selCount,
@@ -1088,6 +1109,14 @@ int ZTLF_DB_PutRecord(
 			ZTLF_L_warning("database error adding selector, I/O error or database corrupt!");
 			break;
 		}
+	}
+
+	/* Add pulse token for this record. */
+	sqlite3_reset(db->sRegisterPulseToken);
+	sqlite3_bind_int64(db->sRegisterPulseToken,1,(sqlite3_int64)pulseToken);
+	sqlite3_bind_int64(db->sRegisterPulseToken,2,(sqlite3_int64)ts);
+	if (sqlite3_step(db->sRegisterPulseToken) != SQLITE_DONE) {
+		ZTLF_L_warning("database error registering pulse token, I/O error or database corrupt!");
 	}
 
 	pthread_mutex_t *const graphNodeLock = &(db->graphNodeLocks[((uintptr_t)goff) % ZTLF_DB_GRAPH_NODE_LOCK_ARRAY_SIZE]);
@@ -1704,4 +1733,33 @@ int ZTLF_DB_HaveRecordIncludeLimbo(struct ZTLF_DB *db,const void *hash)
 	}
 	pthread_mutex_unlock(&db->dbLock);
 	return have;
+}
+
+int ZTLF_DB_UpdatePulse(struct ZTLF_DB *db,const uint64_t token,const uint64_t minutes,const uint64_t startRangeStart,const uint64_t startRangeEnd)
+{
+	int changed = 0;
+	pthread_mutex_lock(&db->dbLock);
+	sqlite3_reset(db->sUpdatePulse);
+	sqlite3_bind_int64(db->sUpdatePulse,1,(sqlite_int64)minutes);
+	sqlite3_bind_int64(db->sUpdatePulse,2,(sqlite_int64)token);
+	sqlite3_bind_int64(db->sUpdatePulse,3,(sqlite_int64)startRangeStart);
+	sqlite3_bind_int64(db->sUpdatePulse,4,(sqlite_int64)startRangeEnd);
+	sqlite3_bind_int64(db->sUpdatePulse,4,(sqlite_int64)minutes);
+	if (sqlite3_step(db->sUpdatePulse) == SQLITE_DONE) {
+		changed = sqlite3_changes(db->dbc);
+	}
+	pthread_mutex_unlock(&db->dbLock);
+	return changed;
+}
+
+uint64_t ZTLF_DB_GetPulse(struct ZTLF_DB *db,const uint64_t token)
+{
+	uint64_t p = 0;
+	pthread_mutex_lock(&db->dbLock);
+	sqlite3_reset(db->sGetPulse);
+	sqlite3_bind_int64(db->sGetPulse,1,(sqlite_int64)token);
+	if (sqlite3_step(db->sGetPulse) == SQLITE_ROW)
+		p = (uint64_t)sqlite3_column_int64(db->sGetPulse,0);
+	pthread_mutex_unlock(&db->dbLock);
+	return p;
 }

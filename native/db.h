@@ -180,6 +180,9 @@ struct ZTLF_DB
 	sqlite3_stmt *sMarkInLimbo;
 	sqlite3_stmt *sTakeFromLimbo;
 	sqlite3_stmt *sHaveRecordInLimbo;
+	sqlite3_stmt *sRegisterPulseToken;
+	sqlite3_stmt *sUpdatePulse;
+	sqlite3_stmt *sGetPulse;
 
 	pthread_mutex_t dbLock;
 	pthread_mutex_t graphNodeLocks[ZTLF_DB_GRAPH_NODE_LOCK_ARRAY_SIZE]; /* used to lock graph nodes by locking node lock goff % NODE_LOCK_ARRAY_SIZE */
@@ -216,6 +219,7 @@ int ZTLF_DB_PutRecord(
 	const void *hash,
 	const void *id,
 	const uint64_t ts,
+	const uint64_t pulseToken,
 	const uint32_t score,
 	const void **selKey,
 	const unsigned int selCount,
@@ -308,6 +312,10 @@ int ZTLF_DB_MarkInLimbo(struct ZTLF_DB *db,const void *hash,const void *owner,co
 
 int ZTLF_DB_HaveRecordIncludeLimbo(struct ZTLF_DB *db,const void *hash);
 
+int ZTLF_DB_UpdatePulse(struct ZTLF_DB *db,const uint64_t token,const uint64_t minutes,const uint64_t startRangeStart,const uint64_t startRangeEnd);
+
+uint64_t ZTLF_DB_GetPulse(struct ZTLF_DB *db,const uint64_t token);
+
 /* Golang-specific shims to get around some inconvenient aspects of cgo */
 
 #ifdef ZTLF_GOLANG
@@ -325,13 +333,14 @@ static inline int ZTLF_DB_PutRecord_fromGo(
 	const void *hash,
 	const void *id,
 	const uint64_t ts,
+	const uint64_t pulseToken,
 	const uint32_t score,
 	const uintptr_t selKey,
 	const unsigned int selCount,
 	const void *links,
 	const unsigned int linkCount)
 {
-	return ZTLF_DB_PutRecord(db,rec,rsize,rtype,owner,ownerSize,hash,id,ts,score,(const void **)selKey,selCount,links,linkCount);
+	return ZTLF_DB_PutRecord(db,rec,rsize,rtype,owner,ownerSize,hash,id,ts,pulseToken,score,(const void **)selKey,selCount,links,linkCount);
 }
 static inline struct ZTLF_QueryResults *ZTLF_DB_Query_fromGo(
 	struct ZTLF_DB *db,

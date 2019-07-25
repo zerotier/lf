@@ -28,6 +28,7 @@ package lf
 
 import (
 	"bytes"
+	"crypto/x509"
 	"hash/crc64"
 	"math"
 	"sort"
@@ -104,10 +105,12 @@ type QueryResult struct {
 	Size        int               ``                  // Size of this record in bytes
 	Record      *Record           `json:",omitempty"` // Record itself.
 	Value       Blob              `json:",omitempty"` // Unmasked value if masking key was included and valid
+	Pulse       uint64            ``                  // Timestamp plus current pulse value
 	Trust       float64           ``                  // Trust metric computed using local and oracle trust (if the latter is elected)
 	LocalTrust  float64           ``                  // Local trust only
 	OracleTrust float64           ``                  // Oracle trust only
 	Weight      QueryResultWeight `json:",omitempty"` // Record weight as a 128-bit big-endian value decomposed into 4 32-bit integers
+	Signed      bool              ``                  // If true, record's owner is signed and cert's timestamps match this record
 }
 
 // QueryResults is a list of results to a query.
@@ -199,6 +202,7 @@ func (m *Query) execute(n *Node) (qr QueryResults, err error) {
 	// oracle trust per ID/owner combo.
 	slanderByIDOwner := make(map[uint64]float64)
 	totalOracles := float64(len(m.Oracles))
+	ownerCertCache := make(map[uint64][]*x509.Certificate)
 	var qrIDOwnerCRC64s [][]uint64
 	for _, rptr := range bySelectorKey {
 		// Collate results and add to query result
@@ -213,19 +217,32 @@ func (m *Query) execute(n *Node) (qr QueryResults, err error) {
 				return nil, err
 			}
 
-			// Check total selector count and also filter out records that are not
-			// currently approved. This means that when a CRL revokes an owner cert
-			// that was used to add a record (that wasn't paid for by PoW) that
-			// record is hidden from clients/users.
-			currentlyApproved, _ := n.recordApprovalStatus(rec)
-			if (len(rec.Selectors) != len(selectorRanges) && (m.Open == nil || !*m.Open)) || !currentlyApproved {
+			if len(rec.Selectors) != len(selectorRanges) && (m.Open == nil || !*m.Open) {
+				continue
+			}
+
+			// Get owner certs and check whether any non-revoked certs apply to this record.
+			ownerC64 := crc64.Checksum(rec.Owner, crc64ECMATable)
+			ownerCerts, haveCachedOwnerCerts := ownerCertCache[ownerC64]
+			if !haveCachedOwnerCerts {
+				ownerCerts, _, _ = n.GetOwnerCertificates(rec.Owner)
+				ownerCertCache[ownerC64] = ownerCerts
+			}
+			recordIsSigned := false
+			for _, cert := range ownerCerts {
+				if rec.Timestamp >= uint64(cert.NotBefore.Unix()) && rec.Timestamp <= uint64(cert.NotAfter.Unix()) {
+					recordIsSigned = true
+					break
+				}
+			}
+			if !recordIsSigned && (n.genesisParameters.AuthRequired || !rec.ValidateWork()) {
 				continue
 			}
 
 			// Compute local trust
-			var trust float64
+			var localTrust float64
 			if result.localReputation >= dbReputationDefault {
-				trust = float64(result.localReputation) / float64(dbReputationDefault)
+				localTrust = float64(result.localReputation) / float64(dbReputationDefault)
 			}
 
 			// Compute oracle trust by determining the max fraction of oracles
@@ -255,16 +272,20 @@ func (m *Query) execute(n *Node) (qr QueryResults, err error) {
 			weight[3] = uint32(result.weightL)
 
 			v, _ := rec.GetValue(maskingKey)
+			pulse := n.db.getPulse(rec.recordBody.PulseToken) * 60 // pulse is in a resolution of minutes
+
 			if rn == 0 {
 				qr = append(qr, []QueryResult{QueryResult{
 					Hash:        rec.Hash(),
 					Size:        int(result.dlen),
 					Record:      rec,
 					Value:       v,
-					Trust:       trust,
-					LocalTrust:  trust,
-					OracleTrust: 1.0,
+					Pulse:       rec.recordBody.Timestamp + pulse,
+					Trust:       localTrust,
+					LocalTrust:  localTrust,
+					OracleTrust: localTrust,
 					Weight:      weight,
+					Signed:      recordIsSigned,
 				}})
 			} else {
 				qr[len(qr)-1] = append(qr[len(qr)-1], QueryResult{
@@ -272,22 +293,37 @@ func (m *Query) execute(n *Node) (qr QueryResults, err error) {
 					Size:        int(result.dlen),
 					Record:      rec,
 					Value:       v,
-					Trust:       trust,
-					LocalTrust:  trust,
-					OracleTrust: 1.0,
+					Pulse:       rec.recordBody.Timestamp + pulse,
+					Trust:       localTrust,
+					LocalTrust:  localTrust,
+					OracleTrust: localTrust,
 					Weight:      weight,
+					Signed:      recordIsSigned,
 				})
 			}
 		}
 	}
 
+	authCerts, _ := n.genesisParameters.GetAuthCertificates()
+	haveAuthCerts := len(authCerts) > 0
+
 	// Compute final trust and sort within each result.
 	for qrSetIdx, qrSet := range qr {
+		// Compute oracle trust and overall trust as a function of local and oracle trust if there are oracles.
 		if len(m.Oracles) > 0 {
 			for qrSetResultIdx := range qrSet {
 				oracleTrust := math.Max(1.0-slanderByIDOwner[qrIDOwnerCRC64s[qrSetIdx][qrSetResultIdx]], 0.0)
 				qrSet[qrSetResultIdx].Trust = (qrSet[qrSetResultIdx].LocalTrust + (oracleTrust * totalOracles)) / (totalOracles + 1.0)
 				qrSet[qrSetResultIdx].OracleTrust = oracleTrust
+			}
+		}
+
+		// If this database has auth certs, penalize records that are not signed.
+		if haveAuthCerts {
+			for qrSetResultIdx := range qrSet {
+				if !qrSet[qrSetResultIdx].Signed {
+					qrSet[qrSetResultIdx].Trust *= 0.9
+				}
 			}
 		}
 

@@ -32,9 +32,10 @@ import (
 	"unsafe"
 )
 
+// AES for AES-MMO with an arbitrary random 128-bit key.
 var th64Aes, _ = aes.NewCipher([]byte{1, 200, 16, 93, 99, 101, 16, 4, 99, 202, 255, 254, 22, 17, 42, 173})
 
-// TH64 computes a tiny 64-bit hash using AES in Matyas-Meyer-Oseas mode.
+// TH64 computes a tiny 64-bit hash using AES in a simple Matyas-Meyer-Oseas construction.
 // See: https://en.wikipedia.org/wiki/One-way_compression_function#Matyas–Meyer–Oseas
 func TH64(i uint64) uint64 {
 	var in, out [16]byte
@@ -44,12 +45,14 @@ func TH64(i uint64) uint64 {
 }
 
 // TH64N performs TH64 count times and is a bit faster than just repeatedly calling TH64.
-func TH64N(i uint64, count int) uint64 {
-	var in, out [16]byte
-	binary.LittleEndian.PutUint64(in[0:8], i)
-	for k := 0; k < count; k++ {
-		th64Aes.Encrypt(out[:], in[:])
-		*((*uint64)(unsafe.Pointer(&in[0]))) ^= *((*uint64)(unsafe.Pointer(&out[0]))) ^ *((*uint64)(unsafe.Pointer(&out[8])))
+func TH64N(i uint64, count uint) uint64 {
+	var in, out [2]uint64
+	inb := ((*[16]byte)(unsafe.Pointer(&in)))[:]
+	outb := ((*[16]byte)(unsafe.Pointer(&out)))[:]
+	binary.LittleEndian.PutUint64(inb[0:8], i)
+	for k := uint(0); k < count; k++ {
+		th64Aes.Encrypt(outb, inb)
+		in[0] ^= out[0] ^ out[1]
 	}
-	return binary.LittleEndian.Uint64(in[0:8])
+	return binary.LittleEndian.Uint64(inb[0:8])
 }

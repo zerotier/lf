@@ -30,6 +30,7 @@ import (
 	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
+	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/json"
@@ -357,7 +358,30 @@ func (o *Owner) String() string { return o.Public.String() }
 func (o *Owner) Type() byte { return o.Public.Type() }
 
 // TypeString returns a human-readable Owner type.
-func (o Owner) TypeString() string { return o.Public.TypeString() }
+func (o *Owner) TypeString() string { return o.Public.TypeString() }
+
+// PrivateHash returns sha256(raw private key)
+func (o *Owner) PrivateHash() (h [32]byte) {
+	if o.Private != nil {
+		switch len(o.Public) {
+		case ownerLenP224, ownerLenP384:
+			priv, _ := o.Private.(*ecdsa.PrivateKey)
+			if priv == nil {
+				return
+			}
+			h = sha256.Sum256(priv.D.Bytes())
+		case ownerLenEd25519:
+			priv, _ := o.Private.(*ed25519.PrivateKey)
+			if priv == nil {
+				return
+			}
+			h = sha256.Sum256(*priv)
+		default:
+			return
+		}
+	}
+	return
+}
 
 // Sign signs a hash (typically 32 bytes) with this key pair.
 // ErrorPrivateKeyRequired is returned if the private key is not present or invalid.
