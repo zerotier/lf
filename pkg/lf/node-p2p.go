@@ -26,6 +26,8 @@
 
 package lf
 
+// This is the P2P protocol parts of Node, see node.go for main object.
+
 import (
 	"bufio"
 	"bytes"

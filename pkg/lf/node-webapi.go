@@ -26,6 +26,8 @@
 
 package lf
 
+// This is the HTTP API parts of Node, see node.go for main object.
+
 import (
 	"encoding/json"
 	"io"
