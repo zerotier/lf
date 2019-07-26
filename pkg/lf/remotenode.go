@@ -243,6 +243,71 @@ func (rn RemoteNode) ExecuteQuery(q *Query) (QueryResults, error) {
 	return qr, nil
 }
 
+// ExecuteMakeRecord instructs a remote node to create a record.
+func (rn RemoteNode) ExecuteMakeRecord(mr *MakeRecord) (*Record, Pulse, bool, error) {
+	body, err := apiRequest(string(rn)+"/makerecord", mr)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	var qr remoteMakeResult
+	err = json.Unmarshal(body, &qr)
+	if err == nil {
+		return qr.Record, qr.Pulse, qr.Accepted, nil
+	}
+	return nil, nil, false, err
+}
+
+// ExecuteMakePulse instructs a remote node to generate and post a pulse.
+func (rn RemoteNode) ExecuteMakePulse(mr *MakePulse) (Pulse, *Record, bool, error) {
+	body, err := apiRequest(string(rn)+"/makerecord", mr)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	var qr remoteMakeResult
+	err = json.Unmarshal(body, &qr)
+	if err == nil {
+		return qr.Pulse, qr.Record, qr.Accepted, nil
+	}
+	return nil, nil, false, err
+}
+
+// DoPulse posts a pulse to this node and returns whether or not it was accepted.
+func (rn RemoteNode) DoPulse(pulse Pulse, announce bool) (bool, error) {
+	resp, err := httpClient.Post(string(rn)+"/pulse", "application/octet-stream", bytes.NewReader(pulse))
+	if err != nil {
+		return false, err
+	}
+
+	bodyReader := resp.Body
+	if !resp.Uncompressed && strings.Contains(resp.Header.Get("Content-Encoding"), "gzip") {
+		bodyReader, err = gzip.NewReader(bodyReader)
+		if err != nil {
+			return false, err
+		}
+	}
+	body, err := ioutil.ReadAll(&io.LimitedReader{R: bodyReader, N: int64(APIMaxResponseSize)})
+	if err != nil {
+		return false, err
+	}
+	bodyReader.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		var e ErrAPI
+		err = json.Unmarshal(body, &e)
+		if err != nil {
+			return false, err
+		}
+		return false, e
+	}
+
+	var r pulsePostResult
+	err = json.Unmarshal(body, &r)
+	if err != nil {
+		return false, err
+	}
+	return r.Accepted, nil
+}
+
 // Connect instructs this node to initiate a remote connection
 func (rn RemoteNode) Connect(ip net.IP, port int, identity []byte) error {
 	_, err := apiRequest(string(rn)+"/connect", &Peer{

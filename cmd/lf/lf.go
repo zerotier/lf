@@ -196,6 +196,7 @@ Commands:
     -owner <owner>                        Use this owner instead of default
     -url <url[,url,...]>                  Override configured node/proxy URLs
     -nowork                               Abort if an auth cert doesn't exist
+    -pulse                                Generate pulse if value unchanged
   get [-...] <name[#start[#end]]> [...]   Find by selector (optional range)
     -mask <key>                           Override default masking key
     -tstart <time>                        Constrain to after this time
@@ -658,8 +659,8 @@ func doGet(cfg *lf.ClientConfig, basePath string, args []string, jsonOutput bool
 	req := &lf.Query{
 		Ranges:    ranges,
 		TimeRange: tr,
-		Oracles:   cfg.Oracles,
 		Open:      openQuery,
+		Oracles:   cfg.Oracles,
 	}
 	if *rawOutput {
 		jsonOutput = false
@@ -777,6 +778,7 @@ func doSet(cfg *lf.ClientConfig, basePath string, args []string) (exitCode int) 
 	valueIsFile := setOpts.Bool("file", false, "")
 	urlOverride := setOpts.String("url", "", "")
 	noWork := setOpts.Bool("nowork", false, "")
+	pulseIfUnchanged := setOpts.Bool("pulse", false, "")
 	setOpts.SetOutput(ioutil.Discard)
 	err := setOpts.Parse(args)
 	if err != nil {
@@ -839,6 +841,9 @@ func doSet(cfg *lf.ClientConfig, basePath string, args []string) (exitCode int) 
 				}
 				plainTextSelectorNames = append(plainTextSelectorNames, sel)
 				plainTextSelectorOrdinals = append(plainTextSelectorOrdinals, ord)
+				if len(mk) == 0 {
+					mk = sel
+				}
 			}
 		}
 	}
@@ -862,8 +867,6 @@ func doSet(cfg *lf.ClientConfig, basePath string, args []string) (exitCode int) 
 			}
 		}
 	}
-
-	var rec *lf.Record
 
 	urls := cfg.URLs
 	if len(*urlOverride) > 0 {
@@ -902,23 +905,72 @@ func doSet(cfg *lf.ClientConfig, basePath string, args []string) (exitCode int) 
 
 	var o *lf.Owner
 	o, err = owner.GetOwner()
-	if err == nil {
-		var wf *lf.Wharrgarblr
-		if !ownerInfo.HasCurrentCertificate {
-			if *noWork {
-				logger.Printf("ERROR: no auth certificate found for owner %s and -nowork was specified.\n", o.String())
-				exitCode = 1
-				return
-			}
-			wf = lf.NewWharrgarblr(lf.RecordDefaultWharrgarblMemory, 0)
+	if err != nil {
+		fmt.Printf("ERROR: invalid owner in config: %s\n", err.Error())
+		exitCode = 1
+		return
+	}
+
+	if *pulseIfUnchanged {
+		var ranges []lf.QueryRange
+		for i := range plainTextSelectorNames {
+			key := lf.MakeSelectorKey(plainTextSelectorNames[i], plainTextSelectorOrdinals[i])
+			ranges = append(ranges, lf.QueryRange{KeyRange: []lf.Blob{key, key}})
 		}
-		rec, err = lf.NewRecord(lf.RecordTypeDatum, value, lf.CastHashBlobsToArrays(ownerInfo.NewRecordLinks), mk, plainTextSelectorNames, plainTextSelectorOrdinals, ownerInfo.ServerTime, wf, o)
-		if err == nil {
-			for trials := 0; trials < 2; trials++ {
-				err = workingURL.AddRecord(rec)
-				if err == nil {
-					break
+		one := 1
+		query := lf.Query{
+			Ranges:  ranges,
+			Owners:  []lf.OwnerPublic{owner.Public},
+			Limit:   &one,
+			Oracles: cfg.Oracles,
+		}
+		for trials := 0; trials < 2; trials++ {
+			oldrecs, err := workingURL.ExecuteQuery(&query)
+			if err == nil {
+				if len(oldrecs) > 0 {
+					oldrec := oldrecs[0]
+					if len(oldrec) > 0 {
+						old := oldrec[0]
+						oldv, err := old.Record.GetValue(mk)
+						if err == nil && bytes.Equal(oldv, value) && old.Record.Timestamp < ownerInfo.ServerTime {
+							minutes := uint((ownerInfo.ServerTime - old.Record.Timestamp) / 60)
+							if minutes > 0 && minutes <= lf.RecordMaxPulseSpan {
+								pulse, err := lf.NewPulse(o, plainTextSelectorNames, plainTextSelectorOrdinals, old.Record.Timestamp, minutes)
+								if err == nil {
+									for trials := 0; trials < 2; trials++ {
+										ok, err := workingURL.DoPulse(pulse, true)
+										if err == nil && ok {
+											fmt.Printf("%s !%s\n", o.String(), pulse.String())
+											return
+										}
+									}
+								}
+							}
+						}
+					}
 				}
+				break
+			}
+		}
+	}
+
+	var rec *lf.Record
+
+	var wf *lf.Wharrgarblr
+	if !ownerInfo.HasCurrentCertificate {
+		if *noWork {
+			logger.Printf("ERROR: no auth certificate found for owner %s and -nowork was specified.\n", o.String())
+			exitCode = 1
+			return
+		}
+		wf = lf.NewWharrgarblr(lf.RecordDefaultWharrgarblMemory, 0)
+	}
+	rec, err = lf.NewRecord(lf.RecordTypeDatum, value, lf.CastHashBlobsToArrays(ownerInfo.NewRecordLinks), mk, plainTextSelectorNames, plainTextSelectorOrdinals, ownerInfo.ServerTime, wf, o)
+	if err == nil {
+		for trials := 0; trials < 2; trials++ {
+			err = workingURL.AddRecord(rec)
+			if err == nil {
+				break
 			}
 		}
 	}

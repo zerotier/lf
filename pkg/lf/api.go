@@ -105,6 +105,16 @@ type LF interface {
 	// ExecuteQuery runs this query against this node.
 	ExecuteQuery(*Query) (QueryResults, error)
 
+	// ExecuteMakeRecord runs a MakeRecordRequest against this node.
+	ExecuteMakeRecord(*MakeRecord) (*Record, Pulse, bool, error)
+
+	// ExecuteMakePulse runs a MakePulseRequest against this node.
+	ExecuteMakePulse(*MakePulse) (Pulse, *Record, bool, error)
+
+	// DoPulse processes a pulse, also announcing it to the global network if the second boolean is true (usually should be true).
+	// This returns true if the pulse was accepted as novel and valid.
+	DoPulse(Pulse, bool) (bool, error)
+
 	// Connect instructs this local or remote node to connect to a peer.
 	// Note that remote nodes will only accept connect from localhost or with an auth token.
 	Connect(net.IP, int, []byte) error

@@ -305,7 +305,7 @@ func NewFS(ds []LF, normalLog *log.Logger, warningLog *log.Logger, mountPoint st
 	time.Sleep(time.Millisecond * 100) // HACK for already mounted to dead daemon case
 	fs.fconn, err = fuse.Mount(
 		mountPoint,
-		fuse.DaemonTimeout("30"),
+		fuse.DaemonTimeout("120"),
 		fuse.FSName("lffs"),
 		fuse.Subtype("lffs"),
 		fuse.VolumeName("lf-"+string(nameEscaped)),
@@ -429,7 +429,7 @@ func (fs *FS) Close() error {
 
 	if fconn != nil {
 		// HACK: Linux likes to hang on Close() until something touches the filesystem, so
-		// frob the filesystem until it actually closes. This has no effect on Mac or others.
+		// frob the filesystem until it actually closes.
 		var closed uint32
 		go func() {
 			fconn.Close()
@@ -439,6 +439,16 @@ func (fs *FS) Close() error {
 			runtime.Gosched()
 			ioutil.ReadFile(path.Join(fs.mountPoint, ".passwd"))
 			time.Sleep(time.Millisecond * 50)
+		}
+
+		// HACK: Linux also likes to not unmount the fuse mount on daemon exit... :P
+		for _, cmd := range []string{"/bin/umount", "/sbin/umount", "/usr/sbin/umount", "/usr/bin/umount"} {
+			if _, err := os.Stat(cmd); err == nil {
+				if p, _ := os.StartProcess(cmd, []string{"-f", fs.mountPoint}, nil); p != nil {
+					p.Wait()
+				}
+				break
+			}
 		}
 	}
 

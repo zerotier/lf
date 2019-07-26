@@ -35,7 +35,7 @@ import (
 const PulseSize = 11
 
 // Pulse encodes a pulse key and a 24-bit number of minutes that it represents.
-type Pulse []byte
+type Pulse Blob
 
 // Key returns the 64-bit pulse key
 func (p Pulse) Key() uint64 {
@@ -57,6 +57,11 @@ func (p Pulse) Minutes() uint {
 		return RecordMaxPulseSpan
 	}
 	return minutes
+}
+
+// String returns this pulse in !base62 format.
+func (p Pulse) String() string {
+	return "!" + Base62Encode(p)
 }
 
 // Token returns the record PulseToken that should match this pulse.

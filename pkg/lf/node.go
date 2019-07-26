@@ -1026,7 +1026,19 @@ func (n *Node) GenesisParameters() (*GenesisParameters, error) {
 }
 
 // ExecuteQuery executes a query against this local node.
-func (n *Node) ExecuteQuery(query *Query) (QueryResults, error) { return query.execute(n) }
+func (n *Node) ExecuteQuery(query *Query) (QueryResults, error) {
+	return query.execute(n)
+}
+
+// ExecuteMakeRecord executes a MakeRecord against this local node.
+func (n *Node) ExecuteMakeRecord(mr *MakeRecord) (*Record, Pulse, bool, error) {
+	return mr.execute(n)
+}
+
+// ExecuteMakePulse executes a MakePulse against this local node.
+func (n *Node) ExecuteMakePulse(mr *MakePulse) (Pulse, *Record, bool, error) {
+	return mr.execute(n)
+}
 
 // IsLocal implements IsLocal in the LF interface, always returns true for Node.
 func (n *Node) IsLocal() bool { return true }
@@ -1036,7 +1048,7 @@ func (n *Node) IsLocal() bool { return true }
 // RecordMaxTimeDrift seconds of the current clock. This is an anti-flooding mechanism to prevent gratuitous pulses
 // from being used to waste bandwidth on the network. Updates are no-ops if the pulse in question has already been
 // updated to an equal or higher minute count.
-func (n *Node) DoPulse(pulse Pulse, announce bool) bool {
+func (n *Node) DoPulse(pulse Pulse, announce bool) (bool, error) {
 	if len(pulse) >= PulseSize {
 		key := pulse.Key()
 		if key != 0 {
@@ -1053,11 +1065,12 @@ func (n *Node) DoPulse(pulse Pulse, announce bool) bool {
 					}
 					n.peersLock.RUnlock()
 				}
-				return true
+				return true, nil
 			}
 		}
+		return false, nil
 	}
-	return false
+	return false, ErrInvalidObject
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -1514,6 +1527,23 @@ func (n *Node) backgroundTaskProcessRecordsInLimbo(ownerPublic OwnerPublic) {
 //////////////////////////////////////////////////////////////////////////////
 // Miscellaneous internal methods
 //////////////////////////////////////////////////////////////////////////////
+
+// recordWorkFunc returns the work function this record needs, nil if none, or an error if there will be a problem creating this record.
+func (n *Node) recordWorkFunc(owner OwnerPublic) (*Wharrgarblr, error) {
+	if !n.localTest {
+		hasCert, err := n.OwnerHasCurrentCertificate(owner)
+		if err != nil {
+			return nil, err
+		}
+		if !hasCert {
+			if n.genesisParameters.AuthRequired {
+				return nil, ErrRecordCertificateRequired
+			}
+			return n.getMakeRecordWorkFunction(), nil
+		}
+	}
+	return nil, nil
+}
 
 // recordIsSigned returns the certificate that signed a record (if any) and whether or not it was revoked by a CRL.
 func (n *Node) recordIsSigned(owner OwnerPublic, recordTimestamp uint64) (*x509.Certificate, bool) {
@@ -2126,7 +2156,7 @@ mainReaderLoop:
 
 		case p2pProtoMessageTypePulse:
 			if len(msg) == 11 {
-				if n.DoPulse(msg, false) {
+				if ok, _ := n.DoPulse(msg, false); ok {
 					n.peersLock.RLock()
 					for _, otherPeer := range n.peers {
 						if &otherPeer != &p {
@@ -2147,6 +2177,17 @@ mainReaderLoop:
 //////////////////////////////////////////////////////////////////////////////
 // HTTP API implementation
 //////////////////////////////////////////////////////////////////////////////
+
+type remoteMakeResult struct {
+	Pulse    Pulse   `json:",omitempty"`
+	Record   *Record `json:",omitempty"`
+	Accepted bool
+}
+
+type pulsePostResult struct {
+	Pulse    Pulse
+	Accepted bool
+}
 
 func apiSetStandardHeaders(out http.ResponseWriter) {
 	now := time.Now().UTC()
@@ -2230,7 +2271,7 @@ func (n *Node) createHTTPServeMux() *http.ServeMux {
 				if err != nil && err != ErrDuplicateRecord {
 					apiSendObj(out, req, http.StatusBadRequest, &ErrAPI{Code: 0, Message: "record rejected or record import failed: " + err.Error(), ErrTypeName: errTypeName(err)})
 				} else {
-					apiSendObj(out, req, http.StatusOK, nil)
+					apiSendObj(out, req, http.StatusOK, rec)
 				}
 			}
 		} else {
@@ -2248,8 +2289,8 @@ func (n *Node) createHTTPServeMux() *http.ServeMux {
 			if err != nil {
 				apiSendObj(out, req, http.StatusBadRequest, &ErrAPI{Code: http.StatusBadRequest, Message: "read error: " + err.Error()})
 			} else {
-				ok := n.DoPulse(pulse, true)
-				apiSendObj(out, req, http.StatusOK, &ok)
+				ok, _ := n.DoPulse(pulse, true)
+				apiSendObj(out, req, http.StatusOK, &pulsePostResult{pulse, ok})
 			}
 		} else {
 			out.Header().Set("Allow", "POST, PUT")
@@ -2257,17 +2298,17 @@ func (n *Node) createHTTPServeMux() *http.ServeMux {
 		}
 	})
 
-	smux.HandleFunc("/make", func(out http.ResponseWriter, req *http.Request) {
+	smux.HandleFunc("/makerecord", func(out http.ResponseWriter, req *http.Request) {
 		apiSetStandardHeaders(out)
 		if req.Method == http.MethodPost || req.Method == http.MethodPut {
 			if n.apiIsTrusted(req) {
-				var m MakeRecordRequest
+				var m MakeRecord
 				if apiReadObj(out, req, &m) == nil {
-					results, err := m.execute(n)
+					rec, pulse, ok, err := m.execute(n)
 					if err != nil {
 						apiSendObj(out, req, http.StatusBadRequest, &ErrAPI{Code: http.StatusBadRequest, Message: "record creation failed: " + err.Error()})
 					} else {
-						apiSendObj(out, req, http.StatusOK, results)
+						apiSendObj(out, req, http.StatusOK, &remoteMakeResult{pulse, rec, ok})
 					}
 				}
 			} else {
@@ -2282,13 +2323,13 @@ func (n *Node) createHTTPServeMux() *http.ServeMux {
 	smux.HandleFunc("/makepulse", func(out http.ResponseWriter, req *http.Request) {
 		apiSetStandardHeaders(out)
 		if req.Method == http.MethodPost || req.Method == http.MethodPut {
-			var m MakePulseRequest
+			var m MakePulse
 			if apiReadObj(out, req, &m) == nil {
-				ok, err := m.execute(n)
+				pulse, rec, ok, err := m.execute(n)
 				if err != nil {
 					apiSendObj(out, req, http.StatusBadRequest, &ErrAPI{Code: http.StatusBadRequest, Message: "record creation failed: " + err.Error()})
 				} else {
-					apiSendObj(out, req, http.StatusOK, &ok)
+					apiSendObj(out, req, http.StatusOK, &remoteMakeResult{pulse, rec, ok})
 				}
 			}
 		} else {
