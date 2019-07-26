@@ -93,7 +93,7 @@ func apiRequest(url string, m interface{}) ([]byte, error) {
 	return body, nil
 }
 
-// RemoteNode is a node reachable over HTTP(S).
+// RemoteNode is a node reachable over HTTP(S) that implements the LF interface.
 type RemoteNode string
 
 // NewRemoteNode constructs a new remote node from a URL in string format.

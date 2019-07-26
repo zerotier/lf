@@ -90,6 +90,20 @@ func MakeSelectorKey(plainTextName []byte, plainTextOrdinal uint64) []byte {
 	return key[:]
 }
 
+// NewSelectorFromBytes decodes a byte-serialized selector.
+func NewSelectorFromBytes(b []byte) (s *Selector, err error) {
+	s = new(Selector)
+	err = s.unmarshalFrom(bytes.NewReader(b))
+	return
+}
+
+// Bytes returns a byte-serialized version of this selector.
+func (s *Selector) Bytes() []byte {
+	var b bytes.Buffer
+	s.marshalTo(&b)
+	return b.Bytes()
+}
+
 // claimKey recovers the public key from this selector's claim and the record body hash used to generate it.
 func (s *Selector) claimKey(hash []byte) *ecdsa.PublicKey {
 	sigHash := sha256.New()
@@ -165,18 +179,6 @@ func (s *Selector) unmarshalFrom(in io.Reader) error {
 	cl[40] = t[0] >> 4
 	s.Claim = cl[:]
 	return nil
-}
-
-func newSelectorFromBytes(b []byte) (s *Selector, err error) {
-	s = new(Selector)
-	err = s.unmarshalFrom(bytes.NewReader(b))
-	return
-}
-
-func (s *Selector) bytes() []byte {
-	var b bytes.Buffer
-	s.marshalTo(&b)
-	return b.Bytes()
 }
 
 func (s *Selector) set(plainTextName []byte, plainTextOrdinal uint64, hash []byte) {

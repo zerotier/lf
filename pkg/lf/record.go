@@ -685,7 +685,7 @@ func (r *Record) workHash() ([]byte, uint) {
 	workHasher := sha512.New384()
 	workHasher.Write(recordBodyHash[:])
 	for i := 0; i < len(r.Selectors); i++ {
-		sb := r.Selectors[i].bytes()
+		sb := r.Selectors[i].Bytes()
 		workHasher.Write(sb)
 		workBillableBytes += uint(len(sb))
 	}
@@ -762,7 +762,7 @@ func (rb *RecordBuilder) Start(recordType int, value []byte, links [][32]byte, m
 		rb.record.Selectors = make([]Selector, len(selectorNames))
 		for i := 0; i < len(selectorNames); i++ {
 			rb.record.Selectors[i].set(selectorNames[i], selectorOrdinals[i], recordBodyHash[:])
-			sb := rb.record.Selectors[i].bytes()
+			sb := rb.record.Selectors[i].Bytes()
 			rb.workBillableBytes += uint(len(sb))
 			workHasher.Write(sb)
 		}

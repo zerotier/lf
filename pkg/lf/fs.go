@@ -153,11 +153,26 @@ func (impl *fsImpl) GenerateInode(parentInode uint64, name string) uint64 {
 
 func (impl *fsImpl) getWorkFunction() *Wharrgarblr {
 	impl.workFuncLock.Lock()
+
 	if impl.workFunc == nil {
-		impl.workFunc = NewWharrgarblr(RecordDefaultWharrgarblMemory, runtime.NumCPU())
+		// If we are running locally within a Node share its MakeRecord work function instance.
+		for _, dsi := range impl.ds {
+			n, _ := dsi.(*Node)
+			if n != nil {
+				impl.workFunc = n.getMakeRecordWorkFunction()
+				break
+			}
+		}
+
+		// Otherwise make one to save here
+		if impl.workFunc == nil {
+			impl.workFunc = NewWharrgarblr(RecordDefaultWharrgarblMemory, runtime.NumCPU())
+		}
 	}
+
 	wf := impl.workFunc
 	impl.workFuncLock.Unlock()
+
 	return wf
 }
 

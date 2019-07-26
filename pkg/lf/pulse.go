@@ -65,7 +65,8 @@ func (p Pulse) String() string {
 }
 
 // Token returns the record PulseToken that should match this pulse.
-func (p Pulse) Token() uint64 { return TH64N(p.Key(), p.Minutes()) }
+// This evaluates the hash tree from its current value up to its final value.
+func (p Pulse) Token() uint64 { return th64n(p.Key(), p.Minutes()) }
 
 // NewPulse generates a pulse for a given record from its selectors, timestamp, and the owner's private key.
 // Use 0 for minutes to generate a pulse token for a new record. The pulse token is the final hash in the pulse
@@ -100,7 +101,7 @@ func NewPulse(owner *Owner, selectorNames [][]byte, selectorOrdinals []uint64, r
 
 	var pbuf [PulseSize]byte
 	p = pbuf[:]
-	binary.BigEndian.PutUint64(p[0:8], TH64N(binary.BigEndian.Uint64(pulseTokenHasher.Sum(tmp[:0])), RecordMaxPulseSpan-minutes))
+	binary.BigEndian.PutUint64(p[0:8], th64n(binary.BigEndian.Uint64(pulseTokenHasher.Sum(tmp[:0])), RecordMaxPulseSpan-minutes))
 	p[8] = byte(minutes >> 16)
 	p[9] = byte(minutes >> 8)
 	p[10] = byte(minutes)
