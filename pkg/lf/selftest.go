@@ -37,7 +37,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"math"
 	"math/rand"
 	"os"
 	"path"
@@ -460,7 +459,7 @@ func TestWharrgarbl(out io.Writer) bool {
 	}
 
 	fmt.Fprintf(out, "Testing and benchmarking Wharrgarbl proof of work algorithm...\n")
-	for rs := uint(256); rs <= 4096; rs += 256 {
+	for rs := uint(256); rs <= 2048; rs += 256 {
 		diff := recordWharrgarblCost(rs)
 		iterations := uint64(0)
 		startTime := time.Now()
@@ -475,7 +474,7 @@ func TestWharrgarbl(out io.Writer) bool {
 			fmt.Fprintf(out, "  %.8x: FAILED (verify)\n", diff)
 			return false
 		}
-		fmt.Fprintf(out, "  %.8x: %d milliseconds %d iterations (difficulty for %d bytes)\n", diff, int(math.Round(runTime)), iterations, rs)
+		fmt.Fprintf(out, "  %.8x: %f seconds, %d iterations, difficulty %.8x for %d bytes\n", diff, runTime, iterations, diff, rs)
 	}
 
 	return true
