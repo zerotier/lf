@@ -121,7 +121,6 @@ func (m *MakeRecord) execute(n *Node) (*Record, Pulse, bool, error) {
 	if err != nil {
 		return nil, nil, false, err
 	}
-
 	var ts uint64
 	if m.Timestamp == nil {
 		ts = TimeSec()
@@ -129,22 +128,25 @@ func (m *MakeRecord) execute(n *Node) (*Record, Pulse, bool, error) {
 		ts = *m.Timestamp
 	}
 
-	if pulseIfUnchanged && recTS != 0 && recTS < ts && recDlen > 0 {
+	if recDlen > 0 {
 		oldb, err := n.db.getDataByOffset(recDoff, recDlen, nil)
 		if err == nil {
 			old, err := NewRecordFromBytes(oldb)
 			if old != nil && err == nil {
 				oldv, err := old.GetValue(maskingKey)
 				if err == nil && bytes.Equal(oldv, m.Value) {
-					minutes := uint((ts - recTS) / 60)
-					if minutes > 0 && minutes < RecordMaxPulseSpan {
-						pulse, err := NewPulse(owner, selectorNames, selectorOrdinals, recTS, minutes)
-						if err != nil {
-							return nil, nil, false, err
+					if pulseIfUnchanged {
+						minutes := uint((ts - recTS) / 60)
+						if minutes > 0 && minutes < RecordMaxPulseSpan {
+							pulse, err := NewPulse(owner, selectorNames, selectorOrdinals, recTS, minutes)
+							if err != nil {
+								return nil, nil, false, err
+							}
+							ok, _ := n.DoPulse(pulse, true)
+							return nil, pulse, ok, nil
 						}
-						ok, _ := n.DoPulse(pulse, true)
-						return nil, pulse, ok, nil
 					}
+					return old, nil, false, nil
 				}
 			}
 		}
@@ -178,7 +180,6 @@ func (m *MakePulse) execute(n *Node) (Pulse, *Record, bool, error) {
 	if err != nil {
 		return nil, nil, false, err
 	}
-
 	var ts uint64
 	if m.Timestamp == nil {
 		ts = TimeSec()

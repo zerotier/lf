@@ -911,28 +911,28 @@ func doSet(cfg *lf.ClientConfig, basePath string, args []string) (exitCode int) 
 		return
 	}
 
-	if *pulseIfUnchanged {
-		var ranges []lf.QueryRange
-		for i := range plainTextSelectorNames {
-			key := lf.MakeSelectorKey(plainTextSelectorNames[i], plainTextSelectorOrdinals[i])
-			ranges = append(ranges, lf.QueryRange{KeyRange: []lf.Blob{key, key}})
-		}
-		one := 1
-		query := lf.Query{
-			Ranges:  ranges,
-			Owners:  []lf.OwnerPublic{owner.Public},
-			Limit:   &one,
-			Oracles: cfg.Oracles,
-		}
-		for trials := 0; trials < 2; trials++ {
-			oldrecs, err := workingURL.ExecuteQuery(&query)
-			if err == nil {
-				if len(oldrecs) > 0 {
-					oldrec := oldrecs[0]
-					if len(oldrec) > 0 {
-						old := oldrec[0]
-						oldv, err := old.Record.GetValue(mk)
-						if err == nil && bytes.Equal(oldv, value) && old.Record.Timestamp < ownerInfo.ServerTime {
+	var ranges []lf.QueryRange
+	for i := range plainTextSelectorNames {
+		key := lf.MakeSelectorKey(plainTextSelectorNames[i], plainTextSelectorOrdinals[i])
+		ranges = append(ranges, lf.QueryRange{KeyRange: []lf.Blob{key, key}})
+	}
+	one := 1
+	query := lf.Query{
+		Ranges:  ranges,
+		Owners:  []lf.OwnerPublic{owner.Public},
+		Limit:   &one,
+		Oracles: cfg.Oracles,
+	}
+	for trials := 0; trials < 2; trials++ {
+		oldrecs, err := workingURL.ExecuteQuery(&query)
+		if err == nil {
+			if len(oldrecs) > 0 {
+				oldrec := oldrecs[0]
+				if len(oldrec) > 0 {
+					old := oldrec[0]
+					oldv, err := old.Record.GetValue(mk)
+					if err == nil && bytes.Equal(oldv, value) {
+						if *pulseIfUnchanged && old.Record.Timestamp < ownerInfo.ServerTime {
 							minutes := uint((ownerInfo.ServerTime - old.Record.Timestamp) / 60)
 							if minutes > 0 && minutes <= lf.RecordMaxPulseSpan {
 								pulse, err := lf.NewPulse(o, plainTextSelectorNames, plainTextSelectorOrdinals, old.Record.Timestamp, minutes)
@@ -947,10 +947,13 @@ func doSet(cfg *lf.ClientConfig, basePath string, args []string) (exitCode int) 
 								}
 							}
 						}
+						rh := old.Hash
+						fmt.Printf("%s =%s\n", o.String(), lf.Base62Encode(rh[:]))
+						return
 					}
 				}
-				break
 			}
+			break
 		}
 	}
 
