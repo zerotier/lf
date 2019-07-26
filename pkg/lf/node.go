@@ -973,7 +973,7 @@ func (n *Node) IsLocal() bool { return true }
 // from being used to waste bandwidth on the network. Updates are no-ops if the pulse in question has already been
 // updated to an equal or higher minute count.
 func (n *Node) DoPulse(pulse Pulse, announce bool) (bool, error) {
-	if len(pulse) >= PulseSize {
+	if len(pulse) == PulseSize {
 		key := pulse.Key()
 		if key != 0 {
 			minutes := pulse.Minutes()

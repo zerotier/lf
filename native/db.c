@@ -1746,7 +1746,7 @@ int ZTLF_DB_UpdatePulse(struct ZTLF_DB *db,const uint64_t token,const uint64_t m
 	sqlite3_bind_int64(db->sUpdatePulse,2,(sqlite_int64)token);
 	sqlite3_bind_int64(db->sUpdatePulse,3,(sqlite_int64)startRangeStart);
 	sqlite3_bind_int64(db->sUpdatePulse,4,(sqlite_int64)startRangeEnd);
-	sqlite3_bind_int64(db->sUpdatePulse,4,(sqlite_int64)minutes);
+	sqlite3_bind_int64(db->sUpdatePulse,5,(sqlite_int64)minutes);
 	if (sqlite3_step(db->sUpdatePulse) == SQLITE_DONE) {
 		changed = sqlite3_changes(db->dbc);
 	}
