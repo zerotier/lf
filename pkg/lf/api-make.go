@@ -26,10 +26,12 @@
 
 package lf
 
-import "bytes"
+import (
+	"bytes"
+)
 
 // doMakeRequestSetup contains common code for execute() for pulses and records
-func doMakeRequestSetup(n *Node, selectors []MakeSelectorRequest, passphrase string, ownerPrivate Blob, reqMaskingKey Blob, scanForOlderRecord bool) (
+func doMakeRequestSetup(n *Node, selectors []MakeSelector, passphrase string, ownerPrivate Blob, reqMaskingKey Blob, scanForOlderRecord bool) (
 	owner *Owner,
 	selectorNames [][]byte,
 	selectorOrdinals []uint64,
@@ -82,8 +84,8 @@ func doMakeRequestSetup(n *Node, selectors []MakeSelectorRequest, passphrase str
 	return
 }
 
-// MakeSelectorRequest contains a plain text name and ordinal for a new record to be created server-side.
-type MakeSelectorRequest struct {
+// MakeSelector contains a plain text name and ordinal for a new record to be created server-side.
+type MakeSelector struct {
 	Name    Blob   `json:",omitempty"`
 	Ordinal uint64 ``
 }
@@ -96,23 +98,23 @@ type MakeSelectorRequest struct {
 // of work unless the client is authorized to do so as this uses significant local compute resources
 // at the node.
 type MakeRecord struct {
-	Selectors        []MakeSelectorRequest `json:",omitempty"` // Selectors for new record
-	Value            Blob                  `json:",omitempty"` // Value for new record
-	OwnerPrivate     Blob                  `json:",omitempty"` // Full owner with private key in DER or PEM format
-	MaskingKey       Blob                  `json:",omitempty"` // Masking key if specified (default: first selector, then owner)
-	Passphrase       string                `json:",omitempty"` // Passphrase to override OwnerPrivate and (if empty) MaskingKey
-	Timestamp        *uint64               `json:",omitempty"` // Timestamp or current time if nil
-	PulseIfUnchanged *bool                 `json:",omitempty"` // If true create a pulse if value matches previous record
+	Selectors        []MakeSelector `json:",omitempty"` // Selectors for new record
+	Value            Blob           `json:",omitempty"` // Value for new record
+	OwnerPrivate     Blob           `json:",omitempty"` // Full owner with private key in DER or PEM format
+	MaskingKey       Blob           `json:",omitempty"` // Masking key if specified (default: first selector, then owner)
+	Passphrase       string         `json:",omitempty"` // Passphrase to override OwnerPrivate and (if empty) MaskingKey
+	Timestamp        *uint64        `json:",omitempty"` // Timestamp or current time if nil
+	PulseIfUnchanged *bool          `json:",omitempty"` // If true create a pulse if value matches previous record
 }
 
 // MakePulse requests server-side generation of a pulse.
 type MakePulse struct {
-	Selectors                    []MakeSelectorRequest `json:",omitempty"` // Selectors for record to pulse
-	OwnerPrivate                 Blob                  `json:",omitempty"` // Full owner with private key in DER or PEM format
-	MaskingKey                   Blob                  `json:",omitempty"` // Masking key if specified (default: first selector, then owner)
-	Passphrase                   string                `json:",omitempty"` // Passphrase to override OwnerPrivate and (if empty) MaskingKey
-	Timestamp                    *uint64               `json:",omitempty"` // Timestamp or current time if nil
-	NewRecordIfPulseSpanExceeded *bool                 `json:",omitempty"` // If true (or missing), create new record if pulse is later than max pulse span
+	Selectors                    []MakeSelector `json:",omitempty"` // Selectors for record to pulse
+	OwnerPrivate                 Blob           `json:",omitempty"` // Full owner with private key in DER or PEM format
+	MaskingKey                   Blob           `json:",omitempty"` // Masking key if specified (default: first selector, then owner)
+	Passphrase                   string         `json:",omitempty"` // Passphrase to override OwnerPrivate and (if empty) MaskingKey
+	Timestamp                    *uint64        `json:",omitempty"` // Timestamp or current time if nil
+	NewRecordIfPulseSpanExceeded *bool          `json:",omitempty"` // If true (or missing), create new record if pulse is later than max pulse span
 }
 
 func (m *MakeRecord) execute(n *Node) (*Record, Pulse, bool, error) {

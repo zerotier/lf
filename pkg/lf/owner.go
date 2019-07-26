@@ -272,8 +272,8 @@ func NewOwnerFromPrivateBytes(b []byte) (*Owner, error) {
 	}
 
 	if strings.Contains(string(b), "-----BEGIN LF OWNER PRIVATE KEY-----") {
-		pb, err := pem.Decode(b)
-		if err == nil && pb.Type == OwnerPrivatePEMType {
+		pb, _ := pem.Decode(b)
+		if pb != nil && pb.Type == OwnerPrivatePEMType {
 			b = pb.Bytes
 		}
 	}

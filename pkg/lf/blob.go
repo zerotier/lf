@@ -53,10 +53,9 @@ func (b *Blob) UnmarshalJSON(j []byte) error {
 		} else if s[0] == '\b' {
 			*b = Base62Decode(s[1:])
 			return nil
-		} else {
-			*b = []byte(s)
-			return nil
 		}
+		*b = []byte(s)
+		return nil
 	}
 
 	// Byte arrays are also accepted

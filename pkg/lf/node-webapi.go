@@ -85,7 +85,7 @@ func apiSendObj(out http.ResponseWriter, req *http.Request, httpStatusCode int, 
 func apiReadObj(out http.ResponseWriter, req *http.Request, dest interface{}) (err error) {
 	err = json.NewDecoder(req.Body).Decode(&dest)
 	if err != nil {
-		apiSendObj(out, req, http.StatusBadRequest, &ErrAPI{Code: http.StatusBadRequest, Message: "invalid or malformed payload"})
+		apiSendObj(out, req, http.StatusBadRequest, &ErrAPI{Code: http.StatusBadRequest, Message: "invalid or malformed payload: " + err.Error()})
 	}
 	return
 }

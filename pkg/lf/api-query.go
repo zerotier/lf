@@ -235,7 +235,7 @@ func (m *Query) execute(n *Node) (qr QueryResults, err error) {
 					break
 				}
 			}
-			if !recordIsSigned && (n.genesisParameters.AuthRequired || !rec.ValidateWork()) {
+			if !recordIsSigned && (n.genesisParameters.AuthRequired || !rec.ValidateWork()) && !n.localTest {
 				continue
 			}
 
