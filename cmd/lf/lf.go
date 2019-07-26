@@ -940,7 +940,7 @@ func doSet(cfg *lf.ClientConfig, basePath string, args []string) (exitCode int) 
 									for trials := 0; trials < 2; trials++ {
 										ok, err := workingURL.DoPulse(pulse, true)
 										if err == nil && ok {
-											fmt.Printf("%s !%s\n", o.String(), pulse.String())
+											fmt.Printf("%s %s\n", o.String(), pulse.String())
 											return
 										}
 									}

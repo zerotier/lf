@@ -364,6 +364,21 @@ func TestCore(out io.Writer) bool {
 	}
 	fmt.Fprintf(out, "OK\n")
 
+	fmt.Fprintf(out, "Testing Pulse...")
+	ptowner, _ := NewOwner(OwnerTypeNistP224)
+	for n := 0; n < 3; n++ {
+		token, _ := NewPulse(ptowner, [][]byte{[]byte("test")}, []uint64{1234}, 1, 0)
+		tk := token.Key()
+		for k := uint(0); k <= RecordMaxPulseSpan; k += 8212 {
+			p, _ := NewPulse(ptowner, [][]byte{[]byte("test")}, []uint64{1234}, 1, k)
+			if p.Token() != tk {
+				fmt.Printf(" FAILED\n")
+				return false
+			}
+		}
+	}
+	fmt.Fprintf(out, " OK\n")
+
 	fmt.Fprintf(out, "Testing Record marshal/unmarshal... ")
 	for k := 0; k < 32; k++ {
 		var testLinks [][32]byte

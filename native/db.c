@@ -1112,11 +1112,13 @@ int ZTLF_DB_PutRecord(
 	}
 
 	/* Add pulse token for this record. */
-	sqlite3_reset(db->sRegisterPulseToken);
-	sqlite3_bind_int64(db->sRegisterPulseToken,1,(sqlite3_int64)pulseToken);
-	sqlite3_bind_int64(db->sRegisterPulseToken,2,(sqlite3_int64)ts);
-	if (sqlite3_step(db->sRegisterPulseToken) != SQLITE_DONE) {
-		ZTLF_L_warning("database error registering pulse token, I/O error or database corrupt!");
+	if (pulseToken) {
+		sqlite3_reset(db->sRegisterPulseToken);
+		sqlite3_bind_int64(db->sRegisterPulseToken,1,(sqlite3_int64)pulseToken);
+		sqlite3_bind_int64(db->sRegisterPulseToken,2,(sqlite3_int64)ts);
+		if (sqlite3_step(db->sRegisterPulseToken) != SQLITE_DONE) {
+			ZTLF_L_warning("database error registering pulse token, I/O error or database corrupt!");
+		}
 	}
 
 	pthread_mutex_t *const graphNodeLock = &(db->graphNodeLocks[((uintptr_t)goff) % ZTLF_DB_GRAPH_NODE_LOCK_ARRAY_SIZE]);
