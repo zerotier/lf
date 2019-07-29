@@ -3,7 +3,7 @@
 *(c)2018-2019 [ZeroTier, Inc.](https://www.zerotier.com/)* 
 *Licensed under the [GNU GPLv3](LICENSE.txt)*
 
-**LF is currently beta software!**
+**LF is currently beta software!** Until 1.x object formats, APIs, and protocols may change in abrupt and non-backward-compatible ways (though we try to avoid it).
 
 ## Introduction
 
@@ -32,17 +32,18 @@ Most decentralized systems use distributed hash tables (DHTs) for this purpose. 
 * Flexible record lookup API allowing multiple nested keys and range queries against 64-bit ordinals associated with each key.
 * Novel proof-of-knowledge mechanism makes it impossible to generate valid records identified by a key whose plain text is not known, increasing the difficulty of data set poisoning attacks by naive attackers.
 * Everything is encrypted including record keys making the system private and secure even though all data is replicated globally. Records whose keys are not known cannot even be enumerated or looked up.
+* The *pulse* feature permits information about object "liveness" to be securely broadcast throughout the network in a best-effort fashion with minimal bandwidth overhead.
 
 ### Limitations and Disadvantages
 
 * LF is only good for small bits of information that don't change very often.
 * [CAP theorem](https://en.wikipedia.org/wiki/CAP_theorem) trade-off: AP (availability, partition-tolerance). Global locks and authoritative queries are not supported.
-* Full nodes are unsuitable for small resource constrained devices due to high storage and relatively high bandwidth overhead.
+* Full nodes are unsuitable for small resource constrained devices due to high storage and relatively high bandwidth overhead. Since all nodes are the same, deployment would normally consist of LF nodes running in the cloud or on larger edge devices with broadband Internet connections and then being queried by other things directly or through the APIs of applications and services that use LF.
 * Storage requirements grow over time in a manner not unlike a block chain. Fortunately [storage is getting cheaper over time too](https://www.backblaze.com/blog/hard-drive-cost-per-gigabyte/). The data model and protocol are designed to permit partial data discarding and fractional nodes but these features are not implemented yet and likely won't be needed for years.
 
 ## Building and Running
 
-LF works on Linux, Mac, and probably BSD. It won't work on Windows yet but porting shouldn't be too hard if anyone wants it. It's mostly written in Go (1.11+ required) with some C for performance critical bits.
+LF works on Linux, Mac, and probably BSD. It won't work on Windows yet but porting shouldn't be too hard if anyone wants it. It's mostly written in Go (1.11+ required) with some C for performance critical bits. It depends on a recent version of SQLite which is included in source form to avoid problems due to excessively old versions on some systems.
 
 To build on most platforms just type `make`. You will need Go 1.11 or newer (type `go version` to check) and a relatively recent C compiler supporting the C99 standard.
 
@@ -160,6 +161,61 @@ A few caveats for running nodes:
 * We recommend a 64-bit system with a bare minimum of 1gb RAM for full nodes. Full nodes usually use between 384mb and 1gb of RAM and may also use upwards of 1gb of virtual address space for memory mapped files. 32-bit systems may have issues with address space exhaustion.
 * Don't locate the node's files on a network share (NFS, CIFS, VM-host mount, etc.) as LF makes heavy use of memory mapping and this does not always play well with network drives. It could be slow, unreliable, or might not work at all. Needless to say a cluster of LF nodes must all have their own storage. Pooling storage isn't possible and defeats the purpose anyway.
 * Hard-stopping a node with `kill -9` or a hard system shutdown may corrupt the database. We plan to improve this in the future but right now the code is not very tolerant of this.
+
+### Pulses
+
+In real world systems it's very often useful to be able to provide information about which objects are "alive." Examples include users in a chat systems, nodes in a distributed network, or services in a distributed micro-service architecture.
+
+Signaling liveness in LF by constantly updating records would be very inefficient. LF therefore provides (since 0.9.18) a much more efficient method called a **pulse**.
+
+Each LF record contains a 64-bit field called *PulseToken*. This field contains the final hash that results from iteratively evaluating a 64-bit AES-based short input cryptographic hash function (see `th64.go`) 525,600 times. The first hash in this hash chain is based on a hash of the record's plain text selector name(s), ordinal(s), timestamp, and owner secret key.
+
+525,600 is non-coincidentally the number of minutes in one year. To generate a pulse the owner of a record computes and broadcasts hash N in the record's pulse hash chain where N equals 525,600 minus the number of minutes that have elapsed since the record's timestamp. Any node can verify the validity of a pulse by hashing the pulse M times where M equals the number of minutes being signaled by the pulse and verifying that the result equals the record's *PulseToken*. Since pulses can only work up to one year since a record's original timestamp, after one year a new record containing the same data will have to be made. The pulse feature reduces the frequency of full record rewrites for liveness messaging from once-per-minute or once-per-few-minutes to once-per-year.
+
+This is effectively the same as the [S/KEY](https://en.wikipedia.org/wiki/S/KEY) one-time password scheme originally invented by cryptographier Leslie Lamport, only in this case passwords signify timestamps.
+
+Pulses are extremely lightweight. They consist of a 64-bit hash plus three bytes for the minute count. Ten million objects could signal liveness with one minute resolution and consume only 1.8 megabytes per second of bandwidth (1.8% of a one gigabit connection). A billion objects would require a bit more than two gigabits of bandwidth. (There are sharding mechanisms that could be used if traffic ever actually gets this heavy.) 
+
+This lightness comes at a cost of some security. A 64-bit hash is not sufficient to prevent a determined attacker with a lot of compute power or storage from falsifying pulse messages, but the cost is high enough to deter casual or mass scale abuse. If you need to convey liveness information with a higher level of security than that offered by the pulse mechanism, this must be done by either refreshing records or using some out-of-band challenge-response mechanism to verify that pulse information is actually correct. If pulses are being used to advertise the liveness of a service or client, this is usually fairly trivial. Simply check that the client or service is actually alive.
+
+On the public network there's a record called `pulse.test` that can be used to test pulses. Try `./lf -json get pulse.test` to output verbose JSON information about this record:
+
+```json
+{
+  "Hash": "=iJniIEzkyHOg6a3h1j84NfK9zAimbKOIdtueFiBmhqW",
+  "Size": 253,
+  "Record": {
+    "Value": "\buejQNR7CCbAQXvwnfSMKDs6uEmQcIA92E0olsb4c",
+    "Owner": "@BwAIObsaWYF1CiOXgol",
+    "Links": ["=WWXjsYR5RofL0HX9kQ5SgXxaG4K53UBAJX9cAaAVBbz", "=yJbYgUszcV0sHRuuqpADsdu1tmM5DSIXdZuIkMiiZds"],
+    "Timestamp": 1564413035,
+    "PulseToken": 2307216339445404689,
+    "Type": 0,
+    "Selectors": [
+      {
+        "Ordinal": "\b015cQjQWnbkEmtGKpOoJX",
+        "Claim": "\bYRsSUaW7KRTQulx9HPPxmMjleJFuA2rCfN9J2FRKXLtRSashX1glxLt"
+      }
+    ],
+    "Work": "\b1hUKPQBAAW6CoI6KeBP",
+    "WorkAlgorithm": 1,
+    "Signature": "\b14RFxlZgEuGoalSdN6Z4SyknXw6QMU145kYLDUIvcPY5AsRH6IyfCFUyAxONARQpUPsosc3VgCLq"
+  },
+  "Value": "This record is being pulsed.",
+  "Pulse": 1564413815,
+  "Trust": 0.9,
+  "LocalTrust": 1,
+  "OracleTrust": 1,
+  "Weight": [0, 0, 0, 71774169],
+  "Signed": false
+}
+```
+
+Note the field *Pulse* in the query response. If there have been no pulses this will equal *Timestamp* in the record. If there have it will be *Timestamp* plus the most recent pulse (times 60 since pulses have a one minute resolution).
+
+One of ZeroTier's nodes has a *cron* job running to emit this pulse every minute but if that node is offline it may stagnate.
+
+Also note that pulses are only broadcast. They are not cached or replicated after the fact. New nodes will not see old pulses, only ones that arrive after they are synchronized.
 
 ### Oracles and Elective Trust
 

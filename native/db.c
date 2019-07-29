@@ -40,7 +40,7 @@
 #endif
 
 /* Cache size for SQLite */
-#define ZTLF_DB_CACHE_SIZE "-524288"
+#define ZTLF_DB_CACHE_SIZE "-131072"
 
 /* A sanity limit on the number of records returned by a selector range query. */
 #define ZTLF_DB_SELECTOR_QUERY_RESULT_LIMIT "1048576"
