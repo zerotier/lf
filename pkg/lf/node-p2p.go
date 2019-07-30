@@ -546,7 +546,8 @@ mainReaderLoop:
 					p.hasRecordsLock.Unlock()
 
 					n.log[LogLevelTrace].Printf("received record =%s from %s", Base62Encode(rh[:]), tcpAddr.IP.String())
-					if n.AddRecord(rec) == ErrRecordNotApproved && !n.db.haveRecordIncludeLimbo(rh[:]) {
+					err = n.AddRecord(rec)
+					if err == ErrRecordNotApproved && !n.db.haveRecordIncludeLimbo(rh[:]) {
 						// If a record is not approved we save it temporarily and mark it "in limbo" in
 						// the database. Records marked in limbo might get added later if certificates
 						// authorizing them arrive or there is a network config change.
@@ -566,6 +567,8 @@ mainReaderLoop:
 							limboFile.Close()
 						}
 						n.limboLock.Unlock()
+					} else if err != nil {
+						n.log[LogLevelVerbose].Printf("rejected record =%s from %s: %s", Base62Encode(rh[:]), tcpAddr.IP.String(), err.Error())
 					}
 				}
 			}
