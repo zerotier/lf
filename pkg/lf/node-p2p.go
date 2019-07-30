@@ -545,6 +545,7 @@ mainReaderLoop:
 					p.hasRecords[rh] = atomic.LoadUintptr(&n.timeTicker)
 					p.hasRecordsLock.Unlock()
 
+					n.log[LogLevelTrace].Printf("received record =%s from %s", Base62Encode(rh[:]), tcpAddr.IP.String())
 					if n.AddRecord(rec) == ErrRecordNotApproved && !n.db.haveRecordIncludeLimbo(rh[:]) {
 						// If a record is not approved we save it temporarily and mark it "in limbo" in
 						// the database. Records marked in limbo might get added later if certificates
@@ -553,6 +554,7 @@ mainReaderLoop:
 
 						limboBasePath := path.Join(n.basePath, "limbo")
 						limboPath := path.Join(limboBasePath, rec.Owner.String())
+						n.log[LogLevelTrace].Printf("marking record =%s from %s as in limbo, adding to %s", Base62Encode(rh[:]), tcpAddr.IP.String(), limboPath)
 						n.limboLock.Lock()
 						limboFile, _ := os.OpenFile(limboPath, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0644)
 						if limboFile == nil {
@@ -587,15 +589,20 @@ mainReaderLoop:
 				copy(h[:], msg[0:32])
 				msg = msg[32:]
 
+				n.log[LogLevelTrace].Printf("have record notification for =%s from %s", Base62Encode(h[:]), tcpAddr.IP.String())
+
 				ticker := atomic.LoadUintptr(&n.timeTicker)
 				p.hasRecordsLock.Lock()
 				p.hasRecords[h] = ticker
 				p.hasRecordsLock.Unlock()
 
-				if !n.db.haveRecordIncludeLimbo(h[:]) {
+				if n.db.haveRecordIncludeLimbo(h[:]) {
+					n.log[LogLevelTrace].Printf("not requesting =%s from %s: already have record", Base62Encode(h[:]), tcpAddr.IP.String())
+				} else {
 					n.recordsRequestedLock.Lock()
 					if (ticker - n.recordsRequested[h]) <= 2 {
 						n.recordsRequestedLock.Unlock()
+						n.log[LogLevelTrace].Printf("not requesting =%s from %s: recently requested", Base62Encode(h[:]), tcpAddr.IP.String())
 						continue
 					}
 					n.recordsRequested[h] = ticker
