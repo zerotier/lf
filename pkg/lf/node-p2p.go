@@ -568,7 +568,7 @@ mainReaderLoop:
 						}
 						n.limboLock.Unlock()
 					} else if err != nil {
-						n.log[LogLevelVerbose].Printf("rejected record =%s from %s: %s", Base62Encode(rh[:]), tcpAddr.IP.String(), err.Error())
+						n.log[LogLevelTrace].Printf("rejected record =%s from %s: %s", Base62Encode(rh[:]), tcpAddr.IP.String(), err.Error())
 					}
 				}
 			}
