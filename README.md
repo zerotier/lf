@@ -5,6 +5,8 @@
 
 **LF is currently beta software!** Until 1.x object formats, APIs, and protocols may change in abrupt and non-backward-compatible ways (though we try to avoid it).
 
+[toc]
+
 ## Introduction
 
 LF (pronounced "aleph") is a fully decentralized fully replicated key/value store.
