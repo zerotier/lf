@@ -33,6 +33,7 @@ import (
 	secrand "crypto/rand"
 	"encoding/binary"
 	"encoding/json"
+	"hash/crc64"
 	"io"
 	"io/ioutil"
 	"os"
@@ -44,6 +45,8 @@ import (
 	"github.com/andybalholm/brotli"
 	"github.com/tidwall/pretty"
 )
+
+var crc64ECMATable = crc64.MakeTable(crc64.ECMA)
 
 // TimeSec returns the time in seconds since epoch.
 func TimeSec() uint64 { return uint64(time.Now().Unix()) }

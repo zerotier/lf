@@ -1,3 +1,5 @@
+// +build !windows
+
 /*
  * LF: Global Fully Replicated Key/Value Store
  * Copyright (C) 2018-2019  ZeroTier, Inc.  https://www.zerotier.com/
@@ -51,22 +53,12 @@ import (
 	"golang.org/x/net/context"
 )
 
-var crc64ECMATable = crc64.MakeTable(crc64.ECMA)
+// LFFSSupported is true on supported platforms
+var LFFSSupported = true
+
 var fsUsernamePrefixes = [14]string{"lf0000000000000", "lf000000000000", "lf00000000000", "lf0000000000", "lf000000000", "lf00000000", "lf0000000", "lf000000", "lf00000", "lf0000", "lf000", "lf00", "lf0", "lf"}
 var one = 1
 var eight = 8
-
-// PassphraseToOwnerAndMaskingKey generates both an owner and a masking key from a secret string.
-func PassphraseToOwnerAndMaskingKey(passphrase string) (*Owner, []byte) {
-	pp := []byte(passphrase)
-	mkh := sha256.Sum256(pp)
-	mkh = sha256.Sum256(mkh[:]) // double hash to ensure difference from seededprng
-	owner, err := NewOwnerFromSeed(OwnerTypeNistP384, pp)
-	if err != nil {
-		panic(err)
-	}
-	return owner, mkh[:]
-}
 
 // fsLfOwnerToUser generates a Unix username and UID from a hash of an owner's public key.
 // A cryptographic hash is used instead of CRC64 just to make it a little bit harder to

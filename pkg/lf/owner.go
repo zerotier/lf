@@ -68,6 +68,18 @@ const (
 	ownerLenEd25519 = 32
 )
 
+// PassphraseToOwnerAndMaskingKey generates both an owner and a masking key from a secret string.
+func PassphraseToOwnerAndMaskingKey(passphrase string) (*Owner, []byte) {
+	pp := []byte(passphrase)
+	mkh := sha256.Sum256(pp)
+	mkh = sha256.Sum256(mkh[:]) // double hash to ensure difference from seededprng
+	owner, err := NewOwnerFromSeed(OwnerTypeNistP384, pp)
+	if err != nil {
+		panic(err)
+	}
+	return owner, mkh[:]
+}
+
 // OwnerTypeFromString converts a canonical string name to an owner type, returning OwnerTypeNistP224 if not recognized.
 func OwnerTypeFromString(typeString string) byte {
 	switch strings.TrimSpace(strings.ToLower(typeString)) {
