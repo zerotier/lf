@@ -236,14 +236,6 @@ Casual users can choose to trust nodes that are generally trusted. Applications 
 
 *Note that you shouldn't run nodes in `-oracle` mode on variable or burstable CPU cloud instances as this could result in a large bill or a surprise failure when the instance uses up its CPU quota. Use reserved CPU or bare metal systems for oracle nodes.*
 
-### Authorization Certificates
-
-Records on open networks must be "paid" using proof of work. It's possible to skip this step if the network is configured with one or more authorization certificate authorities. It's also possible to create private authorization-required networks where proof of work isn't used and authorization certificates are required.
-
-Certificate authorities configured when a network is created can issue certificates to record owners or to intermediate certificates that can in turn issue certificates to owners. (Intermediates are supported but not implemented yet.) Issued certificates are themselves stored in the DAG as records of type *certificate*. These are automatically caught by nodes and indexed and checked when an owner arrives without proof of work.
-
-The `owner` command group in the CLI includes commands to create and sign certificate signing requests (CSRs) for owners.
-
 ### LFFS
 
 LF contains a FUSE filesystem that allows sections of the global data store to be mounted. It can be mounted by remote clients or directly by full nodes, with the latter offering much higher performance since all data is local to the process. LFFS requires FUSE on Linux or [OSXFUSE](https://osxfuse.github.io) on Mac.
