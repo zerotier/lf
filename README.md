@@ -19,31 +19,30 @@ The name LF comes from the short story [The Aleph](https://en.wikipedia.org/wiki
 
 ### Why Does This Exist?
 
-The purpose of LF is to provide for fully open decentralized systems what the key/value store aspects of [etcd](https://github.com/etcd-io/etcd) and [consul](https://www.consul.io) provide in centrally managed environments, namely a fast reliable store for small but critical pieces of information. These are things like keys, certificates, identity information, configuration files, IPs, DNS names, URLs, data hashes, and so on.
+The purpose of LF is to provide for fully open decentralized systems what things like [etcd](https://github.com/etcd-io/etcd) and [consul](https://www.consul.io) provide in centrally managed environments, namely a fast reliable store for small but critical pieces of information. These are things like keys, certificates, identity information, configuration files, IPs, DNS names, URLs, data hashes, and so on.
 
 Most decentralized systems use distributed hash tables (DHTs) for this purpose. DHTs scale well but are slow, require a reliable global network to maintain full access to the data set, and are vulnerable to ["Sybil"](https://en.wikipedia.org/wiki/Sybil_attack) type attacks. We at ZeroTier wanted something very fast, secure, and continuously available even under unreliable network conditions. This prompted us to develop something fundamentally new. As far as we know nothing quite like LF exists (we looked). The closest analogs are cryptocurrency block chains and CRDT-based distributed databases.
 
 ### Features and Benefits
 
-* Easy to use and deploy, ships with useful defaults and credentials to use an open public network.
-* Fully decentralized system with open participation and no single points of failure. (Private LF databses can be created that require certificates, but this is optional.)
-* Fast sub-second nearline queries against the entire global data set at all times.
-* Versatile security model allowing user choice between different conflict resolution mechanisms that can be used alone or in combination with one another. These include local heuristics, proof of work "weight," elective trust of other nodes, and certificates.
-* Flexible record lookup API allowing multiple nested keys and range queries against 64-bit ordinals associated with each key.
-* Novel proof-of-knowledge mechanism makes it impossible to generate valid records identified by a key whose plain text is not known, increasing the difficulty of data set poisoning attacks by naive attackers.
-* Everything is encrypted including record keys making the system private and secure even though all data is replicated globally. Records whose keys are not known cannot even be enumerated or looked up.
-* The *pulse* feature permits information about object "liveness" to be securely broadcast throughout the network in a best-effort fashion with minimal bandwidth overhead.
+* **Easy to use and deploy**, ships with useful defaults and credentials to use an open public network.
+* **Fully decentralized** system with open participation and no single points of failure. (Private LF databses can be created that require certificates, but this is optional.)
+* **Fast sub-second nearline queries** against the entire global data set at all times, even when network is down.
+* **Versatile security model** allowing user choice between different conflict resolution mechanisms that can be used alone or in combination with one another. These include local heuristics, proof of work "weight," elective trust of other nodes, and certificates.
+* **Flexible record lookup** API allowing multiple nested keys and range queries against 64-bit ordinals associated with each key.
+* **Everything is encrypted** including record keys making the system private and secure even though all data is replicated globally. Records whose keys are not known cannot even be enumerated or looked up.
+* **Liveness signaling** through the *pulse* mechanism to enable LF to be used to advertise service, object, or user availability in near-real-time.
 
 ### Limitations and Disadvantages
 
-* LF is only good for small bits of information that don't change very often.
-* [CAP theorem](https://en.wikipedia.org/wiki/CAP_theorem) trade-off: AP (availability, partition-tolerance). Global locks and authoritative queries are not supported.
-* Full nodes are unsuitable for small resource constrained devices due to high storage and relatively high bandwidth overhead. Since all nodes are the same, deployment would normally consist of LF nodes running in the cloud or on larger edge devices with broadband Internet connections and then being queried by other things directly or through the APIs of applications and services that use LF.
-* Storage requirements grow over time in a manner not unlike a block chain. Fortunately [storage is getting cheaper over time too](https://www.backblaze.com/blog/hard-drive-cost-per-gigabyte/). The data model and protocol are designed to permit partial data discarding and fractional nodes but these features are not implemented yet and likely won't be needed for years.
+* **LF is only good for small bits of information** that don't change very often. It's explicitly not designed for large data.
+* **[CAP theorem](https://en.wikipedia.org/wiki/CAP_theorem) trade-off: AP** (availability, partition-tolerance). The database is eventually consistent and locks are not supported.
+* **High CPU, memory, storage, and bandwidth requirements** make LF unsuitable for small and resource constrained devices.
+* **Storage requirements grow over time** in a manner not unlike a block chain. Fortunately [storage is getting cheaper over time too](https://www.backblaze.com/blog/hard-drive-cost-per-gigabyte/). The data model and protocol are designed to permit partial data discarding and fractional nodes. These features are not implemented yet and likely won't be needed for years.
 
 ## Building and Running
 
-LF works on Linux, Mac, and probably BSD. It won't work on Windows yet but porting shouldn't be too hard if anyone wants it. It's mostly written in Go (1.11+ required) with some C for performance critical bits. It depends on a recent version of SQLite which is included in source form to avoid problems due to excessively old versions on some systems.
+LF builds and runs on Linux, Mac, and probably Free/Open/NetBSD. It won't work on Windows yet but porting shouldn't be too hard if anyone wants it. It's mostly written in Go (1.11+ required) with some C for performance critical bits. It depends on a recent version of SQLite which is included in source form to avoid problems due to excessively old versions on some systems.
 
 To build on most platforms just type `make`. You will need Go 1.11 or newer (type `go version` to check) and a relatively recent C compiler supporting the C99 standard.
 
@@ -72,7 +71,7 @@ It's "hi-yo, silver!"                                     | bad#0 horse#13
 Signed: Bad Horse.                                        | bad#0 horse#14
 ```
 
-Don't forget the trailing hash sign on `horse#` or you will only get the first record (more on this later). Drop the `./` before `lf` if you put the binary somewhere in your path.
+Drop the `./` before `lf` if you already installed the binary somewhere in your path. Don't forget the trailing hash sign on `horse#` or you will only get the first record (more on this later).
 
 These are the lyrics to [Bad Horse](https://www.youtube.com/watch?v=VNhhz1yYk2U) from the musical [Dr. Horrible's Sing-Along Blog](https://drhorrible.com). Yes, we put that in the public data store. We hope it's fair use.
 
@@ -98,9 +97,9 @@ The evil league of evil is watching so beware        | bad#0 horse#9
 The grade that you receive'll be your last, we swear | bad#0 horse#10
 ```
 
-When you ask for `bad horse#` (in the very first example) the trailing hash is expanded to `#0#18446744073709551615`. That huge number is the maximum value of a 64-bit unsigned integer. Leaving off the trailing hash is equivalent to `#0` and gets only ordinal zero. Using `#2#10` asks for ordinals two through ten inclusive.
+When you ask for `bad horse#` (in the very first example) the trailing hash is expanded to `#0#18446744073709551615`. That huge number is the maximum value of a 64-bit unsigned integer. Leaving off the trailing hash is equivalent to `#0` and gets only ordinal zero. Using `#2#10` asks for ordinals two through ten inclusive. Try it!
 
-#### First Come, First Serve!
+#### Conflict Resolution
 
 If LF is open and decentralized, what happens if someone does this?
 
@@ -159,10 +158,10 @@ Watch `node.log` after you start your server for the first time and you'll see i
 A few caveats for running nodes:
 
 * We recommend a 64-bit system with a bare minimum of 1gb RAM for full nodes. Full nodes usually use between 384mb and 1gb of RAM and may also use upwards of 1gb of virtual address space for memory mapped files. 32-bit systems may have issues with address space exhaustion.
-* Don't locate the node's files on a network share (NFS, CIFS, VM-host mount, etc.) as LF makes heavy use of memory mapping and this does not always play well with network drives. It could be slow, unreliable, or might not work at all. Needless to say a cluster of LF nodes must all have their own storage. Pooling storage isn't possible and defeats the purpose anyway.
-* Hard-stopping a node with `kill -9` or a hard system shutdown may corrupt the database. We plan to improve this in the future but right now the code is not very tolerant of this.
+* Don't locate the node's files on a network share (NFS, CIFS, VM-host mount, etc.) as LF makes heavy use of memory mapping and this does not always play well with network drives. It could be slow, unreliable, or might not work at all.
+* Hard-stopping a node with `kill -9` or a hard system shutdown could corrupt the database. This might get improved in the future.
 
-### Pulses
+### Pulses for Liveness Signaling
 
 In real world systems it's very often useful to be able to provide information about which objects are "alive." Examples include users in a chat systems, nodes in a distributed network, or services in a distributed micro-service architecture.
 
@@ -172,11 +171,11 @@ Each LF record contains a 64-bit field called *PulseToken*. This field contains 
 
 525,600 is non-coincidentally the number of minutes in one year. To generate a pulse the owner of a record computes and broadcasts hash N in the record's pulse hash chain where N equals 525,600 minus the number of minutes that have elapsed since the record's timestamp. Any node can verify the validity of a pulse by hashing the pulse M times where M equals the number of minutes being signaled by the pulse and verifying that the result equals the record's *PulseToken*. Since pulses can only work up to one year since a record's original timestamp, after one year a new record containing the same data will have to be made. The pulse feature reduces the frequency of full record rewrites for liveness messaging from once-per-minute or once-per-few-minutes to once-per-year.
 
-This is effectively the same as the [S/KEY](https://en.wikipedia.org/wiki/S/KEY) one-time password scheme originally invented by cryptographier Leslie Lamport, only in this case passwords signify timestamps.
+This is effectively the same as the [S/KEY](https://en.wikipedia.org/wiki/S/KEY) one-time password scheme originally invented by cryptographier Leslie Lamport, only in this case each one-time password indicates a timestamp.
 
-Pulses are extremely lightweight. They consist of a 64-bit hash plus three bytes for the minute count. Ten million objects could signal liveness with one minute resolution and consume only 1.8 megabytes per second of bandwidth (1.8% of a one gigabit connection). A billion objects would require a bit more than two gigabits of bandwidth. (There are sharding mechanisms that could be used if traffic ever actually gets this heavy.) 
+Pulses are extremely lightweight. They consist of a 64-bit hash plus three bytes for the minute count. Ten million objects could signal liveness with one minute resolution and consume only 1.8 megabytes per second of bandwidth (1.8% of a one gigabit connection). A billion objects would require a bit more than two gigabits of bandwidth. If scalability of the pulse mechanism becomes a concern broadcasting could be replaced by a sharded or DHT-like pulse signaling algorithm.
 
-This lightness comes at a cost of some security. A 64-bit hash is not sufficient to prevent a determined attacker with a lot of compute power or storage from falsifying pulse messages, but the cost is high enough to deter casual or mass scale abuse. If you need to convey liveness information with a higher level of security than that offered by the pulse mechanism, this must be done by either refreshing records or using some out-of-band challenge-response mechanism to verify that pulse information is actually correct. If pulses are being used to advertise the liveness of a service or client, this is usually fairly trivial. Simply check that the client or service is actually alive.
+This lightness comes at a cost of some security. A 64-bit hash is not sufficient to prevent a determined attacker with large amount of compute power or storage from falsifying pulse messages, but the cost is high enough to deter casual or mass scale abuse. If you need to convey liveness information with a higher level of security than that offered by the pulse mechanism, a secondary check must be employed. Since pulses typically signal liveness the simplest approach would be to directly verify liveness by querying the object or service in question before concluding definitively that it is alive.
 
 On the public network there's a record called `pulse.test` that can be used to test pulses. Try `./lf -json get pulse.test` to output verbose JSON information about this record:
 
@@ -211,11 +210,9 @@ On the public network there's a record called `pulse.test` that can be used to t
 }
 ```
 
-Note the field *Pulse* in the query response. If there have been no pulses this will equal *Timestamp* in the record. If there have it will be *Timestamp* plus the most recent pulse (times 60 since pulses have a one minute resolution).
+One of ZeroTier's nodes has a *cron* job running to emit this pulse every minute. The field *Pulse* will indicate the record's timestamp plus the number of minutes indicated by the latest received pulse.
 
-One of ZeroTier's nodes has a *cron* job running to emit this pulse every minute but if that node is offline it may stagnate.
-
-Also note that pulses are only broadcast. They are not cached or replicated after the fact. New nodes will not see old pulses, only ones that arrive after they are synchronized.
+Pulses are broadcast using a best-effort rumor mill algorithm. A node caches information about the latest pulses it has observed but nodes do not get old pulses when they synchronize nor are pulses re-transmitted if a node re-joins after being offline for a period of time. Pulses are ephemeral signals of liveness, not permanent parts of the data set.
 
 ### Oracles and Elective Trust
 
@@ -308,7 +305,7 @@ LF is open source. It's possible to make your own LF networks and configure them
 
 Running `node-start -localtest` runs a full node in local test mode. Local test nodes store their state and data in a `localtest` subfolder of the LF home path (to not conflict with any full node you're running) and do not communicate over the P2P network. They also ignore proof of work and/or certificate requirements for new records. Local test nodes are good for testing software designed to store data in LF without polluting live databases with test records and junk and without having to wait for proof of work computation.
 
-## Creating a Private Database / Network
+## Creating a Private Database Instance / Network
 
 To create a private database/network you need to create your own *genesis records*. These serve as the first anchor points in the DAG (and are exempt from the normal linkage and other rules) and contain your network's configuration.
 
@@ -365,6 +362,32 @@ In addition to the above output the files `genesis.lf` and `genesis.go` will be 
 If you listed any amendable fields or created any certificates the private keys for those will also be saved as .pem files in the current directory. Keep these somewhere safe.
 
 LF peers will not talk to one another if they aren't members of the same network. This is accomplished by cryptographic means using the network's unique 256-bit ID as a pre-shared key. Beyond this simple mechanism there is no system built into LF to control node access over the network. It's the responsibility of those running private networks to secure them by (for example) running them only over ZeroTier virtual networks instead of over the public Internet.
+
+## Certificate Authorities and Owner Authorization
+
+Networks can have certificate authorities (CAs) capable of issuing certificates to owners to authorize them to add records to the network without "paying" via proof-of-work. Signed owners are also given priority in conflict resolution via the default trust estimation algorithm. Private database instances can be created that always require certificates and do not accept records from unauthorized owners.
+
+The certificate mechanism is based around the same x509 public key infrastructure employed by SSL. When a network is created its genesis records can contain root certificate authorities. These CAs can sign owner authorization certificates or intermediate CA certificates that can then be used to authorize owners.
+
+### Authorizing an Owner
+
+*NOTE: right now only p224 and p384 type owners can be signed as Go's x509 implementation does not yet support EDDSA (ed25519) type public keys. Once this support is added we'll add owner signature support for ed25519 type owners.*
+
+Authorization of an owner requires one to possess a CA private key, so users will only be able to do this on private database instances they have created using `makegenesis` as described above.
+
+The first step involves generating a certificate signing request (CSR) with `lf owner makecsr <owner name>`. The command line client will ask a few questions similar to those asked by the `openssl` command when making CSRs. This CSR can then be sent to the holder of the CA signing keys in a procedure almost identical to the process for getting SSL keys for a web server signed by a web CA.
+
+On the CA side the following command is used to authorize the owner: `lf owner authorize <path to CA private key> <path to owner CSR> <certificate TTL in days>`.
+
+Unlike web SSL servers there is no need to send a certificate back to the owner. LF is a global shared data store and therefore makes use of itself to publish certificates. The authorize command submits a certificate that is stored in LF itself and picked up by all other nodes. This certificate in turn is automatically detected and used when creating or validating records by the signed owner.
+
+You can use the `lf owner status` command to check an owner's signature status. As explained above the default public network has a CA controlled by ZeroTier, Inc. If your CLI is configured to use the public network try this to see a signed owner: `lf owner status @s0ZcB1A9uFId65wS6SRkkko1xZ5e1YnM`.
+
+### Revoking Certificates
+
+CRLs that revoke owner certificates are supported but this capability is not yet exposed in the API or CLI.
+
+Revocation of an owner certificate causes all records relying on this certificate for approval to be effectively deleted. They can't actually be removed from the DAG but they no longer show up in queries.
 
 ## Future Work
 

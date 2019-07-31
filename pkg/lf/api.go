@@ -33,6 +33,7 @@ import (
 // OwnerStatus is describes the status of an owner according to the current node.
 type OwnerStatus struct {
 	Owner                 OwnerPublic ``                  // Public portion of owner
+	OwnerType             string      `json:",omitempty"` // Owner type (for convenience, can also be determine from public key itself)
 	Certificates          []Blob      `json:",omitempty"` // Certificates in DER format
 	RevokedCertificates   []Blob      `json:",omitempty"` // Revoked certificated in DER format
 	HasCurrentCertificate bool        ``                  // True if there is at least one valid non-revoked certificate (as of current time)

@@ -917,6 +917,7 @@ func (n *Node) OwnerStatus(ownerPublic OwnerPublic) (*OwnerStatus, error) {
 	links, _ := n.db.getLinks2(n.genesisParameters.RecordMinLinks)
 	return &OwnerStatus{
 		Owner:                 ownerPublic,
+		OwnerType:             ownerPublic.TypeString(),
 		Certificates:          certsBin,
 		RevokedCertificates:   revokedCertsBin,
 		HasCurrentCertificate: certsCurrent,

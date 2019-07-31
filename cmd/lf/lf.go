@@ -1098,6 +1098,44 @@ func doOwner(cfg *lf.ClientConfig, basePath string, args []string) (exitCode int
 		cfg.Dirty = true
 		fmt.Printf("%-24s * %-7s %s\n", name, cfg.Owners[name].Public.TypeString(), cfg.Owners[name].Public.String())
 
+	case "status":
+		if len(args) < 2 {
+			printHelp("")
+			exitCode = 1
+			return
+		}
+		name := strings.TrimSpace(args[1])
+		var owner lf.OwnerPublic
+		if len(name) > 0 && name[0] == '@' {
+			owner2, err := lf.NewOwnerPublicFromString(name)
+			if err != nil {
+				logger.Println("ERROR: invalid owner '" + args[1] + "'")
+				exitCode = 1
+				return
+			}
+			owner = owner2
+		} else {
+			cfgOwner, have := cfg.Owners[name]
+			if !have {
+				logger.Println("ERROR: an owner named '" + args[1] + "' does not exist.")
+				exitCode = 1
+				return
+			}
+			owner = cfgOwner.Public
+		}
+		found := false
+		for _, u := range cfg.URLs {
+			ownerInfo, err := u.OwnerStatus(owner)
+			if err == nil {
+				fmt.Println(lf.PrettyJSON(ownerInfo))
+				found = true
+				break
+			}
+		}
+		if !found {
+			fmt.Println("{}")
+		}
+
 	case "delete":
 		if len(args) < 2 {
 			printHelp("")
