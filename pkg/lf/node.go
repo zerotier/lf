@@ -91,6 +91,8 @@ type Node struct {
 
 	genesisParameters          GenesisParameters // Genesis configuration for this node's network
 	genesisOwner               OwnerPublic       // Owner of genesis record(s)
+	genesisRecords             []byte            // Genesis records concatenated together
+	genesisRecordsLock         sync.Mutex        //
 	lastGenesisRecordTimestamp uint64            //
 
 	knownPeers               map[string]*knownPeer // Peers we know about by base62-encoded identity
@@ -381,6 +383,10 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 	// Start background thread to add work to DAG and render commentary (if enabled)
 	n.backgroundThreadWG.Add(1)
 	go n.backgroundThreadOracle()
+
+	// Read and process records in a bootstrap file, if any
+	n.backgroundThreadWG.Add(1)
+	go n.backgroundTaskReadBootstrapFile()
 
 	// Set server's client.json URL list to point to itself
 	if n.httpTCPListener != nil {
@@ -875,6 +881,10 @@ func (n *Node) NodeStatus() (*NodeStatus, error) {
 		oracle = n.owner.Public
 	}
 
+	n.genesisRecordsLock.Lock()
+	gr := append(make([]byte, 0, len(n.genesisRecords)), n.genesisRecords...)
+	n.genesisRecordsLock.Unlock()
+
 	return &NodeStatus{
 		Software:          SoftwareName,
 		Version:           Version,
@@ -886,6 +896,7 @@ func (n *Node) NodeStatus() (*NodeStatus, error) {
 		RecordCount:       rc,
 		DataSize:          ds,
 		FullySynchronized: (atomic.LoadUint32(&n.synchronized) != 0),
+		GenesisRecords:    gr,
 		GenesisParameters: n.genesisParameters,
 		Oracle:            oracle,
 		P2PPort:           n.p2pPort,
@@ -921,6 +932,7 @@ func (n *Node) OwnerStatus(ownerPublic OwnerPublic) (*OwnerStatus, error) {
 		Certificates:          certsBin,
 		RevokedCertificates:   revokedCertsBin,
 		HasCurrentCertificate: certsCurrent,
+		AuthRequired:          n.genesisParameters.AuthRequired,
 		RecordCount:           recordCount,
 		RecordBytes:           recordBytes,
 		NewRecordLinks:        CastArraysToHashBlobs(links),
@@ -1449,9 +1461,72 @@ func (n *Node) backgroundTaskProcessRecordsInLimbo(ownerPublic OwnerPublic) {
 	}
 }
 
+func (n *Node) backgroundTaskReadBootstrapFile() {
+	defer n.backgroundThreadWG.Done()
+
+	bootstrapFilePath := path.Join(n.basePath, "bootstrap.lf")
+	bootstrapFile, _ := os.Open(bootstrapFilePath)
+	if bootstrapFile != nil {
+		defer func() {
+			bootstrapFile.Close()
+			if atomic.LoadUint32(&n.shutdown) == 0 {
+				os.Remove(bootstrapFilePath)
+			}
+		}()
+		n.log[LogLevelNormal].Printf("sync: found bootstrap.lf, importing records...")
+		var count uint64
+		for atomic.LoadUint32(&n.shutdown) == 0 {
+			var rec Record
+			if rec.UnmarshalFrom(bootstrapFile) == nil {
+				rh := rec.Hash()
+				n.addRemoteRecord(rec.Bytes(), rh[:], &rec, bootstrapFilePath)
+				count++
+				if (count % 1024) == 0 {
+					n.log[LogLevelNormal].Printf("sync: imported %d records from bootstrap file", count)
+				}
+			} else {
+				n.log[LogLevelNormal].Printf("sync: imported %d records from bootstrap file, import complete, deleting bootstrap file", count)
+				break
+			}
+		}
+	}
+}
+
 //////////////////////////////////////////////////////////////////////////////
 // Miscellaneous internal methods
 //////////////////////////////////////////////////////////////////////////////
+
+// addRemoteRecord adds records received via P2P or bootstrap files.
+func (n *Node) addRemoteRecord(recordBytes, recordHash []byte, rec *Record, src string) error {
+	err := n.AddRecord(rec)
+	if err == ErrRecordNotApproved && !n.db.haveRecordIncludeLimbo(recordHash) {
+		// If a record is not approved we save it temporarily and mark it "in limbo" in
+		// the database. Records marked in limbo might get added later if certificates
+		// authorizing them arrive or there is a network config change.
+		n.db.markInLimbo(recordHash, rec.Owner, TimeSec(), rec.Timestamp)
+
+		limboBasePath := path.Join(n.basePath, "limbo")
+		limboPath := path.Join(limboBasePath, rec.Owner.String())
+		n.log[LogLevelTrace].Printf("marking record =%s from %s as in limbo, adding to %s", Base62Encode(recordHash), src, limboPath)
+		n.limboLock.Lock()
+		limboFile, _ := os.OpenFile(limboPath, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0644)
+		if limboFile == nil {
+			os.MkdirAll(limboBasePath, 0755)
+			limboFile, _ = os.OpenFile(limboPath, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0644)
+		}
+		if limboFile != nil {
+			limboFile.Write(recordBytes)
+			limboFile.Close()
+		}
+		n.limboLock.Unlock()
+
+		return nil
+	} else if err != nil {
+		n.log[LogLevelTrace].Printf("rejected record =%s from %s: %s", Base62Encode(recordHash), src, err.Error())
+		return err
+	}
+	return nil
+}
 
 // recordWorkFunc returns the work function this record needs, nil if none, or an error if there will be a problem creating this record.
 func (n *Node) recordWorkFunc(owner OwnerPublic) (*Wharrgarblr, error) {
@@ -1513,6 +1588,9 @@ func (n *Node) handleGenesisRecord(gr *Record) bool {
 	if err != nil {
 		n.log[LogLevelWarning].Printf("WARNING: genesis record =%s contains an invalid value, ignoring!", grHashStr)
 	} else {
+		n.genesisRecordsLock.Lock()
+		n.genesisRecords = append(n.genesisRecords, gr.Bytes()...)
+		n.genesisRecordsLock.Unlock()
 		if len(rv) > 0 && atomic.LoadUint64(&n.lastGenesisRecordTimestamp) < gr.Timestamp {
 			n.log[LogLevelNormal].Printf("applying genesis configuration update from record =%s", grHashStr)
 			n.genesisParameters.Update(rv)

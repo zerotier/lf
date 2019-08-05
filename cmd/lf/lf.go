@@ -43,6 +43,7 @@ import (
 	"math/big"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path"
@@ -180,6 +181,7 @@ Commands:
     wharrgarbl                            Test proof of work (long!)
     database                              Test DAG and database (long!)
   makegenesis                             Create a private database (see docs)
+  node-bootstrap <url>                    Bootstrap new node from existing
   node-start [-...]                       Start a full LF node
     -p2p <port>                           P2P TCP port (default: ` + lfDefaultP2PPortStr + `)
     -http <port>                          HTTP TCP port (default: ` + lfDefaultHTTPPortStr + `)
@@ -256,6 +258,100 @@ support will be added.
 }
 
 //////////////////////////////////////////////////////////////////////////////
+
+func doNodeBootstrap(cfg *lf.ClientConfig, basePath string, args []string) (exitCode int) {
+	if len(args) == 0 {
+		logger.Printf("FATAL: no URL specified")
+		exitCode = 1
+		return
+	}
+
+	urlParsed, err := url.Parse(args[0])
+	if err != nil {
+		logger.Printf("FATAL: unable to get status from %s (%s)", args[0], err.Error())
+		exitCode = 1
+		return
+	}
+
+	genesisLf := path.Join(basePath, "genesis.lf")
+	if _, err := os.Stat(genesisLf); err == nil {
+		logger.Printf("FATAL: node-bootstrap cannot be run on an already-bootstrapped node")
+		exitCode = 1
+		return
+	}
+
+	remote := lf.RemoteNode(args[0])
+
+	status, err := remote.NodeStatus()
+	if err != nil {
+		logger.Printf("FATAL: unable to get status from %s (%s)", args[0], err.Error())
+		exitCode = 1
+		return
+	}
+	if len(status.GenesisRecords) == 0 {
+		logger.Printf("FATAL: unable to get status from %s (nil genesis records field)", args[0])
+		exitCode = 1
+		return
+	}
+
+	ips, err := net.LookupIP(urlParsed.Hostname())
+	if err != nil {
+		logger.Printf("FATAL: error resolving hostname in URL %s: %s", args[0], err.Error())
+		exitCode = 1
+		return
+	}
+	if len(ips) == 0 {
+		logger.Printf("FATAL: error resolving hostname in URL %s: no IP addresses returned", args[0])
+		exitCode = 1
+		return
+	}
+
+	var peers []lf.Peer
+	for _, ip := range ips {
+		peers = append(peers, lf.Peer{
+			IP:       ip,
+			Port:     status.P2PPort,
+			Identity: status.Identity,
+		})
+	}
+
+	peersJSON := lf.PrettyJSON(peers)
+	ioutil.WriteFile(path.Join(basePath, "peers.json"), []byte(peersJSON), 0644)
+	ioutil.WriteFile(genesisLf, status.GenesisRecords, 0644)
+
+	statusJSON := lf.PrettyJSON(status)
+	fmt.Printf("%s\nDownloading current records...\n", statusJSON)
+	resp, err := http.Get(args[0])
+	if resp.StatusCode == 200 {
+		var total uint64
+		out, err := os.OpenFile(path.Join(basePath, "bootstrap.lf"), os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
+		if err != nil {
+			log.Printf("  FAILED: could not open bootstrap.lf for writing (%s)", err.Error())
+		} else {
+			var buf [1048576]byte
+			for {
+				n, _ := resp.Body.Read(buf[:])
+				if n > 0 {
+					total += uint64(n)
+					fmt.Printf("  %d bytes\n", total)
+					_, err := out.Write(buf[0:n])
+					if err != nil {
+						break
+					}
+				} else {
+					break
+				}
+			}
+			out.Close()
+		}
+	} else {
+		fmt.Printf("  FAILED: %d (%s)", resp.StatusCode, resp.Status)
+	}
+
+	fmt.Printf("\nDone! Node is ready to start.\n")
+
+	return
+}
 
 func doNodeStart(cfg *lf.ClientConfig, basePath string, args []string) (exitCode int) {
 	var logFile *os.File
@@ -1906,6 +2002,9 @@ func main() {
 		}
 		os.Exit(0)
 		return
+
+	case "node-bootstrap":
+		exitCode = doNodeBootstrap(&cfg, *basePath, cmdArgs)
 
 	case "node-start":
 		exitCode = doNodeStart(&cfg, *basePath, cmdArgs)

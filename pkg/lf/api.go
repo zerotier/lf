@@ -37,6 +37,7 @@ type OwnerStatus struct {
 	Certificates          []Blob      `json:",omitempty"` // Certificates in DER format
 	RevokedCertificates   []Blob      `json:",omitempty"` // Revoked certificated in DER format
 	HasCurrentCertificate bool        ``                  // True if there is at least one valid non-revoked certificate (as of current time)
+	AuthRequired          bool        ``                  // True if this database requires a current certificate
 	RecordCount           uint64      ``                  // Number of records in data store by this owner
 	RecordBytes           uint64      ``                  // Number of bytes of records by this owner
 	NewRecordLinks        []HashBlob  `json:",omitempty"` // Suggested links for a new record (for convenience to avoid multiple API calls)
@@ -73,6 +74,7 @@ type NodeStatus struct {
 	RecordCount       uint64            ``                  // Number of records in database
 	DataSize          uint64            ``                  // Total size of records in database in bytes
 	FullySynchronized bool              ``                  // True if there are no dangling links (excluding abandoned ones)
+	GenesisRecords    Blob              ``                  // Genesis records (those currently known)
 	GenesisParameters GenesisParameters ``                  // Network parameters
 	Oracle            OwnerPublic       `json:",omitempty"` // Owner public if this node is an oracle, empty otherwise
 	P2PPort           int               ``                  // This node's P2P port

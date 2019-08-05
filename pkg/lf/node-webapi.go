@@ -33,6 +33,8 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -306,6 +308,24 @@ func (n *Node) createHTTPServeMux() *http.ServeMux {
 				apiSendObj(out, req, http.StatusInternalServerError, &ErrAPI{Code: http.StatusInternalServerError, Message: err.Error(), ErrTypeName: errTypeName(err)})
 			}
 			apiSendObj(out, req, http.StatusOK, nodeStatus)
+		} else {
+			out.Header().Set("Allow", "GET, HEAD")
+			apiSendObj(out, req, http.StatusMethodNotAllowed, &ErrAPI{Code: http.StatusMethodNotAllowed, Message: req.Method + " not supported for this path"})
+		}
+	})
+
+	smux.HandleFunc("/dumprecords", func(out http.ResponseWriter, req *http.Request) {
+		apiSetStandardHeaders(out)
+		if req.Method == http.MethodGet || req.Method == http.MethodHead {
+			recordsLf, err := os.Open(path.Join(n.basePath, "records.lf"))
+			if err != nil {
+				apiSendObj(out, req, http.StatusInternalServerError, &ErrAPI{Code: http.StatusInternalServerError, Message: err.Error(), ErrTypeName: errTypeName(err)})
+			} else {
+				defer recordsLf.Close()
+				out.Header().Set("Content-Type", "application/octet-stream")
+				out.WriteHeader(http.StatusOK)
+				io.Copy(out, recordsLf)
+			}
 		} else {
 			out.Header().Set("Allow", "GET, HEAD")
 			apiSendObj(out, req, http.StatusMethodNotAllowed, &ErrAPI{Code: http.StatusMethodNotAllowed, Message: req.Method + " not supported for this path"})

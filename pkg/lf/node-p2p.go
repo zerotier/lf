@@ -41,8 +41,6 @@ import (
 	"io"
 	"io/ioutil"
 	"net"
-	"os"
-	"path"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -544,32 +542,7 @@ mainReaderLoop:
 					p.hasRecordsLock.Lock()
 					p.hasRecords[rh] = atomic.LoadUintptr(&n.timeTicker)
 					p.hasRecordsLock.Unlock()
-
-					n.log[LogLevelTrace].Printf("received record =%s from %s", Base62Encode(rh[:]), tcpAddr.IP.String())
-					err = n.AddRecord(rec)
-					if err == ErrRecordNotApproved && !n.db.haveRecordIncludeLimbo(rh[:]) {
-						// If a record is not approved we save it temporarily and mark it "in limbo" in
-						// the database. Records marked in limbo might get added later if certificates
-						// authorizing them arrive or there is a network config change.
-						n.db.markInLimbo(rh[:], rec.Owner, TimeSec(), rec.Timestamp)
-
-						limboBasePath := path.Join(n.basePath, "limbo")
-						limboPath := path.Join(limboBasePath, rec.Owner.String())
-						n.log[LogLevelTrace].Printf("marking record =%s from %s as in limbo, adding to %s", Base62Encode(rh[:]), tcpAddr.IP.String(), limboPath)
-						n.limboLock.Lock()
-						limboFile, _ := os.OpenFile(limboPath, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0644)
-						if limboFile == nil {
-							os.MkdirAll(limboBasePath, 0755)
-							limboFile, _ = os.OpenFile(limboPath, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0644)
-						}
-						if limboFile != nil {
-							limboFile.Write(msg)
-							limboFile.Close()
-						}
-						n.limboLock.Unlock()
-					} else if err != nil {
-						n.log[LogLevelTrace].Printf("rejected record =%s from %s: %s", Base62Encode(rh[:]), tcpAddr.IP.String(), err.Error())
-					}
+					n.addRemoteRecord(msg, rh[:], rec, tcpAddr.IP.String())
 				}
 			}
 
