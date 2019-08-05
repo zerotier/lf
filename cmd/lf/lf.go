@@ -1009,7 +1009,13 @@ func doSet(cfg *lf.ClientConfig, basePath string, args []string) (exitCode int) 
 		}
 	}
 	if err != nil {
-		fmt.Printf("ERROR: set failed: unable to get links for new record: %s\n", err.Error())
+		logger.Printf("ERROR: set failed: unable to get links for new record: %s", err.Error())
+		exitCode = 1
+		return
+	}
+
+	if !ownerInfo.HasCurrentCertificate && ownerInfo.AuthRequired {
+		logger.Printf("ERROR: owner %s must have a certificate (database requires authentication)", owner.Public.String())
 		exitCode = 1
 		return
 	}
@@ -1017,7 +1023,7 @@ func doSet(cfg *lf.ClientConfig, basePath string, args []string) (exitCode int) 
 	var o *lf.Owner
 	o, err = owner.GetOwner()
 	if err != nil {
-		fmt.Printf("ERROR: invalid owner in config: %s\n", err.Error())
+		logger.Printf("ERROR: invalid owner in config: %s", err.Error())
 		exitCode = 1
 		return
 	}
