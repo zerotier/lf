@@ -56,6 +56,9 @@ func doMakeRequestSetup(n *Node, selectors []MakeSelector, passphrase string, ow
 		}
 		owner = o
 	}
+	if len(maskingKey) == 0 {
+		maskingKey = reqMaskingKey
+	}
 	if len(maskingKey) == 0 && len(selectors) > 0 {
 		maskingKey = selectors[0].Name
 	}

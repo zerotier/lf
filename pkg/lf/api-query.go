@@ -172,6 +172,12 @@ func (m *Query) execute(n *Node) (qr QueryResults, err error) {
 		tsMin = int64(m.TimeRange[0])
 		tsMax = int64(m.TimeRange[1])
 	}
+	if tsMin < 0 {
+		tsMin = 0
+	}
+	if tsMax < 0 {
+		tsMax = int64(9223372036854775807)
+	}
 
 	// Get all results grouped by selector composite key.
 	bySelectorKey := make(map[uint64]*[]apiQueryResultTmp)
