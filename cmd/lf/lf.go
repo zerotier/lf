@@ -38,6 +38,7 @@ import (
 	"encoding/pem"
 	"flag"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"math/big"
@@ -321,31 +322,45 @@ func doNodeBootstrap(cfg *lf.ClientConfig, basePath string, args []string) (exit
 
 	statusJSON := lf.PrettyJSON(status)
 	fmt.Printf("%s\nDownloading current records...\n", statusJSON)
-	resp, err := http.Get(args[0])
+	var dumpRecordsURL string
+	if strings.HasSuffix(args[0], "/") {
+		dumpRecordsURL = args[0] + "dumprecords"
+	} else {
+		dumpRecordsURL = args[0] + "/dumprecords"
+	}
+	resp, err := http.Get(dumpRecordsURL)
 	if resp.StatusCode == 200 {
 		var total uint64
 		out, err := os.OpenFile(path.Join(basePath, "bootstrap.lf"), os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
 		if err != nil {
-			log.Printf("  FAILED: could not open bootstrap.lf for writing (%s)", err.Error())
-		} else {
-			var buf [1048576]byte
-			for {
-				n, _ := resp.Body.Read(buf[:])
-				if n > 0 {
-					total += uint64(n)
-					fmt.Printf("  %d bytes\n", total)
-					_, err := out.Write(buf[0:n])
-					if err != nil {
-						break
-					}
-				} else {
+			log.Printf("FAILED: could not open bootstrap.lf for writing (%s)", err.Error())
+			exitCode = 1
+			return
+		}
+		var buf [1048576]byte
+		for {
+			n, err := resp.Body.Read(buf[:])
+			if n > 0 {
+				total += uint64(n)
+				fmt.Printf("  %d bytes\n", total)
+				_, err := out.Write(buf[0:n])
+				if err != nil {
 					break
 				}
+			} else {
+				if err != nil && err != io.EOF {
+					log.Printf("FAILED: aborted transfer after unexpected error: %s", err.Error())
+					exitCode = 1
+					return
+				}
+				break
 			}
-			out.Close()
 		}
+		out.Close()
 	} else {
-		fmt.Printf("  FAILED: %d (%s)", resp.StatusCode, resp.Status)
+		log.Printf("FAILED: %d (%s)", resp.StatusCode, resp.Status)
+		exitCode = 1
+		return
 	}
 
 	fmt.Printf("\nDone! Node is ready to start.\n")
