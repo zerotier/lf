@@ -243,7 +243,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 			Handler:        httpCompressionHandler(n.createHTTPServeMux()),
 			IdleTimeout:    10 * time.Second,
 			ReadTimeout:    10 * time.Second,
-			WriteTimeout:   30 * time.Second,
+			WriteTimeout:   600 * time.Second,
 		}
 		n.httpServer.SetKeepAlivesEnabled(true)
 	}
