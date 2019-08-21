@@ -1,7 +1,7 @@
 /*
  * LF: Global Fully Replicated Key/Value Store
  * Copyright (C) 2018-2019  ZeroTier, Inc.  https://www.zerotier.com/
- * 
+ *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
@@ -50,7 +50,7 @@
 
 /**
  * Structure making up graph.bin
- * 
+ *
  * This packed structure tracks records' weights and links to other records by
  * graph node offset. It's stored in little endian format since most systems are
  * little endian and this therefore will usually give the best performance. The
@@ -113,7 +113,7 @@ struct ZTLF_CertificateResults
 
 /**
  * Callback for when records are fully synchronized
- * 
+ *
  * Parameters are: database, record hash, data offset, data length, reputation, and an arbitrary argument.
  */
 typedef void (*RecordSynchronizedCallback)(struct ZTLF_DB *,const void *,uint64_t,unsigned int,int,void *);
@@ -228,8 +228,6 @@ int ZTLF_DB_PutRecord(
 
 struct ZTLF_QueryResults *ZTLF_DB_Query(
 	struct ZTLF_DB *db,
-	const int64_t tsMin,
-	const int64_t tsMax,
 	const void **sel,
 	const unsigned int *selSize,
 	const unsigned int selCount,
@@ -344,8 +342,6 @@ static inline int ZTLF_DB_PutRecord_fromGo(
 }
 static inline struct ZTLF_QueryResults *ZTLF_DB_Query_fromGo(
 	struct ZTLF_DB *db,
-	const int64_t tsMin,
-	const int64_t tsMax,
 	const uintptr_t sel,
 	const unsigned int *selSize,
 	const unsigned int selCount,
@@ -353,7 +349,7 @@ static inline struct ZTLF_QueryResults *ZTLF_DB_Query_fromGo(
 	const unsigned int *oracleSize,
 	const unsigned int oracleCount)
 {
-	return ZTLF_DB_Query(db,tsMin,tsMax,(const void **)sel,selSize,selCount,(const void **)oracles,oracleSize,oracleCount);
+	return ZTLF_DB_Query(db,(const void **)sel,selSize,selCount,(const void **)oracles,oracleSize,oracleCount);
 }
 #endif
 

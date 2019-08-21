@@ -1,7 +1,7 @@
 /*
  * LF: Global Fully Replicated Key/Value Store
  * Copyright (C) 2018-2019  ZeroTier, Inc.  https://www.zerotier.com/
- * 
+ *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
@@ -43,7 +43,7 @@
 #define ZTLF_DB_CACHE_SIZE "-131072"
 
 /* A sanity limit on the number of records returned by a selector range query. */
-#define ZTLF_DB_SELECTOR_QUERY_RESULT_LIMIT "1048576"
+#define ZTLF_DB_SELECTOR_QUERY_RESULT_LIMIT "4194304"
 
 static void *_ZTLF_DB_graphThreadMain(void *arg);
 
@@ -51,7 +51,7 @@ static void *_ZTLF_DB_graphThreadMain(void *arg);
  * config
  *   k                        arbitrary config key
  *   v                        arbitrary config value
- * 
+ *
  * record
  *   doff                     offset of record data in 'records' flat file (unique primary key)
  *   dlen                     length of record data
@@ -77,7 +77,7 @@ static void *_ZTLF_DB_graphThreadMain(void *arg);
  *   revoked_serial_no        revoked certificate serial (base62)
  *   record_doff              doff of record containing CRL
  *   record_dlen              dlen of record containing CRL
- * 
+ *
  * limbo
  *   hash                     hash of record awaiting potential future authorization
  *   owner                    owner of record
@@ -95,37 +95,37 @@ static void *_ZTLF_DB_graphThreadMain(void *arg);
  *   selidx                   selector index (which selector in record)
  *   record_ts                timestamp of record
  *   record_doff              offset of linked record
- * 
+ *
  * dangling_link
  *   hash                     hash of record we don't have
  *   linking_record_goff      graph node offset of record with dangling link
  *   linking_record_link_idx  index in linkedRecordGoff[] of missing link
- * 
+ *
  * hole
  *   waiting_record_goff      graph offset of record that is waiting on this hole to be filled
  *   incomplete_goff          graph offset of graph node with missing links
  *   incomplete_link_idx      index of missing link in linkedRecordGoff[]
- * 
+ *
  * graph_pending
  *   record_goff              graph offset of record pending completion of weight application
  *   hole_count               most recent count of entries in hole that are blocking this node
- * 
+ *
  * wanted
  *   hash                     hash of wanted record
  *   retries                  number of retries attempted so far
- * 
+ *
  * pulse
  *   token                    64-bit pulse token (last in hash chain)
  *   current                  Current depth of hash chain
- * 
+ *
  * Most tables are somewhat self-explanatory.
- * 
+ *
  * The hole and dangling_link tables are similar but serve different functions. The dangling_link table
  * documents immediate missing links from a given linking record and is functionally tied to the wanted
  * table. The latter tracks attempts to retrieve missing records. The hole table documents missing links
  * in the graph anywhere beneath a given record. It's used to track progress in what may be multiple
  * graph traversal iterations to apply a record's weights to the records below it.
- * 
+ *
  * The graph_pending table tracks records whose weights have not yet been fully applied to the entire
  * graph below them. This occurs if there are holes in the graph. The current value of hole_count can
  * be compared with a computed value to determine if some of those holes have been filled and if graph
@@ -317,7 +317,7 @@ int ZTLF_DB_Open(
 	 * The following clause (and variants) is common and selects for records that
 	 * are fully synchronized, meaning they have all the links below them in the
 	 * graph satisfied.
-	 * 
+	 *
 	 * "AND NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) "
 	 * "AND NOT EXISTS (SELECT gp.record_goff FROM graph_pending AS gp WHERE gp.record_goff = r.goff) "
 	 */
@@ -441,10 +441,9 @@ int ZTLF_DB_Open(
 		"INSERT OR IGNORE INTO tmp.rs SELECT record_doff AS \"i\" FROM selector WHERE "
 		"sel BETWEEN ? AND ? "
 		"AND selidx = ? "
-		"AND record_ts BETWEEN ? AND ? "
 		"LIMIT " ZTLF_DB_SELECTOR_QUERY_RESULT_LIMIT);
 	S(db->sQueryAndSelectorRange,
-		"DELETE FROM tmp.rs WHERE \"i\" NOT IN (SELECT record_doff FROM selector WHERE sel BETWEEN ? AND ? AND selidx = ? AND record_ts BETWEEN ? AND ?)");
+		"DELETE FROM tmp.rs WHERE \"i\" NOT IN (SELECT record_doff FROM selector WHERE sel BETWEEN ? AND ? AND selidx = ?)");
 	S(db->sQueryGetResults,
 		"SELECT r.doff,r.dlen,r.goff,r.ts,r.reputation,r.hash,r.ckey,r.owner FROM record AS r,tmp.rs AS rs WHERE "
 		"r.doff = rs.i "
@@ -547,7 +546,7 @@ static inline uint64_t _ZTLF_CRC64(uint64_t crc,const uint8_t *s,unsigned long l
  * traverses the graph along the path of links. If it encounters holes it logs them and
  * does everything it can, returning to do the parts it couldn't do on a later iteration. A
  * record will be revisited until all its weight can be applied with no holes.
- * 
+ *
  * Right now this algorithm is designed to be run in a single thread. Just creating more of
  * these threads would create a multiple-application problem. This could be fixed by using
  * a queue and enqueueing the results of sGetRecordsForWeightApplication for a pool of
@@ -1233,8 +1232,6 @@ exit_putRecord:
 
 struct ZTLF_QueryResults *ZTLF_DB_Query(
 	struct ZTLF_DB *db,
-	const int64_t tsMin,
-	const int64_t tsMax,
 	const void **sel,
 	const unsigned int *selSize,
 	const unsigned int selCount,
@@ -1268,8 +1265,6 @@ struct ZTLF_QueryResults *ZTLF_DB_Query(
 			sqlite3_bind_blob(db->sQueryOrSelectorRange,2,sel[j],(int)selSize[j],SQLITE_STATIC);
 			++j;
 			sqlite3_bind_int(db->sQueryOrSelectorRange,3,(int)i);
-			sqlite3_bind_int64(db->sQueryOrSelectorRange,4,(sqlite_int64)tsMin);
-			sqlite3_bind_int64(db->sQueryOrSelectorRange,5,(sqlite_int64)tsMax);
 			if (sqlite3_step(db->sQueryOrSelectorRange) != SQLITE_DONE) {
 				ZTLF_L_warning("database error querying selector range into record ID cache: %s",sqlite3_errmsg(db->dbc));
 				goto query_error;
@@ -1282,8 +1277,6 @@ struct ZTLF_QueryResults *ZTLF_DB_Query(
 			sqlite3_bind_blob(db->sQueryAndSelectorRange,2,sel[j],(int)selSize[j],SQLITE_STATIC);
 			++j;
 			sqlite3_bind_int(db->sQueryAndSelectorRange,3,(int)i);
-			sqlite3_bind_int64(db->sQueryAndSelectorRange,4,(sqlite_int64)tsMin);
-			sqlite3_bind_int64(db->sQueryAndSelectorRange,5,(sqlite_int64)tsMax);
 			if (sqlite3_step(db->sQueryAndSelectorRange) != SQLITE_DONE) {
 				ZTLF_L_warning("database error querying selector range into record ID cache (AND): %s",sqlite3_errmsg(db->dbc));
 				goto query_error;

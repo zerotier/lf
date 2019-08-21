@@ -121,6 +121,7 @@ type QueryResults [][]QueryResult
 
 type apiQueryResultTmp struct {
 	weightL, weightH, doff, dlen uint64
+	ts                           int64
 	localReputation              int
 	negativeComments             uint
 }
@@ -181,7 +182,7 @@ func (m *Query) execute(n *Node) (qr QueryResults, err error) {
 
 	// Get all results grouped by selector composite key.
 	bySelectorKey := make(map[uint64]*[]apiQueryResultTmp)
-	n.db.query(tsMin, tsMax, selectorRanges, m.Oracles, func(ts, weightL, weightH, doff, dlen uint64, localReputation int, ckey uint64, owner []byte, negativeComments uint) bool {
+	n.db.query(selectorRanges, m.Oracles, func(ts, weightL, weightH, doff, dlen uint64, localReputation int, ckey uint64, owner []byte, negativeComments uint) bool {
 		includeOwner := true
 		if len(m.Owners) > 0 {
 			includeOwner = false
@@ -199,7 +200,7 @@ func (m *Query) execute(n *Node) (qr QueryResults, err error) {
 				rptr = &tmp
 				bySelectorKey[ckey] = rptr
 			}
-			*rptr = append(*rptr, apiQueryResultTmp{weightL, weightH, doff, dlen, localReputation, negativeComments})
+			*rptr = append(*rptr, apiQueryResultTmp{weightL, weightH, doff, dlen, int64(ts), localReputation, negativeComments})
 		}
 		return true
 	})
@@ -214,6 +215,11 @@ func (m *Query) execute(n *Node) (qr QueryResults, err error) {
 		// Collate results and add to query result
 		for rn := 0; rn < len(*rptr); rn++ {
 			result := &(*rptr)[rn]
+
+			if result.ts < tsMin || result.ts > tsMax {
+				continue
+			}
+
 			rdata, err := n.db.getDataByOffset(result.doff, uint(result.dlen), nil)
 			if err != nil {
 				return nil, err

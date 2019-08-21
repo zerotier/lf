@@ -72,7 +72,7 @@ func doMakeRequestSetup(n *Node, selectors []MakeSelector, passphrase string, ow
 	}
 
 	if scanForOlderRecord {
-		n.db.query(0, int64(9223372036854775807), selectorRanges, nil, func(ts, _, _, doff, dlen uint64, _ int, _ uint64, recOwner []byte, _ uint) bool {
+		n.db.query(selectorRanges, nil, func(ts, _, _, doff, dlen uint64, _ int, _ uint64, recOwner []byte, _ uint) bool {
 			if bytes.Equal(recOwner, owner.Public) {
 				if ts > recTS {
 					recTS = ts

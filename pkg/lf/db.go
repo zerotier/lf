@@ -340,7 +340,7 @@ func (db *db) haveDanglingLinks(ignoreAfterNRetries int) bool {
 // results not sorted. The loop is broken if the function returns false. The owner is passed as a pointer to
 // an array that is reused, so a copy must be made if you want to keep it. The arguments to the function are:
 // timestamp, weight (low), weight (high), data offset, data length, local reputation, cumulative selector key, owner, negative comments.
-func (db *db) query(tsMin, tsMax int64, selectorRanges [][2][]byte, oracles []OwnerPublic, f func(uint64, uint64, uint64, uint64, uint64, int, uint64, []byte, uint) bool) error {
+func (db *db) query(selectorRanges [][2][]byte, oracles []OwnerPublic, f func(uint64, uint64, uint64, uint64, uint64, int, uint64, []byte, uint) bool) error {
 	if len(selectorRanges) == 0 {
 		return nil
 	}
@@ -374,8 +374,6 @@ func (db *db) query(tsMin, tsMax int64, selectorRanges [][2][]byte, oracles []Ow
 		db.cdbLock.Lock()
 		cresults = C.ZTLF_DB_Query_fromGo(
 			db.cdb,
-			C.int64_t(tsMin),
-			C.int64_t(tsMax),
 			C.uintptr_t(uintptr(unsafe.Pointer(&sel[0]))),
 			&selSizes[0],
 			C.uint(len(selectorRanges)),
@@ -387,8 +385,6 @@ func (db *db) query(tsMin, tsMax int64, selectorRanges [][2][]byte, oracles []Ow
 		db.cdbLock.Lock()
 		cresults = C.ZTLF_DB_Query_fromGo(
 			db.cdb,
-			C.int64_t(tsMin),
-			C.int64_t(tsMax),
 			C.uintptr_t(uintptr(unsafe.Pointer(&sel[0]))),
 			&selSizes[0],
 			C.uint(len(selectorRanges)),
