@@ -1,28 +1,15 @@
 /*
- * LF: Global Fully Replicated Key/Value Store
- * Copyright (C) 2018-2019  ZeroTier, Inc.  https://www.zerotier.com/
- * 
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
+ * Copyright (c)2019 ZeroTier, Inc.
  *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * Use of this software is governed by the Business Source License included
+ * in the LICENSE.TXT file in the project's root directory.
  *
- * You should have received a copy of the GNU General Public License
- * along with this program. If not, see <http://www.gnu.org/licenses/>.
+ * Change Date: 2023-01-01
  *
- * --
- *
- * You can be released from the requirements of the license by purchasing
- * a commercial license. Buying such a license is mandatory as soon as you
- * develop commercial closed-source software that incorporates or links
- * directly against ZeroTier software without disclosing the source code
- * of your own application.
+ * On the date above, in accordance with the Business Source License, use
+ * of this software will be governed by version 2.0 of the Apache License.
  */
+/****/
 
 #ifndef ZTLF_SUINT96_H
 #define ZTLF_SUINT96_H
@@ -32,7 +19,7 @@
 
 /**
  * A memory mapped 96-bit unsigned integer array that is striped across three files.
- * 
+ *
  * The purpose of this is to store weights. Weights are constantly increased, causing
  * their least significant 32 bits to change frequently and more significant parts to
  * change much less often. Striping this across files dramatically decreases unnecessary
