@@ -3,7 +3,6 @@ module lf
 go 1.12
 
 require (
-	bazil.org/fuse v0.0.0-20180421153158-65cc252bf669
 	github.com/andybalholm/brotli v0.0.0-20190821151343-b60f0d972eeb
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/stretchr/testify v1.4.0 // indirect

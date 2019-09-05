@@ -67,8 +67,6 @@ type Node struct {
 	workFunctionLock           sync.Mutex
 	makeRecordWorkFunction     *Wharrgarblr
 	makeRecordWorkFunctionLock sync.Mutex
-	mountPoints                map[string]*FS
-	mountPointsLock            sync.Mutex
 	db                         db
 
 	owner        *Owner // Owner for commentary, key also currently used for ECDH on link
@@ -135,7 +133,6 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 	n.p2pPort = p2pPort
 	n.httpPort = httpPort
 	n.localTest = localTest
-	n.mountPoints = make(map[string]*FS)
 	n.knownPeers = make(map[string]*knownPeer)
 	n.connectionsInStartup = make(map[*net.TCPConn]bool)
 	n.recordsRequested = make(map[[32]byte]uintptr)
@@ -386,45 +383,6 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 
 	initOk = true
 
-	// Read and apply mounts.json after node is running
-	go func() {
-		time.Sleep(time.Second)
-
-		var mounts []MountPoint
-		mj, _ := ioutil.ReadFile(path.Join(basePath, "mounts.json"))
-		if len(mj) > 0 {
-			err := json.Unmarshal(mj, &mounts)
-			if err != nil {
-				n.log[LogLevelWarning].Printf("WARNING: lffs: ignoring mounts.json due to JSON parse error: %s", err.Error())
-			}
-			for _, mp := range mounts {
-				if atomic.LoadUint32(&n.shutdown) != 0 {
-					break
-				}
-				var owner *Owner
-				var maskingKey []byte
-				if len(mp.Passphrase) > 0 {
-					owner, maskingKey = PassphraseToOwnerAndMaskingKey(mp.Passphrase)
-				} else {
-					if len(mp.OwnerPrivate) > 0 {
-						owner, err = NewOwnerFromPrivateBytes(mp.OwnerPrivate)
-						if err != nil {
-							n.log[LogLevelWarning].Printf("WARNING: lffs: cannot mount %s: invalid owner private key: %s", mp.Path, err.Error())
-							continue
-						}
-					}
-					if len(mp.MaskingKey) > 0 {
-						maskingKey = mp.MaskingKey
-					}
-				}
-				_, err = n.Mount(owner, mp.MaxFileSize, mp.Path, mp.RootSelectorName, maskingKey)
-				if err != nil {
-					n.log[LogLevelWarning].Printf("WARNING: lffs: cannot mount %s: %s", mp.Path, err.Error())
-				}
-			}
-		}
-	}()
-
 	n.log[LogLevelNormal].Print("--- node startup successful ---")
 
 	return n, nil
@@ -435,13 +393,6 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 func (n *Node) Stop() {
 	n.log[LogLevelNormal].Printf("--- shutting down ---")
 	if atomic.SwapUint32(&n.shutdown, 1) == 0 {
-		n.mountPointsLock.Lock()
-		for mpp, mp := range n.mountPoints {
-			mp.Close()
-			delete(n.mountPoints, mpp)
-		}
-		n.mountPointsLock.Unlock()
-
 		n.connectionsInStartupLock.Lock()
 		if n.connectionsInStartup != nil {
 			for c := range n.connectionsInStartup {
@@ -504,58 +455,6 @@ func (n *Node) Stop() {
 func (n *Node) WaitForStop() {
 	n.runningLock.Lock()
 	n.runningLock.Unlock()
-}
-
-// Mount mounts the data store under a given root selector name into the host filesystem using FUSE.
-func (n *Node) Mount(owner *Owner, maxFileSize int, mountPoint string, rootSelectorName []byte, maskingKey []byte) (*FS, error) {
-	n.mountPointsLock.Lock()
-	defer n.mountPointsLock.Unlock()
-	if _, have := n.mountPoints[mountPoint]; have {
-		return nil, ErrAlreadyMounted
-	}
-	if owner == nil {
-		owner = n.owner
-	}
-	fs, err := NewFS([]LF{n}, n.log[LogLevelNormal], n.log[LogLevelWarning], mountPoint, rootSelectorName, owner, maxFileSize, maskingKey)
-	if err != nil {
-		return nil, err
-	}
-	n.mountPoints[mountPoint] = fs
-	return fs, nil
-}
-
-// Unmount unmounts a mount point or does nothing if not mounted.
-func (n *Node) Unmount(mountPoint string) error {
-	n.mountPointsLock.Lock()
-	defer n.mountPointsLock.Unlock()
-	fs := n.mountPoints[mountPoint]
-	delete(n.mountPoints, mountPoint)
-	if fs != nil {
-		go fs.Close()
-	}
-	return nil
-}
-
-// Mounts returns a list of mount points for this node.
-func (n *Node) Mounts(includeSecrets bool) (m []MountPoint) {
-	n.mountPointsLock.Lock()
-	for p, fs := range n.mountPoints {
-		var op Blob
-		var mk Blob
-		if includeSecrets {
-			op, _ = fs.owner.PrivateBytes()
-			mk = fs.maskingKey
-		}
-		m = append(m, MountPoint{
-			Path:             p,
-			RootSelectorName: fs.rootSelectorName,
-			OwnerPrivate:     op,
-			MaskingKey:       mk,
-			MaxFileSize:      fs.maxFileSize,
-		})
-	}
-	n.mountPointsLock.Unlock()
-	return
 }
 
 // GetHTTPHandler gets the HTTP handler for this Node.
@@ -1618,7 +1517,7 @@ func (n *Node) requestWantedRecords(minRetries, maxRetries int) {
 	}
 }
 
-// getMakeRecordWorkFunction returns a work function that can be used to locally make records for LFFS or MakeRecord requests.
+// getMakeRecordWorkFunction returns a work function that can be used to locally make records for MakeRecord requests.
 func (n *Node) getMakeRecordWorkFunction() *Wharrgarblr {
 	n.makeRecordWorkFunctionLock.Lock()
 	if n.makeRecordWorkFunction == nil {

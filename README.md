@@ -1,11 +1,7 @@
 # LF: Fully Decentralized Fully Replicated Key/Value Store
 
-*(c)2018-2019 [ZeroTier, Inc.](https://www.zerotier.com/)* 
-*Licensed under the [GNU GPLv3](LICENSE.txt)*
-
-**LF is currently beta software!** Until 1.x object formats, APIs, and protocols may change in abrupt and non-backward-compatible ways (though we try to avoid it).
-
-[toc]
+*(c)2019 [ZeroTier, Inc.](https://www.zerotier.com/)*
+*Licensed under the [ZeroTier LF BSL](LICENSE.txt)*
 
 ## Introduction
 
@@ -237,53 +233,6 @@ If used with care the oracle system can provide very hard security guarantees th
 Casual users can choose to trust nodes that are generally trusted. Applications could ship with trust lists similar to how they ship with SSL CA lists.
 
 *Note that you shouldn't run nodes in `-oracle` mode on variable or burstable CPU cloud instances as this could result in a large bill or a surprise failure when the instance uses up its CPU quota. Use reserved CPU or bare metal systems for oracle nodes.*
-
-### LFFS
-
-LF contains a FUSE filesystem that allows sections of the global data store to be mounted. It can be mounted by remote clients or directly by full nodes, with the latter offering much higher performance since all data is local to the process. LFFS requires FUSE on Linux or [OSXFUSE](https://osxfuse.github.io) on Mac.
-
-LFFS is very basic and does not support full POSIX filesystem semantics. It's intended to be used for things like configuration file replication. Don't even try to put a database or something else complex on it. Even a git repository is likely to be too much. Here's a current list of known issues and limitations:
-
-* Hard links, special modes like setuid/setgid, named pipes, device nodes, and extended attributes are not supported.
-* Filesystem permission and ownership changes are not supported and chmod/chown are silently ignored.
-* File locks are not supported.
-* Renaming is a bit clunky and slow and doesn't quite obey POSIX semantics as it's implemented as delete-create.
-* Name length is limited to 511 bytes. This is for names within a directory. There is no limit to how many directories can be nested.
-* If you must perform proof of work, writes will be extremely slow to propagate and CPU-intensive. There is currently no way to cancel a write.
-* A single LF owner is used for all new files under a mount and there's no way to change this without remounting.
-* Once a filename is claimed by an owner there is currently no way to transfer ownership even if the file is subsequently deleted.
-
-Some of these might get fixed or improved in the future, but as we said LFFS is intended for very simple use cases and small data.
-
-To try out LFFS try this:
-
-```text
-$ ./lf mount -maxfilesize 4096 -passphrase 'The sparrow perches on the steeple in the rain.' /tmp/lffs-public-test com.zerotier.lffs.public-test
-```
-
-If everything works you should be able to access a public test LFFS share at `/tmp/lffs-public-test`. **Be aware** that this is a global public test share, so it could contain anything! If you see anything nasty there feel free to delete it. Since the passphrase (which generates both the owner and the masking key) is public, anyone can read and write.
-
-The above command mounts via the HTTP(S) API, which is slow. To mount directly under a running full node, edit a file called `mounts.json` in the node's home directory and then restart it. Here's an example `mounts.json` to mount the same public test share.
-
-```json
-[
-	{
-		"Path": "/tmp/lffs-public-test",
-		"RootSelectorName": "com.zerotier.lffs.public-test",
-		"MaxFileSize": 4096,
-		"Passphrase": "The sparrow perches on the steeple in the rain."
-	}
-]
-```
-
-The complete schema for mount points in `mounts.json` is:
-
-* **Path**: Path to mount FUSE filesystem on host (must have read/write access).
-* **RootSelectorName**: LF selector name (without ordinal) of filesystem root.
-* **OwnerPrivate**: Owner private key (if omitted the node's identity is used).
-* **MaskingKey**: Masking key to encrypt record (file) contents (if omitted root selector name is used).
-* **Passphrase**: If present this overrides both **OwnerPrivate** and **MaskingKey** and is used to generate both.
-* **MaxFileSize**: This limits the maximum size of locally written files. Files larger than this can appear if someone else wrote them. The hard global maximum is 4mb. Note that large files can take a *very* long time to commit due to proof of work on public networks!
 
 ## Sol: The Default Public Database / Network
 
