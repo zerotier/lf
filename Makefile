@@ -29,7 +29,7 @@ SQLITE3_FLAGS := \
 all: lf
 
 lf:	native_if
-	go build cmd/lf/lf.go
+	go build -trimpath -ldflags -s -o ./lf cmd/lf/lf.go
 
 native_if: FORCE
 	if [ ! -f native/db_$(UNAME_S).o ]; then $(CC) $(CFLAGS) -c -o native/db_$(UNAME_S).o native/db.c; fi
