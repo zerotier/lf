@@ -87,21 +87,21 @@ func ECCDecompressPublicKey(c elliptic.Curve, data []byte) (*big.Int, *big.Int, 
 
 // ECDHAgree performs elliptic curve Diffie-Hellman key agreement and returns the sha256 digest of the resulting shared key.
 // This is just a simple wrapper function for clarity and brevity.
-func ECDHAgree(c elliptic.Curve, pubX, pubY *big.Int, priv []byte) ([32]byte, error) {
+func ECDHAgree(c elliptic.Curve, pubX, pubY *big.Int, privateKey []byte) ([32]byte, error) {
 	if !c.IsOnCurve(pubX, pubY) {
 		return [32]byte{}, ErrInvalidPublicKey
 	}
-	x, _ := c.ScalarMult(pubX, pubY, priv)
+	x, _ := c.ScalarMult(pubX, pubY, privateKey)
 	return sha256.Sum256(x.Bytes()), nil
 }
 
 // ECDHAgreeECDSA is a version of ECDHAgree that takes an ECDSA-wrapped private and uses its curve parameter.
-// It's a shortcut for using priv.D.Bytes() as the private.
-func ECDHAgreeECDSA(pubX, pubY *big.Int, priv *ecdsa.PrivateKey) ([32]byte, error) {
-	if !priv.Curve.IsOnCurve(pubX, pubY) {
+// It's a shortcut for using privateKey.D.Bytes() as the private.
+func ECDHAgreeECDSA(pubX, pubY *big.Int, privateKey *ecdsa.PrivateKey) ([32]byte, error) {
+	if !privateKey.Curve.IsOnCurve(pubX, pubY) {
 		return [32]byte{}, ErrInvalidPublicKey
 	}
-	x, _ := priv.Curve.ScalarMult(pubX, pubY, priv.D.Bytes())
+	x, _ := privateKey.Curve.ScalarMult(pubX, pubY, privateKey.D.Bytes())
 	return sha256.Sum256(x.Bytes()), nil
 }
 
@@ -208,7 +208,7 @@ func ECDSAVerify(publicKey *ecdsa.PublicKey, hash, signature []byte) bool {
 		orderSize /= 8
 	}
 
-	if len(signature) != int(orderSize*2) {
+	if len(signature) != orderSize*2 {
 		return false
 	}
 
@@ -229,7 +229,7 @@ func ECDSARecover(curve elliptic.Curve, hash, signature []byte) *ecdsa.PublicKey
 	} else {
 		orderSize /= 8
 	}
-	if len(signature) != int(orderSize*2)+1 {
+	if len(signature) != orderSize*2+1 {
 		return nil
 	}
 

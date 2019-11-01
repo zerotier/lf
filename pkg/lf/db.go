@@ -313,14 +313,14 @@ func (db *db) crc64() uint64 {
 func (db *db) hasPending() bool {
 	db.cdbLock.Lock()
 	defer db.cdbLock.Unlock()
-	return (C.ZTLF_DB_HasPending(db.cdb) > 0)
+	return C.ZTLF_DB_HasPending(db.cdb) > 0
 }
 
 // haveDanglingLinks returns true if we have dangling links that haven't been retried more than N times.
 func (db *db) haveDanglingLinks(ignoreAfterNRetries int) bool {
 	db.cdbLock.Lock()
 	defer db.cdbLock.Unlock()
-	return (C.ZTLF_DB_HaveDanglingLinks(db.cdb, C.int(ignoreAfterNRetries)) > 0)
+	return C.ZTLF_DB_HaveDanglingLinks(db.cdb, C.int(ignoreAfterNRetries)) > 0
 }
 
 // query executes a query against a number of selector ranges. The function is executed for each result, with
@@ -480,7 +480,7 @@ func (db *db) getWanted(max, retryCountMin, retryCountMax int, incrementRetryCou
 func (db *db) logComment(byRecordDoff uint64, assertion, reason int, subject []byte) error {
 	var sub unsafe.Pointer
 	if len(subject) > 0 {
-		sub = unsafe.Pointer(&subject[0])
+		sub = &subject[0]
 	}
 	db.cdbLock.Lock()
 	e := C.ZTLF_DB_LogComment(db.cdb, C.int64_t(byRecordDoff), C.int(assertion), C.int(reason), sub, C.int(len(subject)))

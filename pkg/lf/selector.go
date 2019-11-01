@@ -63,12 +63,12 @@ func addOrdinalToHash(h *[32]byte, ordinal *Ordinal) {
 func MakeSelectorKey(plainTextName []byte, plainTextOrdinal uint64) []byte {
 	var prng seededPrng
 	prng.seed(plainTextName)
-	priv, err := ecdsa.GenerateKey(ECCCurveBrainpoolP160T1, &prng)
+	privateKey, err := ecdsa.GenerateKey(ECCCurveBrainpoolP160T1, &prng)
 	if err != nil {
 		panic(err)
 	}
 
-	key, _ := ECDSAHashPublicKey(&priv.PublicKey)
+	key, _ := ECDSAHashPublicKey(&privateKey.PublicKey)
 
 	var ord Ordinal
 	ord.Set(plainTextOrdinal, plainTextName)
@@ -87,7 +87,7 @@ func NewSelectorFromBytes(b []byte) (s *Selector, err error) {
 // Bytes returns a byte-serialized version of this selector.
 func (s *Selector) Bytes() []byte {
 	var b bytes.Buffer
-	s.marshalTo(&b)
+	_ = s.marshalTo(&b)
 	return b.Bytes()
 }
 

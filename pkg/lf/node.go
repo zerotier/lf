@@ -112,11 +112,11 @@ type Node struct {
 
 // NewNode creates and starts a node.
 func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, logLevel int, localTest bool) (*Node, error) {
-	os.MkdirAll(basePath, 0755)
+	_ = os.MkdirAll(basePath, 0755)
 
 	if localTest {
 		basePath = path.Join(basePath, "localtest")
-		os.MkdirAll(basePath, 0755)
+		_ = os.MkdirAll(basePath, 0755)
 	}
 
 	freeDiskSpace, _ := getFreeSpaceOnDevice(basePath)
@@ -186,11 +186,11 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 		if err != nil {
 			return nil, err
 		}
-		priv, err := n.owner.PrivateBytes()
+		privateBytes, err := n.owner.PrivateBytes()
 		if err != nil {
 			return nil, err
 		}
-		err = ioutil.WriteFile(ownerPath, []byte(pem.EncodeToMemory(&pem.Block{Type: OwnerPrivatePEMType, Bytes: priv})), 0600)
+		err = ioutil.WriteFile(ownerPath, pem.EncodeToMemory(&pem.Block{Type: OwnerPrivatePEMType, Bytes: privateBytes}), 0600)
 		if err != nil {
 			return nil, err
 		}
@@ -208,7 +208,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 		n.apiAuthToken = string(authTokenBytes)
 	} else {
 		var junk [24]byte
-		secureRandom.Read(junk[:])
+		_, _ = secureRandom.Read(junk[:])
 		n.apiAuthToken = Base62Encode(junk[:])
 		err = ioutil.WriteFile(authTokenPath, []byte(n.apiAuthToken), 0600)
 		if err != nil {
@@ -293,7 +293,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 			n.log[LogLevelNormal].Print("genesis.lf not found, used compiled-in defaults for global public network node")
 		} else {
 			n.log[LogLevelNormal].Print("genesis.lf found, initial genesis records loaded")
-			genesisFile.Close()
+			_ = genesisFile.Close()
 		}
 	}
 	if len(n.genesisOwner) == 0 {
@@ -303,7 +303,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 	// Load and replay genesis records, passing them through handler to bring network config to current state.
 	n.log[LogLevelNormal].Printf("replaying genesis records by genesis owner @%s", Base62Encode(n.genesisOwner))
 	gotGenesis := false
-	n.db.getAllByOwner(n.genesisOwner, func(doff, dlen uint64, reputation int) bool {
+	_ = n.db.getAllByOwner(n.genesisOwner, func(doff, dlen uint64, reputation int) bool {
 		rdata, _ := n.db.getDataByOffset(doff, uint(dlen), nil)
 		if len(rdata) > 0 {
 			gr, err := NewRecordFromBytes(rdata)
@@ -337,7 +337,7 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 				c, _ := n.p2pTCPListener.AcceptTCP()
 				if atomic.LoadUint32(&n.shutdown) != 0 {
 					if c != nil {
-						c.Close()
+						_ = c.Close()
 					}
 					break
 				}
@@ -353,9 +353,9 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 		n.backgroundThreadWG.Add(1)
 		go func() {
 			defer n.backgroundThreadWG.Done()
-			n.httpServer.Serve(n.httpTCPListener)
+			_ = n.httpServer.Serve(n.httpTCPListener)
 			if n.httpServer != nil {
-				n.httpServer.Close()
+				_ = n.httpServer.Close()
 			}
 		}()
 	}
@@ -376,9 +376,9 @@ func NewNode(basePath string, p2pPort int, httpPort int, logger *log.Logger, log
 	if n.httpTCPListener != nil {
 		clientConfigPath := path.Join(basePath, ClientConfigName)
 		var cc ClientConfig
-		cc.Load(clientConfigPath)
+		_ = cc.Load(clientConfigPath)
 		cc.URLs = []RemoteNode{RemoteNode(fmt.Sprintf("http://127.0.0.1:%d", httpPort))}
-		cc.Save(clientConfigPath)
+		_ = cc.Save(clientConfigPath)
 	}
 
 	initOk = true
@@ -396,7 +396,7 @@ func (n *Node) Stop() {
 		n.connectionsInStartupLock.Lock()
 		if n.connectionsInStartup != nil {
 			for c := range n.connectionsInStartup {
-				c.Close()
+				_ = c.Close()
 			}
 		}
 		n.connectionsInStartupLock.Unlock()
@@ -405,17 +405,17 @@ func (n *Node) Stop() {
 		if n.peers != nil {
 			for _, p := range n.peers {
 				if p.c != nil {
-					p.c.Close()
+					_ = p.c.Close()
 				}
 			}
 		}
 		n.peersLock.RUnlock()
 
 		if n.httpServer != nil {
-			n.httpServer.Close()
+			_ = n.httpServer.Close()
 		}
 		if n.p2pTCPListener != nil {
-			n.p2pTCPListener.Close()
+			_ = n.p2pTCPListener.Close()
 		}
 
 		n.workFunctionLock.Lock()
@@ -501,7 +501,7 @@ func (n *Node) Connect(ip net.IP, port int, identity []byte) error {
 				n.log[LogLevelVerbose].Printf("P2P connection to %s failed: %s", ta.String(), err.Error())
 			}
 		} else if conn != nil {
-			conn.Close()
+			_ = conn.Close()
 		}
 	}()
 
@@ -781,7 +781,7 @@ func (n *Node) NodeStatus() (*NodeStatus, error) {
 		Clock:             uint64(now.Unix()),
 		RecordCount:       rc,
 		DataSize:          ds,
-		FullySynchronized: (atomic.LoadUint32(&n.synchronized) != 0),
+		FullySynchronized: atomic.LoadUint32(&n.synchronized) != 0,
 		GenesisRecords:    gr,
 		GenesisParameters: n.genesisParameters,
 		Oracle:            oracle,
@@ -947,7 +947,7 @@ func (n *Node) handleSynchronizedRecord(doff uint64, dlen uint, reputation int, 
 				// generate a commentary record indicating that this record is suspect.
 				if reputation <= dbReputationCollision && atomic.LoadUint32(&n.commentary) != 0 {
 					rid := r.ID()
-					n.db.getAllByIDNotOwner(rid[:], r.Owner, func(_, _ uint64, alreadyHaveReputation int) bool {
+					_ = n.db.getAllByIDNotOwner(rid[:], r.Owner, func(_, _ uint64, alreadyHaveReputation int) bool {
 						if alreadyHaveReputation > reputation {
 							n.commentsLock.Lock()
 							n.comments.PushBack(&comment{
@@ -976,7 +976,7 @@ func (n *Node) handleSynchronizedRecord(doff uint64, dlen uint, reputation int, 
 							cdata, err = c.readFrom(cdata)
 							if err == nil {
 								n.log[LogLevelVerbose].Printf("comment: @%s: %s", Base62Encode(r.Owner), c.string())
-								n.db.logComment(doff, int(c.assertion), int(c.reason), c.subject)
+								_ = n.db.logComment(doff, int(c.assertion), int(c.reason), c.subject)
 							} else {
 								break
 							}
@@ -1016,7 +1016,7 @@ func (n *Node) handleSynchronizedRecord(doff uint64, dlen uint, reputation int, 
 						if crl != nil {
 							for _, revoked := range crl.TBSCertList.RevokedCertificates {
 								revokedSerial := Base62Encode(revoked.SerialNumber.Bytes())
-								n.db.putCertRevocation(revokedSerial, doff, dlen)
+								_ = n.db.putCertRevocation(revokedSerial, doff, dlen)
 								n.log[LogLevelNormal].Printf("certificate: new CRL from \"%s\" revokes %s", crl.TBSCertList.Issuer.String(), revokedSerial)
 							}
 
@@ -1065,7 +1065,9 @@ func (n *Node) handleSynchronizedRecord(doff uint64, dlen uint, reputation int, 
 				n.db.updateRecordReputationByHash(hash[:], dbReputationRecordDeserializationFailed)
 			}
 		} else {
-			n.log[LogLevelFatal].Printf("FATAL: I/O error or database corruption: unable to read record at byte index %d with size %d in data file (%s)", doff, dlen, err.Error())
+			if err != nil {
+				n.log[LogLevelFatal].Printf("FATAL: I/O error or database corruption: unable to read record at byte index %d with size %d in data file (%s)", doff, dlen, err.Error())
+			}
 			go n.Stop()
 		}
 	}()
@@ -1164,7 +1166,7 @@ func (n *Node) backgroundThreadMaintenance() {
 								}
 								kp.LastReconnectionAttempt = now
 								kp.TotalReconnectionAttempts++
-								n.Connect(kp.IP, kp.Port, kp.Identity)
+								_ = n.Connect(kp.IP, kp.Port, kp.Identity)
 								break
 							}
 						}
@@ -1175,7 +1177,7 @@ func (n *Node) backgroundThreadMaintenance() {
 						}
 						if len(sp) > 0 {
 							spp := &sp[rand.Int()%len(sp)]
-							n.Connect(spp.IP, spp.Port, spp.Identity)
+							_ = n.Connect(spp.IP, spp.Port, spp.Identity)
 						}
 					}
 					n.knownPeersLock.Unlock()
@@ -1336,11 +1338,11 @@ func (n *Node) backgroundTaskProcessRecordsInLimbo(ownerPublic OwnerPublic) {
 			numNotYetApproved++
 		}
 	}
-	f.Close()
+	_ = f.Close()
 
 	if numNotYetApproved == 0 {
 		n.log[LogLevelNormal].Printf("sync: all %d records in limbo for owner %s added", numFound, ownerStr)
-		os.Remove(fp)
+		_ = os.Remove(fp)
 	} else {
 		n.log[LogLevelNormal].Printf("sync: %d records remain in limbo for owner %s", numNotYetApproved, ownerStr)
 		// TODO: eventually forget records in limbo?
@@ -1354,9 +1356,9 @@ func (n *Node) backgroundTaskReadBootstrapFile() {
 	bootstrapFile, _ := os.Open(bootstrapFilePath)
 	if bootstrapFile != nil {
 		defer func() {
-			bootstrapFile.Close()
+			_ = bootstrapFile.Close()
 			if atomic.LoadUint32(&n.shutdown) == 0 {
-				os.Remove(bootstrapFilePath)
+				_ = os.Remove(bootstrapFilePath)
 			}
 		}()
 		n.log[LogLevelNormal].Printf("sync: found bootstrap.lf, importing records...")
@@ -1365,7 +1367,7 @@ func (n *Node) backgroundTaskReadBootstrapFile() {
 			var rec Record
 			if rec.UnmarshalFrom(bootstrapFile) == nil {
 				rh := rec.Hash()
-				n.addRemoteRecord(rec.Bytes(), rh[:], &rec, bootstrapFilePath)
+				_ = n.addRemoteRecord(rec.Bytes(), rh[:], &rec, bootstrapFilePath)
 				count++
 				if (count % 1024) == 0 {
 					n.log[LogLevelNormal].Printf("sync: imported %d records from bootstrap file", count)
@@ -1389,7 +1391,7 @@ func (n *Node) addRemoteRecord(recordBytes, recordHash []byte, rec *Record, src 
 		// If a record is not approved we save it temporarily and mark it "in limbo" in
 		// the database. Records marked in limbo might get added later if certificates
 		// authorizing them arrive or there is a network config change.
-		n.db.markInLimbo(recordHash, rec.Owner, TimeSec(), rec.Timestamp)
+		_ = n.db.markInLimbo(recordHash, rec.Owner, TimeSec(), rec.Timestamp)
 
 		limboBasePath := path.Join(n.basePath, "limbo")
 		limboPath := path.Join(limboBasePath, rec.Owner.String())
@@ -1397,12 +1399,12 @@ func (n *Node) addRemoteRecord(recordBytes, recordHash []byte, rec *Record, src 
 		n.limboLock.Lock()
 		limboFile, _ := os.OpenFile(limboPath, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0644)
 		if limboFile == nil {
-			os.MkdirAll(limboBasePath, 0755)
+			_ = os.MkdirAll(limboBasePath, 0755)
 			limboFile, _ = os.OpenFile(limboPath, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0644)
 		}
 		if limboFile != nil {
-			limboFile.Write(recordBytes)
-			limboFile.Close()
+			_, _ = limboFile.Write(recordBytes)
+			_ = limboFile.Close()
 		}
 		n.limboLock.Unlock()
 
@@ -1463,7 +1465,7 @@ func (n *Node) recordApprovalStatus(rec *Record) (bool, bool) {
 		return true, true
 	}
 	cert, revoked := n.recordIsSigned(rec.Owner, rec.Timestamp)
-	return (cert != nil && !revoked), (cert != nil)
+	return cert != nil && !revoked, cert != nil
 }
 
 // handleGenesisRecord handles new genesis records when starting up or if they arrive over the net.
@@ -1479,7 +1481,7 @@ func (n *Node) handleGenesisRecord(gr *Record) bool {
 		n.genesisRecordsLock.Unlock()
 		if len(rv) > 0 && atomic.LoadUint64(&n.lastGenesisRecordTimestamp) < gr.Timestamp {
 			n.log[LogLevelNormal].Printf("applying genesis configuration update from record =%s", grHashStr)
-			n.genesisParameters.Update(rv)
+			_, _ = n.genesisParameters.Update(rv)
 			atomic.StoreUint64(&n.lastGenesisRecordTimestamp, gr.Timestamp)
 			return true
 		}

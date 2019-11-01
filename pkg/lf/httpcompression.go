@@ -51,7 +51,7 @@ func httpCompressionHandler(next http.Handler) http.Handler {
 			gz := gzPool.Get().(*gzip.Writer)
 			gz.Reset(w)
 			next.ServeHTTP(&compressedResponseWriter{ResponseWriter: w, Writer: gz}, r)
-			gz.Close()
+			_ = gz.Close()
 			gzPool.Put(gz)
 		} else {
 			next.ServeHTTP(w, r)

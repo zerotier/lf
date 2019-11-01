@@ -51,24 +51,20 @@ func apiSetStandardHeaders(out http.ResponseWriter) {
 	h.Set("Server", SoftwareName)
 }
 
-func apiSendObj(out http.ResponseWriter, req *http.Request, httpStatusCode int, obj interface{}) error {
+func apiSendObj(out http.ResponseWriter, req *http.Request, httpStatusCode int, obj interface{}) {
 	h := out.Header()
 	h.Set("Content-Type", "application/json")
 	if req.Method == http.MethodHead {
 		out.WriteHeader(httpStatusCode)
-		return nil
 	}
 	var j []byte
-	var err error
 	if obj != nil {
-		j, err = json.Marshal(obj)
-		if err != nil {
-			return err
-		}
+		j, _ = json.Marshal(obj)
 	}
 	out.WriteHeader(httpStatusCode)
-	_, err = out.Write(j)
-	return err
+	if j != nil {
+		_, _ = out.Write(j)
+	}
 }
 
 func apiReadObj(out http.ResponseWriter, req *http.Request, dest interface{}) (err error) {
@@ -193,7 +189,7 @@ func (n *Node) createHTTPServeMux() *http.ServeMux {
 			if n.apiIsTrusted(req) {
 				var m Peer
 				if apiReadObj(out, req, &m) == nil {
-					n.Connect(m.IP, m.Port, m.Identity)
+					_ = n.Connect(m.IP, m.Port, m.Identity)
 					apiSendObj(out, req, http.StatusOK, nil)
 				}
 			} else {
@@ -208,18 +204,18 @@ func (n *Node) createHTTPServeMux() *http.ServeMux {
 	smux.HandleFunc("/record/raw/", func(out http.ResponseWriter, req *http.Request) {
 		apiSetStandardHeaders(out)
 		if req.Method == http.MethodGet || req.Method == http.MethodHead {
-			path := req.URL.Path
-			if strings.HasPrefix(path, "/record/raw/") { // sanity check
-				path = path[12:]
-				if len(path) > 1 && path[0] == '=' {
-					recordHash := Base62Decode(path[1:])
+			urlPath := req.URL.Path
+			if strings.HasPrefix(urlPath, "/record/raw/") { // sanity check
+				urlPath = urlPath[12:]
+				if len(urlPath) > 1 && urlPath[0] == '=' {
+					recordHash := Base62Decode(urlPath[1:])
 					if len(recordHash) == 32 {
 						_, data, _ := n.db.getDataByHash(recordHash, nil)
 						if len(data) > 0 {
 							out.Header().Set("Content-Type", "application/octet-stream")
 							out.WriteHeader(http.StatusOK)
 							if req.Method != http.MethodHead {
-								out.Write(data)
+								_, _ = out.Write(data)
 							}
 							return
 						}
@@ -236,11 +232,11 @@ func (n *Node) createHTTPServeMux() *http.ServeMux {
 	smux.HandleFunc("/record/", func(out http.ResponseWriter, req *http.Request) {
 		apiSetStandardHeaders(out)
 		if req.Method == http.MethodGet || req.Method == http.MethodHead {
-			path := req.URL.Path
-			if strings.HasPrefix(path, "/record/") { // sanity check
-				path = path[8:]
-				if len(path) > 1 && path[0] == '=' {
-					recordHash := Base62Decode(path[1:])
+			urlPath := req.URL.Path
+			if strings.HasPrefix(urlPath, "/record/") { // sanity check
+				urlPath = urlPath[8:]
+				if len(urlPath) > 1 && urlPath[0] == '=' {
+					recordHash := Base62Decode(urlPath[1:])
 					if len(recordHash) == 32 {
 						_, data, _ := n.db.getDataByHash(recordHash, nil)
 						if len(data) > 0 {
@@ -279,7 +275,7 @@ func (n *Node) createHTTPServeMux() *http.ServeMux {
 			out.WriteHeader(http.StatusOK)
 			if desired > 0 {
 				_, links, _ := n.db.getLinks(desired)
-				out.Write(links)
+				_, _ = out.Write(links)
 			}
 		} else {
 			out.Header().Set("Allow", "GET, HEAD")
@@ -308,10 +304,12 @@ func (n *Node) createHTTPServeMux() *http.ServeMux {
 			if err != nil {
 				apiSendObj(out, req, http.StatusInternalServerError, &ErrAPI{Code: http.StatusInternalServerError, Message: err.Error(), ErrTypeName: errTypeName(err)})
 			} else {
-				defer recordsLf.Close()
+				defer func() {
+					_ = recordsLf.Close()
+				}()
 				out.Header().Set("Content-Type", "application/octet-stream")
 				out.WriteHeader(http.StatusOK)
-				io.Copy(out, recordsLf)
+				_, _ = io.Copy(out, recordsLf)
 			}
 		} else {
 			out.Header().Set("Allow", "GET, HEAD")
@@ -322,11 +320,11 @@ func (n *Node) createHTTPServeMux() *http.ServeMux {
 	smux.HandleFunc("/owner/", func(out http.ResponseWriter, req *http.Request) {
 		apiSetStandardHeaders(out)
 		if req.Method == http.MethodGet || req.Method == http.MethodHead {
-			path := req.URL.Path
-			if strings.HasPrefix(path, "/owner/") { // sanity check
-				path = path[7:]
-				if len(path) > 1 && path[0] == '@' {
-					ownerPublic, _ := NewOwnerPublicFromString(path)
+			urlPath := req.URL.Path
+			if strings.HasPrefix(urlPath, "/owner/") { // sanity check
+				urlPath = urlPath[7:]
+				if len(urlPath) > 1 && urlPath[0] == '@' {
+					ownerPublic, _ := NewOwnerPublicFromString(urlPath)
 					if len(ownerPublic) > 0 {
 						ownerStatus, err := n.OwnerStatus(ownerPublic)
 						if err != nil {

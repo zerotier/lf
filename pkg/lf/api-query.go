@@ -169,7 +169,7 @@ func (m *Query) execute(n *Node) (qr QueryResults, err error) {
 
 	// Get all results grouped by selector composite key.
 	bySelectorKey := make(map[uint64]*[]apiQueryResultTmp)
-	n.db.query(selectorRanges, m.Oracles, func(ts, weightL, weightH, doff, dlen uint64, localReputation int, ckey uint64, owner []byte, negativeComments uint) bool {
+	_ = n.db.query(selectorRanges, m.Oracles, func(ts, weightL, weightH, doff, dlen uint64, localReputation int, ckey uint64, owner []byte, negativeComments uint) bool {
 		includeOwner := true
 		if len(m.Owners) > 0 {
 			includeOwner = false
@@ -249,8 +249,8 @@ func (m *Query) execute(n *Node) (qr QueryResults, err error) {
 			if len(m.Oracles) > 0 {
 				c64 := crc64.New(crc64ECMATable)
 				recID := rec.ID()
-				c64.Write(recID[:])
-				c64.Write(rec.Owner)
+				_, _ = c64.Write(recID[:])
+				_, _ = c64.Write(rec.Owner)
 				idOwnerC64 := c64.Sum64()
 				slander := float64(result.negativeComments) / totalOracles
 				if slander > slanderByIDOwner[idOwnerC64] {
@@ -259,7 +259,7 @@ func (m *Query) execute(n *Node) (qr QueryResults, err error) {
 
 				if rn == 0 {
 					qrIDOwnerCRC64s = append(qrIDOwnerCRC64s, []uint64{idOwnerC64})
-				} else {
+				} else if len(qrIDOwnerCRC64s) > 0 {
 					qrIDOwnerCRC64s[len(qrIDOwnerCRC64s)-1] = append(qrIDOwnerCRC64s[len(qrIDOwnerCRC64s)-1], idOwnerC64)
 				}
 			}
@@ -274,7 +274,7 @@ func (m *Query) execute(n *Node) (qr QueryResults, err error) {
 			pulse := n.db.getPulse(rec.recordBody.PulseToken) * 60 // pulse is in a resolution of minutes
 
 			if rn == 0 {
-				qr = append(qr, []QueryResult{QueryResult{
+				qr = append(qr, []QueryResult{{
 					Hash:        rec.Hash(),
 					Size:        int(result.dlen),
 					Record:      rec,
@@ -286,7 +286,7 @@ func (m *Query) execute(n *Node) (qr QueryResults, err error) {
 					Weight:      weight,
 					Signed:      recordIsSigned,
 				}})
-			} else {
+			} else if len(qr) > 0 {
 				qr[len(qr)-1] = append(qr[len(qr)-1], QueryResult{
 					Hash:        rec.Hash(),
 					Size:        int(result.dlen),
@@ -307,48 +307,50 @@ func (m *Query) execute(n *Node) (qr QueryResults, err error) {
 	haveAuthCerts := len(authCerts) > 0
 
 	// Compute final trust and sort within each result.
-	for qrSetIdx, qrSet := range qr {
-		// Compute oracle trust and overall trust as a function of local and oracle trust if there are oracles.
-		if len(m.Oracles) > 0 {
-			for qrSetResultIdx := range qrSet {
-				oracleTrust := math.Max(1.0-slanderByIDOwner[qrIDOwnerCRC64s[qrSetIdx][qrSetResultIdx]], 0.0)
-				qrSet[qrSetResultIdx].Trust = (qrSet[qrSetResultIdx].LocalTrust + (oracleTrust * totalOracles)) / (totalOracles + 1.0)
-				qrSet[qrSetResultIdx].OracleTrust = oracleTrust
-			}
-		}
-
-		// If this database has auth certs, penalize records that are not signed.
-		if haveAuthCerts {
-			for qrSetResultIdx := range qrSet {
-				if !qrSet[qrSetResultIdx].Signed {
-					qrSet[qrSetResultIdx].Trust *= 0.9
+	if len(qrIDOwnerCRC64s) > 0 {
+		for qrSetIdx, qrSet := range qr {
+			// Compute oracle trust and overall trust as a function of local and oracle trust if there are oracles.
+			if len(m.Oracles) > 0 {
+				for qrSetResultIdx := range qrSet {
+					oracleTrust := math.Max(1.0-slanderByIDOwner[qrIDOwnerCRC64s[qrSetIdx][qrSetResultIdx]], 0.0)
+					qrSet[qrSetResultIdx].Trust = (qrSet[qrSetResultIdx].LocalTrust + (oracleTrust * totalOracles)) / (totalOracles + 1.0)
+					qrSet[qrSetResultIdx].OracleTrust = oracleTrust
 				}
 			}
-		}
 
-		if len(m.SortOrder) == 0 || m.SortOrder == QuerySortOrderTrust {
-			sort.Slice(qrSet, func(b, a int) bool {
-				if qrSet[a].Trust < qrSet[b].Trust {
-					return true
-				} else if uint64(qrSet[a].Trust*trustSigDigits) == uint64(qrSet[b].Trust*trustSigDigits) {
+			// If this database has auth certs, penalize records that are not signed.
+			if haveAuthCerts {
+				for qrSetResultIdx := range qrSet {
+					if !qrSet[qrSetResultIdx].Signed {
+						qrSet[qrSetResultIdx].Trust *= 0.9
+					}
+				}
+			}
+
+			if len(m.SortOrder) == 0 || m.SortOrder == QuerySortOrderTrust {
+				sort.Slice(qrSet, func(b, a int) bool {
+					if qrSet[a].Trust < qrSet[b].Trust {
+						return true
+					} else if uint64(qrSet[a].Trust*trustSigDigits) == uint64(qrSet[b].Trust*trustSigDigits) {
+						return qrSet[a].Weight.Compare(&qrSet[b].Weight) < 0
+					}
+					return false
+				})
+			} else if m.SortOrder == QuerySortOrderWeight {
+				sort.Slice(qrSet, func(b, a int) bool {
 					return qrSet[a].Weight.Compare(&qrSet[b].Weight) < 0
-				}
-				return false
-			})
-		} else if m.SortOrder == QuerySortOrderWeight {
-			sort.Slice(qrSet, func(b, a int) bool {
-				return qrSet[a].Weight.Compare(&qrSet[b].Weight) < 0
-			})
-		} else if m.SortOrder == QuerySortOrderTimestamp {
-			sort.Slice(qrSet, func(b, a int) bool {
-				return qrSet[a].Record.Timestamp < qrSet[b].Record.Timestamp
-			})
-		} else {
-			return nil, ErrQueryInvalidSortOrder
-		}
+				})
+			} else if m.SortOrder == QuerySortOrderTimestamp {
+				sort.Slice(qrSet, func(b, a int) bool {
+					return qrSet[a].Record.Timestamp < qrSet[b].Record.Timestamp
+				})
+			} else {
+				return nil, ErrQueryInvalidSortOrder
+			}
 
-		if m.Limit != nil && *m.Limit > 0 && len(qrSet) > *m.Limit {
-			qr[qrSetIdx] = qrSet[0:*m.Limit]
+			if m.Limit != nil && *m.Limit > 0 && len(qrSet) > *m.Limit {
+				qr[qrSetIdx] = qrSet[0:*m.Limit]
+			}
 		}
 	}
 

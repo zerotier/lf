@@ -61,31 +61,31 @@ func wharrgarblFrankenhash(md5 *lfmd5.Digest, cipher0, cipher1 cipher.Block, tmp
 	cipher1.Encrypt(tmp, tmp)
 
 	md5.Reset()
-	md5.Write(in[:])
-	md5.Write(tmp)
+	_, _ = md5.Write(in[:])
+	_, _ = md5.Write(tmp)
 
 	for k, nn := 0, 1+(int(tmp[0])%6); k < nn; k++ {
 		for i := 0; i < 8; i++ {
 			tmp[i] ^= wharrgarblTable[binary.LittleEndian.Uint32(tmp)&wharrgarblTableMask]
 			cipher0.Encrypt(tmp, tmp)
 		}
-		md5.Write(tmp)
+		_, _ = md5.Write(tmp)
 
 		for i := 0; i < 8; i++ {
 			tmp[i] ^= wharrgarblTable[binary.LittleEndian.Uint32(tmp)&wharrgarblTableMask]
 			cipher1.Encrypt(tmp, tmp)
 		}
-		md5.Write(tmp)
+		_, _ = md5.Write(tmp)
 
 		// GPUs generally suck at branching
 		switch tmp[0] & 7 {
 		case 0:
-			md5.Write(tmp)
+			_, _ = md5.Write(tmp)
 		case 1:
-			md5.Write(in[:])
-			md5.Write(tmp)
-			md5.Write(in[:])
-			md5.Write(tmp)
+			_, _ = md5.Write(in[:])
+			_, _ = md5.Write(tmp)
+			_, _ = md5.Write(in[:])
+			_, _ = md5.Write(tmp)
 		case 2:
 			cipher0.Encrypt(tmp, tmp)
 		case 3:
@@ -120,7 +120,7 @@ func wharrgarblFrankenhash(md5 *lfmd5.Digest, cipher0, cipher1 cipher.Block, tmp
 			}
 		case 5:
 			cipher1.Encrypt(tmp, tmp)
-			md5.Write(tmp)
+			_, _ = md5.Write(tmp)
 			cipher0.Encrypt(tmp, tmp)
 			cipher1.Encrypt(tmp, tmp)
 			cipher0.Encrypt(tmp, tmp)
@@ -128,7 +128,7 @@ func wharrgarblFrankenhash(md5 *lfmd5.Digest, cipher0, cipher1 cipher.Block, tmp
 				cipher1.Encrypt(tmp, tmp)
 			} else {
 				cipher0.Encrypt(tmp, tmp)
-				md5.Write(tmp)
+				_, _ = md5.Write(tmp)
 				cipher0.Encrypt(tmp, tmp)
 			}
 		case 6:
@@ -138,11 +138,11 @@ func wharrgarblFrankenhash(md5 *lfmd5.Digest, cipher0, cipher1 cipher.Block, tmp
 		case 7:
 			binary.LittleEndian.PutUint64(tmp, binary.LittleEndian.Uint64(tmp)+(binary.LittleEndian.Uint64(tmp)/(binary.LittleEndian.Uint64(tmp[8:16])|1)))
 		}
-		md5.Write(tmp)
+		_, _ = md5.Write(tmp)
 
 		// More branching triggering an occasional big memory read
 		if tmp[1] == 17 && tmp[7] < 7 && tmp[13] > 251 {
-			md5.Write(wharrgarblTable[:])
+			_, _ = md5.Write(wharrgarblTable[:])
 		}
 	}
 
@@ -184,11 +184,11 @@ func WharrgarblInitTable(cacheFilePath string) {
 		}
 	}
 
-	copy(wharrgarblTable[:], []byte("My hovercraft is full of eels!"))
+	copy(wharrgarblTable[:], "My hovercraft is full of eels!")
 	for i := 0; i < 4; i++ {
 		h := sha512.Sum512(wharrgarblTable[:])
-		aes, _ := aes.NewCipher(h[0:32])
-		c := cipher.NewCFBEncrypter(aes, h[32:48])
+		aesCipher, _ := aes.NewCipher(h[0:32])
+		c := cipher.NewCFBEncrypter(aesCipher, h[32:48])
 		c.XORKeyStream(wharrgarblTable[:], wharrgarblTable[:])
 		c.XORKeyStream(wharrgarblTable[:], wharrgarblTable[:])
 	}
@@ -275,7 +275,7 @@ func (wg *Wharrgarblr) internalWorkerFunc(mmoCipher0, mmoCipher1 cipher.Block, r
 			}
 		}
 
-		*collisionTableEntry = (uint64(thisCollision24) << 40) | uint64(thisCollider)
+		*collisionTableEntry = (uint64(thisCollision24) << 40) | thisCollider
 	}
 
 	atomic.AddUint64(iterations, iter)

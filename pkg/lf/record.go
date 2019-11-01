@@ -25,11 +25,6 @@ import (
 	"sort"
 )
 
-var (
-	b1_0 = []byte{0x00}
-	b1_1 = []byte{0x01}
-)
-
 const (
 	// Flags are protocol constants and can't be changed. Bits are reserved as
 	// follows:
@@ -98,7 +93,7 @@ const (
 
 	// RecordTypeDelete is a record that hides all other records by the same owner.
 	// This is a protocol constant and can't be changed.
-	RecordTypeDelete = 15 // reserved, not implemented yet
+	// RecordTypeDelete = 15 // reserved, not implemented yet
 
 	// RecordCertificateMaskingKey is the masking key for certs and CRLs (used as byte array).
 	// This is a protocol constant and can't be changed.
@@ -141,7 +136,7 @@ func recordWharrgarblScore(cost uint32) uint32 {
 	if cost < 1 {
 		return 1
 	}
-	return ((cost * 16) + ((cost / 10000) * 5369))
+	return (cost * 16) + ((cost / 10000) * 5369)
 }
 
 // makeMaskingCipher initializes AES256-CFB using various bits of record material.
@@ -353,7 +348,7 @@ func (rb *recordBody) marshalTo(w io.Writer, hashAsProxyForValue bool) error {
 func (rb *recordBody) signingHash() (hb [48]byte) {
 	if rb.sigHash == nil {
 		s384 := sha512.New384()
-		rb.marshalTo(s384, true)
+		_ = rb.marshalTo(s384, true)
 		s384.Sum(hb[:0])
 		rb.sigHash = &hb
 		return
@@ -364,7 +359,7 @@ func (rb *recordBody) signingHash() (hb [48]byte) {
 
 func (rb *recordBody) sizeBytes() uint {
 	var wc countingWriter
-	rb.marshalTo(&wc, false)
+	_ = rb.marshalTo(&wc, false)
 	return uint(wc)
 }
 
@@ -518,14 +513,14 @@ func NewRecordFromBytes(b []byte) (r *Record, err error) {
 func (r *Record) Bytes() []byte {
 	var buf bytes.Buffer
 	buf.Grow(len(r.Value) + 256)
-	r.MarshalTo(&buf, false)
+	_ = r.MarshalTo(&buf, false)
 	return buf.Bytes()
 }
 
 // SizeBytes is a faster shortcut for len(Bytes()) that just serializes to a counting writer.
 func (r *Record) SizeBytes() int {
 	var c countingWriter
-	r.MarshalTo(&c, false)
+	_ = r.MarshalTo(&c, false)
 	return int(c)
 }
 
@@ -542,7 +537,7 @@ func (r *Record) Hash() (hb [32]byte) {
 
 	s256 := sha256.New()
 	s512 := sha512.New()
-	r.MarshalTo(io.MultiWriter(s256, s512), true)
+	_ = r.MarshalTo(io.MultiWriter(s256, s512), true)
 
 	var s512buf [64]byte
 	s256.Write(s512.Sum(s512buf[:0]))

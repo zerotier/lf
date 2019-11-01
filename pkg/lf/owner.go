@@ -89,7 +89,7 @@ func NewOwnerPublicFromString(b62 string) (OwnerPublic, error) {
 		return nil, ErrInvalidParameter
 	}
 	if b62[0] == '@' {
-		return OwnerPublic(Base62Decode(b62[1:])), nil
+		return Base62Decode(b62[1:]), nil
 	}
 	return nil, ErrInvalidParameter
 }
@@ -232,7 +232,7 @@ func internalNewOwner(ownerType byte, prng io.Reader) (*Owner, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Owner{Private: priv, Public: OwnerPublic(oh)}, nil
+	return &Owner{Private: priv, Public: oh}, nil
 }
 
 // NewOwnerFromECDSAPrivateKey creates an owner from an ECDSA private key with either the P224 or the P384 curve.
@@ -250,7 +250,7 @@ func NewOwnerFromECDSAPrivateKey(key *ecdsa.PrivateKey) (*Owner, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Owner{Private: key, Public: OwnerPublic(oh)}, nil
+	return &Owner{Private: key, Public: oh}, nil
 }
 
 // NewOwnerFromSeed creates a new owner whose key pair is generated using deterministic randomness from the given seed.
@@ -331,7 +331,7 @@ func (o *Owner) PrivateBytes() ([]byte, error) {
 		return append([]byte{OwnerTypeNistP384}, priv...), nil
 
 	case ownerLenEd25519:
-		return append([]byte{OwnerTypeEd25519}, (*(o.Private.(*ed25519.PrivateKey)))...), nil
+		return append([]byte{OwnerTypeEd25519}, *(o.Private.(*ed25519.PrivateKey))...), nil
 
 	default:
 		return nil, ErrInvalidObject
@@ -471,7 +471,7 @@ func CreateOwnerCertificate(recordLinks [][32]byte, recordWorkFunction *Wharrgar
 	}
 
 	var randomSerial [32]byte
-	secureRandom.Read(randomSerial[:])
+	_, _ = secureRandom.Read(randomSerial[:])
 	now := time.Now().UTC()
 	cert, err := x509.CreateCertificate(secureRandom, &x509.Certificate{
 		SerialNumber:          new(big.Int).SetBytes(randomSerial[:]),

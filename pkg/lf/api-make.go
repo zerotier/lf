@@ -59,7 +59,7 @@ func doMakeRequestSetup(n *Node, selectors []MakeSelector, passphrase string, ow
 	}
 
 	if scanForOlderRecord {
-		n.db.query(selectorRanges, nil, func(ts, _, _, doff, dlen uint64, _ int, _ uint64, recOwner []byte, _ uint) bool {
+		_ = n.db.query(selectorRanges, nil, func(ts, _, _, doff, dlen uint64, _ int, _ uint64, recOwner []byte, _ uint) bool {
 			if bytes.Equal(recOwner, owner.Public) {
 				if ts > recTS {
 					recTS = ts
@@ -220,7 +220,7 @@ func (m *MakePulse) execute(n *Node) (Pulse, *Record, bool, error) {
 			}
 			return nil, nil, false, err
 		}
-		return nil, nil, false, ErrPulseSpanExeceeded
+		return nil, nil, false, ErrPulseSpanExceeded
 	}
 
 	pulse, err := NewPulse(owner, selectorNames, selectorOrdinals, recTS, minutes)

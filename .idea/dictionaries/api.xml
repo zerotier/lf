@@ -1,0 +1,23 @@
+<component name="ProjectDictionaryState">
+  <dictionary name="api">
+    <words>
+      <w>authcertificates</w>
+      <w>authtoken</w>
+      <w>brainpool</w>
+      <w>brotli</w>
+      <w>deserializes</w>
+      <w>dumprecords</w>
+      <w>forgeable</w>
+      <w>frankenhash</w>
+      <w>gcmeccp</w>
+      <w>kardashev</w>
+      <w>koblitz</w>
+      <w>nonces</w>
+      <w>prng</w>
+      <w>revokedauthcertificates</w>
+      <w>unmarshals</w>
+      <w>wharrgarbl</w>
+      <w>wharrgarblr</w>
+    </words>
+  </dictionary>
+</component>

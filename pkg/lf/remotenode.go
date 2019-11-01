@@ -38,11 +38,11 @@ func apiRequest(url string, m interface{}) ([]byte, error) {
 	method := "GET"
 	if m != nil {
 		method = "POST"
-		json, err := json.Marshal(m)
+		msgJSON, err := json.Marshal(m)
 		if err != nil {
 			return nil, err
 		}
-		requestBody = bytes.NewReader(json)
+		requestBody = bytes.NewReader(msgJSON)
 	}
 
 	req, err := http.NewRequest(method, url, requestBody)
@@ -66,7 +66,7 @@ func apiRequest(url string, m interface{}) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	bodyReader.Close()
+	_ = bodyReader.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		var e ErrAPI
@@ -120,7 +120,7 @@ func (rn RemoteNode) AddRecord(rec *Record) error {
 		if err != nil {
 			return err
 		}
-		bodyReader.Close()
+		_ = bodyReader.Close()
 
 		var e ErrAPI
 		err = json.Unmarshal(body, &e)
@@ -196,7 +196,7 @@ func (rn RemoteNode) Links(count int) ([][32]byte, uint64, error) {
 	}
 	if resp.StatusCode == 200 {
 		body, err := ioutil.ReadAll(&io.LimitedReader{R: resp.Body, N: APIMaxResponseSize})
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if err != nil {
 			return nil, 0, err
 		}
@@ -276,7 +276,7 @@ func (rn RemoteNode) DoPulse(pulse Pulse, announce bool) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	bodyReader.Close()
+	_ = bodyReader.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		var e ErrAPI

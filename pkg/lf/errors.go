@@ -45,20 +45,16 @@ const (
 	ErrInvalidObject          Err = "invalid object"
 	ErrUnsupportedType        Err = "unsupported type"
 	ErrUnsupportedCurve       Err = "unsupported ECC curve (for this purpose)"
-	ErrOutOfRange             Err = "parameter out of range"
 	ErrWharrgarblFailed       Err = "Wharrgarbl proof of work algorithm failed (out of memory?)"
 	ErrIO                     Err = "I/O error"
 	ErrIncorrectKey           Err = "incorrect key"
-	ErrAlreadyConnected       Err = "already connected"
 	ErrRecordNotFound         Err = "record not found"
 	ErrRecordIsNewer          Err = "record is newer than timestamp"
-	ErrPulseSpanExeceeded     Err = "pulse is more than one year after record"
+	ErrPulseSpanExceeded      Err = "pulse is more than one year after record"
 	ErrDuplicateRecord        Err = "duplicate record"
 	ErrPrivateKeyRequired     Err = "private key required"
-	ErrInvalidMessageSize     Err = "message size invalid"
 	ErrQueryRequiresSelectors Err = "query requires at least one selector"
 	ErrQueryInvalidSortOrder  Err = "invalid sort order value"
-	ErrAlreadyMounted         Err = "mount point already mounted"
 )
 
 //////////////////////////////////////////////////////////////////////////////

@@ -111,7 +111,7 @@ func (c *ClientConfig) Save(path string) error {
 				haveDfl = true
 			}
 		}
-		if !haveDfl {
+		if !haveDfl && len(names) > 0 {
 			sort.Strings(names)
 			c.Owners[names[0]].Default = true
 		}

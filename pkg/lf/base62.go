@@ -77,29 +77,29 @@ func (e *baseXEncoding) decode(source string) []byte {
 		return nil
 	}
 	runes := []rune(source)
-	bytes := []byte{0}
+	decodedBytes := []byte{0}
 	for i := 0; i < len(source); i++ {
 		value, ok := e.alphabetMap[runes[i]]
 		if ok { // ignore non-base characters
-			carry := int(value)
-			for j := 0; j < len(bytes); j++ {
-				carry += int(bytes[j]) * e.base
-				bytes[j] = byte(carry & 0xff)
+			carry := value
+			for j := 0; j < len(decodedBytes); j++ {
+				carry += int(decodedBytes[j]) * e.base
+				decodedBytes[j] = byte(carry & 0xff)
 				carry >>= 8
 			}
 			for carry > 0 {
-				bytes = append(bytes, byte(carry&0xff))
+				decodedBytes = append(decodedBytes, byte(carry&0xff))
 				carry >>= 8
 			}
 		}
 	}
 	for k := 0; runes[k] == e.alphabet[0] && k < len(runes)-1; k++ {
-		bytes = append(bytes, 0)
+		decodedBytes = append(decodedBytes, 0)
 	}
-	for i, j := 0, len(bytes)-1; i < j; i, j = i+1, j-1 {
-		bytes[i], bytes[j] = bytes[j], bytes[i]
+	for i, j := 0, len(decodedBytes)-1; i < j; i, j = i+1, j-1 {
+		decodedBytes[i], decodedBytes[j] = decodedBytes[j], decodedBytes[i]
 	}
-	return bytes
+	return decodedBytes
 }
 
 // Base62Encode encodes a byte array in base62 form

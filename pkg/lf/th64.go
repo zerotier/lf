@@ -28,7 +28,7 @@ func th64(i uint64) uint64 {
 	var in, out [16]byte
 	binary.LittleEndian.PutUint64(in[0:8], i)
 	th64Aes.Encrypt(out[:], in[:])
-	return (binary.LittleEndian.Uint64(out[0:8]) ^ binary.LittleEndian.Uint64(out[8:16]) ^ i)
+	return binary.LittleEndian.Uint64(out[0:8]) ^ binary.LittleEndian.Uint64(out[8:16]) ^ i
 }
 
 // th64n performs TH64 count times and is a bit faster than just repeatedly calling TH64.

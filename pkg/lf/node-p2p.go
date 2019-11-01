@@ -65,7 +65,7 @@ const (
 	p2pPeerMaxAttempts = 30
 )
 
-var p2pProtoMessageNames = []string{"Nop", "Hello", "Record", "RequestRecordsByHash", "HaveRecords", "Peer"}
+// var p2pProtoMessageNames = []string{"Nop", "Hello", "Record", "RequestRecordsByHash", "HaveRecords", "Peer"}
 
 // peerHelloMsg is a JSON message used to say 'hello' to other nodes via the P2P protocol.
 type peerHelloMsg struct {
@@ -152,13 +152,13 @@ func (n *Node) writeKnownPeers() {
 	n.knownPeersLock.Lock()
 	defer n.knownPeersLock.Unlock()
 
-	for kpid, kp := range n.knownPeers {
+	for knownPeerID, kp := range n.knownPeers {
 		if kp.TotalReconnectionAttempts > p2pPeerMaxAttempts {
-			delete(n.knownPeers, kpid)
+			delete(n.knownPeers, knownPeerID)
 		}
 	}
 
-	ioutil.WriteFile(n.peersFilePath, []byte(PrettyJSON(&n.knownPeers)), 0644)
+	_ = ioutil.WriteFile(n.peersFilePath, []byte(PrettyJSON(&n.knownPeers)), 0644)
 }
 
 // sendPeerAnnouncement sends a peer announcement to this peer for the given address and public key
@@ -167,13 +167,13 @@ func (p *connectedPeer) sendPeerAnnouncement(tcpAddr *net.TCPAddr, identity []by
 	peerMsg.IP = tcpAddr.IP
 	peerMsg.Port = tcpAddr.Port
 	peerMsg.Identity = identity
-	json, err := json.Marshal(&peerMsg)
+	peerMsgJson, err := json.Marshal(&peerMsg)
 	if err != nil {
 		return
 	}
-	pa := make([]byte, 1, len(json)+1)
+	pa := make([]byte, 1, len(peerMsgJson)+1)
 	pa[0] = p2pProtoMessageTypePeer
-	pa = append(pa, json...)
+	pa = append(pa, peerMsgJson...)
 	p.send(pa)
 }
 
@@ -187,7 +187,7 @@ func (p *connectedPeer) send(msg []byte) {
 		defer func() {
 			if recover() != nil {
 				if p.c != nil {
-					p.c.Close()
+					_ = p.c.Close()
 				}
 			}
 			p.sendLock.Unlock()
@@ -205,10 +205,10 @@ func (p *connectedPeer) send(msg []byte) {
 
 		buf = p.cryptor.Seal(buf, p.outgoingNonce[0:12], msg, nil)
 		if p.c != nil {
-			p.c.SetWriteDeadline(time.Now().Add(time.Second * 30))
+			_ = p.c.SetWriteDeadline(time.Now().Add(time.Second * 30))
 			_, err := p.c.Write(buf)
 			if err != nil {
-				p.c.Close()
+				_ = p.c.Close()
 			}
 		}
 	}()
@@ -221,7 +221,7 @@ func (n *Node) p2pConnectionHandler(c *net.TCPConn, identity []byte, inbound boo
 	tcpAddr, tcpAddrOk := c.RemoteAddr().(*net.TCPAddr)
 	if tcpAddr == nil || !tcpAddrOk {
 		n.log[LogLevelWarning].Print("BUG: P2P connection RemoteAddr() did not return a TCPAddr object, connection closed")
-		c.Close()
+		_ = c.Close()
 		return
 	}
 	peerAddressStr := tcpAddr.String()
@@ -232,7 +232,7 @@ func (n *Node) p2pConnectionHandler(c *net.TCPConn, identity []byte, inbound boo
 			n.log[LogLevelWarning].Printf("WARNING: P2P connection to %s closed: caught panic: %v", peerAddressStr, e)
 		}
 
-		c.Close()
+		_ = c.Close()
 
 		n.connectionsInStartupLock.Lock()
 		delete(n.connectionsInStartup, c)
@@ -263,10 +263,10 @@ func (n *Node) p2pConnectionHandler(c *net.TCPConn, identity []byte, inbound boo
 	n.connectionsInStartup[c] = true
 	n.connectionsInStartupLock.Unlock()
 
-	c.SetKeepAlivePeriod(time.Second * 10)
-	c.SetKeepAlive(true)
-	c.SetLinger(0)
-	c.SetNoDelay(false)
+	_ = c.SetKeepAlivePeriod(time.Second * 10)
+	_ = c.SetKeepAlive(true)
+	_ = c.SetLinger(0)
+	_ = c.SetNoDelay(false)
 	reader := bufio.NewReader(c)
 
 	// Send our public key to remote.
@@ -274,7 +274,7 @@ func (n *Node) p2pConnectionHandler(c *net.TCPConn, identity []byte, inbound boo
 	helloMessage[0] = p2pProtoModeAES256GCMECCP384
 	helloMessage[1] = byte(len(n.identity))
 	copy(helloMessage[2:], n.identity)
-	c.SetWriteDeadline(time.Now().Add(time.Second * 30))
+	_ = c.SetWriteDeadline(time.Now().Add(time.Second * 30))
 	_, err = c.Write(helloMessage)
 	if err != nil {
 		n.log[LogLevelNormal].Printf("P2P connection to %s closed: %s", peerAddressStr, err.Error())
@@ -282,7 +282,7 @@ func (n *Node) p2pConnectionHandler(c *net.TCPConn, identity []byte, inbound boo
 	}
 
 	// Read remote public key
-	c.SetReadDeadline(time.Now().Add(time.Second * 30))
+	_ = c.SetReadDeadline(time.Now().Add(time.Second * 30))
 	_, err = io.ReadFull(reader, helloMessage[0:2])
 	if err != nil {
 		n.log[LogLevelNormal].Printf("P2P connection to %s closed: %s", peerAddressStr, err.Error())
@@ -293,7 +293,7 @@ func (n *Node) p2pConnectionHandler(c *net.TCPConn, identity []byte, inbound boo
 		return
 	}
 	remoteIdentity := make([]byte, uint(helloMessage[1]))
-	c.SetReadDeadline(time.Now().Add(time.Second * 30))
+	_ = c.SetReadDeadline(time.Now().Add(time.Second * 30))
 	_, err = io.ReadFull(reader, remoteIdentity)
 	if err != nil {
 		n.log[LogLevelNormal].Printf("P2P connection to %s closed: %s", peerAddressStr, err.Error())
@@ -335,13 +335,13 @@ func (n *Node) p2pConnectionHandler(c *net.TCPConn, identity []byte, inbound boo
 		return
 	}
 	aesCipher.Encrypt(nonceExchangeTmp[:], outgoingNonce[:])
-	c.SetWriteDeadline(time.Now().Add(time.Second * 30))
+	_ = c.SetWriteDeadline(time.Now().Add(time.Second * 30))
 	_, err = c.Write(nonceExchangeTmp[:])
 	if err != nil {
 		n.log[LogLevelNormal].Printf("P2P connection to %s closed: %s", peerAddressStr, err.Error())
 		return
 	}
-	c.SetReadDeadline(time.Now().Add(time.Second * 30))
+	_ = c.SetReadDeadline(time.Now().Add(time.Second * 30))
 	_, err = io.ReadFull(reader, incomingNonce[:])
 	if err != nil {
 		n.log[LogLevelNormal].Printf("P2P connection to %s closed: %s", peerAddressStr, err.Error())
@@ -351,13 +351,13 @@ func (n *Node) p2pConnectionHandler(c *net.TCPConn, identity []byte, inbound boo
 
 	// Exchange hashes of decrypted nonces to verify correct key.
 	outgoingNonceHash, incomingNonceHash := sha256.Sum256(outgoingNonce[:]), sha256.Sum256(incomingNonce[:])
-	c.SetWriteDeadline(time.Now().Add(time.Second * 30))
+	_ = c.SetWriteDeadline(time.Now().Add(time.Second * 30))
 	_, err = c.Write(incomingNonceHash[0:16])
 	if err != nil {
 		n.log[LogLevelNormal].Printf("P2P connection to %s closed: %s", peerAddressStr, err.Error())
 		return
 	}
-	c.SetReadDeadline(time.Now().Add(time.Second * 30))
+	_ = c.SetReadDeadline(time.Now().Add(time.Second * 30))
 	_, err = io.ReadFull(reader, nonceExchangeTmp[:])
 	if !bytes.Equal(outgoingNonceHash[0:16], nonceExchangeTmp[:]) {
 		n.log[LogLevelNormal].Printf("P2P connection to %s closed: challenge/response failed (key incorrect?)", peerAddressStr)
@@ -394,7 +394,7 @@ func (n *Node) p2pConnectionHandler(c *net.TCPConn, identity []byte, inbound boo
 	for _, existingPeer := range n.peers {
 		if bytes.Equal(existingPeer.identity, remoteIdentity) {
 			n.log[LogLevelNormal].Printf("P2P connection to %s closed: replaced by new link %s to same peer", existingPeer.tcpAddress.String(), peerAddressStr)
-			existingPeer.c.Close()
+			_ = existingPeer.c.Close()
 		} else {
 			if !inbound {
 				existingPeer.sendPeerAnnouncement(tcpAddr, p.identity)
@@ -420,7 +420,7 @@ func (n *Node) p2pConnectionHandler(c *net.TCPConn, identity []byte, inbound boo
 	performedInboundReachabilityTest := false
 mainReaderLoop:
 	for atomic.LoadUint32(&n.shutdown) == 0 {
-		c.SetReadDeadline(time.Now().Add(time.Second * 120))
+		_ = c.SetReadDeadline(time.Now().Add(time.Second * 120))
 
 		// Read size of message (varint)
 		msgSize, err := binary.ReadUvarint(reader)
@@ -512,7 +512,7 @@ mainReaderLoop:
 								}
 								n.peersLock.RUnlock()
 							}
-							testConn.Close()
+							_ = testConn.Close()
 						} else {
 							n.log[LogLevelVerbose].Printf("reverse reachability test to port %d unsuccessful for inbound connection from %s", p.peerHelloMsg.P2PPort, tcpAddr.IP.String())
 						}
@@ -529,7 +529,7 @@ mainReaderLoop:
 					p.hasRecordsLock.Lock()
 					p.hasRecords[rh] = atomic.LoadUintptr(&n.timeTicker)
 					p.hasRecordsLock.Unlock()
-					n.addRemoteRecord(msg, rh[:], rec, tcpAddr.IP.String())
+					_ = n.addRemoteRecord(msg, rh[:], rec, tcpAddr.IP.String())
 				}
 			}
 
@@ -594,7 +594,7 @@ mainReaderLoop:
 						connectionCount += len(n.connectionsInStartup) // include this to prevent flooding attacks
 						n.connectionsInStartupLock.Unlock()
 						if connectionCount < p2pDesiredConnectionCount {
-							n.Connect(peerMsg.IP, peerMsg.Port, peerMsg.Identity)
+							_ = n.Connect(peerMsg.IP, peerMsg.Port, peerMsg.Identity)
 						}
 					}
 				}
