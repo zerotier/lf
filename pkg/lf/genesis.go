@@ -65,7 +65,7 @@ func (gp *GenesisParameters) Update(jsonValue []byte) (bool, error) {
 	if gps == nil {
 		*gp = ngp
 		gps = new(genesisParametersState)
-		atomic.StorePointer(&gp.state, gps)
+		atomic.StorePointer(&gp.state, unsafe.Pointer(gps))
 	}
 	gp.stateP = gps
 	gps.lock.Lock()

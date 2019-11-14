@@ -480,7 +480,7 @@ func (db *db) getWanted(max, retryCountMin, retryCountMax int, incrementRetryCou
 func (db *db) logComment(byRecordDoff uint64, assertion, reason int, subject []byte) error {
 	var sub unsafe.Pointer
 	if len(subject) > 0 {
-		sub = &subject[0]
+		sub = unsafe.Pointer(&subject[0])
 	}
 	db.cdbLock.Lock()
 	e := C.ZTLF_DB_LogComment(db.cdb, C.int64_t(byRecordDoff), C.int(assertion), C.int(reason), sub, C.int(len(subject)))
