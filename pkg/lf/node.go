@@ -1250,7 +1250,7 @@ func (n *Node) backgroundThreadOracle() {
 				var rb RecordBuilder
 				var rec *Record
 				startTime := time.Now()
-				err = rb.Start(RecordTypeCommentary, commentary, links, nil, nil, nil, n.owner.Public, 0, uint64(startTime.Unix()))
+				err = rb.Start(RecordTypeCommentary, commentary, 0, links, nil, nil, nil, n.owner.Public, 0, uint64(startTime.Unix()))
 				if err == nil {
 					err = rb.AddWork(wf, uint32(minWorkDifficultyThisIteration))
 					if err == nil {

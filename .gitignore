@@ -2,6 +2,8 @@
 *.dSYM
 *~
 *.o
+*.o-
+*.tmp
 /lf
 /genesis*
 /*.pem
