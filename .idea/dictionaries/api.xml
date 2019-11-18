@@ -7,14 +7,18 @@
       <w>brotli</w>
       <w>deserializes</w>
       <w>dumprecords</w>
+      <w>eddsa</w>
       <w>forgeable</w>
       <w>frankenhash</w>
       <w>gcmeccp</w>
       <w>kardashev</w>
       <w>koblitz</w>
+      <w>mersenne</w>
+      <w>nist</w>
       <w>nonces</w>
       <w>prng</w>
       <w>revokedauthcertificates</w>
+      <w>sqrt</w>
       <w>unmarshals</w>
       <w>wharrgarbl</w>
       <w>wharrgarblr</w>

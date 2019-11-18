@@ -23,6 +23,7 @@ import (
 	"hash/crc64"
 	"io"
 	"io/ioutil"
+	"math/big"
 	"os"
 	"reflect"
 	"syscall"
@@ -31,6 +32,13 @@ import (
 
 	"github.com/andybalholm/brotli"
 	"github.com/tidwall/pretty"
+)
+
+var (
+	big1 = new(big.Int).SetUint64(1)
+	big2 = new(big.Int).SetUint64(2)
+	big3 = new(big.Int).SetUint64(3)
+	big4 = new(big.Int).SetUint64(4)
 )
 
 var crc64ECMATable = crc64.MakeTable(crc64.ECMA)

@@ -406,7 +406,7 @@ type Record struct {
 
 	Selectors     []Selector `json:",omitempty"` // Things that can be used to find the record
 	Work          Blob       `json:",omitempty"` // Proof of work "paying" for this record
-	WorkAlgorithm int        ``                  // Proof of work algorithm
+	WorkAlgorithm byte       ``                  // Proof of work algorithm
 	Signature     Blob       `json:",omitempty"` // Signature of record (including work) by owner
 
 	hash, id *[32]byte
@@ -434,7 +434,7 @@ func (r *Record) UnmarshalFrom(rdr io.Reader) error {
 		}
 	}
 
-	r.WorkAlgorithm = int(selCountAndWorkAlg >> 4)
+	r.WorkAlgorithm = selCountAndWorkAlg >> 4
 	switch r.WorkAlgorithm {
 	case RecordWorkAlgorithmNone:
 		r.Work = nil
@@ -582,7 +582,7 @@ func (r *Record) SelectorIs(plainTextKey []byte, selectorIndex int) bool {
 }
 
 // ID returns SHA256(selector IDs) where selector IDs are the recovered selector public keys.
-// If there are no selectors in this record, its ID is equal to its hash.
+// If there are no selectors for this record, its ID is equal to its hash.
 func (r *Record) ID() (id [32]byte) {
 	if r.id != nil {
 		copy(id[:], r.id[:])

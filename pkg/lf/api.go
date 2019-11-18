@@ -31,17 +31,6 @@ type OwnerStatus struct {
 	ServerTime            uint64      ``                  // Server time in seconds since epoch (time used to determine HasCurrentCertificate)
 }
 
-// MountPoint describes a FUSE lffs mount point.
-// This is currently used as the record type in mounts.json for having full nodes mount LFFS locally.
-type MountPoint struct {
-	Path             string `json:",omitempty"`
-	RootSelectorName Blob   `json:",omitempty"`
-	OwnerPrivate     Blob   `json:",omitempty"`
-	MaskingKey       Blob   `json:",omitempty"` // masking key to override default value which is the root selector name
-	Passphrase       string `json:",omitempty"` // if present is used to deterministically compute OwnerPrivate and MaskingKey
-	MaxFileSize      int
-}
-
 // Peer contains information about a peer
 type Peer struct {
 	IP       net.IP //

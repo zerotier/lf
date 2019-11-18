@@ -52,9 +52,14 @@ var SolSeedPeers = []Peer{
 		Identity: Base62Decode("JZlvKdV12jt8rM3552LaThpTnsC9FfOZGRvGvbN3GImKnaw4wR1CCBu80k1ohc6H6"),
 	},
 	Peer{
-		IP:       net.ParseIP("174.136.102.98"), // Los Angeles (ZeroTier office)
+		IP:       net.ParseIP("2604:1380:3000:7100::1"), // Tokyo
 		Port:     9908,
-		Identity: Base62Decode("Hcsqi4GP24UhaJL9poDM35k7KwvgvYzt1fMrYDr5EEAhTJ1ZnHu61xpDctypw66fh"),
+		Identity: Base62Decode("GnX0eEnDGLzbeVCkxNAvdAg5fgwfZAa93X6yEpxAXFxtcbfPxiDzTFhbAW2LCbwlC"),
+	},
+	Peer{
+		IP:       net.ParseIP("2605:9880:400:c3:254:f2bc:a1f7:19"), // Miami
+		Port:     9908,
+		Identity: Base62Decode("JYnhUa13nI3ozwe0wdKOf7M4bXIN8YOaphZMsFTniFjsyPXWOx0bDdCey9ZVj5ozv"),
 	},
 }
 

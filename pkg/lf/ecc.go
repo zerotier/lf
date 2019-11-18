@@ -25,6 +25,18 @@ import (
 	"math/big"
 )
 
+// AlgorithmECDSANistP224 is ECDSA with the NIST P-224 curve
+const AlgorithmECDSANistP224 byte = 1
+
+// AlgorithmECDSANistP384 is ECDSA with the NIST P-384 curve
+const AlgorithmECDSANistP384 byte = 2
+
+// AlgorithmEDDSAEd25519 is EDDSA with the Ed25519 curve
+const AlgorithmEDDSAEd25519 byte = 3
+
+// AlgorithmECDSABP160 is ECDSA with the BrainpoolP160T1 curve
+const AlgorithmECDSABP160 byte = 4
+
 var (
 	// ECCCurveBrainpoolP160T1 is a very small elliptic curve used only for selector claim signatures.
 	ECCCurveBrainpoolP160T1 = func() elliptic.Curve {
@@ -38,8 +50,6 @@ var (
 		c.BitSize = 160
 		return &c
 	}()
-
-	bigInt3 = big.NewInt(3)
 )
 
 // ECCCompressPublicKey compresses a naked elliptic curve public key denoted by X and Y components.
@@ -68,8 +78,8 @@ func ECCDecompressPublicKey(c elliptic.Curve, data []byte) (*big.Int, *big.Int, 
 	var x, y, a, ax big.Int
 	params := c.Params()
 	x.SetBytes(data[1:])
-	y.Exp(&x, bigInt3, params.P)
-	a.Sub(params.P, bigInt3)
+	y.Exp(&x, big3, params.P)
+	a.Sub(params.P, big3)
 	ax.Mul(&x, &a)
 	ax.Mod(&ax, params.P)
 	y.Add(&y, &ax)
