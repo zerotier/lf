@@ -31,10 +31,11 @@ const (
 	//   0-4   - boolean flags
 	//   4-8   - link count (0...15)
 	//   8-12  - record type (0...15)
-	//  12-63  - reserved for future use
-	recordBodyFlagHasValue      uint64 = 0x1
-	recordBodyFlagHasPulseToken uint64 = 0x2
-	recordBodyFlagValueIsHash   uint64 = 0x4
+	//  12-63  - additional boolean flags
+	recordBodyFlagHasValue           uint64 = 0x1
+	recordBodyFlagHasPulseToken      uint64 = 0x2
+	recordBodyFlagValueIsHash        uint64 = 0x4
+	recordBodyFlagHasClearTextRegion uint64 = 0x8
 
 	// Record value compression types are protocol constants. Range must be 0-3.
 	recordValueCompressionNone   = 0
@@ -169,13 +170,14 @@ func makeMaskingCipher(maskingKey, ownerPublic []byte, selectorNames [][]byte, t
 // recordBody represents the main body of a record including its value, owner public keys, etc.
 // It's included as part of Record but separated since in record construction we want to treat it as a separate element.
 type recordBody struct {
-	Value      Blob        `json:",omitempty"` // Record value (possibly masked and/or compressed, use GetValue() to get)
-	ValueHash  Blob        `json:",omitempty"` // Normally empty, but contains SHA384(Value) if this is an abbreviated record
-	Owner      OwnerPublic `json:",omitempty"` // Owner of this record
-	Links      []HashBlob  `json:",omitempty"` // Links to previous records' hashes
-	Timestamp  uint64      ``                  // Timestamp (and revision ID) in SECONDS since Unix epoch
-	PulseToken uint64      ``                  // Pulse token (endpoint of TH64 hash chain)
-	Type       int         ``                  // Record type ID
+	Value           Blob        `json:",omitempty"` // Record value (possibly masked and/or compressed, use GetValue() to get)
+	ValueHash       Blob        `json:",omitempty"` // Normally empty, but contains SHA384(Value) if this is an abbreviated record
+	ValueMaskingEnd uint        ``                  // If non-zero this is the index where value masking ends
+	Owner           OwnerPublic `json:",omitempty"` // Owner of this record
+	Links           []HashBlob  `json:",omitempty"` // Links to previous records' hashes
+	Timestamp       uint64      ``                  // Timestamp (and revision ID) in SECONDS since Unix epoch
+	PulseToken      uint64      ``                  // Pulse token (endpoint of TH64 hash chain)
+	Type            int         ``                  // Record type ID
 
 	sigHash *[48]byte
 }
@@ -197,6 +199,7 @@ func (rb *recordBody) unmarshalFrom(r io.Reader) error {
 			}
 			rb.Value = nil
 			rb.ValueHash = vh[:]
+			rb.ValueMaskingEnd = 0
 		} else {
 			l, err := binary.ReadUvarint(&rr)
 			if err != nil {
@@ -215,6 +218,18 @@ func (rb *recordBody) unmarshalFrom(r io.Reader) error {
 				rb.Value = nil
 			}
 			rb.ValueHash = nil
+			if (flags & recordBodyFlagHasClearTextRegion) != 0 {
+				vme, err := binary.ReadUvarint(&rr)
+				if err != nil {
+					return err
+				}
+				rb.ValueMaskingEnd = uint(vme)
+				if rb.ValueMaskingEnd > uint(len(rb.Value)) {
+					return ErrRecordInvalid
+				}
+			} else {
+				rb.ValueMaskingEnd = 0
+			}
 		}
 	} else {
 		rb.Value = nil
@@ -282,6 +297,9 @@ func (rb *recordBody) marshalTo(w io.Writer, hashAsProxyForValue bool) error {
 	flags := (uint64(len(rb.Links)) << 4) | (uint64(rb.Type) << 8)
 	if len(rb.Value) > 0 {
 		flags |= recordBodyFlagHasValue
+		if rb.ValueMaskingEnd > 0 {
+			flags |= recordBodyFlagHasClearTextRegion
+		}
 	}
 	if len(rb.ValueHash) == 48 {
 		flags |= recordBodyFlagHasValue
@@ -315,6 +333,11 @@ func (rb *recordBody) marshalTo(w io.Writer, hashAsProxyForValue bool) error {
 			}
 			if _, err := w.Write(rb.Value); err != nil {
 				return err
+			}
+			if rb.ValueMaskingEnd > 0 {
+				if _, err := writeUVarint(w, uint64(rb.ValueMaskingEnd)); err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -372,8 +395,15 @@ func (rb *recordBody) GetValue(maskingKey []byte) ([]byte, error) {
 		return nil, nil
 	}
 
-	unmaskedValue := make([]byte, len(rb.Value))
-	makeMaskingCipher(maskingKey, rb.Owner, nil, rb.Timestamp, true).XORKeyStream(unmaskedValue, rb.Value)
+	endOfMaskedRegion := len(rb.Value)
+	if rb.ValueMaskingEnd > 0 && rb.ValueMaskingEnd < uint(endOfMaskedRegion) {
+		endOfMaskedRegion = int(rb.ValueMaskingEnd)
+	}
+	unmaskedValue := make([]byte, endOfMaskedRegion, len(rb.Value))
+	makeMaskingCipher(maskingKey, rb.Owner, nil, rb.Timestamp, true).XORKeyStream(unmaskedValue, rb.Value[0:endOfMaskedRegion])
+	if endOfMaskedRegion < len(rb.Value) {
+		unmaskedValue = append(unmaskedValue, rb.Value[endOfMaskedRegion:]...)
+	}
 	flagsAndCrc := (uint16(unmaskedValue[0]) << 8) | uint16(unmaskedValue[1])
 	if (flagsAndCrc >> 2) != (crc16(unmaskedValue[2:]) >> 2) {
 		return nil, ErrIncorrectKey
@@ -389,7 +419,7 @@ func (rb *recordBody) GetValue(maskingKey []byte) ([]byte, error) {
 // ValueDataSize returns the size of the value minus CRC16 overhead.
 // This is the number that's used to check to see if records are below the network's max value size.
 // Checking against just len(Value) excludes records whose payload is exactly the maximum
-// and that are not compressable.
+// and that are not compressible.
 func (rb *recordBody) ValueDataSize() int {
 	if len(rb.Value) <= 2 {
 		return 0
@@ -687,7 +717,9 @@ type RecordBuilder struct {
 }
 
 // Start begins creating a new record, resetting RecordBuilder if it contains any old state.
-func (rb *RecordBuilder) Start(recordType int, value []byte, links [][32]byte, maskingKey []byte, selectorNames [][]byte, selectorOrdinals []uint64, ownerPublic []byte, pulseToken, timestamp uint64) error {
+// The valueMaskingEnd parameter sets the point in the value where masking ends and the remainder
+// is plaintext, with the default if this parameter is zero being to mask the whole value.
+func (rb *RecordBuilder) Start(recordType int, value []byte, valueMaskingEnd int, links [][32]byte, maskingKey []byte, selectorNames [][]byte, selectorOrdinals []uint64, ownerPublic []byte, pulseToken, timestamp uint64) error {
 	rb.record = new(Record)
 	rb.workHash = nil
 	rb.workBillableBytes = 0
@@ -709,11 +741,22 @@ func (rb *RecordBuilder) Start(recordType int, value []byte, links [][32]byte, m
 			}
 		}
 
+		if valueMaskingEnd <= 0 || valueMaskingEnd == len(value) {
+			valueMaskingEnd = len(value) + 2
+		} else if valueMaskingEnd < len(value) {
+			valueMaskingEnd += 2
+			rb.record.recordBody.ValueMaskingEnd = uint(valueMaskingEnd)
+		} else {
+			return ErrInvalidParameter
+		}
 		cfb := makeMaskingCipher(maskingKey, ownerPublic, selectorNames, timestamp, false)
 		valueMasked := make([]byte, 2+len(value))
 		binary.BigEndian.PutUint16(valueMasked[0:2], (crc16(value)&0xfffc)|compressionType)
 		cfb.XORKeyStream(valueMasked[0:2], valueMasked[0:2])
-		cfb.XORKeyStream(valueMasked[2:], value)
+		cfb.XORKeyStream(valueMasked[2:valueMaskingEnd], value)
+		if valueMaskingEnd < len(valueMasked) {
+			copy(valueMasked[valueMaskingEnd:],value[valueMaskingEnd-2:])
+		}
 		rb.record.recordBody.Value = valueMasked
 	}
 
@@ -793,13 +836,13 @@ func (rb *RecordBuilder) Complete(owner *Owner) (*Record, error) {
 }
 
 // NewRecord is a shortcut to running all incremental record creation functions.
-func NewRecord(recordType int, value []byte, links [][32]byte, maskingKey []byte, selectorNames [][]byte, selectorOrdinals []uint64, timestamp uint64, workFunction *Wharrgarblr, owner *Owner) (*Record, error) {
+func NewRecord(recordType int, value []byte, valueMaskingEnd int, links [][32]byte, maskingKey []byte, selectorNames [][]byte, selectorOrdinals []uint64, timestamp uint64, workFunction *Wharrgarblr, owner *Owner) (*Record, error) {
 	pulseToken, err := NewPulse(owner, selectorNames, selectorOrdinals, timestamp, 0)
 	if err != nil {
 		return nil, err
 	}
 	var rb RecordBuilder
-	err = rb.Start(recordType, value, links, maskingKey, selectorNames, selectorOrdinals, owner.Public, pulseToken.Key(), timestamp)
+	err = rb.Start(recordType, value, valueMaskingEnd, links, maskingKey, selectorNames, selectorOrdinals, owner.Public, pulseToken.Key(), timestamp)
 	if err != nil {
 		return nil, err
 	}
