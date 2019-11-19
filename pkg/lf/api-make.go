@@ -90,7 +90,6 @@ type MakeSelector struct {
 type MakeRecord struct {
 	Selectors        []MakeSelector `json:",omitempty"` // Selectors for new record
 	Value            Blob           `json:",omitempty"` // Value for new record
-	ValueMaskingEnd  *uint          `json:",omitempty"` // Index in value where masking should end or zero/empty to mask all (default)
 	OwnerPrivate     Blob           `json:",omitempty"` // Full owner with private key in DER or PEM format
 	MaskingKey       Blob           `json:",omitempty"` // Masking key if specified (default: first selector, then owner)
 	Passphrase       string         `json:",omitempty"` // Passphrase to override OwnerPrivate and (if empty) MaskingKey
@@ -154,12 +153,8 @@ func (m *MakeRecord) execute(n *Node) (*Record, Pulse, bool, error) {
 	if uint(len(l)) < n.genesisParameters.RecordMinLinks {
 		return nil, nil, false, ErrRecordInsufficientLinks
 	}
-	valueMaskingEnd := 0
-	if m.ValueMaskingEnd != nil {
-		valueMaskingEnd = int(*m.ValueMaskingEnd)
-	}
 
-	rec, err := NewRecord(RecordTypeDatum, m.Value, valueMaskingEnd, l, maskingKey, selectorNames, selectorOrdinals, ts, wg, owner)
+	rec, err := NewRecord(RecordTypeDatum, m.Value, l, maskingKey, selectorNames, selectorOrdinals, ts, wg, owner)
 	if err != nil {
 		return nil, nil, false, err
 	}
@@ -215,7 +210,7 @@ func (m *MakePulse) execute(n *Node) (Pulse, *Record, bool, error) {
 			if uint(len(l)) < n.genesisParameters.RecordMinLinks {
 				return nil, nil, false, ErrRecordInsufficientLinks
 			}
-			rec, err := NewRecord(old.Type, oldv, int(old.ValueMaskingEnd), nil, maskingKey, selectorNames, selectorOrdinals, ts, wg, owner)
+			rec, err := NewRecord(old.Type, oldv, nil, maskingKey, selectorNames, selectorOrdinals, ts, wg, owner)
 			if err != nil {
 				return nil, nil, false, err
 			}

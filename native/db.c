@@ -236,15 +236,6 @@ static void *_ZTLF_DB_graphThreadMain(void *arg);
 "PRIMARY KEY(token,start)" \
 ") WITHOUT ROWID;\n" \
 \
-"CREATE TABLE IF NOT EXISTS pointer (" \
-"rowid INTEGER PRIMARY KEY NOT NULL," \
-"record_id BLOB NOT NULL," \
-"ts INTEGER NOT NULL," \
-"data BLOB NOT NULL" \
-");\n" \
-\
-"CREATE INDEX IF NOT EXISTS pointer_record_id_ts ON pointer(record_id,ts);\n" \
-\
 "ATTACH DATABASE ':memory:' AS tmp;\n" \
 \
 "CREATE TABLE IF NOT EXISTS tmp.rs (\"i\" INTEGER PRIMARY KEY NOT NULL);\n"
@@ -447,7 +438,9 @@ int ZTLF_DB_Open(
 	S(db->sQueryAndSelectorRange,
 		"DELETE FROM tmp.rs WHERE \"i\" NOT IN (SELECT record_doff FROM selector WHERE sel BETWEEN ? AND ? AND selidx = ?)");
 	S(db->sQueryGetResults,
-		"SELECT r.doff,r.dlen,r.goff,r.ts,r.reputation,r.hash,r.ckey,r.owner FROM record AS r,tmp.rs AS rs WHERE "
+		"SELECT r.doff,r.dlen,r.goff,r.ts,r.reputation,r.hash,r.ckey,r.owner FROM "
+		"tmp.rs AS rs "
+		"WHERE "
 		"r.doff = rs.i "
 		"AND r.reputation >= 0 "
 		"AND NOT EXISTS (SELECT dl.linking_record_goff FROM dangling_link AS dl WHERE dl.linking_record_goff = r.goff) "

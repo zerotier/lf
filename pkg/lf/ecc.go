@@ -40,6 +40,18 @@ const SignatureAlgorithmEDDSAEd25519 byte = 3
 // SignatureAlgorithmECDSABP160 is ECDSA with the BrainpoolP160T1 curve
 const SignatureAlgorithmECDSABP160 byte = 4
 
+// SignatureAlgorithmECDSANistP224PublicKeySize is the size of a compressed NIST P-224 key.
+const SignatureAlgorithmECDSANistP224PublicKeySize = 29
+
+// SignatureAlgorithmECDSANistP384PublicKeySize is the size of a compressed NIST P-384 key.
+const SignatureAlgorithmECDSANistP384PublicKeySize = 49
+
+// SignatureAlgorithmEDDSAEd25519PublicKeySize is the size of an Ed25519 public key.
+const SignatureAlgorithmEDDSAEd25519PublicKeySize = 32
+
+// SignatureAlgorithmECDSABP160PublicKeySize is the size of a BrainpoolP160T1 public key.
+const SignatureAlgorithmECDSABP160PublicKeySize = 21
+
 var (
 	// ECCCurveBrainpoolP160T1 is a very small elliptic curve used only for selector claim signatures.
 	ECCCurveBrainpoolP160T1 = func() elliptic.Curve {

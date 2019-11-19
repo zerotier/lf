@@ -955,7 +955,7 @@ func doSet(cfg *lf.ClientConfig, basePath string, args []string) (exitCode int) 
 		}
 		wf = lf.NewWharrgarblr(lf.RecordDefaultWharrgarblMemory, 0)
 	}
-	rec, err = lf.NewRecord(lf.RecordTypeDatum, value, 0, lf.CastHashBlobsToArrays(ownerInfo.NewRecordLinks), mk, plainTextSelectorNames, plainTextSelectorOrdinals, ownerInfo.ServerTime, wf, o)
+	rec, err = lf.NewRecord(lf.RecordTypeDatum, value, lf.CastHashBlobsToArrays(ownerInfo.NewRecordLinks), mk, plainTextSelectorNames, plainTextSelectorOrdinals, ownerInfo.ServerTime, wf, o)
 	if err == nil {
 		for trials := 0; trials < 2; trials++ {
 			err = workingURL.AddRecord(rec)
