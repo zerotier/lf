@@ -5,7 +5,9 @@
       <w>authtoken</w>
       <w>brainpool</w>
       <w>brotli</w>
+      <w>ckey</w>
       <w>deserializes</w>
+      <w>dlen</w>
       <w>dumprecords</w>
       <w>eddsa</w>
       <w>forgeable</w>
@@ -14,14 +16,22 @@
       <w>kardashev</w>
       <w>koblitz</w>
       <w>mersenne</w>
+      <w>mmap</w>
       <w>nist</w>
       <w>nonces</w>
       <w>prng</w>
       <w>revokedauthcertificates</w>
+      <w>rowid</w>
+      <w>rtype</w>
+      <w>selidx</w>
+      <w>shandwich</w>
+      <w>sqlite</w>
       <w>sqrt</w>
       <w>unmarshals</w>
+      <w>varint</w>
       <w>wharrgarbl</w>
       <w>wharrgarblr</w>
+      <w>ztlf</w>
     </words>
   </dictionary>
 </component>

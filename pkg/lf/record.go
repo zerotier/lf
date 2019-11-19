@@ -508,7 +508,7 @@ func (r *Record) MarshalTo(w io.Writer, hashAsProxyForValue bool) error {
 		return err
 	}
 
-	if _, err := w.Write([]byte{byte(len(r.Selectors)) | byte(r.WorkAlgorithm<<4)}); err != nil {
+	if _, err := w.Write([]byte{byte(len(r.Selectors)) | r.WorkAlgorithm<<4}); err != nil {
 		return err
 	}
 
@@ -666,7 +666,7 @@ func (r *Record) Validate() (err error) {
 	signingHasher := sha512.New384()
 	signingHasher.Write(workHash)
 	signingHasher.Write(r.Work)
-	signingHasher.Write([]byte{byte(r.WorkAlgorithm)})
+	signingHasher.Write([]byte{r.WorkAlgorithm})
 	var hb [48]byte
 	owner := Owner{Public: r.recordBody.Owner}
 	if !owner.Verify(signingHasher.Sum(hb[:0]), r.Signature) {
@@ -824,7 +824,7 @@ func (rb *RecordBuilder) Complete(owner *Owner) (*Record, error) {
 	signingHasher := sha512.New384()
 	signingHasher.Write(rb.workHash)
 	signingHasher.Write(rb.record.Work)
-	signingHasher.Write([]byte{byte(rb.record.WorkAlgorithm)})
+	signingHasher.Write([]byte{rb.record.WorkAlgorithm})
 	var signingHash [48]byte
 	signingHasher.Sum(signingHash[:0])
 	var err error

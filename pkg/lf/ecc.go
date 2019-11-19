@@ -25,17 +25,20 @@ import (
 	"math/big"
 )
 
-// AlgorithmECDSANistP224 is ECDSA with the NIST P-224 curve
-const AlgorithmECDSANistP224 byte = 1
+// SignatureAlgorithmNone is no signature algorithm.
+const SignatureAlgorithmNone byte = 0
 
-// AlgorithmECDSANistP384 is ECDSA with the NIST P-384 curve
-const AlgorithmECDSANistP384 byte = 2
+// SignatureAlgorithmECDSANistP224 is ECDSA with the NIST P-224 curve
+const SignatureAlgorithmECDSANistP224 byte = 1
 
-// AlgorithmEDDSAEd25519 is EDDSA with the Ed25519 curve
-const AlgorithmEDDSAEd25519 byte = 3
+// SignatureAlgorithmECDSANistP384 is ECDSA with the NIST P-384 curve
+const SignatureAlgorithmECDSANistP384 byte = 2
 
-// AlgorithmECDSABP160 is ECDSA with the BrainpoolP160T1 curve
-const AlgorithmECDSABP160 byte = 4
+// SignatureAlgorithmEDDSAEd25519 is EDDSA with the Ed25519 curve
+const SignatureAlgorithmEDDSAEd25519 byte = 3
+
+// SignatureAlgorithmECDSABP160 is ECDSA with the BrainpoolP160T1 curve
+const SignatureAlgorithmECDSABP160 byte = 4
 
 var (
 	// ECCCurveBrainpoolP160T1 is a very small elliptic curve used only for selector claim signatures.

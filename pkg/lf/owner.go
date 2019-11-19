@@ -33,15 +33,15 @@ import (
 
 // OwnerTypeNistP224 indicates an owner based on the NIST P-224 elliptic curve.
 // Total record overhead for this type is 70 bytes.
-const OwnerTypeNistP224 = AlgorithmECDSANistP224
+const OwnerTypeNistP224 = SignatureAlgorithmECDSANistP224
 
 // OwnerTypeNistP384 indicates an owner based on the NIST P-384 elliptic curve.
 // Total record overhead for this type is 120 bytes.
-const OwnerTypeNistP384 = AlgorithmECDSANistP384
+const OwnerTypeNistP384 = SignatureAlgorithmECDSANistP384
 
 // OwnerTypeEd25519 is an owner using the popular ed25519 Edwards elliptic curve.
 // Total record overhead for this type is 96 bytes.
-const OwnerTypeEd25519 = AlgorithmEDDSAEd25519
+const OwnerTypeEd25519 = SignatureAlgorithmEDDSAEd25519
 
 // OwnerPrivatePEMType is the type string that should be used for PEM-encoding owner private keys.
 const OwnerPrivatePEMType = "LF OWNER PRIVATE KEY"

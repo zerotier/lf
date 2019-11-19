@@ -105,6 +105,12 @@ static void *_ZTLF_DB_graphThreadMain(void *arg);
  *   token                    64-bit pulse token (last in hash chain)
  *   current                  Current depth of hash chain
  *
+ * pointer
+ *   rowid                    Pointer record rowid (integer primary key)
+ *   record_id                Parent record ID (32-byte hash)
+ *   ts                       Pointer timestamp
+ *   data                     Pointer data (raw blob)
+ *
  * Most tables are somewhat self-explanatory.
  *
  * The hole and dangling_link tables are similar but serve different functions. The dangling_link table
@@ -221,6 +227,8 @@ static void *_ZTLF_DB_graphThreadMain(void *arg);
 "retries INTEGER NOT NULL" \
 ") WITHOUT ROWID;\n" \
 \
+"CREATE INDEX IF NOT EXISTS wanted_retries ON wanted(retries);\n" \
+\
 "CREATE TABLE IF NOT EXISTS pulse (" \
 "token INTEGER NOT NULL," \
 "start INTEGER NOT NULL," \
@@ -228,7 +236,14 @@ static void *_ZTLF_DB_graphThreadMain(void *arg);
 "PRIMARY KEY(token,start)" \
 ") WITHOUT ROWID;\n" \
 \
-"CREATE INDEX IF NOT EXISTS wanted_retries ON wanted(retries);\n" \
+"CREATE TABLE IF NOT EXISTS pointer (" \
+"rowid INTEGER PRIMARY KEY NOT NULL," \
+"record_id BLOB NOT NULL," \
+"ts INTEGER NOT NULL," \
+"data BLOB NOT NULL" \
+");\n" \
+\
+"CREATE INDEX IF NOT EXISTS pointer_record_id_ts ON pointer(record_id,ts);\n" \
 \
 "ATTACH DATABASE ':memory:' AS tmp;\n" \
 \
