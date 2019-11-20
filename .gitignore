@@ -2,7 +2,7 @@
 *.dSYM
 *~
 *.o
-*.o-
+*.o-*
 *.tmp
 /lf
 /genesis*

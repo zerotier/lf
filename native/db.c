@@ -439,7 +439,7 @@ int ZTLF_DB_Open(
 		"DELETE FROM tmp.rs WHERE \"i\" NOT IN (SELECT record_doff FROM selector WHERE sel BETWEEN ? AND ? AND selidx = ?)");
 	S(db->sQueryGetResults,
 		"SELECT r.doff,r.dlen,r.goff,r.ts,r.reputation,r.hash,r.ckey,r.owner FROM "
-		"tmp.rs AS rs "
+		"tmp.rs AS rs,record AS r "
 		"WHERE "
 		"r.doff = rs.i "
 		"AND r.reputation >= 0 "

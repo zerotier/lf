@@ -103,6 +103,7 @@ func (db *db) open(basePath string, loggers [logLevelCount]*log.Logger, syncCall
 		}
 		fmt.Println(errstr)
 
+		db.cdb = nil // closing after incomplete open causes segfault
 		db.close()
 
 		return ErrDatabase{int(cerr), "open failed (" + errstr + ")"}

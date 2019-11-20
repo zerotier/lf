@@ -487,5 +487,5 @@ func CreateOwnerCertificate(recordLinks [][32]byte, recordWorkFunction *Wharrgar
 	}
 
 	nowSec := uint64(now.Unix())
-	return NewRecord(RecordTypeCertificate, cert, 0, recordLinks, []byte(RecordCertificateMaskingKey), nil, nil, nowSec, recordWorkFunction, recordOwner)
+	return NewRecord(RecordTypeCertificate, cert, recordLinks, []byte(RecordCertificateMaskingKey), nil, nil, nowSec, recordWorkFunction, recordOwner)
 }
