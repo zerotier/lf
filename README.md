@@ -24,7 +24,7 @@ Most decentralized systems use distributed hash tables (DHTs) for this purpose. 
 ### Features and Benefits
 
 * **Easy to use and deploy**, ships with useful defaults and credentials to use an open public network.
-* **Fully decentralized** system with open participation and no single points of failure. (Private LF databses can be created that require certificates, but this is optional.)
+* **Fully decentralized** system with open participation and no single points of failure. (Private LF databases can be created that require certificates, but this is optional.)
 * **Fast sub-second nearline queries** against the entire global data set at all times, even when network is down.
 * **Versatile security model** allowing user choice between different conflict resolution mechanisms that can be used alone or in combination with one another. These include local heuristics, proof of work "weight," elective trust of other nodes, and certificates.
 * **Flexible record lookup** API allowing multiple nested keys and range queries against 64-bit ordinals associated with each key.
