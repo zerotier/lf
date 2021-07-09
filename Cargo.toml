@@ -1,0 +1,17 @@
+[package]
+name = "lf"
+version = "2.0.0"
+edition = "2018"
+
+[profile.release]
+opt-level = 'z'
+lto = true
+codegen-units = 1
+panic = 'abort'
+
+[dependencies]
+serde = "^1"
+serde_json = "^1"
+openssl = "^0"
+lazy_static = "^1"
+rust-gmp = "^0"
