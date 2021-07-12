@@ -1,3 +1,6 @@
+use lf::raven::selftest;
+
 fn main() {
-    println!("Hello, world!");
+    openssl::init();
+    selftest();
 }

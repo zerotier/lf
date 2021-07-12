@@ -5,6 +5,6 @@ pub struct InvalidData(String);
 
 impl Display for InvalidData {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        write!(f, self.0)
+        write!(f, "{}", self.0)
     }
 }

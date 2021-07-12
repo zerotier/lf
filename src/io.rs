@@ -2,7 +2,7 @@ use std::mem::MaybeUninit;
 use std::io::Read;
 
 #[inline(always)]
-pub(crate) fn read_array<R: Read, S: usize>(r: &mut R) -> std::io::Result<[u8; S]> {
+pub(crate) fn read_array<R: Read, const S: usize>(r: &mut R) -> std::io::Result<[u8; S]> {
     let mut buf = unsafe { MaybeUninit::<[u8; S]>::uninit().assume_init() };
     let rr = r.read_exact(&mut buf);
     if rr.is_err() {
@@ -13,7 +13,7 @@ pub(crate) fn read_array<R: Read, S: usize>(r: &mut R) -> std::io::Result<[u8; S
 }
 
 #[inline(always)]
-pub(crate) fn read_array_with_size_prefix<R: Read, S: usize>(r: &mut R) -> std::io::Result<[u8; S]> {
+pub(crate) fn read_array_with_size_prefix<R: Read, const S: usize>(r: &mut R) -> std::io::Result<[u8; S]> {
     if crate::varint::read(r)? == S as u64 {
         let mut buf = unsafe { MaybeUninit::<[u8; S]>::uninit().assume_init() };
         let rr = r.read_exact(&mut buf);
@@ -27,9 +27,10 @@ pub(crate) fn read_array_with_size_prefix<R: Read, S: usize>(r: &mut R) -> std::
     }
 }
 
+/*
 #[inline(always)]
 pub(crate) fn read_vec<R: Read>(r: &mut R, max_size: usize) -> std::io::Result<Vec<u8>> {
-    let mut l = crate::varint::read(r)?;
+    let l = crate::varint::read(r)?;
     if l > max_size as u64 {
         return std::io::Result::Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "object too large"));
     }
@@ -38,3 +39,4 @@ pub(crate) fn read_vec<R: Read>(r: &mut R, max_size: usize) -> std::io::Result<V
     r.read_exact(v.as_mut_slice())?;
     std::io::Result::Ok(v)
 }
+*/

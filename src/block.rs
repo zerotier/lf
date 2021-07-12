@@ -1,40 +1,44 @@
-use std::convert::TryInto;
 use std::io::{Write, Read};
 
 use crate::sign::KeyPair;
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct Block {
-    // NOTE: validator, signature, and work are written prefixed by a size and could be changed
-    // to vectors, but right now they are always the given size.
     pub id: [u8; 48],
     pub previous_id: [u8; 48],
+    pub chain_id: [u8; 48],
     pub timestamp: u64,
-    pub validator: [u8; crate::sign::KEY_TYPE_SIGNATURE_DUAL_ED25519_NIST_P384_SIZE_PUBLIC],
-    pub signature: [u8; crate::sign::KEY_TYPE_SIGNATURE_DUAL_ED25519_NIST_P384_SIZE_SIGNATURE],
+    pub validator: [u8; crate::sign::P384_PUBLIC_KEY_SIZE],
+    pub signature: [u8; crate::sign::P384_SIGNATURE_SIZE],
     pub entries: Vec<[u8; 48]>,
     pub work: [u8; crate::raven::PROOF_BYTES],
 }
 
 impl Block {
-    #[inline(always)]
     fn calc_id(&mut self) {
         let b = self.to_vec();
         self.id = crate::sha384(&b);
     }
 
+    /// Shortcut for read_from(slice).
+    pub fn from_bytes(b: &[u8]) -> std::io::Result<Block> {
+        let mut bb = b;
+        Block::from_reader(&mut bb)
+    }
+
     /// Read a block from a reader.
-    pub fn read_from<R: Read>(r: &mut R) -> std::io::Result<Block> {
+    pub fn from_reader<R: Read>(r: &mut R) -> std::io::Result<Block> {
         let mut blk = Block {
             id: [0_u8; 48],
             previous_id: crate::io::read_array(r)?,
+            chain_id: crate::io::read_array(r)?,
             timestamp: crate::varint::read(r)?,
             validator: crate::io::read_array_with_size_prefix(r)?,
             signature: crate::io::read_array_with_size_prefix(r)?,
             entries: {
                 let mut e: Vec<[u8; 48]> = Vec::new();
-                let mut count = crate::varint::read(r)?;
-                if count > crate::BLOCK_MAX_ENTRIES || (count * 48) > b.len() as u64 {
+                let count = crate::varint::read(r)?;
+                if count > crate::BLOCK_MAX_ENTRIES {
                     return std::io::Result::Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "block too large"));
                 }
                 e.reserve(count as usize);
@@ -52,6 +56,7 @@ impl Block {
     fn write_to_intl<W: Write>(&self, w: &mut W, include_signature: bool, include_work: bool) -> std::io::Result<()> {
         // id is not written; it's computed on read or sign
         w.write_all(&self.previous_id)?;
+        w.write_all(&self.chain_id)?;
         crate::varint::write(w, self.timestamp)?;
         crate::varint::write(w, self.validator.len() as u64)?;
         w.write_all(&self.validator)?;

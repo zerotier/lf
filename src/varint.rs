@@ -3,10 +3,7 @@ use std::mem::MaybeUninit;
 
 #[inline(always)]
 pub fn write<W: Write>(w: &mut W, mut v: u64) -> std::io::Result<()> {
-    let mut b = unsafe {
-        let mut b: MaybeUninit<[u8; 16]> = MaybeUninit::uninit();
-        b.assume_init()
-    };
+    let mut b = unsafe { MaybeUninit::<[u8; 16]>::uninit().assume_init() };
     let mut i = 0;
     loop {
         if v > 0x7f {
@@ -27,7 +24,7 @@ pub fn read<R: Read>(r: &mut R) -> std::io::Result<u64> {
     let mut v = 0_u64;
     let mut bb = [0_u8; 1];
     for _ in 0..10 {
-        let rr = r.read_exact(r, &mut bb);
+        let rr = r.read_exact(&mut bb);
         if rr.is_ok() {
             v >>= 7;
             let b = bb[0];
