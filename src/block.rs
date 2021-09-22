@@ -1,15 +1,16 @@
 use std::io::{Write, Read};
 
 use crate::sign::KeyPair;
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(with = "serde_arrays")]
 pub struct Block {
+    #[serde(rename = "ID")]
     pub id: [u8; 48],
+    #[serde(rename = "previousID")]
     pub previous_id: [u8; 48],
-    pub chain_id: [u8; 48],
     pub timestamp: u64,
-    pub validator: [u8; crate::sign::P384_PUBLIC_KEY_SIZE],
-    pub signature: [u8; crate::sign::P384_SIGNATURE_SIZE],
     pub entries: Vec<[u8; 48]>,
     pub work: [u8; crate::raven::PROOF_BYTES],
 }
@@ -31,10 +32,7 @@ impl Block {
         let mut blk = Block {
             id: [0_u8; 48],
             previous_id: crate::io::read_array(r)?,
-            chain_id: crate::io::read_array(r)?,
             timestamp: crate::varint::read(r)?,
-            validator: crate::io::read_array_with_size_prefix(r)?,
-            signature: crate::io::read_array_with_size_prefix(r)?,
             entries: {
                 let mut e: Vec<[u8; 48]> = Vec::new();
                 let count = crate::varint::read(r)?;
@@ -53,17 +51,11 @@ impl Block {
         std::io::Result::Ok(blk)
     }
 
-    fn write_to_intl<W: Write>(&self, w: &mut W, include_signature: bool, include_work: bool) -> std::io::Result<()> {
+    fn write_to_intl<W: Write>(&self, w: &mut W, include_work: bool) -> std::io::Result<()> {
         // id is not written; it's computed on read or sign
         w.write_all(&self.previous_id)?;
         w.write_all(&self.chain_id)?;
         crate::varint::write(w, self.timestamp)?;
-        crate::varint::write(w, self.validator.len() as u64)?;
-        w.write_all(&self.validator)?;
-        if include_signature {
-            crate::varint::write(w, self.signature.len() as u64)?;
-            w.write_all(&self.signature)?;
-        }
         crate::varint::write(w, self.entries.len() as u64)?;
         for e in self.entries.iter() {
             w.write_all(e)?;
@@ -77,14 +69,14 @@ impl Block {
 
     /// Write this block in binary format to a writer.
     pub fn write_to<W: Write>(&self, w: &mut W) -> std::io::Result<()> {
-        self.write_to_intl(w, true, true)
+        self.write_to_intl(w, true)
     }
 
     /// Shortcut for write_to(a vector).
     pub fn to_vec(&self) -> Vec<u8> {
         let mut v: Vec<u8> = Vec::new();
         v.reserve(1024 + (self.entries.len() * 48));
-        let _ = self.write_to_intl(&mut v, true, true);
+        let _ = self.write_to_intl(&mut v, true);
         v
     }
 
@@ -93,24 +85,7 @@ impl Block {
     pub fn work(&mut self, difficulty: u64) {
         let mut v: Vec<u8> = Vec::new();
         v.reserve(1024 + (self.entries.len() * 48));
-        let _ = self.write_to_intl(&mut v, false, false);
+        let _ = self.write_to_intl(&mut v, false);
         self.work = crate::raven::work(v.as_slice(), difficulty);
-    }
-
-    /// Sort entries and sign this block, filling out signature and id.
-    /// Returns false if some kind of problem prevents signing (usually indicates a bug or major config problem).
-    pub fn sign(&mut self, key: &KeyPair) -> bool {
-        self.entries.sort();
-        let mut v: Vec<u8> = Vec::new();
-        v.reserve(1024 + (self.entries.len() * 48));
-        let _ = self.write_to_intl(&mut v, false, true);
-        let s = key.sign(v.as_slice());
-        if s.is_some() {
-            self.signature = s.unwrap();
-            self.calc_id();
-            true
-        } else {
-            false
-        }
     }
 }

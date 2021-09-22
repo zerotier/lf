@@ -86,7 +86,7 @@ impl KeyPair {
 
 /// Get algorithm type from a public key or key pair, returns type or 0 if not valid.
 #[inline(always)]
-pub fn algorithm_type(key: &[u8]) -> u8 {
+pub fn key_algorithm_type(key: &[u8]) -> u8 {
     if !key.is_empty() {
         key[0]
     } else {
@@ -94,7 +94,7 @@ pub fn algorithm_type(key: &[u8]) -> u8 {
     }
 }
 
-pub fn verify(msg: &[u8], signature: &[u8], public_key: &[u8]) -> bool {
+pub fn verify_signature(msg: &[u8], signature: &[u8], public_key: &[u8]) -> bool {
     if public_key.len() != P384_PUBLIC_KEY_SIZE || public_key[0] != SIGNATURE_ALGORITHM_TYPE_P384 || signature.len() != P384_SIGNATURE_SIZE {
         return false;
     }
