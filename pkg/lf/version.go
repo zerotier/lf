@@ -16,8 +16,8 @@ import (
 // LF version and software implementation name
 const (
 	VersionMajor    = 1
-	VersionMinor    = 0
-	VersionRevision = 1
+	VersionMinor    = 1
+	VersionRevision = 0
 	VersionBuild    = 0
 
 	ProtocolVersion    = 1
@@ -26,7 +26,7 @@ const (
 	APIVersion = 1
 
 	SoftwareName = "ZeroTier LF Reference"
-	License      = "ZeroTier-BSL"
+	License      = "MPL-2.0"
 )
 
 // Version is the version in array form.
