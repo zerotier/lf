@@ -1,1 +1,13 @@
-/target
+.DS_Store
+*.dSYM
+*~
+*.o
+*.o-*
+*.tmp
+/lf
+/genesis*
+/*.pem
+/*.csr
+/*.crt
+/*.secret
+/.vscode
