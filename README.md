@@ -1,7 +1,7 @@
 # LF: Fully Decentralized Fully Replicated Key/Value Store
 
-*(c)2019 [ZeroTier, Inc.](https://www.zerotier.com/)*
-*Licensed under the [ZeroTier LF BSL](LICENSE.txt)*
+*(c)2019-2021 [ZeroTier, Inc.](https://www.zerotier.com/)*
+*Licensed under the [Mozilla Public License (MPL) Version 2.0](LICENSE.txt)*
 
 ## Introduction
 
