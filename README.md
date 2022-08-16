@@ -3,6 +3,8 @@
 *(c)2019-2021 [ZeroTier, Inc.](https://www.zerotier.com/)*
 *Licensed under the [Mozilla Public License (MPL) Version 2.0](LICENSE.txt)*
 
+*NOTE: this project is not currently maintained. We are still working on decentralization of the root infrastructure but due mostly to performance constraints will probably pursue a simpler and faster system to do so. That system may include some of these ideas but probably not all of them and will probably be written in Rust. That being said, we're leaving this up for others to check out as it contains a lot of interesting ideas. Think of it as a R&D incubation project from "ZeroTier Labs."*
+
 ## Introduction
 
 LF (pronounced "aleph") is a fully decentralized fully replicated key/value store.
